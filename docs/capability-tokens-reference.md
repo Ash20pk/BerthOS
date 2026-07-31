@@ -40,6 +40,12 @@ This is expected to work correctly on:
 
 **Before treating Phase 3 as passing any real security review, re-run `capability-enforcement.mjs` on one of those and confirm it logs `ruleset=FullyEnforced` (or `PartiallyEnforced`) and hard-asserts the traversal write is denied** — the script already detects which case it's in and only treats the denial as a required assertion when Landlock is actually active; on this dev machine it correctly reports "NOT VERIFIED (expected in this environment)" instead of a false pass or a false failure.
 
+### CI closes this gap
+
+`.github/workflows/capability-enforcement.yml` runs this exact script on GitHub Actions `ubuntu-latest` on every push to `main`, every PR, and on demand via `workflow_dispatch`. Because that runner is a real Linux kernel (not Docker Desktop's linuxkit VM), `capability-enforcement.mjs` is expected to detect `ruleset=FullyEnforced` there and hard-assert the traversal write is denied. The script additionally treats a `NotEnforced` result as a hard CI failure (not just a warning) when `process.env.CI` is set — since Landlock going inactive on `ubuntu-latest` would itself be a real regression worth catching, not an expected environment limitation like on this Mac.
+
+This closes the verification gap going forward: once this workflow has run green at least once on a real push, Phase 3's kernel enforcement claim is confirmed, and any future regression in `agent-init`'s Landlock ruleset construction gets caught by CI rather than silently reintroduced.
+
 ## Running it yourself
 
 ```bash
