@@ -4,6 +4,8 @@ version: 0.1.0
 capabilities:
   - filesystem:read:/workspace
   - filesystem:write:/workspace
+  - filesystem:read:/context
+  - filesystem:write:/context
 
 exports:
   - name: write_file
@@ -13,6 +15,13 @@ exports:
     output: { content: string }
   - name: list_files
     output: { files: array }
+  - name: write_context_file
+    input: { path: string, content: string }
+  - name: tag_context_file
+    input: { path: string, task: string, relatedApps: array }
+  - name: query_context
+    input: { text: string }
+    output: { results: array }
 
 on_install: []
 on_agent_ready:

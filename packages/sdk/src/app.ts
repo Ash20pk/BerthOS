@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { BerthManifest } from "@berth/manifest-schema";
 import type { ContextBusClient } from "./context-bus/client.js";
+import type { SemanticFsClient } from "./semantic-fs/client.js";
 
 export interface ExportDefinition<In = unknown, Out = unknown> {
   name: string;
@@ -11,6 +12,7 @@ export interface ExportDefinition<In = unknown, Out = unknown> {
 
 export interface AppContext {
   contextBus: ContextBusClient;
+  semanticFs: SemanticFsClient;
   manifest: BerthManifest;
 }
 

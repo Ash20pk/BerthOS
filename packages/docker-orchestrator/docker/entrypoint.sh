@@ -33,6 +33,23 @@ for _ in $(seq 1 50); do
   sleep 0.1
 done
 
+# Started here (before agent-init's Landlock ruleset is applied to the app
+# process below) so the daemon itself is never subject to the app's
+# filesystem:write:* grants — same reasoning as context-bus-daemon above.
+# Resident apps that want to write through /context still need their own
+# filesystem:write:/context capability declared in berth.yml; only the
+# control socket (register/tag/query) is unconditionally reachable.
+echo "[berth:entrypoint] starting semantic-fs daemon at ${BERTH_CONTEXT_MOUNT} (backed by ${BERTH_CONTEXT_DATA})" >&2
+/usr/local/bin/semantic-fs-daemon &
+
+# Wait for the FUSE mount to actually appear in the mount table, not just for
+# the process to start — fuse.Mount() hands off to fusermount3 and the mount
+# only becomes visible once that completes.
+for _ in $(seq 1 50); do
+  grep -q " ${BERTH_CONTEXT_MOUNT} fuse" /proc/mounts && break
+  sleep 0.1
+done
+
 # Translates berth.yml's capabilities into the JSON policy agent-init reads
 # (see @berth/sdk's generate-capability-policy.ts for why this lives in
 # Node/TypeScript rather than being parsed from YAML in Rust).

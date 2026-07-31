@@ -1,5 +1,6 @@
-# Berth Agent OS — Phase 1 stand-in, now with Phase 2's Context Bus daemon
-# and Phase 3's kernel-enforced capability policy (Landlock).
+# Berth Agent OS — Phase 1 stand-in, now with Phase 2's Context Bus daemon,
+# Phase 3's kernel-enforced capability policy (Landlock), and Phase 4's
+# semantic filesystem (FUSE, mounted at /context).
 #
 # node:22-alpine IS Alpine (musl) — used directly rather than alpine:3.20 +
 # manual Node install, since the SDK runtime needs Node regardless and the
@@ -29,6 +30,17 @@ WORKDIR /agent-init
 COPY agent-init/ .
 RUN cargo build --release
 
+# Compiles semantic-fs-daemon (packages/semantic-fs-daemon) — a pure-Go (no
+# cgo — bazil.org/fuse talks to /dev/fuse directly on Linux, and
+# modernc.org/sqlite is a pure-Go SQLite) static binary, so CGO_ENABLED=0
+# keeps it independent of Alpine's musl libc version the same way the Rust
+# binaries above are. Its own stage means Docker's layer cache only rebuilds
+# it when semantic-fs-daemon's own source changes.
+FROM golang:1-alpine AS semantic-fs-daemon-builder
+WORKDIR /semantic-fs-daemon
+COPY semantic-fs-daemon/ .
+RUN CGO_ENABLED=0 go build -o semantic-fs-daemon .
+
 FROM node:22-alpine AS base
 
 RUN apk add --no-cache \
@@ -37,6 +49,10 @@ RUN apk add --no-cache \
     chromium chromium-chromedriver \
     xvfb x11vnc websockify novnc \
     dbus ttf-freefont \
+    # fuse3 provides fusermount3, which bazil.org/fuse's Mount() execs to
+    # perform the actual mount(2) syscall — the daemon itself needs no other
+    # userspace FUSE library (no libfuse-dev, no cgo binding to it).
+    fuse3 \
     # PEP 668 blocks `pip install` on a system Python unless this marker is
     # removed. This is a container we fully control (unlike a developer's own
     # machine), so on_install hooks like the PRD's `pip install -r
@@ -46,12 +62,17 @@ RUN apk add --no-cache \
 ENV CHROME_BIN=/usr/bin/chromium-browser \
     DISPLAY=:99 \
     BERTH_APP_ROOT=/app \
-    BERTH_CONTEXT_BUS_SOCKET=/tmp/berth-context-bus.sock
+    BERTH_CONTEXT_BUS_SOCKET=/tmp/berth-context-bus.sock \
+    BERTH_CONTEXT_MOUNT=/context \
+    BERTH_CONTEXT_DATA=/var/berth/context-data \
+    BERTH_CONTEXT_INDEX_DB=/var/berth/context-index.db \
+    BERTH_SEMANTIC_FS_SOCKET=/tmp/berth-semantic-fs.sock
 
 WORKDIR /app
 
 COPY --from=context-bus-builder /daemon/target/release/context-bus-daemon /usr/local/bin/context-bus-daemon
 COPY --from=agent-init-builder /agent-init/target/release/agent-init /usr/local/bin/agent-init
+COPY --from=semantic-fs-daemon-builder /semantic-fs-daemon/semantic-fs-daemon /usr/local/bin/semantic-fs-daemon
 
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

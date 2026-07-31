@@ -6,12 +6,16 @@ import type { BerthApp, AppContext } from "./app.js";
 import type { ContextBusClient } from "./context-bus/client.js";
 import { createLocalContextBus } from "./context-bus/local.js";
 import { createUnixSocketContextBus } from "./context-bus/unix-socket.js";
+import type { SemanticFsClient } from "./semantic-fs/client.js";
+import { createLocalSemanticFs } from "./semantic-fs/local.js";
+import { createUnixSocketSemanticFs } from "./semantic-fs/unix-socket.js";
 import { startRpcServer } from "./rpc.js";
 
 const APP_ROOT = process.cwd();
 const MANIFEST_PATH = process.env.BERTH_MANIFEST_PATH ?? path.join(APP_ROOT, "berth.yml");
 const APP_ENTRY = process.env.BERTH_APP_ENTRY ?? path.join(APP_ROOT, "dist", "index.js");
 const CONTEXT_BUS_SOCKET = process.env.BERTH_CONTEXT_BUS_SOCKET ?? "/tmp/berth-context-bus.sock";
+const SEMANTIC_FS_SOCKET = process.env.BERTH_SEMANTIC_FS_SOCKET ?? "/tmp/berth-semantic-fs.sock";
 
 /**
  * Phase 2's real context bus if the daemon is reachable (see
@@ -31,6 +35,18 @@ async function createContextBus(): Promise<ContextBusClient> {
   }
 }
 
+/** Same fallback reasoning as createContextBus(), for Phase 4's semantic-fs-daemon. */
+async function createSemanticFs(): Promise<SemanticFsClient> {
+  try {
+    return await createUnixSocketSemanticFs(SEMANTIC_FS_SOCKET);
+  } catch (err) {
+    console.error(
+      `[berth:runtime] semantic-fs daemon not reachable at ${SEMANTIC_FS_SOCKET} (${err instanceof Error ? err.message : String(err)}) — falling back to local no-op`,
+    );
+    return createLocalSemanticFs();
+  }
+}
+
 async function main(): Promise<void> {
   console.error(`[berth:runtime] loading manifest from ${MANIFEST_PATH}`);
   const manifest = await loadManifest(MANIFEST_PATH);
@@ -45,12 +61,13 @@ async function main(): Promise<void> {
   assertExportsMatchManifest(app, manifest.exports.map((e) => e.name));
 
   const contextBus = await createContextBus();
+  const semanticFs = await createSemanticFs();
 
   for (const hook of app._onInstallHooks) {
     await hook();
   }
 
-  const ctx: AppContext = { contextBus, manifest };
+  const ctx: AppContext = { contextBus, semanticFs, manifest };
   for (const hook of app._onAgentReadyHooks) {
     await hook(ctx);
   }

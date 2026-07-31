@@ -38,6 +38,7 @@ Runs once your app's exports are registered and `on_install` has completed. Rece
 ```ts
 interface AppContext {
   contextBus: ContextBusClient;
+  semanticFs: SemanticFsClient;
   manifest: BerthManifest; // your parsed, validated berth.yml
 }
 ```
@@ -53,6 +54,18 @@ interface ContextBusClient {
 ```
 
 **Real as of Phase 2.** `@berth/sdk`'s runtime connects to the Context Bus daemon (a Rust process, one per sandbox) over a Unix socket and falls back to Phase 1's in-process `createLocalContextBus()` no-op only if the daemon isn't reachable (e.g. running outside a sandbox, or in a unit test). See [context-bus-reference.md](./context-bus-reference.md) for the wire protocol and a real, running verification. App code written against this interface in Phase 1 needed zero changes for this to start working.
+
+## `SemanticFsClient`
+
+```ts
+interface SemanticFsClient {
+  register(info: { app: string }): Promise<void>;
+  tag(path: string, meta: { task?: string; relatedApps?: string[] }): Promise<void>;
+  query(text: string, limit?: number): Promise<SemanticFsQueryResult[]>;
+}
+```
+
+**Real as of Phase 4.** Files written through `$BERTH_CONTEXT_MOUNT` (default `/context`, a FUSE mount served by `semantic-fs-daemon`, a Go process, one per sandbox) are automatically attributed to whichever app called `register()` from that process — `tag()` then attaches `task`/`related_apps` metadata explicitly, and `query()` searches all of it. Falls back to `createLocalSemanticFs()` (an always-empty no-op) if the daemon isn't reachable. See [semantic-fs-reference.md](./semantic-fs-reference.md) for the full design, the FUSE wire-up, and a real, running verification.
 
 ## `requestCapability(appName, capability)`
 
