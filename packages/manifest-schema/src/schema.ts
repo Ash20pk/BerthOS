@@ -29,6 +29,8 @@ export const ExportSpec = z.object({
 export const BerthManifestSchema = z.object({
   name: z.string().regex(/^[a-z0-9-]+$/, "name must be lowercase alphanumeric with dashes"),
   version: z.string().regex(/^\d+\.\d+\.\d+$/, "version must be semver (x.y.z)"),
+  /** Optional human-readable summary — surfaced by the Phase 5 registry's listing/search, unused before that. */
+  description: z.string().default(""),
   capabilities: z.array(CapabilityString).default([]),
   exports: z.array(ExportSpec).default([]),
   on_install: z.array(z.string()).default([]),
