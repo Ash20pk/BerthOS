@@ -17,6 +17,8 @@ const DOCKER_ASSETS_DIR = join(__dirname, "..", "docker");
 const CONTEXT_BUS_DAEMON_DIR = join(__dirname, "..", "..", "context-bus-daemon");
 /** packages/agent-init — same reasoning as CONTEXT_BUS_DAEMON_DIR. */
 const AGENT_INIT_DIR = join(__dirname, "..", "..", "agent-init");
+/** packages/semantic-fs-daemon — same reasoning as CONTEXT_BUS_DAEMON_DIR. */
+const SEMANTIC_FS_DAEMON_DIR = join(__dirname, "..", "..", "semantic-fs-daemon");
 
 export type BuildTarget = "dev" | "production";
 
@@ -104,6 +106,7 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
       recursive: true,
       filter: (src) => !src.includes(join(AGENT_INIT_DIR, "target")),
     });
+    await cp(SEMANTIC_FS_DAEMON_DIR, join(stagingDir, "semantic-fs-daemon"), { recursive: true });
 
     const dockerfileContents = await readFile(join(DOCKER_ASSETS_DIR, "base.Dockerfile"), "utf-8");
     await writeFile(join(stagingDir, "Dockerfile"), dockerfileContents);

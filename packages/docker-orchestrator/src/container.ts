@@ -73,6 +73,13 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
       Binds: binds,
       PortBindings: portBindings,
       AutoRemove: false,
+      // Every sandbox mounts the Phase 4 semantic filesystem at /context via
+      // FUSE (see docker/entrypoint.sh), which needs the /dev/fuse device
+      // node plus CAP_SYS_ADMIN to call mount(2) — unconditional, the same
+      // way context-bus-daemon always starts, since /context isn't gated
+      // behind any manifest capability the way browser:* ports are.
+      Devices: [{ PathOnHost: "/dev/fuse", PathInContainer: "/dev/fuse", CgroupPermissions: "rwm" }],
+      CapAdd: ["SYS_ADMIN"],
     },
   });
 
