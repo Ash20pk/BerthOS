@@ -15,6 +15,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const DOCKER_ASSETS_DIR = join(__dirname, "..", "docker");
 /** packages/context-bus-daemon — a sibling workspace package, staged into every build context so base.Dockerfile's builder stage can compile it. */
 const CONTEXT_BUS_DAEMON_DIR = join(__dirname, "..", "..", "context-bus-daemon");
+/** packages/agent-init — same reasoning as CONTEXT_BUS_DAEMON_DIR. */
+const AGENT_INIT_DIR = join(__dirname, "..", "..", "agent-init");
 
 export type BuildTarget = "dev" | "production";
 
@@ -98,6 +100,10 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
       // the Docker builder stage anyway, so there's no reason to ship it.
       filter: (src) => !src.includes(join(CONTEXT_BUS_DAEMON_DIR, "target")),
     });
+    await cp(AGENT_INIT_DIR, join(stagingDir, "agent-init"), {
+      recursive: true,
+      filter: (src) => !src.includes(join(AGENT_INIT_DIR, "target")),
+    });
 
     const dockerfileContents = await readFile(join(DOCKER_ASSETS_DIR, "base.Dockerfile"), "utf-8");
     await writeFile(join(stagingDir, "Dockerfile"), dockerfileContents);
@@ -109,12 +115,27 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
     });
 
     await new Promise<void>((resolve, reject) => {
+      // A failed RUN step doesn't always surface through followProgress's
+      // own completion callback as `err` — the daemon can report it as a
+      // per-event `error` field mid-stream instead, with the stream then
+      // ending "successfully" from followProgress's point of view. Track
+      // any such event ourselves so a broken build never gets reported as
+      // having produced a usable image.
+      let buildError: string | undefined;
       docker.modem.followProgress(
         buildStream,
-        (err: Error | null) => (err ? reject(err) : resolve()),
+        (err: Error | null) => {
+          if (err) reject(err);
+          else if (buildError) reject(new Error(buildError));
+          else resolve();
+        },
         (event: { stream?: string; error?: string }) => {
-          if (event.error) console.error(`[berth:build] ${event.error}`);
-          else if (event.stream) process.stderr.write(`[berth:build] ${event.stream}`);
+          if (event.error) {
+            buildError = event.error;
+            console.error(`[berth:build] ${event.error}`);
+          } else if (event.stream) {
+            process.stderr.write(`[berth:build] ${event.stream}`);
+          }
         },
       );
     });

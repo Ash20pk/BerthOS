@@ -1,6 +1,6 @@
 # Contributing to Berth
 
-Berth is early — Phases 1–2 of a 5-phase roadmap. We're looking for pilot developers building resident apps and feedback on the `berth init` → `berth dev` workflow.
+Berth is early — Phases 1–3 of a 5-phase roadmap. We're looking for pilot developers building resident apps and feedback on the `berth init` → `berth dev` workflow.
 
 ## Setup
 
@@ -27,6 +27,7 @@ Use the issue templates in `.github/ISSUE_TEMPLATE/`. For the Phase 1 pilot, the
 - `packages/context-bus-daemon`'s `proto/context_bus.proto` is the canonical wire schema; `packages/sdk/proto/context_bus.proto` must be kept in sync by hand (see the comment at the top of either file).
 - Run `pnpm --filter <package> test` to scope a test run to one package, or `pnpm test` to run everything through Turborepo.
 - `node packages/docker-orchestrator/test/context-bus-milestone.mjs` is a real (Docker-backed, not mocked) integration test proving apps react to each other via the context bus — run it after touching `context-bus-daemon`, the SDK's context-bus client, or `apps/filesystem`/`apps/code-editor`.
+- `packages/agent-init` (Rust, Landlock) needs Landlock active in the kernel's LSM stack to actually enforce anything — check `cat /sys/kernel/security/lsm` (after `mount -t securityfs securityfs /sys/kernel/security` if testing in a privileged container). Docker Desktop for Mac's linuxkit VM does NOT have it active; see `docs/capability-tokens-reference.md` before assuming a passing `capability-enforcement.mjs` run means enforcement actually works.
 
 ## Code style
 
