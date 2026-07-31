@@ -1,0 +1,14 @@
+name: code-editor
+version: 0.1.0
+
+capabilities:
+  - filesystem:read:/workspace
+
+exports:
+  - name: open_file
+    input: { path: string }
+    output: { content: string }
+
+on_install: []
+on_agent_ready:
+  - "register_with_context_bus"

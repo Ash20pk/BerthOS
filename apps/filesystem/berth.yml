@@ -1,0 +1,19 @@
+name: filesystem
+version: 0.1.0
+
+capabilities:
+  - filesystem:read:/workspace
+  - filesystem:write:/workspace
+
+exports:
+  - name: write_file
+    input: { path: string, content: string }
+  - name: read_file
+    input: { path: string }
+    output: { content: string }
+  - name: list_files
+    output: { files: array }
+
+on_install: []
+on_agent_ready:
+  - "register_with_context_bus"

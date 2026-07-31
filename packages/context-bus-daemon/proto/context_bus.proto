@@ -1,0 +1,56 @@
+syntax = "proto3";
+package berth.contextbus;
+
+// Every resident app process in one agent sandbox connects to the same
+// daemon over a Unix socket and exchanges length-prefixed Envelope frames
+// (4-byte big-endian length + protobuf bytes). This schema is the wire
+// contract shared between the Rust daemon (this crate) and @berth/sdk's
+// TypeScript client (packages/sdk/src/context-bus/unix-socket.ts).
+//
+// CANONICAL COPY: this file is the source of truth. @berth/sdk ships an
+// identical copy at packages/sdk/proto/context_bus.proto (protobufjs loads
+// it at runtime rather than requiring a codegen step) — a real shared-schema
+// package would remove this duplication, but wasn't worth standing up for
+// one file at Phase 2's scope. Keep both copies in sync by hand.
+
+message RegisterRequest {
+  string app = 1;
+}
+
+// payload is opaque JSON bytes so the wire format doesn't need to know the
+// shape of what a resident app is publishing — the SDK encodes/decodes JSON
+// on either end.
+message PublishRequest {
+  string topic = 1;
+  bytes payload = 2;
+}
+
+message SubscribeRequest {
+  string topic = 1;
+}
+
+message UnsubscribeRequest {
+  string topic = 1;
+}
+
+// Server -> client push for a topic the client has subscribed to.
+message Event {
+  string topic = 1;
+  bytes payload = 2;
+}
+
+message Ack {
+  bool ok = 1;
+  string error = 2;
+}
+
+message Envelope {
+  oneof kind {
+    RegisterRequest register = 1;
+    PublishRequest publish = 2;
+    SubscribeRequest subscribe = 3;
+    UnsubscribeRequest unsubscribe = 4;
+    Event event = 5;
+    Ack ack = 6;
+  }
+}

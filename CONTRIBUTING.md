@@ -1,6 +1,6 @@
 # Contributing to Berth
 
-Berth is early — Phase 1 of a 5-phase roadmap. We're looking for pilot developers building resident apps and feedback on the `berth init` → `berth dev` workflow.
+Berth is early — Phases 1–2 of a 5-phase roadmap. We're looking for pilot developers building resident apps and feedback on the `berth init` → `berth dev` workflow.
 
 ## Setup
 
@@ -10,6 +10,8 @@ pnpm install
 pnpm build
 pnpm test
 ```
+
+`packages/context-bus-daemon` is Rust — you don't need a local Rust toolchain to use `berth`/build resident apps day-to-day, since `berth dev`/`test`/`deploy` compile it inside the Docker image (see `base.Dockerfile`'s `context-bus-builder` stage). You only need `cargo` + a `protoc` on PATH (`brew install protobuf` / `apk add protobuf`) if you're editing the daemon itself and want a fast local `cargo build`/`cargo check` loop.
 
 ## Reporting issues
 
@@ -22,7 +24,9 @@ Use the issue templates in `.github/ISSUE_TEMPLATE/`. For the Phase 1 pilot, the
 - `packages/manifest-schema` has no dependency on anything else in the repo — start there if you're touching the `berth.yml` shape.
 - `packages/sdk` runs *inside* the sandboxed container — it must never import Docker, the CLI, or Node-host-only APIs.
 - `packages/cli` never imports E2B/Daytona SDKs directly — deploy adapters live behind `packages/adapters/adapter-core`'s `DeployAdapter` interface.
+- `packages/context-bus-daemon`'s `proto/context_bus.proto` is the canonical wire schema; `packages/sdk/proto/context_bus.proto` must be kept in sync by hand (see the comment at the top of either file).
 - Run `pnpm --filter <package> test` to scope a test run to one package, or `pnpm test` to run everything through Turborepo.
+- `node packages/docker-orchestrator/test/context-bus-milestone.mjs` is a real (Docker-backed, not mocked) integration test proving apps react to each other via the context bus — run it after touching `context-bus-daemon`, the SDK's context-bus client, or `apps/filesystem`/`apps/code-editor`.
 
 ## Code style
 

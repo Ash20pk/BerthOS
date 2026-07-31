@@ -52,7 +52,7 @@ interface ContextBusClient {
 }
 ```
 
-**This is a no-op today.** Phase 1 ships `createLocalContextBus()` — an in-process `EventEmitter` that logs every call and never leaves the container. Phase 2 will implement the same interface against a real Unix-socket/protobuf daemon shared across resident apps in the same sandbox. Code written against this interface now needs zero changes when that lands — don't build features that assume cross-app messages are actually delivered yet.
+**Real as of Phase 2.** `@berth/sdk`'s runtime connects to the Context Bus daemon (a Rust process, one per sandbox) over a Unix socket and falls back to Phase 1's in-process `createLocalContextBus()` no-op only if the daemon isn't reachable (e.g. running outside a sandbox, or in a unit test). See [context-bus-reference.md](./context-bus-reference.md) for the wire protocol and a real, running verification. App code written against this interface in Phase 1 needed zero changes for this to start working.
 
 ## `requestCapability(appName, capability)`
 

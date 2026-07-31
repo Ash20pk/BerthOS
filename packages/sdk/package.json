@@ -18,7 +18,7 @@
   "bin": {
     "berth-runtime": "./dist/runtime.js"
   },
-  "files": ["dist"],
+  "files": ["dist", "proto"],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
@@ -27,6 +27,7 @@
   },
   "dependencies": {
     "@berth/manifest-schema": "workspace:*",
+    "protobufjs": "^7.4.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {
