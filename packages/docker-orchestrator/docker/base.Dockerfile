@@ -1,4 +1,4 @@
-# Berth Agent OS — Phase 1 stand-in.
+# Berth Agent OS — Phase 1 stand-in, now with Phase 2's Context Bus daemon.
 #
 # node:22-alpine IS Alpine (musl) — used directly rather than alpine:3.20 +
 # manual Node install, since the SDK runtime needs Node regardless and the
@@ -6,6 +6,18 @@
 # Modal, Vercel Sandbox) ships a stock kernel/image the same way; the one
 # thing that will eventually differ here is Phase 3's custom PID 1 and
 # eBPF/seccomp capability enforcement — not the base image itself.
+
+# Compiles the Context Bus daemon (packages/context-bus-daemon) natively
+# against musl inside Alpine, so the final image never needs a Rust
+# toolchain — just the resulting static binary. Isolated in its own stage so
+# Docker's layer cache only recompiles it when the daemon's own source
+# changes, not on every app's dev/test/deploy build.
+FROM rust:1-alpine AS context-bus-builder
+RUN apk add --no-cache build-base protobuf protobuf-dev
+WORKDIR /daemon
+COPY context-bus-daemon/ .
+RUN cargo build --release
+
 FROM node:22-alpine AS base
 
 RUN apk add --no-cache \
@@ -22,9 +34,12 @@ RUN apk add --no-cache \
 
 ENV CHROME_BIN=/usr/bin/chromium-browser \
     DISPLAY=:99 \
-    BERTH_APP_ROOT=/app
+    BERTH_APP_ROOT=/app \
+    BERTH_CONTEXT_BUS_SOCKET=/tmp/berth-context-bus.sock
 
 WORKDIR /app
+
+COPY --from=context-bus-builder /daemon/target/release/context-bus-daemon /usr/local/bin/context-bus-daemon
 
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

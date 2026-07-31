@@ -1,0 +1,16 @@
+[package]
+name = "context-bus-daemon"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "context-bus-daemon"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "sync", "macros", "signal"] }
+prost = "0.13"
+bytes = "1"
+
+[build-dependencies]
+prost-build = "0.13"

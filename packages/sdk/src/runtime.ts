@@ -3,12 +3,33 @@ import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { loadManifest } from "@berth/manifest-schema";
 import type { BerthApp, AppContext } from "./app.js";
+import type { ContextBusClient } from "./context-bus/client.js";
 import { createLocalContextBus } from "./context-bus/local.js";
+import { createUnixSocketContextBus } from "./context-bus/unix-socket.js";
 import { startRpcServer } from "./rpc.js";
 
 const APP_ROOT = process.cwd();
 const MANIFEST_PATH = process.env.BERTH_MANIFEST_PATH ?? path.join(APP_ROOT, "berth.yml");
 const APP_ENTRY = process.env.BERTH_APP_ENTRY ?? path.join(APP_ROOT, "dist", "index.js");
+const CONTEXT_BUS_SOCKET = process.env.BERTH_CONTEXT_BUS_SOCKET ?? "/tmp/berth-context-bus.sock";
+
+/**
+ * Phase 2's real context bus if the daemon is reachable (see
+ * @berth/docker-orchestrator's entrypoint.sh, which starts it before this
+ * runtime); falls back to Phase 1's local no-op otherwise, so an app never
+ * hard-fails just because it's running outside a sandbox with the daemon
+ * (e.g. a bare `node dist/index.js` during a unit test).
+ */
+async function createContextBus(): Promise<ContextBusClient> {
+  try {
+    return await createUnixSocketContextBus(CONTEXT_BUS_SOCKET);
+  } catch (err) {
+    console.error(
+      `[berth:runtime] context-bus daemon not reachable at ${CONTEXT_BUS_SOCKET} (${err instanceof Error ? err.message : String(err)}) — falling back to local no-op`,
+    );
+    return createLocalContextBus();
+  }
+}
 
 async function main(): Promise<void> {
   console.error(`[berth:runtime] loading manifest from ${MANIFEST_PATH}`);
@@ -23,7 +44,7 @@ async function main(): Promise<void> {
 
   assertExportsMatchManifest(app, manifest.exports.map((e) => e.name));
 
-  const contextBus = createLocalContextBus();
+  const contextBus = await createContextBus();
 
   for (const hook of app._onInstallHooks) {
     await hook();

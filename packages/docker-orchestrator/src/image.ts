@@ -13,6 +13,8 @@ const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 /** packages/docker-orchestrator/docker — shipped alongside dist/ via the package's "files" field. */
 const DOCKER_ASSETS_DIR = join(__dirname, "..", "docker");
+/** packages/context-bus-daemon — a sibling workspace package, staged into every build context so base.Dockerfile's builder stage can compile it. */
+const CONTEXT_BUS_DAEMON_DIR = join(__dirname, "..", "..", "context-bus-daemon");
 
 export type BuildTarget = "dev" | "production";
 
@@ -90,6 +92,12 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
     }
 
     await cp(DOCKER_ASSETS_DIR, join(stagingDir, "docker"), { recursive: true });
+    await cp(CONTEXT_BUS_DAEMON_DIR, join(stagingDir, "context-bus-daemon"), {
+      recursive: true,
+      // target/ is Cargo's build output — large, and rebuilt fresh inside
+      // the Docker builder stage anyway, so there's no reason to ship it.
+      filter: (src) => !src.includes(join(CONTEXT_BUS_DAEMON_DIR, "target")),
+    });
 
     const dockerfileContents = await readFile(join(DOCKER_ASSETS_DIR, "base.Dockerfile"), "utf-8");
     await writeFile(join(stagingDir, "Dockerfile"), dockerfileContents);

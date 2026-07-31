@@ -23,5 +23,15 @@ if [ "$NEEDS_BROWSER" = "1" ] && [ "${BERTH_TEST_MODE:-0}" != "1" ]; then
   websockify --web=/usr/share/novnc 6080 localhost:5900 &
 fi
 
+echo "[berth:entrypoint] starting context-bus daemon on ${BERTH_CONTEXT_BUS_SOCKET}" >&2
+/usr/local/bin/context-bus-daemon &
+
+# Wait briefly for the daemon's socket to appear before handing off, so the
+# SDK runtime's first connection attempt doesn't race the bind() call.
+for _ in $(seq 1 50); do
+  [ -S "$BERTH_CONTEXT_BUS_SOCKET" ] && break
+  sleep 0.1
+done
+
 echo "[berth:entrypoint] handing off to SDK runtime" >&2
 exec "$@"

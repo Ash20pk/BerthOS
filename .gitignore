@@ -8,3 +8,7 @@ dist/
 !.env.example
 .berth/
 coverage/
+
+# Rust
+target/
+Cargo.lock.bak
