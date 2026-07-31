@@ -33,5 +33,10 @@ for _ in $(seq 1 50); do
   sleep 0.1
 done
 
-echo "[berth:entrypoint] handing off to SDK runtime" >&2
-exec "$@"
+# Translates berth.yml's capabilities into the JSON policy agent-init reads
+# (see @berth/sdk's generate-capability-policy.ts for why this lives in
+# Node/TypeScript rather than being parsed from YAML in Rust).
+node "$PWD/node_modules/@berth/sdk/dist/generate-capability-policy.js"
+
+echo "[berth:entrypoint] handing off to agent-init for kernel-level capability enforcement" >&2
+exec /usr/local/bin/agent-init "$@"
