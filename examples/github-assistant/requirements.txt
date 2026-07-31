@@ -1,0 +1,4 @@
+# Intentionally empty — this example mirrors the PRD's manifest verbatim
+# (including its Python on_install hook) as a schema conformance check.
+# The resident app itself is TypeScript; this file just needs to exist so
+# `pip install -r requirements.txt` succeeds during on_install.

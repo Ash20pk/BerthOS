@@ -1,0 +1,21 @@
+{
+  "name": "berth",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Berth — the operating system and framework for AI agent workers",
+  "packageManager": "pnpm@10.21.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "test": "turbo run test",
+    "lint": "turbo run lint"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.3",
+    "@types/node": "^22.10.5"
+  }
+}

@@ -1,0 +1,20 @@
+name: github-assistant
+version: 1.0.0
+
+capabilities:
+  - github:read:repos
+  - github:write:issues
+  - filesystem:read:/workspace
+  - browser:navigate:*.github.com
+
+exports:
+  - name: create_issue
+    input: { title: string, body: string }
+  - name: get_repo_summary
+    input: { repo: string }
+    output: { summary: string, open_issues: number }
+
+on_install:
+  - "pip install -r requirements.txt"
+on_agent_ready:
+  - "register_with_context_bus"

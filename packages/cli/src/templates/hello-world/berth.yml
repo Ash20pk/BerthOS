@@ -1,0 +1,12 @@
+name: {{name}}
+version: 0.1.0
+
+capabilities: []
+
+exports:
+  - name: ping
+    output: { message: string }
+
+on_install: []
+on_agent_ready:
+  - "register_with_context_bus"
