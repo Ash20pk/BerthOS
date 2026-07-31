@@ -2,6 +2,8 @@
 
 `@berth/sdk` is what a resident app imports. It runs *inside* the sandboxed container — it has no knowledge of Docker, the CLI, or the host toolchain.
 
+If you're consuming this from outside this monorepo (any real third-party app is), `berth init` vendors a self-contained build automatically — see [app registry reference](./app-registry-reference.md#making-berthsdk-installable-outside-this-monorepo) for what that build actually is and why it was needed.
+
 ## `defineApp(setup)`
 
 ```ts

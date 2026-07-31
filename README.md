@@ -6,7 +6,7 @@ Berth is the operating system and framework that treats the AI agent as the prim
 
 Berth gives an agent a real, isolated computer to work in — a filesystem, a browser, installable tools, persistent state — instead of a bag of API calls. Developers build **resident apps**: persistent, stateful processes that live on the agent's computer, declare capability-scoped permissions, and collaborate through a shared context bus.
 
-This repository currently implements **Phase 1 — Framework Shell** (CLI, resident app SDK, manifest format, a Docker-based stand-in for the Agent OS), **Phase 2 — Context Bus** (a Rust daemon giving resident apps shared semantic memory, so they react to each other without explicit orchestration), and **Phase 3 — Capability Tokens** (a custom init, `agent-init`, applying a kernel-enforced Landlock policy derived from `berth.yml` before any resident app runs). See [manifest reference](./docs/manifest-reference.md), [context bus reference](./docs/context-bus-reference.md), and [capability tokens reference](./docs/capability-tokens-reference.md) for details.
+This repository currently implements **Phase 1 — Framework Shell** (CLI, resident app SDK, manifest format, a Docker-based stand-in for the Agent OS), **Phase 2 — Context Bus** (a Rust daemon giving resident apps shared semantic memory, so they react to each other without explicit orchestration), **Phase 3 — Capability Tokens** (a custom init, `agent-init`, applying a kernel-enforced Landlock policy derived from `berth.yml` before any resident app runs), **Phase 4 — Semantic FS** (a Go/FUSE daemon giving resident apps a filesystem queryable by intent, not just path), and **Phase 5 — App Ecosystem** (a local app registry for publish/discover/install, and a self-contained `@berth/sdk` build genuinely external developers can depend on). See [manifest reference](./docs/manifest-reference.md), [context bus reference](./docs/context-bus-reference.md), [capability tokens reference](./docs/capability-tokens-reference.md), [semantic FS reference](./docs/semantic-fs-reference.md), and [app registry reference](./docs/app-registry-reference.md) for details.
 
 ## Quickstart
 
@@ -30,6 +30,8 @@ packages/
   docker-orchestrator/ Alpine-based "OS stand-in" container lifecycle
   context-bus-daemon/  Rust daemon — shared semantic memory for apps in one sandbox
   agent-init/          Rust — applies a kernel-enforced (Landlock) capability policy before exec-ing the runtime
+  semantic-fs-daemon/  Go/FUSE daemon — filesystem queryable by intent, backed by a SQLite metadata index
+  registry-server/     local app registry — publish/discover/install (Fastify + SQLite)
   adapters/            deploy adapters (E2B, Daytona)
   cli/                 the `berth` CLI (init, dev, test, publish, deploy)
 apps/
@@ -43,7 +45,7 @@ examples/
 
 ## Status
 
-Phases 1–3 of 5. Semantic filesystem (Phase 4) and the app registry (Phase 5) are designed for but not yet implemented. Phase 3's Landlock-based enforcement is implemented and runs correctly end-to-end, but hasn't been verified to actually deny a disallowed write on this repo's dev machine (Docker Desktop for Mac's kernel doesn't have Landlock active in its LSM stack) — see [capability tokens reference](./docs/capability-tokens-reference.md) before relying on it in production.
+All 5 phases of the roadmap are implemented. Phase 3's Landlock-based enforcement is implemented and runs correctly end-to-end, but hasn't been verified to actually deny a disallowed write on this repo's dev machine (Docker Desktop for Mac's kernel doesn't have Landlock active in its LSM stack) — see [capability tokens reference](./docs/capability-tokens-reference.md) before relying on it in production. Phase 5's registry is a local, single-node implementation (no hosted service, no billing/usage metering — the PRD's "first external revenue" metric isn't in scope here) — see [app registry reference](./docs/app-registry-reference.md).
 
 ## License
 

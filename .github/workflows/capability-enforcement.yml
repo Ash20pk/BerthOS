@@ -1,0 +1,37 @@
+name: Capability Enforcement (Phase 3 Landlock)
+
+# Verifies Phase 3's kernel-level enforcement claim on a real Linux kernel.
+# Docker Desktop for Mac's linuxkit VM does not have Landlock active in its
+# LSM stack (only capability,bpf), so this can only be confirmed here, not
+# on a dev machine. See docs/capability-tokens-reference.md.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Report host LSM stack
+        run: cat /sys/kernel/security/lsm || echo "could not read /sys/kernel/security/lsm (non-fatal, diagnostic only)"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.21.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Run capability-enforcement.mjs
+        working-directory: packages/docker-orchestrator
+        run: node test/capability-enforcement.mjs

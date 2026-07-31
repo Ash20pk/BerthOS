@@ -61,6 +61,13 @@ async function main() {
     console.log(statusLine);
     const landlockActive = /ruleset=FullyEnforced|ruleset=PartiallyEnforced/.test(statusLine);
     if (!landlockActive) {
+      assert(
+        !process.env.CI,
+        "Landlock is NOT active in this CI runner's LSM stack. GitHub Actions ubuntu-latest is expected to " +
+          "have Landlock active (mainline since kernel 5.13) — this is a real regression (runner image change, " +
+          "kernel config change, or a container/security-opt change suppressing it), not an environment " +
+          "limitation. Investigate before assuming Phase 3 enforces anything.",
+      );
       console.log(
         "\nWARNING: this kernel does not have Landlock active in its LSM stack (see this file's header comment).\n" +
           "Enforcement cannot be verified in this environment — treating the write-outside-workspace check as\n" +
