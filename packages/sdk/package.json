@@ -18,9 +18,12 @@
   "bin": {
     "berth-runtime": "./dist/runtime.js"
   },
-  "files": ["dist", "proto"],
+  "files": [
+    "dist",
+    "proto"
+  ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/build-external.mjs",
     "dev": "tsc -p tsconfig.json --watch",
     "test": "node --test dist/**/*.test.js",
     "lint": "tsc -p tsconfig.json --noEmit"
@@ -31,7 +34,8 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
-    "typescript": "^5.7.3",
-    "@types/node": "^22.10.5"
+    "@types/node": "^22.10.5",
+    "esbuild": "^0.28.1",
+    "typescript": "^5.7.3"
   }
 }

@@ -35,17 +35,21 @@ Lowercase alphanumeric with dashes (`^[a-z0-9-]+$`). Used as the Docker image na
 
 Strict semver (`x.y.z`).
 
+### `description` (default: `""`)
+
+A short human-readable summary. Unused before Phase 5; the [app registry](./app-registry-reference.md) now surfaces it in `GET /apps` listings and matches it against `?q=` search terms.
+
 ### `capabilities` (default: `[]`)
 
 A list of `namespace:action:scope` strings — e.g. `github:read:repos`, `browser:navigate:*.github.com`, `filesystem:read:/workspace`. `scope` may use a trailing/embedded `*` glob.
 
-**Phase 1 status: declared but not enforced.** Every capability request is logged and unconditionally granted (`@berth/sdk`'s `requestCapability()`). Phase 3 is what turns this list into a kernel-enforced grant — a compromised or misbehaving app will eventually be denied at the syscall boundary, not by a framework-level check. Declare capabilities honestly now: Phase 3's enforcement (and Phase 5's registry, which will show them to users installing your app) will trust this list.
+**Phase 1 status: declared but not enforced.** Every capability request is logged and unconditionally granted (`@berth/sdk`'s `requestCapability()`). Phase 3 is what turns this list into a kernel-enforced grant — a compromised or misbehaving app will eventually be denied at the syscall boundary, not by a framework-level check. Declare capabilities honestly: Phase 3's enforcement trusts this list, and so does the [app registry](./app-registry-reference.md)'s listing, which shows them to anyone `berth init`-ing your app.
 
 ### `exports` (default: `[]`)
 
 The RPC surface your app exposes. Each entry has a `name` and optional `input`/`output` — flat maps of field name to one of `string | number | boolean | object | array` (no nested objects in Phase 1; this is the wire-contract subset the SDK's stub-payload generator and RPC layer need).
 
-**This list must exactly match your code's `app.export(...)` calls.** `@berth/sdk`'s runtime cross-checks this at container boot and hard-fails startup on mismatch — an export declared here but not implemented, or implemented but not declared, is a startup error, not a warning. This is what keeps `berth.yml` trustworthy for tooling (like `berth test`'s stub invocation) and for later phases (Phase 3's capability tokens, Phase 5's registry listing) that need to trust what this file says an app does.
+**This list must exactly match your code's `app.export(...)` calls.** `@berth/sdk`'s runtime cross-checks this at container boot and hard-fails startup on mismatch — an export declared here but not implemented, or implemented but not declared, is a startup error, not a warning. This is what keeps `berth.yml` trustworthy for tooling (like `berth test`'s stub invocation, Phase 3's capability tokens, and the [app registry](./app-registry-reference.md)'s listing) that need to trust what this file says an app does.
 
 ### `on_install` (default: `[]`)
 

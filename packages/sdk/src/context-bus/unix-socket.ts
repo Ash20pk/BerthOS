@@ -1,14 +1,24 @@
 import * as net from "node:net";
 import * as path from "node:path";
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import protobuf from "protobufjs";
 import type { ContextBusClient } from "./client.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// dist/context-bus -> dist -> package root -> proto/context_bus.proto
-// (shipped as a package asset — see this package's "files" field — kept in
-// sync by hand with packages/context-bus-daemon/proto/context_bus.proto).
-const PROTO_PATH = path.join(__dirname, "..", "..", "proto", "context_bus.proto");
+// Package asset — see this package's "files" field — kept in sync by hand
+// with packages/context-bus-daemon/proto/context_bus.proto. Resolved against
+// two candidate layouts so the same source works both under tsc's nested
+// dist/context-bus/unix-socket.js (climb two levels to package root) and
+// under the flat, single-file dist-external/ bundle built for external
+// consumers (climb zero — proto/ sits right next to the bundle).
+function resolveProtoPath(): string {
+  const nested = path.join(__dirname, "..", "..", "proto", "context_bus.proto");
+  if (existsSync(nested)) return nested;
+  const flat = path.join(__dirname, "proto", "context_bus.proto");
+  if (existsSync(flat)) return flat;
+  throw new Error(`context_bus.proto not found at ${nested} or ${flat}`);
+}
 
 const CONNECT_TIMEOUT_MS = 2000;
 
@@ -19,7 +29,7 @@ const CONNECT_TIMEOUT_MS = 2000;
  * doesn't change based on which implementation runtime.ts wires in.
  */
 export async function createUnixSocketContextBus(socketPath: string): Promise<ContextBusClient> {
-  const root = await protobuf.load(PROTO_PATH);
+  const root = await protobuf.load(resolveProtoPath());
   const Envelope = root.lookupType("berth.contextbus.Envelope");
 
   const socket = await connect(socketPath);

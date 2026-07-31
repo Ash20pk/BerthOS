@@ -1,5 +1,7 @@
 node_modules/
 dist/
+dist-bundle/
+dist-external/
 .turbo/
 *.log
 .DS_Store
@@ -7,6 +9,7 @@ dist/
 .env.*
 !.env.example
 .berth/
+.berth-registry-data/
 coverage/
 
 # Rust
