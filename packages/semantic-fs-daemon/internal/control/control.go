@@ -14,6 +14,8 @@ import (
 	"log"
 	"net"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 
 	"berth/semantic-fs-daemon/internal/index"
@@ -56,10 +58,34 @@ func (r *PidRegistry) Register(pid int, app string) {
 	r.pid[pid] = app
 }
 
+// Lookup resolves pid to its thread-group id before checking the map. FUSE's
+// per-request Header.Pid (at least on this kernel) is the raw kernel task id
+// of whichever thread issued the syscall — for Node, that's whichever libuv
+// threadpool worker handled the fs call, which varies request to request and
+// never matches the tgid (Node's own process.pid) that register() recorded.
+// /proc/<pid>/status is readable here because the daemon and every resident
+// app share the same container's pid namespace.
 func (r *PidRegistry) Lookup(pid int) string {
+	tgid := resolveTgid(pid)
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.pid[pid]
+	return r.pid[tgid]
+}
+
+func resolveTgid(pid int) int {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
+	if err != nil {
+		return pid
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[0] == "Tgid:" {
+			if tgid, err := strconv.Atoi(fields[1]); err == nil {
+				return tgid
+			}
+		}
+	}
+	return pid
 }
 
 func Serve(socketPath string, idx *index.Index, registry *PidRegistry) error {
