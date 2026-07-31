@@ -1,5 +1,6 @@
 node_modules/
 dist/
+dist-external/
 .turbo/
 *.log
 .DS_Store
