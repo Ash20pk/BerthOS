@@ -59,11 +59,13 @@ interface ContextBusClient {
 ```ts
 import { requestCapability } from "@berth/sdk";
 
-const grant = await requestCapability("my-app", "browser:navigate:*.github.com");
-// grant.granted === true, grant.token === null — unconditional in Phase 1
+const grant = await requestCapability("my-app", "filesystem:write:/workspace");
+// grant.granted reflects whether this was actually declared in berth.yml —
+// and for filesystem:write:*, whether the kernel is actually enforcing it
+// (see docs/capability-tokens-reference.md)
 ```
 
-**Also a no-op today.** Every request is logged and granted unconditionally; `token` is always `null`. Phase 3 replaces this with a real call that blocks on human admin approval and returns a scoped, expiring token enforced at the kernel syscall boundary. Declare the capabilities you actually need in `berth.yml` now — Phase 3 will start enforcing exactly that list.
+**Real as of Phase 3, for filesystem writes.** `requestCapability()` checks the requested capability against `berth.yml`'s declared `capabilities:` (the same list `agent-init` turned into an enforced Landlock policy at boot) and reports `{ granted, token }` honestly — `granted: false` for anything not declared. It does not itself decide or broker access; the kernel already decided that at process start for filesystem writes. A full human-approval workflow and a real expiring/audited token are still deferred — see [capability-tokens-reference.md](./capability-tokens-reference.md) for exactly what's enforced vs. reported-only right now (network and read-path scoping aren't kernel-enforced yet, only declared).
 
 ## The RPC layer
 
