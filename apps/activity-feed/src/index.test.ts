@@ -1,45 +1,42 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createLocalContextBus, createLocalSemanticFs, type AppContext } from "@berth/sdk";
+import { createLocalContextBus } from "@berth/sdk";
 import app from "./index.js";
 
-test("get_activity tallies notes.added/notes.completed events published over the context bus", async () => {
+// `app` is a module-level singleton (defineApp() runs once at import, same
+// as every real resident app for its whole container lifetime) — its event
+// buffer persists across this file's assertions rather than resetting per
+// test, so this is deliberately one sequential scenario instead of several
+// independent tests that would each assume a fresh buffer they don't get.
+test("fans in known topics into one ordered, capped feed", async () => {
   const contextBus = createLocalContextBus();
-  const ctx: AppContext = {
-    contextBus,
-    semanticFs: createLocalSemanticFs(),
-    manifest: { name: "activity-feed", version: "0.1.0", description: "", capabilities: [], exports: [], on_install: [], on_agent_ready: [] },
-  };
-  for (const hook of app._onAgentReadyHooks) await hook(ctx);
+  for (const hook of app._onAgentReadyHooks) {
+    await hook({ contextBus, semanticFs: undefined as never, manifest: undefined as never });
+  }
+  const getRecentActivity = app._exports.get("get_recent_activity")!;
 
+  assert.deepEqual(await getRecentActivity.handler(undefined), { events: [] });
+
+  await contextBus.publish("fs.file_created", { path: "hello.txt", createdBy: "filesystem" });
   await contextBus.publish("notes.added", { id: "1", text: "buy milk" });
-  await contextBus.publish("notes.added", { id: "2", text: "walk the dog" });
   await contextBus.publish("notes.completed", { id: "1" });
+  await contextBus.publish("some.unsubscribed.topic", { ignored: true });
 
-  const getActivity = app._exports.get("get_activity")!;
-  const result = (await getActivity.handler(undefined)) as { events: unknown[]; added: number; completed: number };
-
-  assert.equal(result.added, 2);
-  assert.equal(result.completed, 1);
-  assert.equal(result.events.length, 3);
-});
-
-test("get_activity ignores topics it never subscribed to", async () => {
-  const contextBus = createLocalContextBus();
-  const ctx: AppContext = {
-    contextBus,
-    semanticFs: createLocalSemanticFs(),
-    manifest: { name: "activity-feed", version: "0.1.0", description: "", capabilities: [], exports: [], on_install: [], on_agent_ready: [] },
+  const afterThree = (await getRecentActivity.handler(undefined)) as {
+    events: { topic: string; payload: unknown; receivedAt: number }[];
   };
-  for (const hook of app._onAgentReadyHooks) await hook(ctx);
+  assert.equal(afterThree.events.length, 3);
+  assert.deepEqual(
+    afterThree.events.map((e) => e.topic),
+    ["notes.completed", "notes.added", "fs.file_created"], // most-recent-first
+  );
+  assert.deepEqual(afterThree.events[0]?.payload, { id: "1" });
+  for (const event of afterThree.events) assert.equal(typeof event.receivedAt, "number");
 
-  const getActivity = app._exports.get("get_activity")!;
-  const before = (await getActivity.handler(undefined)) as { events: unknown[]; added: number; completed: number };
-
-  await contextBus.publish("fs.file_created", { path: "irrelevant.txt" });
-
-  const after = (await getActivity.handler(undefined)) as { events: unknown[]; added: number; completed: number };
-  assert.equal(after.added, before.added);
-  assert.equal(after.completed, before.completed);
-  assert.equal(after.events.length, before.events.length);
+  for (let i = 0; i < 60; i++) {
+    await contextBus.publish("notes.added", { id: `bulk-${i}` });
+  }
+  const afterBulk = (await getRecentActivity.handler(undefined)) as { events: { payload: unknown }[] };
+  assert.equal(afterBulk.events.length, 50);
+  assert.deepEqual(afterBulk.events[0]?.payload, { id: "bulk-59" }); // most recent survives the cap
 });
