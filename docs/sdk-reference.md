@@ -80,7 +80,7 @@ const grant = await requestCapability("my-app", "filesystem:write:/workspace");
 // (see docs/capability-tokens-reference.md)
 ```
 
-**Real as of Phase 3, for filesystem writes.** `requestCapability()` checks the requested capability against `berth.yml`'s declared `capabilities:` (the same list `agent-init` turned into an enforced Landlock policy at boot) and reports `{ granted, token }` honestly — `granted: false` for anything not declared. It does not itself decide or broker access; the kernel already decided that at process start for filesystem writes. A full human-approval workflow and a real expiring/audited token are still deferred — see [capability-tokens-reference.md](./capability-tokens-reference.md) for exactly what's enforced vs. reported-only right now (network and read-path scoping aren't kernel-enforced yet, only declared).
+**Real as of Phase 3, for filesystem writes and (opt-in, when declared) reads and network ports.** `requestCapability()` checks the requested capability against `berth.yml`'s declared `capabilities:` (the same list `agent-init` turned into an enforced Landlock policy at boot) and reports `{ granted, token, issuedAt, expiresAt }` honestly — `granted: false` (and the rest `null`) for anything not declared. It does not itself decide or broker access; the kernel already decided that at process start. `token` is a real HMAC-SHA256 signature with a 5-minute expiry (`verifyCapabilityToken()` checks it), not just a marker. A full human-approval workflow is still separate work in progress — see [capability-tokens-reference.md](./capability-tokens-reference.md) for exactly what's enforced vs. reported-only right now (domain-scoped network filtering isn't kernel-enforced, only port-based).
 
 ## The RPC layer
 

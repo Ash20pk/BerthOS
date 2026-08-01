@@ -55,5 +55,11 @@ done
 # Node/TypeScript rather than being parsed from YAML in Rust).
 node "$PWD/node_modules/@berth/sdk/dist/generate-capability-policy.js"
 
+# One secret per container boot, inherited by the app process (agent-init
+# execs into it, preserving the environment) — backs @berth/sdk's
+# HMAC-signed capability tokens. Generated with Node rather than openssl/apk
+# so no new Alpine package is needed.
+export BERTH_TOKEN_SECRET="$(node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))")"
+
 echo "[berth:entrypoint] handing off to agent-init for kernel-level capability enforcement" >&2
 exec /usr/local/bin/agent-init "$@"
