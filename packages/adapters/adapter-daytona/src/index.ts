@@ -40,33 +40,36 @@ export function createDaytonaAdapter(): DeployAdapter {
   return {
     name: "daytona",
 
-    // NOTE: verified against the actually-installed @daytonaio/sdk
-    // (v0.202.0, present in this repo's node_modules) that `client.image`
-    // and `client.workspace` DO NOT EXIST on the real `Daytona` class — this
-    // SDK version only exposes `daytona.create()`/`.get()`/`.list()`/
-    // `.stop()` operating on a "Sandbox" concept, not "workspace". upload()
-    // and start() below predate that shape and will throw
-    // "Cannot read properties of undefined" at runtime as written. Left
-    // as-is here — rewriting them is a bigger fix than this pass's actual
-    // scope (adding list() for `berth fleet status`) — but flagged clearly
-    // rather than silently compounding the mismatch into list() too, which
-    // (along with DaytonaDeployHandle above) has been corrected to match
-    // the real SDK.
+    // Verified against the actually-installed @daytonaio/sdk (v0.202.0):
+    // `Daytona` has no `.image`/`.workspace` — only `.snapshot`
+    // (SnapshotService) plus create()/get()/list()/stop() operating on a
+    // "Sandbox" concept. A snapshot is the stable, reusable ref `start()`
+    // needs (deploy.ts calls upload() once and reuses its remoteImageRef
+    // across multiple start() calls for --count > 1), so upload() registers
+    // one here rather than creating a sandbox directly.
     async upload(target: DeployTarget) {
       const daytona = await loadDaytona();
       const client = new daytona.Daytona();
-      const image = await client.image.register(target.imageRef, { name: target.manifest.name });
-      return { remoteImageRef: image.ref ?? target.imageRef };
+      // NOTE: target.imageRef is a local Docker tag (see DeployTarget) —
+      // SnapshotService.create()'s `image` param expects a
+      // registry-resolvable reference. This mirrors the same assumption
+      // the prior code made; pushing to a registry first is a separate,
+      // larger fix and out of scope here.
+      const snapshot = await client.snapshot.create({
+        name: target.manifest.name,
+        image: target.imageRef,
+      });
+      return { remoteImageRef: snapshot.name ?? target.imageRef };
     },
 
     async start(remoteImageRef: string, target: DeployTarget) {
       const daytona = await loadDaytona();
       const client = new daytona.Daytona();
-      const workspace = await client.workspace.create({
-        image: remoteImageRef,
+      const sandbox = await client.create({
+        snapshot: remoteImageRef,
         envVars: target.env,
       });
-      return new DaytonaDeployHandle(workspace.id, workspace);
+      return new DaytonaDeployHandle(sandbox.id, sandbox);
     },
 
     async teardown(handle: DeployHandle) {
