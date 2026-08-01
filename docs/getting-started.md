@@ -98,6 +98,18 @@ berth deploy --fleet=e2b   # or --fleet=daytona, or an alias from ~/.berthrc
 
 See [manifest-reference.md](./manifest-reference.md) for the full `berth.yml` schema and [sdk-reference.md](./sdk-reference.md) for the resident app SDK.
 
+## More examples
+
+Beyond the `hello-world` → `notes` → `browser-native` ladder above:
+
+- [`examples/cli-runner`](../examples/cli-runner) — wraps the `git` CLI as
+  RPC exports (`git_status`/`git_log`/`git_diff` over the workspace repo),
+  demonstrating a resident app that shells out to an external command-line
+  tool rather than only touching the filesystem or network directly. Its
+  `berth.yml` declares a new `process:exec:git` capability namespace — like
+  every capability before Phase 3, it's declared and logged, not yet
+  kernel-enforced.
+
 ## 8. Build agents on top — `@berth/agents`
 
 Everything above is about authoring and running one resident app. To wire an
