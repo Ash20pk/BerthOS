@@ -4,22 +4,147 @@ Berth is the operating system and framework that treats the AI agent as the prim
 
 > Agents are not functions. They are workers. Workers need desks.
 
-Berth gives an agent a real, isolated computer to work in — a filesystem, a browser, installable tools, persistent state — instead of a bag of API calls. Developers build **resident apps**: persistent, stateful processes that live on the agent's computer, declare capability-scoped permissions, and collaborate through a shared context bus.
+Berth gives an agent a real, isolated computer to work in — a filesystem, a browser, installable tools, persistent state — instead of a bag of API calls. You build **resident apps**: persistent, stateful processes that live on the agent's computer, declare capability-scoped permissions, and collaborate with each other through a shared context bus.
 
-This repository currently implements **Phase 1 — Framework Shell** (CLI, resident app SDK, manifest format, a Docker-based stand-in for the Agent OS), **Phase 2 — Context Bus** (a Rust daemon giving resident apps shared semantic memory, so they react to each other without explicit orchestration), **Phase 3 — Capability Tokens** (a custom init, `agent-init`, applying a kernel-enforced Landlock policy derived from `berth.yml` before any resident app runs), **Phase 4 — Semantic FS** (a Go/FUSE daemon giving resident apps a filesystem queryable by intent, not just path), and **Phase 5 — App Ecosystem** (a local app registry for publish/discover/install, and a self-contained `@berth/sdk` build genuinely external developers can depend on). See [manifest reference](./docs/manifest-reference.md), [context bus reference](./docs/context-bus-reference.md), [capability tokens reference](./docs/capability-tokens-reference.md), [semantic FS reference](./docs/semantic-fs-reference.md), [app registry reference](./docs/app-registry-reference.md), and [multi-app sandbox reference](./docs/multi-app-reference.md) (multiple resident apps sharing one sandbox, each with real independent Landlock enforcement, via `--apps`) for details.
+This README is written for developers building on Berth. If you're looking for roadmap/phase status instead, see [Status](#status) below.
 
-## Quickstart
+## Prerequisites
+
+- Node.js 22+ (`nvm use` picks up `.nvmrc`)
+- Docker, running locally
+- `corepack enable` (ships with Node 22, manages pnpm for you)
+
+## Install and build
 
 ```bash
+git clone <this-repo>
+cd agentOS
 corepack enable
 pnpm install
 pnpm build
+```
 
+`pnpm build` compiles every package in dependency order via Turborepo — `@berth/manifest-schema` first, then `@berth/sdk`, `@berth/docker-orchestrator`, the deploy adapters, and finally `@berth/cli`.
+
+## Run an example
+
+```bash
 cd examples/hello-world
 pnpm exec berth dev
 ```
 
-See [docs/getting-started.md](./docs/getting-started.md) for the full walkthrough, including the browser-native example app with a live VNC view.
+```
+Building dev image for "hello-world"...
+Container started. Watching .../examples/hello-world/src and berth.yml for changes...
+[berth:dev] "hello-world" declares no browser:* capability — no VNC/CDP ports exposed
+[berth:dev] [berth:runtime] "hello-world" ready
+```
+
+Edit `src/index.ts` and save — the container restarts automatically (`on_install` hooks are skipped on warm restarts, so this is fast).
+
+Want a live browser you can watch? `apps/browser-native` declares `browser:navigate:*`, so `berth dev` there prints a noVNC URL you can open in a tab to watch the sandboxed Chromium instance live:
+
+```bash
+cd apps/browser-native
+pnpm exec berth dev
+```
+
+## Scaffold your own app
+
+```bash
+pnpm exec berth init my-app
+cd my-app
+pnpm exec berth dev
+```
+
+`berth init` prompts for a name and a starting template (`hello-world` or `browser-native`), scaffolds `berth.yml` + SDK boilerplate, runs `pnpm install`, and validates the manifest before handing control back to you. Pass `--template` to skip the prompt.
+
+## Anatomy of a resident app
+
+Every app has two things at its root: a `berth.yml` manifest and an entry file that calls `defineApp()`.
+
+**`berth.yml`** — what the app is called, what it's allowed to do, and what it exposes:
+
+```yaml
+name: hello-world
+version: 0.1.0
+
+capabilities: []
+
+exports:
+  - name: ping
+    output: { message: string }
+
+on_install: []
+on_agent_ready:
+  - "register_with_context_bus"
+```
+
+**`src/index.ts`** — the code behind those exports:
+
+```ts
+import { defineApp } from "@berth/sdk";
+import { z } from "zod";
+
+export default defineApp((app) => {
+  app.export({
+    name: "ping",
+    output: z.object({ message: z.string() }),
+    handler: () => ({ message: "pong" }),
+  });
+
+  app.onAgentReady(async (ctx) => {
+    await ctx.contextBus.register({ app: "hello-world" });
+  });
+});
+```
+
+A few things that will bite you if you skip them:
+
+- **Exports must match on both sides.** Every `app.export({ name })` call needs a matching entry in `berth.yml`'s `exports:` list, and vice versa — a mismatch is a hard boot failure, not a warning.
+- **Capabilities are declared up front.** `capabilities:` is a list of `namespace:action:scope` strings (`filesystem:write:/workspace`, `browser:navigate:*.github.com`, `network:connect:8090`). The kernel enforces this list via Landlock before your app's code ever runs — see [capability tokens reference](./docs/capability-tokens-reference.md). Undeclared capabilities are denied, not just unenforced.
+- **`on_install` vs `app.onInstall(fn)`.** Use `on_install` in `berth.yml` for shell setup (`pip install -r requirements.txt`); use the SDK's `onInstall` for setup that's easier to express in TypeScript. Both run once per cold build, skipped on warm dev restarts.
+- **Network is deny-by-default.** If your app needs to reach the outside world, route it through the egress broker rather than requesting a wide-open `network:connect:*` — see [egress broker reference](./docs/egress-broker-reference.md) and `apps/browser-native`'s `berth.yml` for the pattern.
+
+Full manifest schema: [docs/manifest-reference.md](./docs/manifest-reference.md). Full SDK surface (`defineApp`, `ContextBusClient`, `SemanticFsClient`, `requestCapability`): [docs/sdk-reference.md](./docs/sdk-reference.md). Building in Python instead of TypeScript: [docs/sdk-python-reference.md](./docs/sdk-python-reference.md).
+
+## Talking to other apps
+
+Apps in the same sandbox share two things, both reachable from `AppContext` in `onAgentReady`:
+
+- **Context bus** (`ctx.contextBus`) — `register`, `publish(topic, payload)`, `subscribe(topic, handler)`. A Rust daemon gives you real pub/sub between apps without explicit orchestration — one app writes a file, another reacts to `fs.file_created` without either knowing the other exists. See [docs/context-bus-reference.md](./docs/context-bus-reference.md).
+- **Semantic FS** (`ctx.semanticFs`) — `register`, `tag(path, meta)`, `query(text, limit)`. A filesystem mounted at `$BERTH_CONTEXT_MOUNT` (default `/context`) that's queryable by intent, not just path — write a file, tag it with `task`/`relatedApps`, and any app can find it later by describing what it needs. See [docs/semantic-fs-reference.md](./docs/semantic-fs-reference.md).
+
+`apps/filesystem` and `apps/code-editor` are a working example of this: the former publishes `fs.file_created`, the latter reacts to it.
+
+Want more than one app in a single sandbox, each still under independent Landlock enforcement? See [docs/multi-app-reference.md](./docs/multi-app-reference.md) and pass `--apps` to `berth dev`.
+
+## CLI reference
+
+| Command | What it does |
+|---|---|
+| `berth init <name>` | Scaffold a new resident app from a template |
+| `berth dev` | Build a dev image, run it, hot-reload on source changes |
+| `berth test` | Build the production image, validate exports against `berth.yml`, invoke each with a schema-valid stub, run your own `npm test` |
+| `berth deploy --fleet=<e2b\|daytona\|k8s>` | Deploy to a remote sandbox provider |
+| `berth logs <app>` | Stream logs from an already-running dev or fleet container |
+| `berth rpc <app> --export=<name> --input=<json>` | Call a resident app's export directly from the host |
+| `berth mcp --app=<name>` | Bridge a running app's exports to MCP tools, for Claude Desktop/Code or any MCP client |
+| `berth publish --registry=<url>` | Build and publish the app to a running app registry |
+| `berth snapshot create\|list\|restore` | Checkpoint and restore a container + its semantic-fs context data |
+| `berth grants list\|approve\|deny` | Review and resolve pending human-approval capability requests |
+| `berth fleet status` | Check the state of a configured remote fleet |
+
+Run `berth <command> --help` for flags. Docs for the less obvious ones: [MCP bridge](./docs/mcp-bridge-reference.md), [app registry](./docs/app-registry-reference.md), [computer snapshots](./docs/computer-snapshots-reference.md), [capability tokens / grants](./docs/capability-tokens-reference.md), [K8s adapter](./docs/k8s-adapter-reference.md).
+
+## Testing and deploying
+
+```bash
+pnpm exec berth test              # build prod image, validate exports, run stub invocations + your own tests
+pnpm exec berth test --json       # CI-friendly output
+
+berth deploy --fleet=e2b          # or --fleet=daytona, --fleet=k8s, or an alias from ~/.berthrc
+```
 
 ## Repository layout
 
@@ -46,19 +171,20 @@ examples/
   hello-world/         minimal resident app
 ```
 
+## Something not working?
+
+File a [bug report](./.github/ISSUE_TEMPLATE/bug_report.md) or [workflow feedback](./.github/ISSUE_TEMPLATE/workflow_feedback.md) — "what was confusing" reports are exactly what we need right now.
+
 ## Status
 
-All 5 phases of the roadmap are implemented. Phase 3's Landlock-based enforcement (write-path always, read-path and network ports opt-in when declared) is confirmed via CI on a real Linux kernel (`.github/workflows/capability-enforcement.yml`) — it cannot be verified on this repo's own dev machine (Docker Desktop for Mac's kernel doesn't have Landlock active in its LSM stack). Phase 3's human-approval workflow (`@berth/grants-server` + `berth grants list/approve/deny`) is also implemented, opt-in via `--grants-server=<url>` — approval takes effect on an app's next restart, not live, since Landlock rulesets can't be widened once applied. See [capability tokens reference](./docs/capability-tokens-reference.md) for the CI verification gap and what's still deferred (domain-scoped network filtering, per-syscall audit logging). Phase 5's registry is a local, single-node implementation (no hosted service, no billing/usage metering — the PRD's "first external revenue" metric isn't in scope here) — see [app registry reference](./docs/app-registry-reference.md).
+All 5 phases of the roadmap are implemented: **Phase 1 — Framework Shell** (CLI, resident app SDK, manifest format, Docker-based OS stand-in), **Phase 2 — Context Bus**, **Phase 3 — Capability Tokens** (kernel-enforced Landlock policy derived from `berth.yml`), **Phase 4 — Semantic FS**, and **Phase 5 — App Ecosystem** (local registry + a self-contained `@berth/sdk` build external developers can depend on).
 
-Post-Phase-5: `berth mcp --app=<name>` bridges a local dev container's declared exports to real MCP tools for any MCP client — see [MCP bridge reference](./docs/mcp-bridge-reference.md) for what's real vs. deferred (auth, remote/fleet-hosted apps, multi-app aggregation).
+Things worth knowing before you build on this:
 
-Post-Phase-5: `--fleet=k8s` deploys to a real Kubernetes cluster via `@berth/adapter-k8s` (the PRD lists K8s as an infra backend but never assigns it a build phase) — see [K8s adapter reference](./docs/k8s-adapter-reference.md) for the FUSE/Pod-Security-Admission caveat and what's deferred (registry-push auth).
-
-Post-Phase-5: path/verb-level GitHub API scoping (`github:read:<scope>` vs `github:write:<scope>`) is enforced via a real TLS-terminating broker (`github-api-broker.cjs`) — see [GitHub API scoping reference](./docs/github-api-scoping-reference.md) for how it wires into `apps/github-assistant` and what's deferred (multi-app containers, a general path/verb grammar beyond GitHub).
-
-Post-Phase-5: `berth snapshot create/restore/list` is a real (not simulated) MVP of the PRD's "Computer Snapshots" primitive — a genuine `docker commit()` + semantic-fs context-data archive round trip, not a build-phase item in the PRD itself. See [computer snapshots reference](./docs/computer-snapshots-reference.md) for what's deferred (browser tabs/sessions, active tokens, fork-and-run-in-parallel).
-
-Post-Phase-5: `packages/sdk-python` is a real second-language SDK, wire-protocol-compatible with `@berth/sdk` (same manifest shape, same RPC framing, and — Slice 2 — the same context-bus daemon via a compiled-protobuf client) — proven by real container boots, a real RPC round trip, and a real cross-language pub/sub round trip (a Python app publishing, a TypeScript app reacting), not unit tests in isolation. See [Python SDK reference](./docs/sdk-python-reference.md) and [Python SDK context-bus reference](./docs/sdk-python-context-bus-reference.md) for what's reused vs. rewritten, and what's still deferred (multi-app wiring, production images).
+- Landlock enforcement (write-path always, read-path and network ports opt-in when declared) is verified in CI on a real Linux kernel — it cannot be verified on this repo's own dev machine (Docker Desktop for Mac's kernel doesn't expose Landlock). See [capability tokens reference](./docs/capability-tokens-reference.md) for the CI gap and what's deferred (domain-scoped network filtering, per-syscall audit logging).
+- The human-approval workflow (`berth grants list/approve/deny`, opt-in via `--grants-server=<url>`) takes effect on an app's next restart, not live — Landlock rulesets can't be widened once applied.
+- The app registry ([reference](./docs/app-registry-reference.md)) is local/single-node — no hosted service, no billing/usage metering.
+- Post-Phase-5 additions, each with a reference doc covering what's real vs. deferred: [MCP bridge](./docs/mcp-bridge-reference.md), [K8s fleet adapter](./docs/k8s-adapter-reference.md), [GitHub API scoping](./docs/github-api-scoping-reference.md), [computer snapshots](./docs/computer-snapshots-reference.md), [Python SDK](./docs/sdk-python-reference.md) and its [context-bus support](./docs/sdk-python-context-bus-reference.md).
 
 ## License
 
