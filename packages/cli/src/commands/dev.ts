@@ -1,17 +1,26 @@
-import { Command } from "@oclif/core";
+import { Command, Flags } from "@oclif/core";
 import Docker from "dockerode";
 import { restartContainer, startContainer, stopContainer, streamLogs, watchApp } from "@berth/docker-orchestrator";
 import { loadManifestOrExit } from "../util/manifest.js";
 import { buildDevImage, devImageTag } from "../util/build.js";
 import { resolveDevBindMount } from "../util/workspace.js";
+import { resolveApps, assertAtMostOneBrowserApp } from "../util/multi-app.js";
 
 export default class Dev extends Command {
   static override description = "Boot the resident app in a local Agent OS instance, with hot reload";
+  static override flags = {
+    apps: Flags.string({ description: "comma-separated workspace-relative paths of companion resident apps to run alongside this one" }),
+  };
 
   async run(): Promise<void> {
+    const { flags } = await this.parse(Dev);
     const appDir = process.cwd();
     const manifest = await loadManifestOrExit(appDir);
     const docker = new Docker();
+
+    const apps = await resolveApps(appDir, flags.apps, manifest);
+    assertAtMostOneBrowserApp(apps);
+    if (apps.length > 1) this.log(`Running with companion apps: ${apps.slice(1).map((a) => a.name).join(", ")}`);
 
     this.log(`Building dev image for "${manifest.name}"...`);
     await buildDevImage(appDir, manifest);
@@ -30,6 +39,10 @@ export default class Dev extends Command {
       bindMount,
       workingDir,
       installMarkerVolume: volumeName,
+      apps:
+        apps.length > 1
+          ? apps.map((a) => ({ name: a.name, workingDir: `/workspace/${a.relPath}`, manifest: a.manifest }))
+          : undefined,
       docker,
     });
 

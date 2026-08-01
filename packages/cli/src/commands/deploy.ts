@@ -2,11 +2,13 @@ import { Command, Flags } from "@oclif/core";
 import { loadManifestOrExit } from "../util/manifest.js";
 import { buildProductionImage, productionImageTag } from "../util/build.js";
 import { resolveFleet } from "../util/fleet.js";
+import { resolveApps, assertAtMostOneBrowserApp } from "../util/multi-app.js";
 
 export default class Deploy extends Command {
   static override description = "Build and deploy the resident app to a fleet (E2B, Daytona, or an alias in ~/.berthrc)";
   static override flags = {
     fleet: Flags.string({ description: "e2b, daytona, or an alias from ~/.berthrc", required: true }),
+    apps: Flags.string({ description: "comma-separated workspace-relative paths of companion resident apps to run alongside this one" }),
   };
 
   async run(): Promise<void> {
@@ -14,12 +16,20 @@ export default class Deploy extends Command {
     const appDir = process.cwd();
     const manifest = await loadManifestOrExit(appDir);
 
+    const apps = await resolveApps(appDir, flags.apps, manifest);
+    assertAtMostOneBrowserApp(apps);
+    const companions = apps.slice(1);
+
     this.log(`Building production image for "${manifest.name}"...`);
-    await buildProductionImage(appDir, manifest);
+    await buildProductionImage(appDir, manifest, companions);
     const imageRef = productionImageTag(manifest);
 
     const { adapter, env } = await resolveFleet(flags.fleet);
-    const target = { imageRef, manifest, env };
+    const appsEnv: Record<string, string> = {};
+    if (apps.length > 1) {
+      appsEnv.BERTH_APPS = JSON.stringify(apps.map((a) => ({ name: a.name, workingDir: `/app/apps/${a.name}` })));
+    }
+    const target = { imageRef, manifest, env: { ...env, ...appsEnv } };
 
     this.log(`Uploading to ${adapter.name}...`);
     const { remoteImageRef } = await adapter.upload(target);
