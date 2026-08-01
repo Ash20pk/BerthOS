@@ -87,7 +87,18 @@ ENV CHROME_BIN=/usr/bin/chromium-browser \
     BERTH_CONTEXT_MOUNT=/context \
     BERTH_CONTEXT_DATA=/var/berth/context-data \
     BERTH_CONTEXT_INDEX_DB=/var/berth/context-index.db \
-    BERTH_SEMANTIC_FS_SOCKET=/tmp/berth-semantic-fs.sock
+    BERTH_SEMANTIC_FS_SOCKET=/tmp/berth-semantic-fs.sock \
+    # Chrome 128+ made crashpad's --database flag mandatory for its crash
+    # handler, which derives that path from XDG_CONFIG_HOME/XDG_CACHE_HOME —
+    # unset in a plain container, this makes the handler invocation itself
+    # fail ("chrome_crashpad_handler: --database is required"), which then
+    # takes the whole browser down with SIGTRAP on startup. Docker Desktop's
+    # linuxkit VM tolerates the unset case somehow; a more locked-down runner
+    # (e.g. GitHub Actions' ubuntu-latest) does not — pointing both at a
+    # writable dir up front is the documented fix (see e.g.
+    # chrome-php/chrome#649, puppeteer#11023).
+    XDG_CONFIG_HOME=/tmp/.chromium \
+    XDG_CACHE_HOME=/tmp/.chromium
 
 WORKDIR /app
 
