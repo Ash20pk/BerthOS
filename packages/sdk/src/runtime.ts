@@ -72,7 +72,7 @@ async function main(): Promise<void> {
     await hook(ctx);
   }
 
-  startRpcServer(app);
+  startRpcServer(app, { socketPath: process.env.BERTH_RPC_SOCKET });
   console.error(`[berth:runtime] "${manifest.name}" ready`);
 }
 

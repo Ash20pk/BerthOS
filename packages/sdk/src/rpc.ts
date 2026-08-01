@@ -1,4 +1,6 @@
 import * as readline from "node:readline";
+import * as net from "node:net";
+import { unlinkSync } from "node:fs";
 import type { BerthApp } from "./app.js";
 
 interface RpcRequest {
@@ -10,33 +12,70 @@ interface RpcRequest {
 type RpcResponse = { id: string; result: unknown } | { id: string; error: string };
 
 /**
- * A minimal line-delimited JSON RPC server over stdin/stdout. Each line in is
- * a { id, export, input } request; each line out is a { id, result } or
- * { id, error } response. This is what berth test's stub-payload invocation
- * (and, later, an agent's own tool-calling layer) talks to.
+ * A minimal line-delimited JSON RPC server over stdin/stdout (and,
+ * optionally, an additional Unix socket — see `socketPath` below). Each line
+ * in is a { id, export, input } request; each line out is a { id, result }
+ * or { id, error } response. This is what berth test's stub-payload
+ * invocation (and, later, an agent's own tool-calling layer) talks to.
+ *
+ * `socketPath` is for multi-app-per-sandbox mode: only the container's PID 1
+ * process has stdio reachable via `docker attach()` from the host, so
+ * companion apps in the same container expose the identical line-JSON
+ * framing over their own Unix socket instead — reached from the host via
+ * `docker exec` + a tiny relay (see docker-orchestrator's relay.ts), not a
+ * new wire format.
  */
-export function startRpcServer(app: BerthApp): void {
+export function startRpcServer(app: BerthApp, options?: { socketPath?: string }): void {
   const rl = readline.createInterface({ input: process.stdin, terminal: false });
 
   rl.on("line", (line) => {
     if (!line.trim()) return;
-    void handleLine(app, line);
+    void handleFramedLine(app, line, (resp) => process.stdout.write(resp + "\n"));
   });
 
   console.error("[berth:runtime] RPC server listening on stdio");
+
+  if (options?.socketPath) {
+    startSocketServer(app, options.socketPath);
+  }
 }
 
-async function handleLine(app: BerthApp, line: string): Promise<void> {
+function startSocketServer(app: BerthApp, socketPath: string): void {
+  try {
+    unlinkSync(socketPath);
+  } catch {
+    // fine if it didn't exist yet
+  }
+
+  const server = net.createServer((socket) => {
+    let buffer = "";
+    socket.on("data", (chunk: Buffer) => {
+      buffer += chunk.toString("utf-8");
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        void handleFramedLine(app, line, (resp) => socket.write(resp + "\n"));
+      }
+    });
+  });
+
+  server.listen(socketPath, () => {
+    console.error(`[berth:runtime] RPC server also listening on ${socketPath}`);
+  });
+}
+
+async function handleFramedLine(app: BerthApp, line: string, write: (encodedResponse: string) => void): Promise<void> {
   let request: RpcRequest;
   try {
     request = JSON.parse(line);
   } catch {
-    console.error(`[berth:runtime] ignoring non-JSON line on RPC stdin: ${line}`);
+    console.error(`[berth:runtime] ignoring non-JSON RPC line: ${line}`);
     return;
   }
 
   const response = await invokeExport(app, request);
-  process.stdout.write(JSON.stringify(response) + "\n");
+  write(JSON.stringify(response));
 }
 
 export async function invokeExport(app: BerthApp, request: RpcRequest): Promise<RpcResponse> {

@@ -3,6 +3,8 @@ import Docker from "dockerode";
 import { PassThrough } from "node:stream";
 import { loadManifestOrExit } from "../util/manifest.js";
 import { buildProductionImage, productionImageTag } from "../util/build.js";
+import { resolveApps, assertAtMostOneBrowserApp, type AppSpec } from "../util/multi-app.js";
+import { startContainer, stopContainer } from "@berth/docker-orchestrator";
 
 interface ExportCheckResult {
   ok: boolean;
@@ -16,6 +18,7 @@ export default class Test extends Command {
   static override description = "Run the resident app in an isolated test OS instance and check its export contracts";
   static override flags = {
     json: Flags.boolean({ description: "emit a structured JSON summary" }),
+    apps: Flags.string({ description: "comma-separated workspace-relative paths of companion resident apps to run alongside this one" }),
   };
 
   async run(): Promise<void> {
@@ -24,15 +27,21 @@ export default class Test extends Command {
     const manifest = await loadManifestOrExit(appDir);
     const docker = new Docker();
 
+    const apps = await resolveApps(appDir, flags.apps, manifest);
+    assertAtMostOneBrowserApp(apps);
+    const companions = apps.slice(1);
+
     if (!flags.json) this.log(`Building test image for "${manifest.name}"...`);
-    await buildProductionImage(appDir, manifest);
+    await buildProductionImage(appDir, manifest, companions);
     const image = productionImageTag(manifest);
 
-    const exportCheck = await this.runInContainer(docker, image, [
-      "node",
-      "node_modules/@berth/sdk/dist/check-exports.js",
-    ]);
-    const appTestCheck = await this.maybeRunAppTests(docker, image, appDir);
+    const exportCheck = await this.runInContainer(
+      docker,
+      image,
+      apps,
+      ["node", "node_modules/@berth/sdk/dist/check-exports.js"],
+    );
+    const appTestCheck = await this.maybeRunAppTests(docker, image, appDir, apps);
 
     const summary = {
       manifest: manifest.name,
@@ -55,6 +64,7 @@ export default class Test extends Command {
     docker: Docker,
     image: string,
     appDir: string,
+    apps: AppSpec[],
   ): Promise<{ exitCode: number; output: string } | null> {
     const fs = await import("node:fs/promises");
     const path = await import("node:path");
@@ -64,36 +74,72 @@ export default class Test extends Command {
     } catch {
       return null;
     }
-    return this.runInContainer(docker, image, ["npm", "test"]);
+    return this.runInContainer(docker, image, apps, ["npm", "test"]);
   }
 
+  /**
+   * Single-app: today's exact one-shot `docker.run(AutoRemove)` path,
+   * unchanged. Multi-app: `docker.run` has no way to keep companion apps
+   * alive alongside the checked command, so this case instead starts a real
+   * container (all apps, real per-app Landlock enforcement via
+   * entrypoint.sh's multi-app branch), execs the check inside the primary
+   * app's own directory, then tears the container down — same net effect,
+   * companions just get to exist during the check.
+   */
   private async runInContainer(
     docker: Docker,
     image: string,
+    apps: AppSpec[],
     cmd: string[],
   ): Promise<{ exitCode: number; output: string; parsed?: ExportCheckResult }> {
-    let output = "";
-    const stdout = new PassThrough();
-    stdout.on("data", (chunk: Buffer) => {
-      output += chunk.toString("utf-8");
-    });
+    if (apps.length <= 1) {
+      let output = "";
+      const stdout = new PassThrough();
+      stdout.on("data", (chunk: Buffer) => {
+        output += chunk.toString("utf-8");
+      });
 
-    const [result] = await docker.run(image, cmd, stdout, {
-      Env: ["BERTH_TEST_MODE=1"],
-      HostConfig: { AutoRemove: true },
-    });
+      const [result] = await docker.run(image, cmd, stdout, {
+        Env: ["BERTH_TEST_MODE=1"],
+        HostConfig: { AutoRemove: true },
+      });
 
-    let parsed: ExportCheckResult | undefined;
-    const lastLine = output.trim().split("\n").pop();
-    if (lastLine) {
-      try {
-        parsed = JSON.parse(lastLine);
-      } catch {
-        // app's own `npm test` output won't be JSON — that's expected.
-      }
+      return { exitCode: result.StatusCode ?? 0, output, parsed: parseLastJsonLine(output) };
     }
 
-    return { exitCode: result.StatusCode ?? 0, output, parsed };
+    const primary = apps[0]!;
+    const running = await startContainer({
+      image,
+      name: `berth-test-${primary.name}-${Date.now()}`,
+      manifest: primary.manifest,
+      workingDir: `/app/apps/${primary.name}`,
+      env: { BERTH_TEST_MODE: "1" },
+      apps: apps.map((a) => ({ name: a.name, workingDir: `/app/apps/${a.name}`, manifest: a.manifest })),
+      docker,
+    });
+
+    try {
+      const exec = await running.container.exec({
+        Cmd: cmd,
+        WorkingDir: `/app/apps/${primary.name}`,
+        AttachStdout: true,
+        AttachStderr: true,
+      });
+      const stream = await exec.start({ hijack: true, stdin: false });
+      const stdout = new PassThrough();
+      const stderr = new PassThrough();
+      docker.modem.demuxStream(stream, stdout, stderr);
+
+      let output = "";
+      stdout.on("data", (chunk: Buffer) => (output += chunk.toString("utf-8")));
+      stderr.on("data", (chunk: Buffer) => (output += chunk.toString("utf-8")));
+      await new Promise<void>((resolve) => stream.on("end", resolve));
+
+      const inspect = await exec.inspect();
+      return { exitCode: inspect.ExitCode ?? 0, output, parsed: parseLastJsonLine(output) };
+    } finally {
+      await stopContainer(running.container);
+    }
   }
 
   private printHumanSummary(
@@ -118,5 +164,16 @@ export default class Test extends Command {
     if (appTestCheck) {
       this.log(appTestCheck.exitCode === 0 ? "✓ app test suite" : "✗ app test suite failed");
     }
+  }
+}
+
+function parseLastJsonLine(output: string): ExportCheckResult | undefined {
+  const lastLine = output.trim().split("\n").pop();
+  if (!lastLine) return undefined;
+  try {
+    return JSON.parse(lastLine);
+  } catch {
+    // app's own `npm test` output won't be JSON — that's expected.
+    return undefined;
   }
 }

@@ -29,6 +29,18 @@ export interface StartContainerOptions {
   /** Named volume used for the on_install marker file, so warm restarts skip reinstalling. */
   installMarkerVolume?: string;
   env?: Record<string, string>;
+  /**
+   * Companion apps sharing this container — each gets its own real,
+   * independent Landlock ruleset (entrypoint.sh runs one `agent-init` per
+   * app as sibling backgrounded processes, not one exec'd process for the
+   * whole container). `manifest` above stays the *primary* app's manifest,
+   * used for `needsBrowserPorts`/`WorkingDir` exactly as today; browser-port
+   * logic still assumes at most one app across the whole set needs them
+   * (enforced by the CLI's assertAtMostOneBrowserApp before this is called).
+   * Omitted (or a single-element array) preserves single-app behavior
+   * exactly.
+   */
+  apps?: { name: string; workingDir: string; manifest: BerthManifest }[];
   docker?: Docker;
 }
 
@@ -40,7 +52,10 @@ export interface RunningContainer {
 
 export async function startContainer(options: StartContainerOptions): Promise<RunningContainer> {
   const docker = options.docker ?? new Docker();
-  const needsBrowserPorts = declaresBrowserCapability(options.manifest);
+  const needsBrowserPorts =
+    options.apps && options.apps.length > 0
+      ? options.apps.some((a) => declaresBrowserCapability(a.manifest))
+      : declaresBrowserCapability(options.manifest);
 
   const exposedPorts: Record<string, {}> = {};
   const portBindings: Record<string, Array<{ HostPort: string }>> = {};
@@ -57,11 +72,19 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
   if (options.bindMount) binds.push(`${options.bindMount.hostPath}:${options.bindMount.containerPath}`);
   if (options.installMarkerVolume) binds.push(`${options.installMarkerVolume}:${workingDir}/.berth`);
 
+  // Only set when there's more than one app — entrypoint.sh's single-app
+  // branch (today's exact behavior) runs whenever this is absent, so a
+  // one-app `apps` array is equivalent to omitting `apps` entirely.
+  const env = { ...options.env };
+  if (options.apps && options.apps.length > 1) {
+    env.BERTH_APPS = JSON.stringify(options.apps.map((a) => ({ name: a.name, workingDir: a.workingDir })));
+  }
+
   const container = await docker.createContainer({
     name: options.name,
     Image: options.image,
     WorkingDir: workingDir,
-    Env: Object.entries(options.env ?? {}).map(([k, v]) => `${k}=${v}`),
+    Env: Object.entries(env).map(([k, v]) => `${k}=${v}`),
     ExposedPorts: exposedPorts,
     // The SDK runtime's RPC server listens on stdin to stay alive — without
     // an open stdin, Docker delivers immediate EOF to a non-interactive
