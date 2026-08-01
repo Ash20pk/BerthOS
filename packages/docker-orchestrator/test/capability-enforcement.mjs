@@ -52,10 +52,6 @@ async function main() {
     manifest,
     bindMount: { hostPath: REPO_ROOT, containerPath: "/workspace" },
     workingDir: "/workspace/apps/filesystem",
-    // Enables filesystem's test-only probe_network_connect export (off by
-    // default, and deliberately NOT gated behind BERTH_TEST_MODE — see that
-    // export's comment in apps/filesystem/src/index.ts).
-    env: { BERTH_NETWORK_PROBE: "1" },
     docker,
   });
 

@@ -4,11 +4,19 @@ version: 0.1.0
 capabilities:
   - browser:navigate:*
   - browser:screenshot:*
-  # Network is deny-by-default (see docs/capability-tokens-reference.md) —
-  # this app drives a real browser that needs to reach arbitrary hosts, so
-  # it explicitly opts out of port-scoping rather than silently riding on
-  # what used to be an always-open default.
-  - network:connect:*
+  # Network is deny-by-default (see docs/capability-tokens-reference.md).
+  # Rather than opting out of port-scoping entirely (network:connect:*),
+  # this app is scoped to ONLY the egress broker's loopback port — Chromium
+  # is launched with that broker as its sole upstream proxy (see
+  # cdp-controller.ts), so the broker's own browser:navigate:<pattern>
+  # host-matching is what actually decides which sites are reachable.
+  # Caveat: Landlock's network scoping is port-only, not address-scoped —
+  # network:connect:8090 technically permits connecting to port 8090 on any
+  # host, not just 127.0.0.1. The real host-level enforcement comes from the
+  # broker itself refusing disallowed hosts, not from this Landlock rule
+  # alone; this rule's job is just to make direct-to-internet connections on
+  # *other* ports impossible, forcing everything through the broker.
+  - network:connect:8090
 
 exports:
   - name: navigate

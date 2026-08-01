@@ -60,6 +60,11 @@ if [ -z "${BERTH_APPS:-}" ]; then
   # Node/TypeScript rather than being parsed from YAML in Rust).
   node "$PWD/node_modules/@berth/sdk/dist/generate-capability-policy.js"
 
+  if [ "$NEEDS_BROWSER" = "1" ]; then
+    echo "[berth:entrypoint] browser:* capability declared — starting egress broker on 127.0.0.1:${BERTH_EGRESS_BROKER_PORT:-8090}" >&2
+    BERTH_CAPABILITY_POLICY="${BERTH_CAPABILITY_POLICY:-$PWD/.berth/capability-policy.json}" node /usr/local/bin/berth-egress-broker.js &
+  fi
+
   # One secret per container boot, inherited by the app process (agent-init
   # execs into it, preserving the environment) — backs @berth/sdk's
   # HMAC-signed capability tokens. Generated with Node rather than openssl/apk
@@ -83,11 +88,16 @@ echo "[berth:entrypoint] multi-app mode: $(cut -f1 <<<"$APPS_TSV" | tr '\n' ' ')
 # A simple grep for "browser:" in each app's berth.yml, not full YAML/capability
 # parsing — good enough for this internal "should Xvfb start at all" decision
 # (the CLI's assertAtMostOneBrowserApp already guarantees at most one real
-# hit here; this only needs to detect whether that one exists).
+# hit here; this only needs to detect whether that one exists, and which
+# app's own .berth/capability-policy.json the egress broker should read).
 NEEDS_BROWSER=0
+BROWSER_APP_DIR=""
 while IFS=$'\t' read -r _ APP_DIR; do
   [ -z "$APP_DIR" ] && continue
-  grep -q "browser:" "$APP_DIR/berth.yml" 2>/dev/null && NEEDS_BROWSER=1
+  if grep -q "browser:" "$APP_DIR/berth.yml" 2>/dev/null; then
+    NEEDS_BROWSER=1
+    BROWSER_APP_DIR="$APP_DIR"
+  fi
 done <<<"$APPS_TSV"
 
 if [ "$NEEDS_BROWSER" = "1" ] && [ "${BERTH_TEST_MODE:-0}" != "1" ]; then
@@ -164,6 +174,16 @@ while IFS=$'\t' read -r APP_NAME APP_DIR; do
   fi
   INDEX=$((INDEX + 1))
 done <<<"$APPS_TSV"
+
+if [ "$NEEDS_BROWSER" = "1" ]; then
+  BROWSER_POLICY_PATH="$BROWSER_APP_DIR/.berth/capability-policy.json"
+  for _ in $(seq 1 50); do
+    [ -f "$BROWSER_POLICY_PATH" ] && break
+    sleep 0.1
+  done
+  echo "[berth:entrypoint] browser:* capability declared — starting egress broker on 127.0.0.1:${BERTH_EGRESS_BROKER_PORT:-8090}" >&2
+  BERTH_CAPABILITY_POLICY="$BROWSER_POLICY_PATH" node /usr/local/bin/berth-egress-broker.js &
+fi
 
 # Registered only now (not via `exec`, since this script must survive to
 # supervise) — docker stop's SIGTERM reaches tini, which forwards to this

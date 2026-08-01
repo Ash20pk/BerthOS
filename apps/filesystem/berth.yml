@@ -22,6 +22,12 @@ exports:
   - name: query_context
     input: { text: string }
     output: { results: array }
+  # Diagnostic export for capability-enforcement.mjs's network deny-by-default
+  # check — this app declares no network:connect capability, so it should
+  # never be able to reach out.
+  - name: probe_network_connect
+    input: { host: string, port: number }
+    output: { connected: boolean }
 
 on_install: []
 on_agent_ready:

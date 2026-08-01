@@ -36,7 +36,7 @@ Verified for real, not just unit-tested: `packages/docker-orchestrator/test/gran
 
 ## What's still deliberately deferred (by explicit decision, not oversight)
 
-- **Domain-scoped network filtering.** Port-based scoping is real; domain/SNI-based filtering is not, as above.
+- **Domain-scoped network filtering at the kernel level.** Landlock's own port-based scoping is real; domain/SNI-based filtering isn't possible at that layer, as above. A host-level egress broker now covers this for `browser:navigate:*` specifically — see `docs/egress-broker-reference.md`. Path/verb-level API scoping (`github:read:repos` vs `github:write:issues`) remains genuinely unbuilt: no real consuming app is deployed against the sandbox pipeline to test it against.
 - **Per-syscall-denial audit logging.** `agent-init` logs the *policy it applied* at boot as a structured JSON line (`{"event":"capability_policy_applied",...}`, visible in container logs) — that's a real audit record of what was granted, but not a live stream of every individual denied syscall. Real per-event audit logging needs either the Linux audit subsystem (`auditd`, needs privileges typically unavailable in an unprivileged container) or privileged eBPF LSM hooks — both out of scope here, permanently, not just for this pass, since Landlock itself has no deny-notification hook to build on.
 
 ## Verification status — read this before trusting Phase 3 in any environment
