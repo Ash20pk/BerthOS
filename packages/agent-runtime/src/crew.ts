@@ -1,4 +1,5 @@
 import { Agent } from "./agent.js";
+import type { NetworkedAgent } from "./network.js";
 
 export interface CrewRun {
   run(input: string): Promise<string>;
@@ -34,6 +35,23 @@ export const Crew = {
       worker.asTool(`Delegate a task to the "${worker.name}" agent, then return what it reports back.`),
     );
     const manager = options.manager.withTools(workerTools);
+
+    return {
+      async run(input: string): Promise<string> {
+        const result = await manager.run(input);
+        return result.text;
+      },
+    };
+  },
+
+  /**
+   * Same "agent-as-tool" delegation as withManager(), but the workers are
+   * genuinely independent agent-computers (bootNetworkedAgent()) rather than
+   * in-process Agent objects — each free to run its own LLM/model/tool set
+   * inside its own sandbox, joined to a shared Docker network.
+   */
+  networked(options: { manager: Agent; peers: NetworkedAgent[] }): CrewRun {
+    const manager = options.manager.withTools(options.peers.map((peer) => peer.tool));
 
     return {
       async run(input: string): Promise<string> {

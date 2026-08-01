@@ -100,7 +100,7 @@ export class Agent {
   }
 }
 
-export interface CreateAgentOptions extends Pick<BootComputerOptions, "apps" | "network" | "docker"> {
+export interface CreateAgentOptions extends Pick<BootComputerOptions, "apps" | "network" | "env" | "docker"> {
   llm: LLMProvider;
   systemPrompt?: string;
   name?: string;
@@ -114,7 +114,12 @@ export interface CreateAgentOptions extends Pick<BootComputerOptions, "apps" | "
  * snapshot, or `stop()` it when done.
  */
 export async function createAgent(options: CreateAgentOptions): Promise<{ agent: Agent; computer: Computer }> {
-  const computer = await Computer.boot({ apps: options.apps, network: options.network, docker: options.docker });
+  const computer = await Computer.boot({
+    apps: options.apps,
+    network: options.network,
+    env: options.env,
+    docker: options.docker,
+  });
   const agent = new Agent({
     name: options.name,
     systemPrompt: options.systemPrompt,

@@ -26,7 +26,7 @@ function zodFor(type: JsonPrimitiveTypeName): z.ZodTypeAny {
   }
 }
 
-function inputSchemaFor(exportSpec: ExportSpecType): object {
+export function inputSchemaFor(exportSpec: ExportSpecType): object {
   const input = exportSpec.input ?? {};
   const shape = Object.fromEntries(Object.entries(input).map(([field, type]) => [field, zodFor(type)]));
   return zodToJsonSchema(z.object(shape));

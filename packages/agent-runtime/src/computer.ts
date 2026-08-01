@@ -17,24 +17,50 @@ export interface BootComputerOptions {
   apps: string[];
   /** Joins the container to a shared Docker network — see Crew.networked(). */
   network?: string;
+  /** Extra container environment variables — e.g. an LLM API key for a synthesized agent-server companion app. */
+  env?: Record<string, string>;
   docker?: Docker;
 }
 
 /**
- * No fabricated health-check export exists to poll — container boot plus
- * each app's on_install can take a few seconds. Instead, retry the actual
- * call itself on failure, with backoff, up to this ceiling; the first real
- * call doubles as the readiness probe.
+ * No fabricated health-check export exists to poll — container boot (on_install,
+ * the context-bus/semantic-fs daemons, capability-policy generation, agent-init's
+ * Landlock setup) takes a few seconds before the app's RPC server is even
+ * reading its stdin/socket. A request written before that point can be lost
+ * rather than buffered (dockerode's hijacked attach stream + Docker's own
+ * attach machinery, not a guarantee this code controls) — so each retry
+ * re-issues a fresh request rather than waiting out one long-lived call.
+ * READY_ATTEMPT_TIMEOUT_MS is deliberately much shorter than
+ * createStdioRpcClient's own internal 30s timeout, so several attempts fit
+ * inside the ceiling instead of the ceiling and one attempt being the same
+ * number (which would leave no room to retry at all).
  */
 const READY_RETRY_CEILING_MS = 30_000;
+const READY_ATTEMPT_TIMEOUT_MS = 3_000;
 const READY_RETRY_INITIAL_DELAY_MS = 250;
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`attempt timed out after ${ms}ms`)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
 
 async function withReadyRetry<T>(fn: () => Promise<T>): Promise<T> {
   const start = Date.now();
   let delay = READY_RETRY_INITIAL_DELAY_MS;
   for (;;) {
     try {
-      return await fn();
+      return await withTimeout(fn(), READY_ATTEMPT_TIMEOUT_MS);
     } catch (err) {
       if (Date.now() - start >= READY_RETRY_CEILING_MS) throw err;
       await new Promise((resolve) => setTimeout(resolve, delay));
@@ -59,6 +85,8 @@ export class Computer {
     private readonly stdioClient: StdioRpcClient | undefined,
     tools: Tool[],
     containerName: string,
+    private readonly docker: Docker,
+    private readonly image: string,
   ) {
     this.tools = tools;
     this.containerName = containerName;
@@ -84,6 +112,7 @@ export class Computer {
           ? apps.map((a) => ({ name: a.name, workingDir: `/app/apps/${a.name}`, manifest: a.manifest }))
           : undefined,
       network: options.network,
+      env: options.env,
       docker,
     });
 
@@ -106,7 +135,7 @@ export class Computer {
 
     const tools = computerToolsFor(apps, call);
 
-    return new Computer(container, apps, stdioClient, tools, containerName);
+    return new Computer(container, apps, stdioClient, tools, containerName, docker, image);
   }
 
   async call(toolName: string, input: unknown): Promise<unknown> {
@@ -117,8 +146,20 @@ export class Computer {
     return tool.invoke(input);
   }
 
+  /**
+   * Every Computer.boot() builds a fresh, uniquely-tagged image (see
+   * buildComputerImage) rather than reusing a stable tag the way `berth dev`/
+   * `berth deploy` do — so nothing else references it, and leaving it behind
+   * would just leak disk space across repeated boots. Best-effort: a
+   * container the caller never actually started (a failed boot) or an image
+   * Docker already reclaimed shouldn't turn a normal stop() into an error.
+   */
   async stop(): Promise<void> {
     this.stdioClient?.close();
     await stopContainer(this.container);
+    await this.docker
+      .getImage(this.image)
+      .remove()
+      .catch(() => {});
   }
 }

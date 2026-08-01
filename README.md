@@ -119,6 +119,24 @@ Apps in the same sandbox share two things, both reachable from `AppContext` in `
 
 Want more than one app in a single sandbox, each still under independent Landlock enforcement? See [docs/multi-app-reference.md](./docs/multi-app-reference.md) and pass `--apps` to `berth dev`.
 
+## Building an agent on top
+
+Most frameworks wire `agent -> tool`. `@berth/agent-runtime` inverts it: `computer -> agent -> tool` — boot a real sandbox loaded with resident apps, and every export becomes a tool for any LLM provider you plug in:
+
+```ts
+import { createAgent, createAnthropicProvider } from "@berth/agent-runtime";
+
+const { agent, computer } = await createAgent({
+  apps: ["apps/filesystem"],
+  llm: createAnthropicProvider(), // or createOpenAIProvider(), or your own LLMProvider
+});
+
+const result = await agent.run("write a file called hello.txt with the text 'hi', then read it back");
+await computer.stop();
+```
+
+`Crew.withManager()`/`Crew.sequential()` compose multiple agents; `Crew.networked()` composes agents running on entirely separate computers, joined over a real Docker network. See [docs/agent-runtime-reference.md](./docs/agent-runtime-reference.md).
+
 ## CLI reference
 
 | Command | What it does |
@@ -161,6 +179,7 @@ packages/
   adapters/            deploy adapters (E2B, Daytona, Kubernetes)
   cli/                 the `berth` CLI (init, dev, test, publish, deploy)
   sdk-python/          Python resident-app SDK — wire-protocol-compatible with @berth/sdk
+  agent-runtime/       computer -> agent -> tool — boots a Computer from resident apps, drives it with any LLM provider, composes multi-agent Crews
 apps/
   browser-native/      first-party resident app — headless Chromium + VNC
   filesystem/          first-party resident app — reads/writes /workspace, publishes fs.file_created
