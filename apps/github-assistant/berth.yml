@@ -6,6 +6,7 @@ capabilities:
   - github:write:issues
   - filesystem:read:/workspace
   - browser:navigate:*.github.com
+  - network:connect:443
 
 exports:
   - name: create_issue
