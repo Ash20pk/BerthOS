@@ -22,6 +22,6 @@ export interface SemanticFsClient {
   register(info: { app: string }): Promise<void>;
   /** Attaches task/related_apps metadata to a path already written under /context (relative to the mount root). */
   tag(path: string, meta: { task?: string; relatedApps?: string[] }): Promise<void>;
-  /** Keyword query over path/created_by/task/related_apps metadata — see semantic-fs-daemon's index.Query for ranking semantics. */
+  /** Hybrid keyword + embedding-similarity query over tagged files — see semantic-fs-daemon's index.Query for ranking semantics. */
   query(text: string, limit?: number): Promise<SemanticFsQueryResult[]>;
 }

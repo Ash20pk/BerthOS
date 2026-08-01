@@ -22,15 +22,17 @@ import (
 )
 
 type request struct {
-	ID          string   `json:"id"`
-	Op          string   `json:"op"`
-	Pid         int      `json:"pid,omitempty"`
-	App         string   `json:"app,omitempty"`
-	Path        string   `json:"path,omitempty"`
-	Task        string   `json:"task,omitempty"`
-	RelatedApps []string `json:"related_apps,omitempty"`
-	Text        string   `json:"text,omitempty"`
-	Limit       int      `json:"limit,omitempty"`
+	ID          string    `json:"id"`
+	Op          string    `json:"op"`
+	Pid         int       `json:"pid,omitempty"`
+	App         string    `json:"app,omitempty"`
+	Path        string    `json:"path,omitempty"`
+	Task        string    `json:"task,omitempty"`
+	RelatedApps []string  `json:"related_apps,omitempty"`
+	Text        string    `json:"text,omitempty"`
+	Limit       int       `json:"limit,omitempty"`
+	Embedding   []float32 `json:"embedding,omitempty"`
+	Model       string    `json:"model,omitempty"`
 }
 
 type response struct {
@@ -138,10 +140,18 @@ func handle(req request, idx *index.Index, registry *PidRegistry) response {
 		if err := idx.Tag(req.Path, req.Task, req.RelatedApps); err != nil {
 			return response{ID: req.ID, OK: false, Error: err.Error()}
 		}
+		// Embeddings are an enhancement, not a correctness requirement — a
+		// failed/absent embedding never turns a working Tag() into a
+		// failure for the calling app.
+		if len(req.Embedding) > 0 {
+			if err := idx.SetEmbedding(req.Path, req.Embedding, req.Model); err != nil {
+				log.Printf("[semantic-fs:control] WARNING: failed to store embedding for %q: %v", req.Path, err)
+			}
+		}
 		return response{ID: req.ID, OK: true}
 
 	case "query":
-		results, err := idx.Query(req.Text, req.Limit)
+		results, err := idx.Query(req.Text, req.Embedding, req.Model, req.Limit)
 		if err != nil {
 			return response{ID: req.ID, OK: false, Error: err.Error()}
 		}

@@ -67,7 +67,7 @@ interface SemanticFsClient {
 }
 ```
 
-**Real as of Phase 4.** Files written through `$BERTH_CONTEXT_MOUNT` (default `/context`, a FUSE mount served by `semantic-fs-daemon`, a Go process, one per sandbox) are automatically attributed to whichever app called `register()` from that process — `tag()` then attaches `task`/`related_apps` metadata explicitly, and `query()` searches all of it. Falls back to `createLocalSemanticFs()` (an always-empty no-op) if the daemon isn't reachable. See [semantic-fs-reference.md](./semantic-fs-reference.md) for the full design, the FUSE wire-up, and a real, running verification.
+**Real as of Phase 4.** Files written through `$BERTH_CONTEXT_MOUNT` (default `/context`, a FUSE mount served by `semantic-fs-daemon`, a Go process, one per sandbox) are automatically attributed to whichever app called `register()` from that process — `tag()` then attaches `task`/`related_apps` metadata explicitly (and, internally, an embedding computed from that same text), and `query()` searches all of it via a hybrid keyword + embedding-similarity ranking. Falls back to `createLocalSemanticFs()` (an always-empty no-op) if the daemon isn't reachable. See [semantic-fs-reference.md](./semantic-fs-reference.md) for the full design, the FUSE wire-up, the embedding model/calibration details, and a real, running verification.
 
 ## `requestCapability(appName, capability)`
 

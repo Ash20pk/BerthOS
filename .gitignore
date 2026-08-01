@@ -12,6 +12,9 @@ dist-external/
 .berth-registry-data/
 coverage/
 
+# Downloaded at `pnpm install` time by packages/sdk/scripts/prefetch-embedding-model.mjs
+packages/sdk/models/
+
 # Rust
 target/
 Cargo.lock.bak

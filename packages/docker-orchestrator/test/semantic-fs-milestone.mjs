@@ -101,7 +101,43 @@ async function main() {
       `expected created_by to be automatically attributed to "filesystem", got: ${results[0]?.createdBy}`,
     );
 
+    console.log("\n--- Purely-semantic match: zero keyword overlap with the query ---");
+    // v0's keyword-only ranker dropped every zero-keyword-hit row outright —
+    // this fixture and query share no substrings at all, so it only surfaces
+    // if the embedding-similarity half of the hybrid ranking (Track 4) is
+    // actually running, not silently falling back to keyword-only.
+    const writeSession = await rpc.call({
+      id: "6",
+      export: "write_context_file",
+      input: { path: "session-notes.md", content: "Users were getting logged out unexpectedly after a few minutes." },
+    });
+    assert(!writeSession.error, `write_context_file (session) failed: ${writeSession.error}`);
+
+    const tagSession = await rpc.call({
+      id: "7",
+      export: "tag_context_file",
+      input: { path: "session-notes.md", task: "diagnosed why users were getting logged out unexpectedly", relatedApps: [] },
+    });
+    assert(!tagSession.error, `tag_context_file (session) failed: ${tagSession.error}`);
+
+    const semanticQuery = await rpc.call({ id: "8", export: "query_context", input: { text: "authentication failure investigation" } });
+    assert(!semanticQuery.error, `query_context (semantic) failed: ${semanticQuery.error}`);
+
+    const semanticResults = semanticQuery.result?.results ?? [];
+    console.log("semantic query results:", JSON.stringify(semanticResults, null, 2));
+    assert(
+      semanticResults.some((r) => r.path === "session-notes.md"),
+      `expected session-notes.md (zero keyword overlap, semantically related) to surface — embeddings may not be running: ${JSON.stringify(semanticResults)}`,
+    );
+    assert(
+      !semanticResults.some((r) => r.path === "cleanup-notes.md"),
+      "cleanup-notes.md (tagged unrelated-refactor, also zero keyword overlap) should not pass the embedding-similarity threshold either",
+    );
+
     rpc.close();
+
+    const embeddingsFailed = /\[semantic-fs:embeddings\] .*failed/.test(containerLog.text());
+    assert(!embeddingsFailed, `embeddings.ts logged a failure — check container log for details:\n${containerLog.text()}`);
 
     console.log("\nConfirming the fixture bytes landed in the real backing dir (not just visible via the mount)...");
     const backingLs = await execOutput(running.container, ["ls", "/var/berth/context-data"]);
