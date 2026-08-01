@@ -186,6 +186,7 @@ apps/
   code-editor/         first-party resident app — reacts to fs.file_created via the context bus
   github-assistant/    first-party resident app — the PRD's example manifest, deployed and milestone-tested
   hello-world-py/      minimal Python resident app — proves the Python SDK's RPC wire compatibility
+  terminal/            first-party resident app — a full shell for the OS, run_command executes arbitrary commands via bash
   activity-feed/       first-party resident app — zero-capability, reacts to notes.added/notes.completed over the context bus
 examples/
   hello-world/         minimal resident app

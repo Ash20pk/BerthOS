@@ -108,6 +108,15 @@ Beyond the `hello-world` → `notes` → `browser-native` ladder above:
   tallies them in memory (`get_activity`). Run it alongside `notes` to see
   two containers composed purely over the context bus, no direct RPC between
   them.
+- [`apps/terminal`](../apps/terminal) — a full shell for the OS: `run_command`
+  hands an arbitrary string straight to `bash -c` (pipes, redirects, globs —
+  everything a real terminal gives you), with a persistent working directory
+  that survives across calls the same way `cd` does in a real session. Its
+  `berth.yml` declares a new `process:exec:*` capability namespace — the
+  broadest scope in the repo, honestly reflecting that this app *is* the
+  escape hatch to a real shell, not a wrapper around one allowlisted binary.
+  Like every capability before Phase 3, it's declared and logged, not yet
+  kernel-enforced.
 
 ## 8. Build agents on top — `@berth/agents`
 
