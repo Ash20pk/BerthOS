@@ -33,7 +33,7 @@ packages/
   semantic-fs-daemon/  Go/FUSE daemon — filesystem queryable by intent, backed by a SQLite metadata index
   registry-server/     local app registry — publish/discover/install (Fastify + SQLite)
   grants-server/       human-approval service for capability grants (Fastify + SQLite)
-  adapters/            deploy adapters (E2B, Daytona)
+  adapters/            deploy adapters (E2B, Daytona, Kubernetes)
   cli/                 the `berth` CLI (init, dev, test, publish, deploy)
 apps/
   browser-native/      first-party resident app — headless Chromium + VNC
@@ -47,6 +47,8 @@ examples/
 ## Status
 
 All 5 phases of the roadmap are implemented. Phase 3's Landlock-based enforcement (write-path always, read-path and network ports opt-in when declared) is confirmed via CI on a real Linux kernel (`.github/workflows/capability-enforcement.yml`) — it cannot be verified on this repo's own dev machine (Docker Desktop for Mac's kernel doesn't have Landlock active in its LSM stack). Phase 3's human-approval workflow (`@berth/grants-server` + `berth grants list/approve/deny`) is also implemented, opt-in via `--grants-server=<url>` — approval takes effect on an app's next restart, not live, since Landlock rulesets can't be widened once applied. See [capability tokens reference](./docs/capability-tokens-reference.md) for the CI verification gap and what's still deferred (domain-scoped network filtering, per-syscall audit logging). Phase 5's registry is a local, single-node implementation (no hosted service, no billing/usage metering — the PRD's "first external revenue" metric isn't in scope here) — see [app registry reference](./docs/app-registry-reference.md).
+
+Post-Phase-5: `--fleet=k8s` deploys to a real Kubernetes cluster via `@berth/adapter-k8s` (the PRD lists K8s as an infra backend but never assigns it a build phase) — see [K8s adapter reference](./docs/k8s-adapter-reference.md) for the FUSE/Pod-Security-Admission caveat and what's deferred (registry-push auth).
 
 ## License
 
