@@ -32,7 +32,7 @@ The PRD's "human admins approve grants; agents never see raw secrets" is now rea
 - **CLI**: `berth grants list|approve|deny` (`packages/cli/src/commands/grants/`), talking to the server's REST API via `--server` (default `http://127.0.0.1:4874`).
 - **Omitted by default**: no `--grants-server` flag means `BERTH_GRANTS_SERVER_URL` is never set, which is a no-op everywhere above — today's fully-static, no-async-workflow behavior is unchanged unless you opt in.
 
-Verified for real, not just unit-tested: a full pending → `berth grants approve` → policy-regeneration round trip against a real running `berth-grants` server confirms an approved `network:connect:<port>` capability lands in the freshly-written `capability-policy.json`'s `networkPorts`.
+Verified for real, not just unit-tested: `packages/docker-orchestrator/test/grants-server-milestone.mjs` runs a full pending → `berth grants approve`-equivalent HTTP round trip against a real running `berth-grants` server, boots a real container with `BERTH_GRANTS_SERVER_URL` set, and asserts the approved `network:connect:<port>` capability (one `apps/filesystem/berth.yml` does not statically declare) lands in the freshly-written `capability-policy.json`'s `networkPorts`. Wired into CI via `.github/workflows/grants-server-milestone.yml`.
 
 ## What's still deliberately deferred (by explicit decision, not oversight)
 
