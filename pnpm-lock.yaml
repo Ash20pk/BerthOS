@@ -200,7 +200,7 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
-  packages/agent-runtime:
+  packages/agents:
     dependencies:
       '@anthropic-ai/sdk':
         specifier: ^0.32.1

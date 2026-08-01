@@ -56,7 +56,7 @@ export interface StartContainerOptions {
    * it doesn't already exist), rather than the default bridge. Containers on
    * a user-defined network resolve each other by container `name` via
    * Docker's embedded DNS — this is what lets one Berth computer reach
-   * another by name for agent-to-agent networking (see @berth/agent-runtime's
+   * another by name for agent-to-agent networking (see @berth/agents's
    * Crew.networked()). The default bridge network provides no such DNS.
    */
   network?: string;
