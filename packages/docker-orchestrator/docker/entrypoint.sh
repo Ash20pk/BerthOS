@@ -65,6 +65,26 @@ if [ -z "${BERTH_APPS:-}" ]; then
     BERTH_CAPABILITY_POLICY="${BERTH_CAPABILITY_POLICY:-$PWD/.berth/capability-policy.json}" node /usr/local/bin/berth-egress-broker.js &
   fi
 
+  # Single-app mode only (see docs/github-api-scoping-reference.md for why a
+  # multi-app companion isn't wired up here yet). Path/verb-level scoping of
+  # github:read:<scope>/github:write:<scope> needs real TLS interception —
+  # unlike the browser egress broker above, this one terminates TLS itself,
+  # so the app must both route through it as a proxy AND trust its
+  # generated CA (BERTH_GITHUB_API_PROXY / NODE_EXTRA_CA_CERTS below).
+  if grep -q "github:" "$MANIFEST_PATH" 2>/dev/null; then
+    GITHUB_BROKER_PORT="${BERTH_GITHUB_API_BROKER_PORT:-8092}"
+    GITHUB_BROKER_CERT_DIR="${BERTH_GITHUB_API_BROKER_CERT_DIR:-/tmp/berth-github-api-broker}"
+    echo "[berth:entrypoint] github:* capability declared — starting GitHub API broker on 127.0.0.1:${GITHUB_BROKER_PORT}" >&2
+    BERTH_CAPABILITY_POLICY="${BERTH_CAPABILITY_POLICY:-$PWD/.berth/capability-policy.json}" node /usr/local/bin/berth-github-api-broker.js &
+
+    for _ in $(seq 1 50); do
+      [ -f "${GITHUB_BROKER_CERT_DIR}/ca.crt" ] && break
+      sleep 0.1
+    done
+    export BERTH_GITHUB_API_PROXY="http://127.0.0.1:${GITHUB_BROKER_PORT}"
+    export NODE_EXTRA_CA_CERTS="${GITHUB_BROKER_CERT_DIR}/ca.crt"
+  fi
+
   # One secret per container boot, inherited by the app process (agent-init
   # execs into it, preserving the environment) — backs @berth/sdk's
   # HMAC-signed capability tokens. Generated with Node rather than openssl/apk

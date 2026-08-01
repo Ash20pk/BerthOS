@@ -53,6 +53,10 @@ RUN apk add --no-cache \
     # perform the actual mount(2) syscall — the daemon itself needs no other
     # userspace FUSE library (no libfuse-dev, no cgo binding to it).
     fuse3 \
+    # the openssl CLI, used by github-api-broker.cjs to generate its own
+    # MITM CA + a per-boot leaf cert for api.github.com at container start —
+    # Node core has no self-signing certificate API of its own.
+    openssl \
     # PEP 668 blocks `pip install` on a system Python unless this marker is
     # removed. This is a container we fully control (unlike a developer's own
     # machine), so on_install hooks like the PRD's `pip install -r
@@ -78,6 +82,7 @@ COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 COPY docker/rpc-relay.js /usr/local/bin/berth-rpc-relay.js
 COPY docker/egress-broker.cjs /usr/local/bin/berth-egress-broker.js
+COPY docker/github-api-broker.cjs /usr/local/bin/berth-github-api-broker.js
 
 EXPOSE 5900 6080 9222
 
