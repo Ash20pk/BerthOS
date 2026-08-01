@@ -25,7 +25,7 @@ async function main(): Promise<void> {
   if (!existsSync(MARKER_PATH)) {
     for (const command of manifest.on_install) {
       console.error(`[berth:lifecycle] running on_install: ${command}`);
-      execSync(command, { stdio: "inherit", cwd: "/app" });
+      execSync(command, { stdio: "inherit", cwd: process.cwd() });
     }
     mkdirSync(dirname(MARKER_PATH), { recursive: true });
     writeFileSync(MARKER_PATH, new Date().toISOString());
