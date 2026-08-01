@@ -1,0 +1,40 @@
+name: Agent Runtime Milestone
+
+# Real, running verification that @berth/agent-runtime's Computer boots a
+# live sandbox and produces a callable tool list from resident-app exports —
+# see packages/agent-runtime/test/computer-boot-milestone.mjs and
+# computer-multi-app-milestone.mjs. The provider-swap/crew milestone tests
+# need real LLM API credentials and are intentionally not run here — see
+# docs/agent-runtime-reference.md.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.21.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Run computer-boot-milestone.mjs
+        working-directory: packages/agent-runtime
+        run: node test/computer-boot-milestone.mjs
+
+      - name: Run computer-multi-app-milestone.mjs
+        working-directory: packages/agent-runtime
+        run: node test/computer-multi-app-milestone.mjs

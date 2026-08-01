@@ -51,6 +51,15 @@ export interface StartContainerOptions {
    * exactly.
    */
   apps?: { name: string; workingDir: string; manifest: BerthManifest }[];
+  /**
+   * Joins this container to a Docker user-defined bridge network (created if
+   * it doesn't already exist), rather than the default bridge. Containers on
+   * a user-defined network resolve each other by container `name` via
+   * Docker's embedded DNS — this is what lets one Berth computer reach
+   * another by name for agent-to-agent networking (see @berth/agent-runtime's
+   * Crew.networked()). The default bridge network provides no such DNS.
+   */
+  network?: string;
   docker?: Docker;
 }
 
@@ -91,6 +100,10 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
     env.BERTH_APPS = JSON.stringify(options.apps.map((a) => ({ name: a.name, workingDir: a.workingDir })));
   }
 
+  if (options.network) {
+    await ensureNetwork(docker, options.network);
+  }
+
   const container = await docker.createContainer({
     name: options.name,
     Image: options.image,
@@ -115,6 +128,9 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
       Devices: [{ PathOnHost: "/dev/fuse", PathInContainer: "/dev/fuse", CgroupPermissions: "rwm" }],
       CapAdd: ["SYS_ADMIN"],
     },
+    ...(options.network
+      ? { NetworkingConfig: { EndpointsConfig: { [options.network]: {} } } }
+      : {}),
   });
 
   await container.start();
@@ -156,6 +172,22 @@ async function waitForPortMappings(
     await new Promise((resolve) => setTimeout(resolve, delayMs));
   }
   return {};
+}
+
+/**
+ * Idempotent: Docker has no "create if missing" network call, so this lists
+ * by name filter first and only creates on a miss. Safe to call once per
+ * container start — concurrent callers racing to create the same network
+ * would get a 409 from Docker, which is treated the same as "already exists".
+ */
+async function ensureNetwork(docker: Docker, name: string): Promise<void> {
+  const existing = await docker.listNetworks({ filters: JSON.stringify({ name: [name] }) });
+  if (existing.some((n) => n.Name === name)) return;
+  try {
+    await docker.createNetwork({ Name: name, Driver: "bridge" });
+  } catch (err) {
+    if ((err as { statusCode?: number }).statusCode !== 409) throw err;
+  }
 }
 
 export async function stopContainer(container: Docker.Container): Promise<void> {
