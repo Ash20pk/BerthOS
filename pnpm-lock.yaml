@@ -41,6 +41,22 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
+  apps/cli-runner:
+    dependencies:
+      '@berth/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.5
+        version: 22.20.1
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
   apps/code-editor:
     dependencies:
       '@berth/sdk':
@@ -81,22 +97,6 @@ importers:
       undici:
         specifier: ^8.9.0
         version: 8.9.0
-      zod:
-        specifier: ^3.24.1
-        version: 3.25.76
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.5
-        version: 22.20.1
-      typescript:
-        specifier: ^5.7.3
-        version: 5.9.3
-
-  examples/cli-runner:
-    dependencies:
-      '@berth/sdk':
-        specifier: workspace:*
-        version: link:../../packages/sdk
       zod:
         specifier: ^3.24.1
         version: 3.25.76

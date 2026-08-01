@@ -21,7 +21,7 @@ async function withWorkspace<T>(dir: string, fn: () => Promise<T>): Promise<T> {
 }
 
 async function makeGitRepo(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "cli-runner-example-test-"));
+  const dir = await mkdtemp(join(tmpdir(), "cli-runner-test-"));
   await run("git", ["init", "-q"], { cwd: dir });
   await run("git", ["config", "user.email", "test@example.com"], { cwd: dir });
   await run("git", ["config", "user.name", "berth-test"], { cwd: dir });
@@ -55,7 +55,7 @@ test("git_status/git_log/git_diff reflect a real repo's history", async () => {
 });
 
 test("exports degrade gracefully when the workspace isn't a git repo", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "cli-runner-example-test-norepo-"));
+  const dir = await mkdtemp(join(tmpdir(), "cli-runner-test-norepo-"));
   await withWorkspace(dir, async () => {
     const gitStatus = app._exports.get("git_status")!;
     assert.deepEqual(await gitStatus.handler(undefined), { clean: true, changes: [] });

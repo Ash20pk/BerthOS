@@ -102,7 +102,7 @@ See [manifest-reference.md](./manifest-reference.md) for the full `berth.yml` sc
 
 Beyond the `hello-world` → `notes` → `browser-native` ladder above:
 
-- [`examples/cli-runner`](../examples/cli-runner) — wraps the `git` CLI as
+- [`apps/cli-runner`](../apps/cli-runner) — wraps the `git` CLI as
   RPC exports (`git_status`/`git_log`/`git_diff` over the workspace repo),
   demonstrating a resident app that shells out to an external command-line
   tool rather than only touching the filesystem or network directly. Its

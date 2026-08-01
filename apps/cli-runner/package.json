@@ -1,5 +1,5 @@
 {
-  "name": "cli-runner-example",
+  "name": "cli-runner",
   "version": "0.1.0",
   "private": true,
   "type": "module",

@@ -186,6 +186,7 @@ apps/
   code-editor/         first-party resident app — reacts to fs.file_created via the context bus
   github-assistant/    first-party resident app — the PRD's example manifest, deployed and milestone-tested
   hello-world-py/      minimal Python resident app — proves the Python SDK's RPC wire compatibility
+  cli-runner/          first-party resident app — wraps the git CLI as RPC exports (git_status/git_log/git_diff)
 examples/
   hello-world/         minimal resident app
 ```
