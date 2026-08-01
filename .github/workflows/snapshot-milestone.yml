@@ -1,0 +1,35 @@
+name: Computer Snapshots Milestone
+
+# Real, running verification of `berth snapshot create/restore` — see
+# packages/docker-orchestrator/test/snapshot-milestone.mjs. Uses a production
+# (self-contained) apps/filesystem image so the test genuinely exercises
+# docker commit()/getArchive(), not a bind-mounted /workspace that would
+# "survive" trivially regardless.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.21.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Run snapshot-milestone.mjs
+        working-directory: packages/docker-orchestrator
+        run: node test/snapshot-milestone.mjs
