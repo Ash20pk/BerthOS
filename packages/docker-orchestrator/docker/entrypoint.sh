@@ -13,11 +13,24 @@ if [ -z "${BERTH_APPS:-}" ]; then
     exit 1
   fi
 
+  # Additive, defaults to "node" (today's exact behavior, byte-for-byte,
+  # when unset) — a Python resident app sets BERTH_APP_RUNTIME=python.
+  # PYTHONPATH points straight at the bind-mounted packages/sdk-python
+  # source, the same role a pre-existing node_modules symlink plays for a
+  # TS app's @berth/sdk — no pip install needed for dev mode.
+  if [ "${BERTH_APP_RUNTIME:-node}" = "python" ]; then
+    export PYTHONPATH="/workspace/packages/sdk-python${PYTHONPATH:+:$PYTHONPATH}"
+  fi
+
   # Runs on_install hooks (once) and reports whether a browser:* capability is
   # declared. The lifecycle script's last stdout line is "1" or "0" — everything
   # before that is its own on_install command output (already streamed to
   # stderr/stdout by execSync's inherited stdio).
-  NEEDS_BROWSER="$(node "$PWD/node_modules/@berth/sdk/dist/run-lifecycle.js" | tail -n1)"
+  if [ "${BERTH_APP_RUNTIME:-node}" = "python" ]; then
+    NEEDS_BROWSER="$(python3 -m berth_sdk.run_lifecycle | tail -n1)"
+  else
+    NEEDS_BROWSER="$(node "$PWD/node_modules/@berth/sdk/dist/run-lifecycle.js" | tail -n1)"
+  fi
 
   if [ "$NEEDS_BROWSER" = "1" ] && [ "${BERTH_TEST_MODE:-0}" != "1" ]; then
     echo "[berth:entrypoint] browser:* capability declared — starting Xvfb + x11vnc + noVNC" >&2
@@ -57,8 +70,14 @@ if [ -z "${BERTH_APPS:-}" ]; then
 
   # Translates berth.yml's capabilities into the JSON policy agent-init reads
   # (see @berth/sdk's generate-capability-policy.ts for why this lives in
-  # Node/TypeScript rather than being parsed from YAML in Rust).
-  node "$PWD/node_modules/@berth/sdk/dist/generate-capability-policy.js"
+  # Node/TypeScript rather than being parsed from YAML in Rust) — mirrored
+  # exactly in Python for BERTH_APP_RUNTIME=python (same policy JSON shape;
+  # agent-init doesn't care which one wrote it).
+  if [ "${BERTH_APP_RUNTIME:-node}" = "python" ]; then
+    python3 -m berth_sdk.generate_capability_policy
+  else
+    node "$PWD/node_modules/@berth/sdk/dist/generate-capability-policy.js"
+  fi
 
   if [ "$NEEDS_BROWSER" = "1" ]; then
     echo "[berth:entrypoint] browser:* capability declared — starting egress broker on 127.0.0.1:${BERTH_EGRESS_BROKER_PORT:-8090}" >&2
@@ -92,7 +111,11 @@ if [ -z "${BERTH_APPS:-}" ]; then
   export BERTH_TOKEN_SECRET="$(node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))")"
 
   echo "[berth:entrypoint] handing off to agent-init for kernel-level capability enforcement" >&2
-  exec /usr/local/bin/agent-init "$@"
+  if [ "${BERTH_APP_RUNTIME:-node}" = "python" ]; then
+    exec /usr/local/bin/agent-init python3 -m berth_sdk.runtime
+  else
+    exec /usr/local/bin/agent-init "$@"
+  fi
 fi
 
 # --- Multi-app mode: every app gets its own, real, independent Landlock

@@ -35,11 +35,13 @@ packages/
   grants-server/       human-approval service for capability grants (Fastify + SQLite)
   adapters/            deploy adapters (E2B, Daytona, Kubernetes)
   cli/                 the `berth` CLI (init, dev, test, publish, deploy)
+  sdk-python/          Python resident-app SDK — wire-protocol-compatible with @berth/sdk
 apps/
   browser-native/      first-party resident app — headless Chromium + VNC
   filesystem/          first-party resident app — reads/writes /workspace, publishes fs.file_created
   code-editor/         first-party resident app — reacts to fs.file_created via the context bus
   github-assistant/    first-party resident app — the PRD's example manifest, deployed and milestone-tested
+  hello-world-py/      minimal Python resident app — proves the Python SDK's RPC wire compatibility
 examples/
   hello-world/         minimal resident app
 ```
@@ -55,6 +57,8 @@ Post-Phase-5: `--fleet=k8s` deploys to a real Kubernetes cluster via `@berth/ada
 Post-Phase-5: path/verb-level GitHub API scoping (`github:read:<scope>` vs `github:write:<scope>`) is enforced via a real TLS-terminating broker (`github-api-broker.cjs`) — see [GitHub API scoping reference](./docs/github-api-scoping-reference.md) for how it wires into `apps/github-assistant` and what's deferred (multi-app containers, a general path/verb grammar beyond GitHub).
 
 Post-Phase-5: `berth snapshot create/restore/list` is a real (not simulated) MVP of the PRD's "Computer Snapshots" primitive — a genuine `docker commit()` + semantic-fs context-data archive round trip, not a build-phase item in the PRD itself. See [computer snapshots reference](./docs/computer-snapshots-reference.md) for what's deferred (browser tabs/sessions, active tokens, fork-and-run-in-parallel).
+
+Post-Phase-5, Slice 1: `packages/sdk-python` is a real second-language SDK, wire-protocol-compatible with `@berth/sdk` (same manifest shape, same RPC framing) — proven by a real container boot + RPC round trip against `apps/hello-world-py`, not a unit test in isolation. See [Python SDK reference](./docs/sdk-python-reference.md) for what's reused vs. rewritten, and what's deferred to a follow-up slice (context-bus pub/sub, multi-app wiring, production images).
 
 ## License
 

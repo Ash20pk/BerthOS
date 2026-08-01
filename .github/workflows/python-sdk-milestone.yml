@@ -1,0 +1,35 @@
+name: Python SDK Milestone
+
+# Real, running verification that @berth/sdk-python's RPC framing is
+# byte-compatible with @berth/sdk's — see
+# packages/docker-orchestrator/test/python-sdk-milestone.mjs. Boots a real
+# apps/hello-world-py container and drives it with a real RPC round trip
+# over its actual container stdio.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.21.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Run python-sdk-milestone.mjs
+        working-directory: packages/docker-orchestrator
+        run: node test/python-sdk-milestone.mjs

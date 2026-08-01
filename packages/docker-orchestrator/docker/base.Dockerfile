@@ -61,7 +61,13 @@ RUN apk add --no-cache \
     # removed. This is a container we fully control (unlike a developer's own
     # machine), so on_install hooks like the PRD's `pip install -r
     # requirements.txt` are expected to work without a virtualenv dance.
-    && rm -f /usr/lib/python3*/EXTERNALLY-MANAGED
+    && rm -f /usr/lib/python3*/EXTERNALLY-MANAGED \
+    # @berth/sdk-python's own runtime deps — baked into every image (not a
+    # per-app on_install step) since run_lifecycle.py itself needs to import
+    # berth_sdk (and thus pydantic/pyyaml) before any app-specific on_install
+    # has had a chance to run; the same reason @berth/sdk's node_modules is
+    # already resolvable before a TS app's own on_install runs.
+    && pip install --no-cache-dir pydantic pyyaml
 
 ENV CHROME_BIN=/usr/bin/chromium-browser \
     DISPLAY=:99 \

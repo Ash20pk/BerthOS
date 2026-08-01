@@ -1,0 +1,16 @@
+[project]
+name = "berth-sdk"
+version = "0.1.0"
+description = "Python resident-app SDK for Berth — reuses the same wire protocols as @berth/sdk (RPC newline-JSON framing, the manifest shape), with idiomatic Python runtime glue rather than a port of the TypeScript code."
+requires-python = ">=3.11"
+dependencies = [
+    "pyyaml>=6.0",
+    "pydantic>=2.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["berth_sdk*"]
