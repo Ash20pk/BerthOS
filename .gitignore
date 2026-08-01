@@ -10,6 +10,7 @@ dist-external/
 !.env.example
 .berth/
 .berth-registry-data/
+.tmp-github-broker-test-*/
 coverage/
 
 # Downloaded at `pnpm install` time by packages/sdk/scripts/prefetch-embedding-model.mjs
