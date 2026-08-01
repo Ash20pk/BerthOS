@@ -98,6 +98,17 @@ berth deploy --fleet=e2b   # or --fleet=daytona, or an alias from ~/.berthrc
 
 See [manifest-reference.md](./manifest-reference.md) for the full `berth.yml` schema and [sdk-reference.md](./sdk-reference.md) for the resident app SDK.
 
+## More examples
+
+Beyond the `hello-world` → `notes` → `browser-native` ladder above:
+
+- [`apps/activity-feed`](../apps/activity-feed) — a zero-capability
+  resident app that never calls `notes`' exports directly. It subscribes to
+  the `notes.added`/`notes.completed` topics `apps/notes` publishes and
+  tallies them in memory (`get_activity`). Run it alongside `notes` to see
+  two containers composed purely over the context bus, no direct RPC between
+  them.
+
 ## 8. Build agents on top — `@berth/agents`
 
 Everything above is about authoring and running one resident app. To wire an
