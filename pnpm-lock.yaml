@@ -92,7 +92,7 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
-  examples/hello-world:
+  apps/notes:
     dependencies:
       '@berth/sdk':
         specifier: workspace:*
@@ -108,7 +108,7 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
-  examples/notes:
+  examples/hello-world:
     dependencies:
       '@berth/sdk':
         specifier: workspace:*

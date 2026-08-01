@@ -6,7 +6,7 @@ import { join } from "node:path";
 import app from "./index.js";
 
 async function withTempWorkspace<T>(fn: () => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(join(tmpdir(), "notes-example-test-"));
+  const dir = await mkdtemp(join(tmpdir(), "notes-test-"));
   const previous = process.env.BERTH_WORKSPACE_ROOT;
   process.env.BERTH_WORKSPACE_ROOT = dir;
   try {

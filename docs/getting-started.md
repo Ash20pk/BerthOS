@@ -38,15 +38,15 @@ Container started. Watching .../examples/hello-world/src and berth.yml for chang
 
 Edit `src/index.ts` and save — the container restarts automatically (on_install hooks are skipped on warm restarts, so this is fast).
 
-## 3. Run the notes example (a resident app with a real capability)
+## 3. Run the notes app (a resident app with a real capability)
 
-`hello-world` declares zero capabilities. `examples/notes` is the next step
-up: a stateful resident app (`add_note`/`list_notes`/`complete_note`,
+`hello-world` declares zero capabilities. `apps/notes` is the next step
+up: a stateful, first-party resident app (`add_note`/`list_notes`/`complete_note`,
 persisted to a JSON file) that declares `filesystem:write:/workspace` and
 publishes to the context bus on every write.
 
 ```bash
-cd examples/notes
+cd apps/notes
 pnpm exec berth dev
 ```
 
