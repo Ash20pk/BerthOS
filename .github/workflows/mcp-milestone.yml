@@ -1,0 +1,35 @@
+name: MCP Bridge Milestone
+
+# Real, running verification of the MCP bridge (`berth mcp`) — see
+# packages/docker-orchestrator/test/mcp-milestone.mjs. Boots a real
+# apps/filesystem dev container, spawns `berth mcp --app=filesystem` as a
+# real child process, and drives it with the actual
+# @modelcontextprotocol/sdk Client over real stdio.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.21.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Run mcp-milestone.mjs
+        working-directory: packages/docker-orchestrator
+        run: node test/mcp-milestone.mjs
