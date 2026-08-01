@@ -1,0 +1,36 @@
+{
+  "name": "@berth/agent-runtime",
+  "version": "0.1.0",
+  "description": "computer -> agent -> tool: boots a Berth computer loaded with resident apps, generates a tool list from their exports, and wires any LLM provider into single- or multi-agent crews",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "test": "node --test dist/**/*.test.js",
+    "lint": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@berth/manifest-schema": "workspace:*",
+    "@berth/docker-orchestrator": "workspace:*",
+    "@berth/sdk": "workspace:*",
+    "@anthropic-ai/sdk": "^0.32.1",
+    "openai": "^4.77.0",
+    "dockerode": "^4.0.3",
+    "zod": "^3.24.1",
+    "zod-to-json-schema": "^3.24.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "@types/node": "^22.10.5",
+    "@types/dockerode": "^3.3.31"
+  }
+}
