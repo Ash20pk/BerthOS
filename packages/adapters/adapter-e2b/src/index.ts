@@ -68,5 +68,18 @@ export function createE2bAdapter(): DeployAdapter {
     async teardown(handle: DeployHandle) {
       await handle.stop();
     },
+
+    // `Sandbox.list()` (confirmed against the actual installed e2b SDK's
+    // type definitions, v1.13.2) returns plain ListedSandbox summaries —
+    // {sandboxId, state, ...} — not live instances with isRunning()/kill()/
+    // logs. Sandbox.connect(sandboxId) is what turns an id back into a real
+    // instance those methods work on, same as start()'s own Sandbox.create().
+    async list() {
+      const e2b = await loadE2b();
+      if (typeof e2b.Sandbox?.list !== "function" || typeof e2b.Sandbox?.connect !== "function") return [];
+      const summaries = await e2b.Sandbox.list();
+      const sandboxes = await Promise.all((summaries ?? []).map((s: any) => e2b.Sandbox.connect(s.sandboxId ?? s.id)));
+      return sandboxes.map((sandbox: any) => new E2bDeployHandle(sandbox.sandboxId ?? sandbox.id, sandbox));
+    },
   };
 }
