@@ -23,13 +23,16 @@ class ExportDefinition:
 
 
 class AppContext:
-    """Semantic-fs/context-bus clients are deliberately out of this slice —
-    see docs/sdk-python-reference.md. Direct file I/O against the
+    """Semantic-fs's tag/query control API is deliberately out of scope for
+    this SDK — see docs/sdk-python-reference.md. Direct file I/O against the
     FUSE-mounted /context already works from any process with zero SDK code,
-    which is this slice's honest v1 scope for context access."""
+    which is this SDK's honest v1 scope for context access. `context_bus` is
+    real (see context_bus.py / local_context_bus.py, wired in by
+    runtime.py)."""
 
-    def __init__(self, manifest: BerthManifest) -> None:
+    def __init__(self, manifest: BerthManifest, context_bus: Any) -> None:
         self.manifest = manifest
+        self.context_bus = context_bus
 
 
 class BerthApp:
