@@ -98,13 +98,13 @@ berth deploy --fleet=e2b   # or --fleet=daytona, or an alias from ~/.berthrc
 
 See [manifest-reference.md](./manifest-reference.md) for the full `berth.yml` schema and [sdk-reference.md](./sdk-reference.md) for the resident app SDK.
 
-## 8. Build agents on top — `@berth/agent-runtime`
+## 8. Build agents on top — `@berth/agents`
 
 Everything above is about authoring and running one resident app. To wire an
 LLM agent up to one or more resident apps' exports as tools — single-agent,
 manager/worker crews, or independent agents networked across containers —
-see [`packages/agent-runtime/examples/`](../packages/agent-runtime/examples/README.md)
-and [agent-runtime-reference.md](./agent-runtime-reference.md).
+see [`packages/agents/examples/`](../packages/agents/examples/README.md)
+and [agents-reference.md](./agents-reference.md).
 
 ## Something not working?
 

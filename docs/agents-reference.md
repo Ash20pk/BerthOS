@@ -1,9 +1,9 @@
 # Agent Runtime Reference
 
-Every other agent framework wires `agent -> tool`: the agent process calls out to stateless functions. `@berth/agent-runtime` inverts that — a `Computer` (a real Docker sandbox, built from the same `berth.yml`/manifest infrastructure every other phase already uses) comes first, resident apps loaded into it become the tools, and an `Agent` is what gets attached on top. It's a framework in the spirit of LangChain/CrewAI — bring your own LLM provider, define agents, compose them into multi-agent crews — except every agent's tools come from real sandboxed resident apps, not bare functions.
+Every other agent framework wires `agent -> tool`: the agent process calls out to stateless functions. `@berth/agents` inverts that — a `Computer` (a real Docker sandbox, built from the same `berth.yml`/manifest infrastructure every other phase already uses) comes first, resident apps loaded into it become the tools, and an `Agent` is what gets attached on top. It's a framework in the spirit of LangChain/CrewAI — bring your own LLM provider, define agents, compose them into multi-agent crews — except every agent's tools come from real sandboxed resident apps, not bare functions.
 
 ```ts
-import { createAgent, createAnthropicProvider } from "@berth/agent-runtime";
+import { createAgent, createAnthropicProvider } from "@berth/agents";
 
 const { agent, computer } = await createAgent({
   apps: ["apps/filesystem"],
@@ -56,7 +56,7 @@ Two small, real additions to existing infrastructure back this:
 - `@berth/docker-orchestrator`'s `startContainer()` gained a `network?: string` option — joins (creating if needed) a Docker user-defined bridge network, so peer containers resolve each other by name via Docker's embedded DNS.
 - `@berth/sdk`'s `rpc.ts` gained an optional TCP listener (`BERTH_NETWORK_PORT`) alongside its existing stdio/Unix-socket transports, using the identical line-delimited JSON envelope.
 
-The synthesized agent-server app is generated on the fly (`berth.yml` + a plain, pre-built `dist/index.js` — no TS compile step) and vendors `@berth/sdk` the same way `berth init` already does for apps outside the pnpm workspace (`packages/sdk/dist-external/berth-sdk.tgz`). Its runtime is deliberately self-contained: it dials sibling apps' RPC Unix sockets directly with `node:net` and calls the LLM API directly with `fetch()`, rather than importing `@berth/agent-runtime` itself (which would drag `@anthropic-ai/sdk`/`openai` — and their own vendoring — into the sandbox). Because a live `LLMProvider` object can't be serialized into generated source, networked peers are limited to the two built-in providers (`{provider: "anthropic" | "openai", model?, apiKeyEnvVar}`), not an arbitrary custom `LLMProvider` — in-process `Agent`s have no such limit.
+The synthesized agent-server app is generated on the fly (`berth.yml` + a plain, pre-built `dist/index.js` — no TS compile step) and vendors `@berth/sdk` the same way `berth init` already does for apps outside the pnpm workspace (`packages/sdk/dist-external/berth-sdk.tgz`). Its runtime is deliberately self-contained: it dials sibling apps' RPC Unix sockets directly with `node:net` and calls the LLM API directly with `fetch()`, rather than importing `@berth/agents` itself (which would drag `@anthropic-ai/sdk`/`openai` — and their own vendoring — into the sandbox). Because a live `LLMProvider` object can't be serialized into generated source, networked peers are limited to the two built-in providers (`{provider: "anthropic" | "openai", model?, apiKeyEnvVar}`), not an arbitrary custom `LLMProvider` — in-process `Agent`s have no such limit.
 
 ### What's real vs. deferred
 
@@ -75,11 +75,11 @@ The synthesized agent-server app is generated on the fly (`berth.yml` + a plain,
 ## Examples
 
 Narrative, runnable demonstrations (not hard-assertion tests) live in
-[`packages/agent-runtime/examples/`](../packages/agent-runtime/examples/README.md):
+[`packages/agents/examples/`](../packages/agents/examples/README.md):
 
 ```bash
-cd packages/agent-runtime
-export ANTHROPIC_API_KEY=sk-...
+cd packages/agents
+export OPENAI_API_KEY=sk-...
 node examples/single-agent.mjs      # createAgent() — one Computer, one Agent
 node examples/manager-crew.mjs      # Crew.withManager() — two in-process worker agents
 node examples/networked-crew.mjs    # Crew.networked() — two independent networked agent-computers
@@ -88,7 +88,7 @@ node examples/networked-crew.mjs    # Crew.networked() — two independent netwo
 ## Verification
 
 ```bash
-cd packages/agent-runtime
+cd packages/agents
 node test/computer-boot-milestone.mjs          # real: single-app Computer, live tool list, write_file/read_file round trip
 node test/computer-multi-app-milestone.mjs     # real: filesystem + code-editor, namespaced tools, both independently callable
 node test/provider-swap-milestone.mjs          # real: same Computer's tools, driven once by each built-in provider (needs ANTHROPIC_API_KEY + OPENAI_API_KEY)
@@ -96,4 +96,4 @@ node test/crew-manager-milestone.mjs           # real: manager agent delegates a
 node test/crew-networked-milestone.mjs         # real: two independent networked agent-computers complete delegated tasks (needs ANTHROPIC_API_KEY)
 ```
 
-The first two need only a local Docker daemon and are wired into CI (`.github/workflows/agent-runtime-milestone.yml`). The other three need real LLM API credentials and are manual/local-only — consistent with how this repo treats anything needing external credentials.
+The first two need only a local Docker daemon and are wired into CI (`.github/workflows/agents-milestone.yml`). The other three need real LLM API credentials and are manual/local-only — consistent with how this repo treats anything needing external credentials.

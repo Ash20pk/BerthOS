@@ -27,7 +27,7 @@ type RpcResponse = { id: string; result: unknown } | { id: string; error: string
  *
  * `networkPort` (or the `BERTH_NETWORK_PORT` env var) binds that same framing
  * on a TCP listener instead of a Unix socket, reachable from *other*
- * containers on a shared Docker network (see @berth/agent-runtime's
+ * containers on a shared Docker network (see @berth/agents's
  * Crew.networked()) rather than only from the host.
  */
 export function startRpcServer(app: BerthApp, options?: { socketPath?: string; networkPort?: number }): void {

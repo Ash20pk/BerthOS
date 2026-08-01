@@ -2,11 +2,11 @@
 // Multi-agent composition, in-process: one Computer loaded with two resident
 // apps (apps/filesystem and examples/notes), one worker Agent per app, and a
 // manager Agent that delegates via Crew.withManager() — the "agent-as-tool"
-// pattern (Agent.asTool()). Requires ANTHROPIC_API_KEY — skips (not fails)
+// pattern (Agent.asTool()). Requires OPENAI_API_KEY — skips (not fails)
 // if absent.
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { Computer, Agent, Crew, createAnthropicProvider } from "../dist/index.js";
+import { Computer, Agent, Crew, createOpenAIProvider } from "../dist/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");
@@ -14,8 +14,8 @@ const FILESYSTEM_APP_DIR = join(REPO_ROOT, "apps", "filesystem");
 const NOTES_APP_DIR = join(REPO_ROOT, "examples", "notes");
 
 async function main() {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    console.log("SKIP — set ANTHROPIC_API_KEY to run this example.");
+  if (!process.env.OPENAI_API_KEY) {
+    console.log("SKIP — set OPENAI_API_KEY to run this example.");
     return;
   }
 
@@ -29,20 +29,20 @@ async function main() {
     const filer = new Agent({
       name: "filer",
       systemPrompt: "You read and write files. Use your filesystem__write_file / filesystem__read_file tools.",
-      llm: createAnthropicProvider(),
+      llm: createOpenAIProvider(),
       tools: fileTools,
     });
     const notetaker = new Agent({
       name: "notetaker",
       systemPrompt: "You keep a list of notes. Use your notes__add_note / notes__list_notes tools.",
-      llm: createAnthropicProvider(),
+      llm: createOpenAIProvider(),
       tools: noteTools,
     });
     const manager = new Agent({
       name: "manager",
       systemPrompt:
         "You coordinate a filer agent and a notetaker agent. Delegate file work to filer and note-taking to notetaker — don't try to do their jobs yourself.",
-      llm: createAnthropicProvider(),
+      llm: createOpenAIProvider(),
       tools: [],
     });
 
@@ -50,7 +50,7 @@ async function main() {
 
     console.log("Running a task that needs both agents...");
     const output = await crew.run(
-      "Ask the notetaker to add a note that says 'ship the agent-runtime examples', then ask the filer to write a file called summary.txt containing that same note text, then confirm both are done.",
+      "Ask the notetaker to add a note that says 'ship the agents examples', then ask the filer to write a file called summary.txt containing that same note text, then confirm both are done.",
     );
 
     console.log("\ncrew output:", output);

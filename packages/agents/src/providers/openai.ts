@@ -17,12 +17,12 @@ function toOpenAIMessages(messages: AgentMessage[]): ChatCompletionMessageParam[
     if (message.role === "tool") {
       const result = message.toolResult;
       if (!result) throw new Error("AgentMessage with role 'tool' is missing toolResult");
-      return { role: "tool", tool_call_id: result.id, content: JSON.stringify(result.output) };
+      return { role: "tool", tool_call_id: result.id, content: JSON.stringify(result.output ?? null) };
     }
     // role === "assistant"
     return {
       role: "assistant",
-      content: message.text ?? null,
+      content: message.text ?? "",
       tool_calls: message.toolCalls?.map((call) => ({
         id: call.id,
         type: "function",

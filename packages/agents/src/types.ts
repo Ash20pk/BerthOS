@@ -28,7 +28,7 @@ export interface LLMTurn {
 
 /**
  * The "bring your own LLM" seam. Any provider implementing this can drive an
- * Agent — @berth/agent-runtime ships createAnthropicProvider() and
+ * Agent — @berth/agents ships createAnthropicProvider() and
  * createOpenAIProvider(), but nothing in Computer/Agent/Crew references a
  * specific vendor.
  */

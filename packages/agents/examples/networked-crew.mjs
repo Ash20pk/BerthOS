@@ -4,12 +4,12 @@
 // in-container agent loop via bootNetworkedAgent()'s synthesized
 // agent-server companion app), joined to a shared Docker network and
 // reachable as Tools by a host-side manager Agent via Crew.networked().
-// Requires ANTHROPIC_API_KEY — skips (not fails) if absent. See
-// ../../../docs/agent-runtime-reference.md for what's real vs. deferred
+// Requires OPENAI_API_KEY — skips (not fails) if absent. See
+// ../../../docs/agents-reference.md for what's real vs. deferred
 // about this pattern (host-mediated dispatch, unrestricted egress, etc).
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { Agent, Crew, createAnthropicProvider, bootNetworkedAgent } from "../dist/index.js";
+import { Agent, Crew, createOpenAIProvider, bootNetworkedAgent } from "../dist/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");
@@ -17,18 +17,18 @@ const FILESYSTEM_APP_DIR = join(REPO_ROOT, "apps", "filesystem");
 const NOTES_APP_DIR = join(REPO_ROOT, "examples", "notes");
 
 async function main() {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    console.log("SKIP — set ANTHROPIC_API_KEY to run this example.");
+  if (!process.env.OPENAI_API_KEY) {
+    console.log("SKIP — set OPENAI_API_KEY to run this example.");
     return;
   }
 
-  const apiKeyEnv = { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY };
+  const apiKeyEnv = { OPENAI_API_KEY: process.env.OPENAI_API_KEY };
 
   console.log("Booting peer 'filer' (its own computer, apps/filesystem tools)...");
   const filer = await bootNetworkedAgent({
     name: "filer",
     apps: [FILESYSTEM_APP_DIR],
-    llm: { provider: "anthropic", apiKeyEnvVar: "ANTHROPIC_API_KEY" },
+    llm: { provider: "openai", apiKeyEnvVar: "OPENAI_API_KEY" },
     systemPrompt: "You write and read files when asked, using your filesystem tools.",
     env: apiKeyEnv,
   });
@@ -37,7 +37,7 @@ async function main() {
   const notetaker = await bootNetworkedAgent({
     name: "notetaker",
     apps: [NOTES_APP_DIR],
-    llm: { provider: "anthropic", apiKeyEnvVar: "ANTHROPIC_API_KEY" },
+    llm: { provider: "openai", apiKeyEnvVar: "OPENAI_API_KEY" },
     systemPrompt: "You keep a list of notes when asked, using your notes tools.",
     env: apiKeyEnv,
   });
@@ -48,7 +48,7 @@ async function main() {
     const manager = new Agent({
       name: "manager",
       systemPrompt: "You coordinate two independent networked agents, filer and notetaker, delegating tasks to whichever is relevant.",
-      llm: createAnthropicProvider(),
+      llm: createOpenAIProvider(),
       tools: [],
     });
 

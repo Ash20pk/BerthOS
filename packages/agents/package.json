@@ -1,5 +1,5 @@
 {
-  "name": "@berth/agent-runtime",
+  "name": "@berth/agents",
   "version": "0.1.0",
   "description": "computer -> agent -> tool: boots a Berth computer loaded with resident apps, generates a tool list from their exports, and wires any LLM provider into single- or multi-agent crews",
   "type": "module",

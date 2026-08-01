@@ -1,4 +1,4 @@
-# `@berth/agent-runtime` examples
+# `@berth/agents` examples
 
 Runnable, narrative demonstrations of `Computer` -> `Agent` -> `Crew`. These
 print what they're doing and what came back — for hard-assertion
@@ -9,21 +9,21 @@ verification of the same code paths, see `../test/*-milestone.mjs` instead
 
 ```bash
 pnpm install
-pnpm build          # from the repo root, or `pnpm --filter @berth/agent-runtime... build`
+pnpm build          # from the repo root, or `pnpm --filter @berth/agents... build`
 ```
 
 A local Docker daemon must be running — every example boots at least one
 real `Computer` (a real container, not a mock).
 
-All three examples need `ANTHROPIC_API_KEY` in the environment (they drive
-`createAnthropicProvider()`); each prints `SKIP` and exits cleanly if it's
-unset, rather than failing.
+All three examples need `OPENAI_API_KEY` in the environment (they drive
+`createOpenAIProvider()`, defaulting to `gpt-4o`); each prints `SKIP` and
+exits cleanly if it's unset, rather than failing.
 
 ## Running
 
 ```bash
-cd packages/agent-runtime
-export ANTHROPIC_API_KEY=sk-...
+cd packages/agents
+export OPENAI_API_KEY=sk-...
 
 node examples/single-agent.mjs      # one Computer (apps/filesystem), one Agent
 node examples/manager-crew.mjs      # one Computer, two apps, Crew.withManager() delegates in-process
@@ -44,6 +44,6 @@ Read them in that order — each introduces one new idea on top of the last:
   agent loop via `bootNetworkedAgent()`), joined on a shared Docker network
   and reachable through `Crew.networked()`.
 
-See [`docs/agent-runtime-reference.md`](../../../docs/agent-runtime-reference.md)
+See [`docs/agents-reference.md`](../../../docs/agents-reference.md)
 for the full API reference and what's real vs. deferred about the networked
 pattern.
