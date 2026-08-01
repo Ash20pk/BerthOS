@@ -12,8 +12,11 @@
 use std::env;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use landlock::{AccessFs, PathBeneath, PathFd, Ruleset, RulesetAttr, RulesetCreatedAttr, ABI};
+use landlock::{
+    AccessFs, AccessNet, Access, NetPort, PathBeneath, PathFd, Ruleset, RulesetAttr, RulesetCreatedAttr, ABI,
+};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -24,6 +27,24 @@ struct CapabilityPolicy {
     declared_capabilities: Vec<String>,
     #[serde(rename = "writePaths")]
     write_paths: Vec<String>,
+    // Both opt-in: absent/empty means "don't touch this access type at all,"
+    // preserved via #[serde(default)] so policy files written before this
+    // change (no readPaths/networkPorts fields) still deserialize cleanly.
+    #[serde(rename = "readPaths", default)]
+    read_paths: Vec<String>,
+    #[serde(rename = "networkPorts", default)]
+    network_ports: Vec<u16>,
+}
+
+/// One structured JSON line per boot — a real, greppable audit record of
+/// what was granted, since Landlock itself has no deny-notification hook to
+/// log individual denials from (see docs/capability-tokens-reference.md).
+fn log_audit_event(policy: &CapabilityPolicy, ruleset_status: &str) {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    eprintln!(
+        "[agent-init] {{\"event\":\"capability_policy_applied\",\"app\":{:?},\"writePaths\":{:?},\"readPaths\":{:?},\"networkPorts\":{:?},\"ruleset\":{:?},\"timestamp\":{}}}",
+        policy.app_name, policy.write_paths, policy.read_paths, policy.network_ports, ruleset_status, now
+    );
 }
 
 fn main() {
@@ -61,13 +82,13 @@ fn apply_policy(policy_path: &str) -> Result<CapabilityPolicy, Box<dyn std::erro
     let raw = std::fs::read_to_string(policy_path)?;
     let policy: CapabilityPolicy = serde_json::from_str(&raw)?;
 
-    // Deliberately WRITE-ish access rights only — read/execute stay
-    // unrestricted. Node.js (and anything else the base image ships) needs
-    // broad read access to function at all, and enumerating every path it
-    // legitimately needs to read is fragile. Restricting writes is both the
-    // higher-value threat-model boundary (tampering, exfiltration-by-write,
-    // planting files) and the one we can scope correctly today. See
-    // docs/capability-tokens-reference.md.
+    // Write-ish access rights are always handled. Read and network are
+    // opt-in — handle_access()'ing an access type makes it denied-by-default
+    // everywhere except where a rule grants it, so these must only be turned
+    // on when the policy actually declared at least one path/port (see
+    // generate-capability-policy.ts's BASELINE_READ_PATHS comment for why
+    // read scoping, once enabled, still needs a broad baseline rather than
+    // just the app's own declared paths).
     let write_access = AccessFs::WriteFile
         | AccessFs::RemoveDir
         | AccessFs::RemoveFile
@@ -78,9 +99,20 @@ fn apply_policy(policy_path: &str) -> Result<CapabilityPolicy, Box<dyn std::erro
         | AccessFs::MakeFifo
         | AccessFs::MakeBlock
         | AccessFs::MakeSym;
+    let read_access = AccessFs::ReadFile | AccessFs::ReadDir;
+    let net_access = AccessNet::ConnectTcp;
 
-    let abi = ABI::V3;
-    let mut ruleset = Ruleset::default().handle_access(write_access)?.create()?;
+    let restrict_reads = !policy.read_paths.is_empty();
+    let restrict_network = !policy.network_ports.is_empty();
+
+    let mut builder = Ruleset::default().handle_access(write_access)?;
+    if restrict_reads {
+        builder = builder.handle_access(read_access)?;
+    }
+    if restrict_network {
+        builder = builder.handle_access(AccessNet::from_all(ABI::V4))?;
+    }
+    let mut ruleset = builder.create()?;
 
     for path in &policy.write_paths {
         match PathFd::new(path) {
@@ -93,11 +125,30 @@ fn apply_policy(policy_path: &str) -> Result<CapabilityPolicy, Box<dyn std::erro
         }
     }
 
-    let _ = abi; // reserved: bumping ABI version later should only require raising this constant
+    if restrict_reads {
+        for path in &policy.read_paths {
+            match PathFd::new(path) {
+                Ok(fd) => {
+                    ruleset = ruleset.add_rule(PathBeneath::new(fd, read_access))?;
+                }
+                Err(err) => {
+                    eprintln!("[agent-init] WARNING: couldn't open \"{path}\" to grant read access ({err}), skipping");
+                }
+            }
+        }
+    }
+
+    if restrict_network {
+        for &port in &policy.network_ports {
+            ruleset = ruleset.add_rule(NetPort::new(port, net_access))?;
+        }
+    }
+
     let status = ruleset.restrict_self()?;
     eprintln!(
         "[agent-init] landlock restrict_self() status: ruleset={:?} no_new_privs={:?}",
         status.ruleset, status.no_new_privs
     );
+    log_audit_event(&policy, &format!("{:?}", status.ruleset));
     Ok(policy)
 }
