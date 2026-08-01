@@ -38,6 +38,7 @@
     "@berth/manifest-schema": "workspace:*",
     "@berth/sdk": "workspace:*",
     "@inquirer/prompts": "^7.2.1",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@oclif/core": "^4.2.0",
     "dockerode": "^4.0.3",
     "tar-fs": "^3.0.6",

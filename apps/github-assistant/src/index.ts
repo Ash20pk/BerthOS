@@ -1,7 +1,7 @@
 import { defineApp } from "@berth/sdk";
 import { z } from "zod";
 
-const GITHUB_API = "https://api.github.com";
+const GITHUB_API = process.env.GITHUB_API_BASE_URL ?? "https://api.github.com";
 
 /** Returns null if no live credentials are configured, so exports still work (with stub data) in `berth test` and local dev without a token. */
 async function githubFetch(path: string, init?: RequestInit): Promise<any | null> {

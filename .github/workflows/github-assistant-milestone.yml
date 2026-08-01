@@ -1,0 +1,33 @@
+name: GitHub Assistant Milestone
+
+# Real, running verification that apps/github-assistant (promoted from
+# examples/github-assistant) actually calls the GitHub REST API for real —
+# see packages/docker-orchestrator/test/github-assistant-milestone.mjs.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.21.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Run github-assistant-milestone.mjs
+        working-directory: packages/docker-orchestrator
+        run: node test/github-assistant-milestone.mjs
