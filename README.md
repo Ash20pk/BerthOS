@@ -121,10 +121,10 @@ Want more than one app in a single sandbox, each still under independent Landloc
 
 ## Building an agent on top
 
-Most frameworks wire `agent -> tool`. `@berth/agent-runtime` inverts it: `computer -> agent -> tool` — boot a real sandbox loaded with resident apps, and every export becomes a tool for any LLM provider you plug in:
+Most frameworks wire `agent -> tool`. `@berth/agents` inverts it: `computer -> agent -> tool` — boot a real sandbox loaded with resident apps, and every export becomes a tool for any LLM provider you plug in:
 
 ```ts
-import { createAgent, createAnthropicProvider } from "@berth/agent-runtime";
+import { createAgent, createAnthropicProvider } from "@berth/agents";
 
 const { agent, computer } = await createAgent({
   apps: ["apps/filesystem"],
@@ -135,7 +135,7 @@ const result = await agent.run("write a file called hello.txt with the text 'hi'
 await computer.stop();
 ```
 
-`Crew.withManager()`/`Crew.sequential()` compose multiple agents; `Crew.networked()` composes agents running on entirely separate computers, joined over a real Docker network. See [docs/agent-runtime-reference.md](./docs/agent-runtime-reference.md).
+`Crew.withManager()`/`Crew.sequential()` compose multiple agents; `Crew.networked()` composes agents running on entirely separate computers, joined over a real Docker network. See [docs/agents-reference.md](./docs/agents-reference.md).
 
 ## CLI reference
 
@@ -179,7 +179,7 @@ packages/
   adapters/            deploy adapters (E2B, Daytona, Kubernetes)
   cli/                 the `berth` CLI (init, dev, test, publish, deploy)
   sdk-python/          Python resident-app SDK — wire-protocol-compatible with @berth/sdk
-  agent-runtime/       computer -> agent -> tool — boots a Computer from resident apps, drives it with any LLM provider, composes multi-agent Crews
+  agents/              computer -> agent -> tool — boots a Computer from resident apps, drives it with any LLM provider, composes multi-agent Crews
 apps/
   browser-native/      first-party resident app — headless Chromium + VNC
   filesystem/          first-party resident app — reads/writes /workspace, publishes fs.file_created

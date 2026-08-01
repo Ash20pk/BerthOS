@@ -65,13 +65,13 @@ function embeddedToolsFor(apps: ComputerAppSpec[]): EmbeddedToolSpec[] {
 function renderManifestYaml(name: string): string {
   return `name: ${name}
 version: 0.1.0
-description: "Synthesized by @berth/agent-runtime — runs an in-container agent loop reachable as a Crew.networked() peer"
+description: "Synthesized by @berth/agents — runs an in-container agent loop reachable as a Crew.networked() peer"
 
 capabilities:
   # v1 simplification: unrestricted egress rather than a scoped broker — the
   # existing egress broker only host-matches browser:navigate:* today (see
   # docs/egress-broker-reference.md). Documented follow-up in
-  # docs/agent-runtime-reference.md.
+  # docs/agents-reference.md.
   - network:connect:*
 
 exports:
@@ -124,7 +124,7 @@ async function vendorSdk(appDir: string): Promise<void> {
 /**
  * The generated app's runtime: a self-contained agent loop using only Node
  * built-ins (node:net for sibling RPC sockets, fetch() for the LLM API) —
- * deliberately not importing @berth/agent-runtime itself, which would drag
+ * deliberately not importing @berth/agents itself, which would drag
  * @anthropic-ai/sdk/openai (and their own vendoring) into the sandbox. Kept
  * as one provider-native loop per LLM (Anthropic content-blocks vs OpenAI
  * role/tool_calls) rather than a third unified format, since this is
@@ -321,7 +321,7 @@ export interface NetworkedAgent {
    * mediated); the peer's container is also joined to `network`, which is
    * the substrate for direct container-to-container reachability — wiring a
    * mesh dispatch path through that instead of the host is deferred (see
-   * docs/agent-runtime-reference.md).
+   * docs/agents-reference.md).
    */
   tool: Tool;
   stop(): Promise<void>;

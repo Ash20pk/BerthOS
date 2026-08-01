@@ -25,12 +25,12 @@ async function main() {
     assert(toolNames.includes("read_file"), `expected an unnamespaced "read_file" tool, got: ${JSON.stringify(toolNames)}`);
 
     console.log("Calling write_file...");
-    await computer.call("write_file", { path: "computer-boot-test.txt", content: "hello from agent-runtime" });
+    await computer.call("write_file", { path: "computer-boot-test.txt", content: "hello from berth agents" });
 
     console.log("Calling read_file...");
     const result = await computer.call("read_file", { path: "computer-boot-test.txt" });
     console.log("read_file result:", result);
-    assert(result.content === "hello from agent-runtime", `expected round-tripped content, got: ${JSON.stringify(result)}`);
+    assert(result.content === "hello from berth agents", `expected round-tripped content, got: ${JSON.stringify(result)}`);
 
     console.log("\nPASS — Computer.boot() produced a live, callable tool list for a single app.");
   } finally {
