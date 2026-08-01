@@ -54,6 +54,8 @@ Post-Phase-5: `--fleet=k8s` deploys to a real Kubernetes cluster via `@berth/ada
 
 Post-Phase-5: path/verb-level GitHub API scoping (`github:read:<scope>` vs `github:write:<scope>`) is enforced via a real TLS-terminating broker (`github-api-broker.cjs`) — see [GitHub API scoping reference](./docs/github-api-scoping-reference.md) for how it wires into `apps/github-assistant` and what's deferred (multi-app containers, a general path/verb grammar beyond GitHub).
 
+Post-Phase-5: `berth snapshot create/restore/list` is a real (not simulated) MVP of the PRD's "Computer Snapshots" primitive — a genuine `docker commit()` + semantic-fs context-data archive round trip, not a build-phase item in the PRD itself. See [computer snapshots reference](./docs/computer-snapshots-reference.md) for what's deferred (browser tabs/sessions, active tokens, fork-and-run-in-parallel).
+
 ## License
 
 Apache-2.0 — see [LICENSE](./LICENSE).
