@@ -1,0 +1,19 @@
+name: hello-world-py
+version: 0.1.0
+description: "Minimal Python resident app — proves @berth/sdk-python's wire-protocol compatibility with the TypeScript runtime"
+
+capabilities: []
+
+exports:
+  - name: greet
+    input: { name: string }
+    output: { message: string }
+
+on_install:
+  # berth_sdk is already importable via PYTHONPATH (entrypoint.sh's Python
+  # branch sets it to the bind-mounted packages/sdk-python source, the same
+  # role a pre-existing node_modules symlink plays for TS apps) — nothing to
+  # install for this demo. Kept non-empty to prove on_install genuinely runs
+  # for a Python app too.
+  - "echo python-on-install-ran"
+on_agent_ready: []
