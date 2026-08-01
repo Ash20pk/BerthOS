@@ -8,6 +8,11 @@ exports:
   - name: greet
     input: { name: string }
     output: { message: string }
+  # Real cross-language context-bus proof: apps/code-editor (TypeScript)
+  # already reacts to "fs.file_created" — see
+  # docs/sdk-python-context-bus-reference.md.
+  - name: publish_file_created
+    input: { path: string, created_by: string }
 
 on_install:
   # berth_sdk is already importable via PYTHONPATH (entrypoint.sh's Python

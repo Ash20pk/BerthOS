@@ -32,8 +32,8 @@ Getting the milestone test to pass reliably surfaced a genuine bug in `dockerode
 
 ## What's deliberately out of this slice
 
-- **Semantic-fs's tag/query control API.** Direct file I/O against the FUSE-mounted `/context` already works from any process with zero SDK code — that's this slice's honest v1 scope for context access. The richer control socket (register/tag/query) stays TypeScript-only until the context-bus slice (which shares the same daemon's proto).
-- **Context-bus pub/sub.** Real cross-language pub/sub (a Python app publishing, a TypeScript app reacting) needs a compiled-protobuf client against `context_bus.proto` — genuinely more work than the RPC framing reused here, and is the explicit subject of the follow-up slice.
+- **Semantic-fs's tag/query control API.** Direct file I/O against the FUSE-mounted `/context` already works from any process with zero SDK code — that's this SDK's honest v1 scope for context access. The richer control socket (register/tag/query) stays TypeScript-only.
+- **Context-bus pub/sub** — closed in a follow-up slice, not deferred indefinitely: see [Python SDK context-bus reference](./sdk-python-context-bus-reference.md) for the compiled-protobuf client and a real cross-language pub/sub proof.
 - **Multi-app-mode wiring.** `entrypoint.sh`'s `BERTH_APP_RUNTIME` branch only exists in the single-app path. A Python companion app in a `--apps` multi-app sandbox isn't wired up.
 - **Production images / `berth deploy` for Python apps.** `berth dev`'s CLI doesn't auto-detect a Python app (no `package.json` to key off of) — `python-sdk-milestone.mjs` drives `buildImage()`/`startContainer()` directly rather than through the `berth` CLI. `berth init --template=python` or equivalent CLI-level support is future work.
 - **A packaged, pip-installable `berth-sdk` distribution.** Dev mode resolves it via `PYTHONPATH` pointed at the bind-mounted source, mirroring the TS SDK's own dev-mode symlink resolution — there's no `sdist`/`wheel` publishing step here, matching Phase 5's own TS SDK story only partially (that one has `build-external.mjs` bundling for real external consumption; this doesn't yet).

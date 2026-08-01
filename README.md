@@ -58,7 +58,7 @@ Post-Phase-5: path/verb-level GitHub API scoping (`github:read:<scope>` vs `gith
 
 Post-Phase-5: `berth snapshot create/restore/list` is a real (not simulated) MVP of the PRD's "Computer Snapshots" primitive — a genuine `docker commit()` + semantic-fs context-data archive round trip, not a build-phase item in the PRD itself. See [computer snapshots reference](./docs/computer-snapshots-reference.md) for what's deferred (browser tabs/sessions, active tokens, fork-and-run-in-parallel).
 
-Post-Phase-5, Slice 1: `packages/sdk-python` is a real second-language SDK, wire-protocol-compatible with `@berth/sdk` (same manifest shape, same RPC framing) — proven by a real container boot + RPC round trip against `apps/hello-world-py`, not a unit test in isolation. See [Python SDK reference](./docs/sdk-python-reference.md) for what's reused vs. rewritten, and what's deferred to a follow-up slice (context-bus pub/sub, multi-app wiring, production images).
+Post-Phase-5: `packages/sdk-python` is a real second-language SDK, wire-protocol-compatible with `@berth/sdk` (same manifest shape, same RPC framing, and — Slice 2 — the same context-bus daemon via a compiled-protobuf client) — proven by real container boots, a real RPC round trip, and a real cross-language pub/sub round trip (a Python app publishing, a TypeScript app reacting), not unit tests in isolation. See [Python SDK reference](./docs/sdk-python-reference.md) and [Python SDK context-bus reference](./docs/sdk-python-context-bus-reference.md) for what's reused vs. rewritten, and what's still deferred (multi-app wiring, production images).
 
 ## License
 

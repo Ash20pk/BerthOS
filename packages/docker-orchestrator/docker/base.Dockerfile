@@ -67,7 +67,7 @@ RUN apk add --no-cache \
     # berth_sdk (and thus pydantic/pyyaml) before any app-specific on_install
     # has had a chance to run; the same reason @berth/sdk's node_modules is
     # already resolvable before a TS app's own on_install runs.
-    && pip install --no-cache-dir pydantic pyyaml
+    && pip install --no-cache-dir pydantic pyyaml protobuf
 
 ENV CHROME_BIN=/usr/bin/chromium-browser \
     DISPLAY=:99 \

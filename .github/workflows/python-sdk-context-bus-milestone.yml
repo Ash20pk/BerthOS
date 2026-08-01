@@ -1,0 +1,34 @@
+name: Python SDK Context Bus Milestone
+
+# Real, running verification of @berth/sdk-python's context-bus client
+# (compiled-protobuf framing) interoperating with a real TypeScript
+# subscriber through the actual Rust daemon — see
+# packages/docker-orchestrator/test/python-sdk-context-bus-milestone.mjs.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.21.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Run python-sdk-context-bus-milestone.mjs
+        working-directory: packages/docker-orchestrator
+        run: node test/python-sdk-context-bus-milestone.mjs

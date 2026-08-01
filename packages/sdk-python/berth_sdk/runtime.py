@@ -13,8 +13,27 @@ import sys
 from pathlib import Path
 
 from .app import AppContext, BerthApp
+from .context_bus import create_unix_socket_context_bus
+from .local_context_bus import LocalContextBus
 from .manifest import load_manifest
 from .rpc import serve_stdio_forever, start_rpc_server
+
+
+def _create_context_bus():
+    """Real context-bus daemon if reachable (entrypoint.sh starts it before
+    this runtime — same file/env contract @berth/sdk's runtime.ts uses);
+    falls back to a local no-op otherwise, so an app never hard-fails just
+    because it's running outside a sandbox with the daemon (e.g. a bare
+    `python3 -m berth_sdk.runtime` during a quick script)."""
+    socket_path = os.environ.get("BERTH_CONTEXT_BUS_SOCKET", "/tmp/berth-context-bus.sock")
+    try:
+        return create_unix_socket_context_bus(socket_path)
+    except Exception as err:  # noqa: BLE001 - genuinely any connection failure should fall back, not crash boot
+        print(
+            f"[berth:runtime] context-bus daemon not reachable at {socket_path} ({err}) — falling back to local no-op",
+            file=sys.stderr,
+        )
+        return LocalContextBus()
 
 
 def _assert_exports_match_manifest(app: BerthApp, declared_exports: list[str]) -> None:
@@ -57,7 +76,8 @@ def main() -> None:
     for hook in app.on_install_hooks:
         hook()
 
-    ctx = AppContext(manifest)
+    context_bus = _create_context_bus()
+    ctx = AppContext(manifest, context_bus)
     for hook in app.on_agent_ready_hooks:
         hook(ctx)
 
