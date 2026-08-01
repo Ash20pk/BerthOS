@@ -1,5 +1,6 @@
 import * as net from "node:net";
 import type { SemanticFsClient, SemanticFsQueryResult } from "./client.js";
+import { EMBEDDING_MODEL, embedText, warmup } from "./embeddings.js";
 
 const CONNECT_TIMEOUT_MS = 2000;
 const CALL_TIMEOUT_MS = 5000;
@@ -84,17 +85,37 @@ export async function createUnixSocketSemanticFs(socketPath: string): Promise<Se
     });
   }
 
+  // Kicks off the embedding model's WASM/weights load in the background as
+  // soon as this client exists, in parallel with the app's own onAgentReady
+  // setup — so it's likely already warm by the time real tag()/query() calls
+  // happen, rather than paying the full cold-start latency inline on the
+  // first one.
+  warmup();
+
   return {
     async register(info) {
       const resp = await call("register", { pid: process.pid, app: info.app });
       if (!resp.ok) throw new Error(resp.error ?? "register failed");
     },
     async tag(path, meta) {
-      const resp = await call("tag", { path, task: meta.task ?? "", related_apps: meta.relatedApps ?? [] });
+      const task = meta.task ?? "";
+      const relatedApps = meta.relatedApps ?? [];
+      const embedding = await embedText(`${task} ${relatedApps.join(" ")} ${path}`.trim());
+      const resp = await call("tag", {
+        path,
+        task,
+        related_apps: relatedApps,
+        ...(embedding ? { embedding, model: EMBEDDING_MODEL } : {}),
+      });
       if (!resp.ok) throw new Error(resp.error ?? "tag failed");
     },
     async query(text, limit): Promise<SemanticFsQueryResult[]> {
-      const resp = await call("query", { text, limit: limit ?? 0 });
+      const embedding = await embedText(text);
+      const resp = await call("query", {
+        text,
+        limit: limit ?? 0,
+        ...(embedding ? { embedding, model: EMBEDDING_MODEL } : {}),
+      });
       if (!resp.ok) throw new Error(resp.error ?? "query failed");
       return (resp.results ?? []).map((r) => ({
         path: r.path,
