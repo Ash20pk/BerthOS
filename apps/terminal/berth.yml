@@ -1,27 +1,31 @@
 name: terminal
 version: 0.1.0
-description: "A full shell terminal for the OS — run_command executes arbitrary commands via bash in a persistent working directory, returning stdout/stderr/exit code, the same way a real terminal session would"
+description: "An interactive shared terminal: the agent drives a real shell via run_command/read_screen/send_keys, and a human can watch (and type into) that exact same session live over ttyd"
 
 capabilities:
-  - filesystem:read:/workspace
+  # Write-restricted to /workspace, same default as apps/filesystem — but no
+  # filesystem:read:<path> is declared, so read access stays today's fully
+  # open default (see @berth/sdk's generate-capability-policy.ts) rather than
+  # narrowing to just /workspace: a general-purpose shell that can't `cat`
+  # outside one directory isn't very useful as a terminal.
   - filesystem:write:/workspace
-  # Broadest possible scope: this app IS the escape hatch to a real shell,
-  # not a wrapper around one allowlisted binary — declaring process:exec:*
-  # honestly reflects that, per manifest-reference.md's "declare
-  # capabilities honestly" guidance. Phase 1: declared and logged, not yet
-  # kernel-enforced — Phase 3's Landlock policy and the grants-server's
-  # human-approval flow are what will eventually gate an app that asks for
-  # this much.
-  - process:exec:*
+  # Not kernel-enforced on its own (like browser:*/github:*) — just the
+  # signal @berth/docker-orchestrator's container.ts uses to map the ttyd
+  # port and start it. No network:connect:* is declared, so — same as every
+  # other app here — the shell this spawns has zero outbound network access
+  # under deny-by-default, inherited via Landlock same as any other child
+  # process of this app.
+  - terminal:attach:*
 
 exports:
   - name: run_command
     input: { command: string }
-    output: { stdout: string, stderr: string, exitCode: number, cwd: string, timedOut: boolean }
-  - name: get_cwd
-    output: { cwd: string }
+    output: { output: string }
+  - name: read_screen
+    output: { text: string }
+  - name: send_keys
+    input: { keys: string }
 
-on_install:
-  - "apk add --no-cache git"
+on_install: []
 on_agent_ready:
   - "register_with_context_bus"
