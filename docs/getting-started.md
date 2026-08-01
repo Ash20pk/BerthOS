@@ -103,20 +103,20 @@ See [manifest-reference.md](./manifest-reference.md) for the full `berth.yml` sc
 Beyond the `hello-world` → `notes` → `browser-native` ladder above:
 
 - [`apps/activity-feed`](../apps/activity-feed) — a zero-capability
-  resident app that never calls `notes`' exports directly. It subscribes to
-  the `notes.added`/`notes.completed` topics `apps/notes` publishes and
-  tallies them in memory (`get_activity`). Run it alongside `notes` to see
-  two containers composed purely over the context bus, no direct RPC between
-  them.
-- [`apps/terminal`](../apps/terminal) — a full shell for the OS: `run_command`
-  hands an arbitrary string straight to `bash -c` (pipes, redirects, globs —
-  everything a real terminal gives you), with a persistent working directory
-  that survives across calls the same way `cd` does in a real session. Its
-  `berth.yml` declares a new `process:exec:*` capability namespace — the
-  broadest scope in the repo, honestly reflecting that this app *is* the
-  escape hatch to a real shell, not a wrapper around one allowlisted binary.
-  Like every capability before Phase 3, it's declared and logged, not yet
-  kernel-enforced.
+  resident app that fans context-bus events **in** from other apps rather
+  than reacting to just one. It subscribes to `fs.file_created`
+  (`apps/filesystem`) and `notes.added`/`notes.completed` (`apps/notes`),
+  and exposes `get_recent_activity` — the last 50 events, most-recent-first.
+  Run it alongside `filesystem`/`notes` to see several containers composed
+  purely over the context bus, no direct RPC between them.
+- [`apps/terminal`](../apps/terminal) — a shared, interactive shell: the
+  agent drives a real shell via `run_command`/`read_screen`/`send_keys`
+  (backed by `tmux`), and a human can watch — and type into — that exact
+  same session live over the web (`ttyd`), the terminal equivalent of
+  watching `apps/browser-native`'s Chromium over noVNC. Because both are
+  spawned as children of this app's own already-Landlocked process, the
+  shell inherits whatever filesystem/network capabilities `terminal`
+  declares, the same way Chromium inherits `browser-native`'s.
 
 ## 8. Build agents on top — `@berth/agents`
 
