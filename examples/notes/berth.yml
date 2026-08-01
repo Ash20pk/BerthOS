@@ -1,0 +1,20 @@
+name: notes
+version: 0.1.0
+description: "A stateful resident app — persists notes to /workspace, one capability beyond hello-world's zero-capability baseline"
+
+capabilities:
+  - filesystem:write:/workspace
+
+exports:
+  - name: add_note
+    input: { text: string }
+    output: { id: string }
+  - name: list_notes
+    output: { notes: array }
+  - name: complete_note
+    input: { id: string }
+    output: { completed: boolean }
+
+on_install: []
+on_agent_ready:
+  - "register_with_context_bus"

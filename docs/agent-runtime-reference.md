@@ -72,6 +72,19 @@ The synthesized agent-server app is generated on the fly (`berth.yml` + a plain,
 - **App directories, not registry names.** Pulling a resident app "by name" from the app registry only ever gets you a source bundle that still needs a local Docker build (see `docs/app-registry-reference.md`) — `apps:` takes local directory paths.
 - **Tool schema fidelity matches the manifest, not your code.** `berth.yml`'s `exports:` grammar is intentionally flat (`string | number | boolean | object | array`, no nesting) — the same limitation `berth mcp`'s tool bridge already has. Whatever richer Zod schema you wrote in `app.export({input: ...})` never crosses the RPC wire, so it isn't available here either.
 
+## Examples
+
+Narrative, runnable demonstrations (not hard-assertion tests) live in
+[`packages/agent-runtime/examples/`](../packages/agent-runtime/examples/README.md):
+
+```bash
+cd packages/agent-runtime
+export ANTHROPIC_API_KEY=sk-...
+node examples/single-agent.mjs      # createAgent() — one Computer, one Agent
+node examples/manager-crew.mjs      # Crew.withManager() — two in-process worker agents
+node examples/networked-crew.mjs    # Crew.networked() — two independent networked agent-computers
+```
+
 ## Verification
 
 ```bash

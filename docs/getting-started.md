@@ -38,7 +38,24 @@ Container started. Watching .../examples/hello-world/src and berth.yml for chang
 
 Edit `src/index.ts` and save — the container restarts automatically (on_install hooks are skipped on warm restarts, so this is fast).
 
-## 3. Run the browser-native example (with a live VNC view)
+## 3. Run the notes example (a resident app with a real capability)
+
+`hello-world` declares zero capabilities. `examples/notes` is the next step
+up: a stateful resident app (`add_note`/`list_notes`/`complete_note`,
+persisted to a JSON file) that declares `filesystem:write:/workspace` and
+publishes to the context bus on every write.
+
+```bash
+cd examples/notes
+pnpm exec berth dev
+```
+
+Call an export (e.g. via `berth rpc` or the MCP bridge — see
+[mcp-bridge-reference.md](./mcp-bridge-reference.md)) and watch
+`filesystem:write:/workspace` actually get enforced: writing outside
+`/workspace` is refused at the kernel level, not just by convention.
+
+## 4. Run the browser-native example (with a live VNC view)
 
 ```bash
 cd examples/../../apps/browser-native
@@ -55,7 +72,7 @@ Because this app declares `browser:navigate:*` in its `berth.yml`, `berth dev` p
 
 Open the noVNC URL in a browser tab — you're looking at the headless Chromium instance running inside the sandboxed container, live.
 
-## 4. Scaffold your own app
+## 5. Scaffold your own app
 
 ```bash
 pnpm exec berth init my-app
@@ -65,7 +82,7 @@ pnpm exec berth dev
 
 `berth init` prompts for a name and a starting template (`hello-world` or `browser-native`), scaffolds `berth.yml` + SDK boilerplate, runs `pnpm install`, and validates the manifest before handing control back to you. Pass `--template` to skip the prompt (e.g. for scripting): `berth init my-app --template hello-world`.
 
-## 5. Test before you deploy
+## 6. Test before you deploy
 
 ```bash
 pnpm exec berth test
@@ -73,13 +90,21 @@ pnpm exec berth test
 
 This builds the production image (not the dev one), checks that your `berth.yml`'s `exports:` list matches what your code actually implements, invokes each export with a schema-valid stub payload, and runs your own `npm test` if you have one. Add `--json` for CI.
 
-## 6. Deploy
+## 7. Deploy
 
 ```bash
 berth deploy --fleet=e2b   # or --fleet=daytona, or an alias from ~/.berthrc
 ```
 
 See [manifest-reference.md](./manifest-reference.md) for the full `berth.yml` schema and [sdk-reference.md](./sdk-reference.md) for the resident app SDK.
+
+## 8. Build agents on top — `@berth/agent-runtime`
+
+Everything above is about authoring and running one resident app. To wire an
+LLM agent up to one or more resident apps' exports as tools — single-agent,
+manager/worker crews, or independent agents networked across containers —
+see [`packages/agent-runtime/examples/`](../packages/agent-runtime/examples/README.md)
+and [agent-runtime-reference.md](./agent-runtime-reference.md).
 
 ## Something not working?
 
