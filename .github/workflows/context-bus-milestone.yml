@@ -1,0 +1,33 @@
+name: Context Bus Milestone (Phase 2)
+
+# Real, running verification that two resident apps in one sandbox can
+# communicate over the context bus without explicit orchestration — see
+# packages/docker-orchestrator/test/context-bus-milestone.mjs.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.21.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Run context-bus-milestone.mjs
+        working-directory: packages/docker-orchestrator
+        run: node test/context-bus-milestone.mjs

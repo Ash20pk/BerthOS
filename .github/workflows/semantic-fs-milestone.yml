@@ -1,0 +1,35 @@
+name: Semantic FS Milestone (Phase 4)
+
+# Real, running verification of the FUSE-mounted semantic filesystem — see
+# packages/docker-orchestrator/test/semantic-fs-milestone.mjs. Needs
+# /dev/fuse + SYS_ADMIN, both already unconditionally requested by
+# startContainer() and already proven working on ubuntu-latest by the
+# capability-enforcement workflow.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.21.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Run semantic-fs-milestone.mjs
+        working-directory: packages/docker-orchestrator
+        run: node test/semantic-fs-milestone.mjs
