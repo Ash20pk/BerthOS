@@ -1,0 +1,6 @@
+{
+  "name": "sharp-stub",
+  "version": "0.0.0",
+  "description": "No-op stand-in for 'sharp' — see root package.json's pnpm.overrides and packages/sdk's embeddings.ts for why",
+  "main": "index.js"
+}
