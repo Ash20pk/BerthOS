@@ -1,0 +1,39 @@
+name: K8s Adapter Milestone
+
+# Real, running verification of @berth/adapter-k8s against a live (if
+# throwaway) Kubernetes cluster — provisioned via `kind`, which needs no
+# cloud account. See
+# packages/adapters/adapter-k8s/test/k8s-adapter-milestone.mjs.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: helm/kind-action@v1
+        with:
+          install_only: true
+          version: v0.32.0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.21.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Run k8s-adapter-milestone.mjs
+        working-directory: packages/adapters/adapter-k8s
+        run: node test/k8s-adapter-milestone.mjs

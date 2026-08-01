@@ -1,0 +1,125 @@
+#!/usr/bin/env node
+// Real, running verification of @berth/adapter-k8s against a live (if
+// throwaway) Kubernetes cluster — provisioned via `kind` (Kubernetes-in-
+// Docker), which needs no cloud account, unlike adapter-e2b/adapter-daytona
+// (which ship with zero tests today, real or mocked, since they need paid
+// live accounts). Exercises the full DeployAdapter lifecycle for real:
+// upload (no-op) -> start (creates a real Pod) -> status transitions to
+// running -> list sees it -> streamLogs yields real container output ->
+// teardown deletes it.
+import { execFile, spawn } from "node:child_process";
+import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+import Docker from "dockerode";
+import { loadManifest } from "@berth/manifest-schema";
+import { buildImage } from "@berth/docker-orchestrator";
+import { createK8sAdapter } from "../dist/index.js";
+
+const execFileAsync = promisify(execFile);
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = join(__dirname, "..", "..", "..", "..");
+const FILESYSTEM_APP_DIR = join(REPO_ROOT, "apps", "filesystem");
+const CLUSTER_NAME = "berth-adapter-k8s-milestone";
+const IMAGE_TAG = "berth/filesystem:k8s-milestone";
+
+async function main() {
+  const manifest = await loadManifest(join(FILESYSTEM_APP_DIR, "berth.yml"));
+
+  console.log(`\n--- Creating throwaway kind cluster "${CLUSTER_NAME}" ---`);
+  await execFileAsync("kind", ["create", "cluster", "--name", CLUSTER_NAME]);
+
+  try {
+    console.log("\n--- Building filesystem's production image ---");
+    await buildImage({ appDir: FILESYSTEM_APP_DIR, tag: IMAGE_TAG, target: "production", docker: new Docker() });
+
+    console.log(`\n--- Loading the image into the kind cluster's node ---`);
+    await execFileAsync("kind", ["load", "docker-image", IMAGE_TAG, "--name", CLUSTER_NAME]);
+
+    const adapter = createK8sAdapter();
+
+    console.log("\n--- Test 1: upload() is a documented no-op returning the same imageRef ---");
+    const { remoteImageRef } = await adapter.upload({ imageRef: IMAGE_TAG, manifest });
+    assert(remoteImageRef === IMAGE_TAG, `expected upload() to pass the imageRef through unchanged, got ${remoteImageRef}`);
+
+    console.log("\n--- Test 2: start() creates a real Pod, status transitions to running ---");
+    const handle = await adapter.start(remoteImageRef, { imageRef: remoteImageRef, manifest });
+    console.log("started pod:", handle.id);
+
+    let finalStatus;
+    for (let i = 0; i < 30; i++) {
+      finalStatus = await handle.status();
+      if (finalStatus === "running") break;
+      await sleep(1000);
+    }
+    assert(finalStatus === "running", `expected the Pod to reach "running" within 30s, last saw "${finalStatus}"`);
+    console.log("PASS — status() reached running.");
+
+    console.log("\n--- Test 3: list() sees the real running Pod ---");
+    const listed = await adapter.list();
+    assert(
+      listed.some((h) => h.id === handle.id),
+      `expected list() to include ${handle.id}, got: ${listed.map((h) => h.id).join(", ")}`,
+    );
+    console.log("PASS — list() includes the Pod started above.");
+
+    console.log("\n--- Test 4: streamLogs() yields real container output ---");
+    const collected = await collectLogsFor(handle, 15000, /"filesystem" ready|listening on/);
+    assert(collected.matched, `expected to see real runtime startup output in the streamed logs, got: ${JSON.stringify(collected.text)}`);
+    console.log("PASS — streamLogs() carried real output from the container:\n" + collected.text.trim());
+
+    console.log("\n--- Test 5: teardown() deletes the real Pod ---");
+    await adapter.teardown(handle);
+    await sleep(2000);
+    const { stdout } = await execFileAsync("kubectl", [
+      "--context",
+      `kind-${CLUSTER_NAME}`,
+      "get",
+      "pods",
+      "-l",
+      "app.kubernetes.io/managed-by=berth",
+      "--no-headers",
+      "--ignore-not-found",
+    ]);
+    assert(stdout.trim() === "", `expected no berth-managed Pods left after teardown(), got: ${stdout}`);
+    console.log("PASS — teardown() removed the Pod for real.");
+
+    console.log(
+      "\nALL PASS — @berth/adapter-k8s's full DeployAdapter lifecycle (upload/start/status/list/streamLogs/teardown) " +
+        "works against a real, live Kubernetes API, not a mock.",
+    );
+  } finally {
+    console.log(`\n--- Deleting the throwaway kind cluster ---`);
+    await execFileAsync("kind", ["delete", "cluster", "--name", CLUSTER_NAME]).catch(() => {});
+  }
+}
+
+async function collectLogsFor(handle, timeoutMs, matchPattern) {
+  let text = "";
+  let matched = false;
+  const deadline = Date.now() + timeoutMs;
+  for await (const chunk of handle.streamLogs()) {
+    text += chunk;
+    if (matchPattern.test(text)) {
+      matched = true;
+      break;
+    }
+    if (Date.now() > deadline) break;
+  }
+  return { text, matched };
+}
+
+function assert(condition, message) {
+  if (!condition) throw new Error(message);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+main()
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error("\nK8S ADAPTER MILESTONE VERIFICATION FAILED:", err);
+    process.exit(1);
+  });
