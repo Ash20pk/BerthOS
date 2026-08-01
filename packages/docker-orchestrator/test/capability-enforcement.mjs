@@ -2,7 +2,11 @@
 // Real, running verification of Phase 3's kernel enforcement: confirms
 // writes inside a resident app's declared filesystem:write path succeed,
 // and a write outside it (via path traversal — proving the kernel catches
-// what app code doesn't validate itself) is refused BY THE KERNEL.
+// what app code doesn't validate itself) is refused BY THE KERNEL. Also
+// covers read-path scoping (opt-in — see generate-capability-policy.ts):
+// apps/filesystem/berth.yml already declares filesystem:read:/workspace and
+// filesystem:read:/context, so reads are confined to baseline+declared paths
+// for this app without any test-only manifest changes.
 //
 // Note on scope: this only exercises the app's own runtime process, which is
 // what agent-init actually restricts via landlock_restrict_self() before
@@ -105,6 +109,29 @@ async function main() {
           ? "\n(Interesting: denied anyway, despite ruleset != Enforced — logged for information, not asserted.)"
           : "\nNOT VERIFIED (expected in this environment) — the traversal write succeeded because Landlock isn't enforced here.",
       );
+    }
+
+    console.log("\n--- Test 3: read INSIDE the declared+baseline path (should always succeed) ---");
+    // apps/filesystem/berth.yml already declares filesystem:read:/workspace
+    // and filesystem:read:/context — read scoping (opt-in per
+    // generate-capability-policy.ts) is therefore already active for this
+    // app, no synthetic manifest needed to exercise it.
+    const insideRead = await rpc.call({ id: "3", export: "read_file", input: { path: "allowed.txt" } });
+    assert(!insideRead.error, `expected read inside /workspace to succeed, got error: ${insideRead.error}`);
+
+    console.log("\n--- Test 4: read OUTSIDE the declared+baseline paths via path traversal ---");
+    const outsideRead = await rpc.call({
+      id: "4",
+      export: "read_file",
+      input: { path: "../../../opt/berth-should-not-be-readable.txt" },
+    });
+    console.log("response:", outsideRead);
+    const readDenied = outsideRead.error && /EACCES|EPERM|permission/i.test(outsideRead.error);
+    if (landlockActive) {
+      assert(readDenied, `Landlock is active but the out-of-scope read was NOT denied — real regression: ${JSON.stringify(outsideRead)}`);
+      console.log("\nPASS — declaring filesystem:read:* confined reads to baseline+declared paths.");
+    } else {
+      console.log("\nNOT VERIFIED (expected in this environment) — Landlock isn't enforced here.");
     }
 
     rpc.close();

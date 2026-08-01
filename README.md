@@ -45,7 +45,7 @@ examples/
 
 ## Status
 
-All 5 phases of the roadmap are implemented. Phase 3's Landlock-based enforcement is implemented and runs correctly end-to-end, but hasn't been verified to actually deny a disallowed write on this repo's dev machine (Docker Desktop for Mac's kernel doesn't have Landlock active in its LSM stack) — see [capability tokens reference](./docs/capability-tokens-reference.md) before relying on it in production. Phase 5's registry is a local, single-node implementation (no hosted service, no billing/usage metering — the PRD's "first external revenue" metric isn't in scope here) — see [app registry reference](./docs/app-registry-reference.md).
+All 5 phases of the roadmap are implemented. Phase 3's Landlock-based enforcement (write-path always, read-path and network ports opt-in when declared) is confirmed via CI on a real Linux kernel (`.github/workflows/capability-enforcement.yml`) — it cannot be verified on this repo's own dev machine (Docker Desktop for Mac's kernel doesn't have Landlock active in its LSM stack), see [capability tokens reference](./docs/capability-tokens-reference.md) for that gap and what's still deferred (human-approval workflow, domain-scoped network filtering, per-syscall audit logging). Phase 5's registry is a local, single-node implementation (no hosted service, no billing/usage metering — the PRD's "first external revenue" metric isn't in scope here) — see [app registry reference](./docs/app-registry-reference.md).
 
 ## License
 

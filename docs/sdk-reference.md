@@ -67,7 +67,7 @@ interface SemanticFsClient {
 }
 ```
 
-**Real as of Phase 4.** Files written through `$BERTH_CONTEXT_MOUNT` (default `/context`, a FUSE mount served by `semantic-fs-daemon`, a Go process, one per sandbox) are automatically attributed to whichever app called `register()` from that process — `tag()` then attaches `task`/`related_apps` metadata explicitly, and `query()` searches all of it. Falls back to `createLocalSemanticFs()` (an always-empty no-op) if the daemon isn't reachable. See [semantic-fs-reference.md](./semantic-fs-reference.md) for the full design, the FUSE wire-up, and a real, running verification.
+**Real as of Phase 4.** Files written through `$BERTH_CONTEXT_MOUNT` (default `/context`, a FUSE mount served by `semantic-fs-daemon`, a Go process, one per sandbox) are automatically attributed to whichever app called `register()` from that process — `tag()` then attaches `task`/`related_apps` metadata explicitly (and, internally, an embedding computed from that same text), and `query()` searches all of it via a hybrid keyword + embedding-similarity ranking. Falls back to `createLocalSemanticFs()` (an always-empty no-op) if the daemon isn't reachable. See [semantic-fs-reference.md](./semantic-fs-reference.md) for the full design, the FUSE wire-up, the embedding model/calibration details, and a real, running verification.
 
 ## `requestCapability(appName, capability)`
 
@@ -80,7 +80,7 @@ const grant = await requestCapability("my-app", "filesystem:write:/workspace");
 // (see docs/capability-tokens-reference.md)
 ```
 
-**Real as of Phase 3, for filesystem writes.** `requestCapability()` checks the requested capability against `berth.yml`'s declared `capabilities:` (the same list `agent-init` turned into an enforced Landlock policy at boot) and reports `{ granted, token }` honestly — `granted: false` for anything not declared. It does not itself decide or broker access; the kernel already decided that at process start for filesystem writes. A full human-approval workflow and a real expiring/audited token are still deferred — see [capability-tokens-reference.md](./capability-tokens-reference.md) for exactly what's enforced vs. reported-only right now (network and read-path scoping aren't kernel-enforced yet, only declared).
+**Real as of Phase 3, for filesystem writes and (opt-in, when declared) reads and network ports.** `requestCapability()` checks the requested capability against `berth.yml`'s declared `capabilities:` (the same list `agent-init` turned into an enforced Landlock policy at boot) and reports `{ granted, token, issuedAt, expiresAt }` honestly — `granted: false` (and the rest `null`) for anything not declared. It does not itself decide or broker access; the kernel already decided that at process start. `token` is a real HMAC-SHA256 signature with a 5-minute expiry (`verifyCapabilityToken()` checks it), not just a marker. A full human-approval workflow is still separate work in progress — see [capability-tokens-reference.md](./capability-tokens-reference.md) for exactly what's enforced vs. reported-only right now (domain-scoped network filtering isn't kernel-enforced, only port-based).
 
 ## The RPC layer
 

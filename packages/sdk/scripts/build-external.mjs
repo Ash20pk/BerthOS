@@ -23,8 +23,11 @@ const manifestPkg = JSON.parse(await readFile(join(MANIFEST_SCHEMA_ROOT, "packag
 // Real npm packages stay external — including "yaml", which @berth/sdk only
 // depends on transitively via the inlined @berth/manifest-schema, but which
 // must still be resolvable at runtime (esbuild can't safely bundle its CJS
-// dynamic-require internals into an ESM output).
-const EXTERNAL_DEPS = ["zod", "protobufjs", "yaml"];
+// dynamic-require internals into an ESM output). "@xenova/transformers" is
+// the same story, more so — its backend-selection code branches on
+// platform/environment and does its own dynamic module resolution (ONNX
+// runtime WASM/native backends), which esbuild bundling would break.
+const EXTERNAL_DEPS = ["zod", "protobufjs", "yaml", "@xenova/transformers"];
 
 await rm(OUT_DIR, { recursive: true, force: true });
 await mkdir(OUT_DIR, { recursive: true });
@@ -46,6 +49,10 @@ await build({
 });
 
 await cp(join(PACKAGE_ROOT, "proto"), join(OUT_DIR, "proto"), { recursive: true });
+// Only present if scripts/prefetch-embedding-model.mjs succeeded during
+// `pnpm install` (network-dependent, non-fatal if it didn't) — embeddings.ts
+// fails soft to keyword-only ranking if this directory is absent.
+await cp(join(PACKAGE_ROOT, "models"), join(OUT_DIR, "models"), { recursive: true, force: true }).catch(() => {});
 
 // esbuild inlines @berth/manifest-schema's *code* into the JS bundle above,
 // but a consuming app's own `tsc` still needs its *types* (BerthManifest
@@ -97,7 +104,7 @@ const externalPkg = {
     "./runtime": { types: "./runtime.d.ts", default: "./runtime.js" },
   },
   bin: { "berth-runtime": "./runtime.js" },
-  files: ["index.js", "index.d.ts", "runtime.js", "runtime.d.ts", "proto", "*.d.ts", "manifest-schema", "context-bus", "semantic-fs"],
+  files: ["index.js", "index.d.ts", "runtime.js", "runtime.d.ts", "proto", "models", "*.d.ts", "manifest-schema", "context-bus", "semantic-fs"],
   dependencies: Object.fromEntries(
     EXTERNAL_DEPS.map((name) => [name, pkg.dependencies[name] ?? manifestPkg.dependencies[name]]),
   ),
