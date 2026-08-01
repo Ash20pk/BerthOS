@@ -102,6 +102,12 @@ See [manifest-reference.md](./manifest-reference.md) for the full `berth.yml` sc
 
 Beyond the `hello-world` → `notes` → `browser-native` ladder above:
 
+- [`apps/activity-feed`](../apps/activity-feed) — a zero-capability
+  resident app that never calls `notes`' exports directly. It subscribes to
+  the `notes.added`/`notes.completed` topics `apps/notes` publishes and
+  tallies them in memory (`get_activity`). Run it alongside `notes` to see
+  two containers composed purely over the context bus, no direct RPC between
+  them.
 - [`apps/terminal`](../apps/terminal) — a full shell for the OS: `run_command`
   hands an arbitrary string straight to `bash -c` (pipes, redirects, globs —
   everything a real terminal gives you), with a persistent working directory

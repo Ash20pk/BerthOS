@@ -1,0 +1,13 @@
+name: activity-feed
+version: 0.1.0
+description: "Zero-capability resident app that reacts to other apps' context-bus events — subscribes to notes.added/notes.completed and keeps a rolling in-memory activity log, no direct RPC call to notes required"
+
+capabilities: []
+
+exports:
+  - name: get_activity
+    output: { events: array, added: number, completed: number }
+
+on_install: []
+on_agent_ready:
+  - "register_with_context_bus"
