@@ -4,6 +4,11 @@ version: 0.1.0
 capabilities:
   - browser:navigate:*
   - browser:screenshot:*
+  # Network is deny-by-default (see docs/capability-tokens-reference.md) —
+  # this app drives a real browser that needs to reach arbitrary hosts, so
+  # it explicitly opts out of port-scoping rather than silently riding on
+  # what used to be an always-open default.
+  - network:connect:*
 
 exports:
   - name: navigate

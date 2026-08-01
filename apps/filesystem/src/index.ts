@@ -1,6 +1,7 @@
 import { defineApp, type ContextBusClient, type SemanticFsClient } from "@berth/sdk";
 import { z } from "zod";
 import { mkdir, readFile, writeFile, readdir } from "node:fs/promises";
+import { createConnection } from "node:net";
 import { join } from "node:path";
 
 const WORKSPACE_ROOT = process.env.BERTH_WORKSPACE_ROOT ?? "/workspace";
@@ -73,6 +74,33 @@ export default defineApp((app) => {
     output: z.object({ results: z.array(z.any()) }),
     handler: async ({ text }) => ({ results: (await semanticFs?.query(text)) ?? [] }),
   });
+
+  // Test-only, off by default: this app declares no network:connect
+  // capability, so under deny-by-default it should never be able to reach
+  // out. Gated behind its own env var (not BERTH_TEST_MODE, which
+  // check-exports.js also sets) so it never appears as an undeclared export
+  // during normal `berth test` runs — see
+  // packages/docker-orchestrator/test/capability-enforcement.mjs.
+  if (process.env.BERTH_NETWORK_PROBE === "1") {
+    app.export({
+      name: "probe_network_connect",
+      input: z.object({ host: z.string(), port: z.number() }),
+      output: z.object({ connected: z.boolean(), error: z.string().optional() }),
+      handler: ({ host, port }) =>
+        new Promise((resolve) => {
+          const socket = createConnection({ host, port, timeout: 3000 });
+          socket.once("connect", () => {
+            socket.destroy();
+            resolve({ connected: true });
+          });
+          socket.once("timeout", () => {
+            socket.destroy();
+            resolve({ connected: false, error: "timeout" });
+          });
+          socket.once("error", (err) => resolve({ connected: false, error: (err as Error).message }));
+        }),
+    });
+  }
 
   app.onAgentReady(async (ctx) => {
     contextBus = ctx.contextBus;

@@ -34,6 +34,12 @@ struct CapabilityPolicy {
     read_paths: Vec<String>,
     #[serde(rename = "networkPorts", default)]
     network_ports: Vec<u16>,
+    // Deny-by-default: network access is restricted to `network_ports` unless
+    // this is set, which is the explicit, audited escape hatch for an app
+    // that declared `network:connect:*` (e.g. browser-native, which needs to
+    // reach arbitrary hosts). See generate-capability-policy.ts.
+    #[serde(rename = "networkUnrestricted", default)]
+    network_unrestricted: bool,
 }
 
 /// One structured JSON line per boot — a real, greppable audit record of
@@ -42,8 +48,8 @@ struct CapabilityPolicy {
 fn log_audit_event(policy: &CapabilityPolicy, ruleset_status: &str) {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     eprintln!(
-        "[agent-init] {{\"event\":\"capability_policy_applied\",\"app\":{:?},\"writePaths\":{:?},\"readPaths\":{:?},\"networkPorts\":{:?},\"ruleset\":{:?},\"timestamp\":{}}}",
-        policy.app_name, policy.write_paths, policy.read_paths, policy.network_ports, ruleset_status, now
+        "[agent-init] {{\"event\":\"capability_policy_applied\",\"app\":{:?},\"writePaths\":{:?},\"readPaths\":{:?},\"networkPorts\":{:?},\"networkUnrestricted\":{},\"ruleset\":{:?},\"timestamp\":{}}}",
+        policy.app_name, policy.write_paths, policy.read_paths, policy.network_ports, policy.network_unrestricted, ruleset_status, now
     );
 }
 
@@ -82,13 +88,20 @@ fn apply_policy(policy_path: &str) -> Result<CapabilityPolicy, Box<dyn std::erro
     let raw = std::fs::read_to_string(policy_path)?;
     let policy: CapabilityPolicy = serde_json::from_str(&raw)?;
 
-    // Write-ish access rights are always handled. Read and network are
-    // opt-in — handle_access()'ing an access type makes it denied-by-default
-    // everywhere except where a rule grants it, so these must only be turned
-    // on when the policy actually declared at least one path/port (see
+    // Write-ish access rights are always handled. Read stays opt-in —
+    // handle_access()'ing an access type makes it denied-by-default
+    // everywhere except where a rule grants it, so it's only turned on when
+    // the policy actually declared at least one read path (see
     // generate-capability-policy.ts's BASELINE_READ_PATHS comment for why
     // read scoping, once enabled, still needs a broad baseline rather than
     // just the app's own declared paths).
+    //
+    // Network is deny-by-default: unless the app explicitly declared
+    // `network:connect:*` (network_unrestricted), it gets a network ruleset
+    // with only its declared ports allowed — zero declared ports means zero
+    // outbound TCP, full stop. This is the PRD's "deny-by-default network
+    // policies" claim, enforced by the kernel rather than left to whatever
+    // the container's network namespace happens to allow.
     let write_access = AccessFs::WriteFile
         | AccessFs::RemoveDir
         | AccessFs::RemoveFile
@@ -103,7 +116,7 @@ fn apply_policy(policy_path: &str) -> Result<CapabilityPolicy, Box<dyn std::erro
     let net_access = AccessNet::ConnectTcp;
 
     let restrict_reads = !policy.read_paths.is_empty();
-    let restrict_network = !policy.network_ports.is_empty();
+    let restrict_network = !policy.network_unrestricted;
 
     let mut builder = Ruleset::default().handle_access(write_access)?;
     if restrict_reads {

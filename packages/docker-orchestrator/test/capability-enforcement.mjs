@@ -52,6 +52,10 @@ async function main() {
     manifest,
     bindMount: { hostPath: REPO_ROOT, containerPath: "/workspace" },
     workingDir: "/workspace/apps/filesystem",
+    // Enables filesystem's test-only probe_network_connect export (off by
+    // default, and deliberately NOT gated behind BERTH_TEST_MODE — see that
+    // export's comment in apps/filesystem/src/index.ts).
+    env: { BERTH_NETWORK_PROBE: "1" },
     docker,
   });
 
@@ -132,6 +136,35 @@ async function main() {
       console.log("\nPASS — declaring filesystem:read:* confined reads to baseline+declared paths.");
     } else {
       console.log("\nNOT VERIFIED (expected in this environment) — Landlock isn't enforced here.");
+    }
+
+    console.log("\n--- Test 5: network is deny-by-default — filesystem declares no network:connect capability ---");
+    // apps/filesystem/berth.yml declares no network:* capability, so under
+    // the deny-by-default policy (packages/agent-init/src/main.rs) it should
+    // get a Landlock ruleset with zero allowed outbound ports — a real
+    // attempted TCP connect from inside the actually-restricted runtime
+    // process (not a docker-exec'd one, see this file's header comment)
+    // should fail at the kernel level, not just look denied.
+    const netProbe = await rpc.call({
+      id: "5",
+      export: "probe_network_connect",
+      input: { host: "1.1.1.1", port: 80 },
+    });
+    console.log("response:", netProbe);
+    assert(!netProbe.error, `probe_network_connect itself errored (unexpected): ${netProbe.error}`);
+    const wasNetDenied = netProbe.result?.connected === false;
+    if (landlockActive) {
+      assert(
+        wasNetDenied,
+        `Landlock is active but an app with no declared network:connect capability was able to connect out — deny-by-default regression: ${JSON.stringify(netProbe)}`,
+      );
+      console.log("\nPASS — an app declaring no network:connect capability could not reach out at all.");
+    } else {
+      console.log(
+        wasNetDenied
+          ? "\n(Interesting: denied anyway, despite ruleset != Enforced — logged for information, not asserted.)"
+          : "\nNOT VERIFIED (expected in this environment) — the connect succeeded because Landlock isn't enforced here.",
+      );
     }
 
     rpc.close();
