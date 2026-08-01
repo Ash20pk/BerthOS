@@ -29,4 +29,12 @@ export interface DeployAdapter {
   upload(target: DeployTarget): Promise<{ remoteImageRef: string }>;
   start(remoteImageRef: string, target: DeployTarget): Promise<DeployHandle>;
   teardown(handle: DeployHandle): Promise<void>;
+  /**
+   * Lists instances currently running on this provider, if it exposes such
+   * an API — optional because "list everything running" isn't guaranteed by
+   * every backend's SDK the same way upload/start/teardown are. Adapters
+   * that can't support it simply omit this method; callers (e.g. `berth
+   * fleet status`) fall back to locally-persisted state instead.
+   */
+  list?(): Promise<DeployHandle[]>;
 }
