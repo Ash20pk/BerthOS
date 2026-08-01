@@ -8,6 +8,8 @@ export interface AgentOptions {
   tools: Tool[];
   /** Safety cap on the tool-use loop, in case a provider never stops requesting tool calls. */
   maxTurns?: number;
+  /** Fires synchronously right after each tool call resolves — observe the agent's tool use as it happens, e.g. to print it live in a chat REPL. */
+  onToolCall?: (call: { name: string; input: unknown; result: unknown }) => void;
 }
 
 export interface AgentRunResult {
@@ -28,6 +30,9 @@ export class Agent {
   private readonly llm: LLMProvider;
   private readonly systemPrompt: string | undefined;
   private readonly maxTurns: number;
+  private readonly onToolCall: AgentOptions["onToolCall"];
+  /** Conversation history for chat() — separate from run()'s scratch messages, since run() is meant to be a stateless one-off call. */
+  private readonly history: AgentMessage[] = [];
 
   constructor(options: AgentOptions) {
     this.name = options.name ?? "agent";
@@ -35,16 +40,30 @@ export class Agent {
     this.llm = options.llm;
     this.tools = options.tools;
     this.maxTurns = options.maxTurns ?? DEFAULT_MAX_TURNS;
+    this.onToolCall = options.onToolCall;
   }
 
   async run(input: string): Promise<AgentRunResult> {
-    const messages: AgentMessage[] = [{ role: "user", text: input }];
+    return this.loop([{ role: "user", text: input }]);
+  }
+
+  /**
+   * Like run(), but appends to a conversation history kept across calls
+   * instead of starting fresh each time — the shape a chat REPL needs.
+   */
+  async chat(input: string): Promise<AgentRunResult> {
+    this.history.push({ role: "user", text: input });
+    return this.loop(this.history);
+  }
+
+  private async loop(messages: AgentMessage[]): Promise<AgentRunResult> {
     const executed: AgentRunResult["toolCalls"] = [];
 
     for (let turnCount = 0; turnCount < this.maxTurns; turnCount++) {
       const turn = await this.llm.chat({ system: this.systemPrompt, messages, tools: this.tools });
 
       if (turn.toolCalls.length === 0) {
+        messages.push({ role: "assistant", text: turn.text });
         return { text: turn.text ?? "", toolCalls: executed };
       }
 
@@ -54,6 +73,7 @@ export class Agent {
         const tool = this.tools.find((t) => t.name === call.name);
         const result: unknown = tool ? await tool.invoke(call.input) : { error: `no such tool "${call.name}"` };
         executed.push({ name: call.name, input: call.input, result });
+        this.onToolCall?.({ name: call.name, input: call.input, result });
         messages.push({ role: "tool", toolResult: { id: call.id, name: call.name, output: result } });
       }
     }
@@ -73,6 +93,7 @@ export class Agent {
       llm: this.llm,
       tools: [...this.tools, ...extraTools],
       maxTurns: this.maxTurns,
+      onToolCall: this.onToolCall,
     });
   }
 
@@ -105,6 +126,7 @@ export interface CreateAgentOptions extends Pick<BootComputerOptions, "apps" | "
   systemPrompt?: string;
   name?: string;
   maxTurns?: number;
+  onToolCall?: AgentOptions["onToolCall"];
 }
 
 /**
@@ -126,6 +148,7 @@ export async function createAgent(options: CreateAgentOptions): Promise<{ agent:
     llm: options.llm,
     tools: computer.tools,
     maxTurns: options.maxTurns,
+    onToolCall: options.onToolCall,
   });
   return { agent, computer };
 }

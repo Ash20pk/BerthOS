@@ -103,7 +103,10 @@ See [manifest-reference.md](./manifest-reference.md) for the full `berth.yml` sc
 Everything above is about authoring and running one resident app. To wire an
 LLM agent up to one or more resident apps' exports as tools — single-agent,
 manager/worker crews, or independent agents networked across containers —
-see [`packages/agents/examples/`](../packages/agents/examples/README.md)
+see [`packages/agents/examples/`](../packages/agents/examples/README.md). For
+an interactive session where you chat with the agent and watch it use the
+Computer live (tool calls as they happen, plus the sandbox's own log stream),
+run `node examples/chat.mjs` from `packages/agents`.
 and [agents-reference.md](./agents-reference.md).
 
 ## Something not working?
