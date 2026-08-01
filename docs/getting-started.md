@@ -98,6 +98,26 @@ berth deploy --fleet=e2b   # or --fleet=daytona, or an alias from ~/.berthrc
 
 See [manifest-reference.md](./manifest-reference.md) for the full `berth.yml` schema and [sdk-reference.md](./sdk-reference.md) for the resident app SDK.
 
+## More examples
+
+Beyond the `hello-world` → `notes` → `browser-native` ladder above:
+
+- [`apps/activity-feed`](../apps/activity-feed) — a zero-capability
+  resident app that never calls `notes`' exports directly. It subscribes to
+  the `notes.added`/`notes.completed` topics `apps/notes` publishes and
+  tallies them in memory (`get_activity`). Run it alongside `notes` to see
+  two containers composed purely over the context bus, no direct RPC between
+  them.
+- [`apps/terminal`](../apps/terminal) — a full shell for the OS: `run_command`
+  hands an arbitrary string straight to `bash -c` (pipes, redirects, globs —
+  everything a real terminal gives you), with a persistent working directory
+  that survives across calls the same way `cd` does in a real session. Its
+  `berth.yml` declares a new `process:exec:*` capability namespace — the
+  broadest scope in the repo, honestly reflecting that this app *is* the
+  escape hatch to a real shell, not a wrapper around one allowlisted binary.
+  Like every capability before Phase 3, it's declared and logged, not yet
+  kernel-enforced.
+
 ## 8. Build agents on top — `@berth/agents`
 
 Everything above is about authoring and running one resident app. To wire an
