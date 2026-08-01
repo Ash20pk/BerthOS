@@ -32,6 +32,7 @@ packages/
   agent-init/          Rust — applies a kernel-enforced (Landlock) capability policy before exec-ing the runtime
   semantic-fs-daemon/  Go/FUSE daemon — filesystem queryable by intent, backed by a SQLite metadata index
   registry-server/     local app registry — publish/discover/install (Fastify + SQLite)
+  grants-server/       human-approval service for capability grants (Fastify + SQLite)
   adapters/            deploy adapters (E2B, Daytona)
   cli/                 the `berth` CLI (init, dev, test, publish, deploy)
 apps/
@@ -45,7 +46,7 @@ examples/
 
 ## Status
 
-All 5 phases of the roadmap are implemented. Phase 3's Landlock-based enforcement (write-path always, read-path and network ports opt-in when declared) is confirmed via CI on a real Linux kernel (`.github/workflows/capability-enforcement.yml`) — it cannot be verified on this repo's own dev machine (Docker Desktop for Mac's kernel doesn't have Landlock active in its LSM stack), see [capability tokens reference](./docs/capability-tokens-reference.md) for that gap and what's still deferred (human-approval workflow, domain-scoped network filtering, per-syscall audit logging). Phase 5's registry is a local, single-node implementation (no hosted service, no billing/usage metering — the PRD's "first external revenue" metric isn't in scope here) — see [app registry reference](./docs/app-registry-reference.md).
+All 5 phases of the roadmap are implemented. Phase 3's Landlock-based enforcement (write-path always, read-path and network ports opt-in when declared) is confirmed via CI on a real Linux kernel (`.github/workflows/capability-enforcement.yml`) — it cannot be verified on this repo's own dev machine (Docker Desktop for Mac's kernel doesn't have Landlock active in its LSM stack). Phase 3's human-approval workflow (`@berth/grants-server` + `berth grants list/approve/deny`) is also implemented, opt-in via `--grants-server=<url>` — approval takes effect on an app's next restart, not live, since Landlock rulesets can't be widened once applied. See [capability tokens reference](./docs/capability-tokens-reference.md) for the CI verification gap and what's still deferred (domain-scoped network filtering, per-syscall audit logging). Phase 5's registry is a local, single-node implementation (no hosted service, no billing/usage metering — the PRD's "first external revenue" metric isn't in scope here) — see [app registry reference](./docs/app-registry-reference.md).
 
 ## License
 

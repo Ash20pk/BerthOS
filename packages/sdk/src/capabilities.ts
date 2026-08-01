@@ -8,10 +8,37 @@ export interface CapabilityGrant {
   token: string | null;
   issuedAt: string | null;
   expiresAt: string | null;
+  /**
+   * True if this denial was submitted to a berth-grants server
+   * (BERTH_GRANTS_SERVER_URL) as a pending request for human approval — see
+   * `berth grants list/approve/deny`. Approval takes effect on this app's
+   * NEXT container restart (generate-capability-policy.ts re-reads approved
+   * grants at boot), never live — Landlock rulesets can't be widened once
+   * applied to a running process.
+   */
+  pending?: boolean;
 }
 
 const MANIFEST_PATH = process.env.BERTH_MANIFEST_PATH ?? path.join(process.cwd(), "berth.yml");
 const TOKEN_TTL_MS = 5 * 60 * 1000;
+const GRANTS_SERVER_URL = process.env.BERTH_GRANTS_SERVER_URL;
+
+/** Best-effort: an unreachable/misconfigured grants server never blocks the caller, just skips the pending-request step. */
+async function submitPendingGrant(appName: string, capability: string): Promise<boolean> {
+  if (!GRANTS_SERVER_URL) return false;
+  try {
+    const res = await fetch(new URL("/grants", GRANTS_SERVER_URL), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ appName, capability }),
+      signal: AbortSignal.timeout(3000),
+    });
+    return res.ok;
+  } catch (err) {
+    console.error(`[capabilities] WARNING: couldn't submit pending grant to ${GRANTS_SERVER_URL} (${err})`);
+    return false;
+  }
+}
 
 // Generated once per container boot by entrypoint.sh and inherited via the
 // environment — see docker/entrypoint.sh. Falls back to a process-local
@@ -68,8 +95,9 @@ export async function requestCapability(appName: string, capability: string): Pr
   const granted = declared.some((grantedCapability) => matchesCapability(grantedCapability, capability));
 
   if (!granted) {
-    console.debug(`[capabilities] denied`, request, "(not declared in berth.yml)");
-    return { granted: false, token: null, issuedAt: null, expiresAt: null };
+    const pending = await submitPendingGrant(appName, capability);
+    console.debug(`[capabilities] denied`, request, pending ? "(submitted for human approval)" : "(not declared in berth.yml)");
+    return { granted: false, token: null, issuedAt: null, expiresAt: null, pending };
   }
 
   const issuedAt = request.requestedAt;
