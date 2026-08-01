@@ -120,6 +120,17 @@ async function main() {
     assert(!insideRead.error, `expected read inside /workspace to succeed, got error: ${insideRead.error}`);
 
     console.log("\n--- Test 4: read OUTSIDE the declared+baseline paths via path traversal ---");
+    // The fixture must actually exist for this to mean anything: Landlock
+    // only gates open()/readdir() on a *resolved* inode, not path traversal
+    // itself, so reading a path that simply doesn't exist returns ENOENT
+    // from ordinary VFS lookup before Landlock's check is ever reached —
+    // indistinguishable from "denied" by the error-message check below, but
+    // proving nothing about enforcement either way. Created via a fresh
+    // `docker exec` (unrestricted — a sibling of the Landlock-restricted app
+    // process, not a descendant of it, same as this file's header comment
+    // already notes about not *testing* enforcement via exec) rather than
+    // baking a test-only file into entrypoint.sh's real production boot path.
+    await execInContainer(running.container, ["sh", "-c", "mkdir -p /opt && echo secret > /opt/berth-should-not-be-readable.txt"]);
     const outsideRead = await rpc.call({
       id: "4",
       export: "read_file",
@@ -172,6 +183,19 @@ async function main() {
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+async function execInContainer(container, cmd) {
+  const exec = await container.exec({ Cmd: cmd, AttachStdout: true, AttachStderr: true });
+  const stream = await exec.start({ hijack: true });
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  docker.modem.demuxStream(stream, stdout, stderr);
+  let out = "";
+  stdout.on("data", (chunk) => (out += chunk.toString("utf-8")));
+  stderr.on("data", (chunk) => process.stderr.write(`[exec stderr] ${chunk}`));
+  await new Promise((resolve) => stream.on("end", resolve));
+  return out;
 }
 
 async function startLogCapture(container) {

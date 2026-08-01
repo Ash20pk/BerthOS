@@ -133,6 +133,16 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
       Binds: binds,
       PortBindings: portBindings,
       AutoRemove: false,
+      // Docker Desktop (Mac/Windows) resolves host.docker.internal inside
+      // every container automatically; native Linux Docker (e.g. GitHub
+      // Actions' ubuntu-latest runners) does not, unless told to via this
+      // special host-gateway value (Docker 20.10+) — several milestone
+      // tests reach a host-side mock/grants server through that name
+      // (grants-server-milestone.mjs, github-assistant-milestone.mjs), which
+      // otherwise silently fails to resolve in CI while working locally on
+      // a Mac, masking the difference until the request itself times out.
+      // A no-op wherever host.docker.internal already resolves.
+      ExtraHosts: ["host.docker.internal:host-gateway"],
       // Every sandbox mounts the Phase 4 semantic filesystem at /context via
       // FUSE (see docker/entrypoint.sh), which needs the /dev/fuse device
       // node plus CAP_SYS_ADMIN to call mount(2) — unconditional, the same

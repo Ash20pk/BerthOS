@@ -84,10 +84,20 @@ async function main() {
     assert(!tagRefactor.error, `tag_context_file (refactor) failed: ${tagRefactor.error}`);
 
     console.log("\n--- Querying: \"find files related to the auth bug\" ---");
-    const query = await rpc.call({ id: "5", export: "query_context", input: { text: "auth bug" } });
-    assert(!query.error, `query_context failed: ${query.error}`);
-
-    const results = query.result?.results ?? [];
+    // Retried rather than a single shot: write_context_file's real FUSE write
+    // and tag_context_file's control-socket call are two genuinely separate
+    // paths into the daemon (kernel mount vs Unix socket) - nothing here
+    // guarantees the daemon's own indexing of the write has landed before a
+    // query issued immediately after tag_context_file returns, and a slower
+    // CI runner is more likely to expose that gap than this dev machine.
+    let results = [];
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const query = await rpc.call({ id: `5-${attempt}`, export: "query_context", input: { text: "auth bug" } });
+      assert(!query.error, `query_context failed: ${query.error}`);
+      results = query.result?.results ?? [];
+      if (results.length > 0) break;
+      await sleep(500);
+    }
     console.log("query results:", JSON.stringify(results, null, 2));
 
     assert(results.length > 0, "expected at least one query result");
@@ -158,6 +168,10 @@ async function main() {
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function execOutput(container, cmd) {

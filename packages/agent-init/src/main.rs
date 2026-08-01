@@ -128,6 +128,19 @@ fn apply_policy(policy_path: &str) -> Result<CapabilityPolicy, Box<dyn std::erro
     let mut ruleset = builder.create()?;
 
     for path in &policy.write_paths {
+        // PathFd::new() opens the path via a real file descriptor - it must
+        // already exist on disk, or this (and the write grant along with
+        // it) silently fails below. A declared write path like /workspace
+        // is never guaranteed to exist yet (no Dockerfile step creates it,
+        // and dev's bind-mount is the only thing that happens to), so this
+        // process - not yet Landlock-restricted itself at this point in
+        // apply_policy() - creates it first. Without this, the resident
+        // app's own first `mkdir(WORKSPACE_ROOT)` call fails with EACCES:
+        // creating a not-yet-existing /workspace is an operation on its
+        // *parent* (/), which was never granted, not on /workspace itself.
+        if let Err(err) = std::fs::create_dir_all(path) {
+            eprintln!("[agent-init] WARNING: couldn't create \"{path}\" ahead of granting write access ({err})");
+        }
         match PathFd::new(path) {
             Ok(fd) => {
                 ruleset = ruleset.add_rule(PathBeneath::new(fd, write_access))?;

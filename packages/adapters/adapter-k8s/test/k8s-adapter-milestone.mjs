@@ -70,18 +70,30 @@ async function main() {
 
     console.log("\n--- Test 5: teardown() deletes the real Pod ---");
     await adapter.teardown(handle);
-    await sleep(2000);
-    const { stdout } = await execFileAsync("kubectl", [
-      "--context",
-      `kind-${CLUSTER_NAME}`,
-      "get",
-      "pods",
-      "-l",
-      "app.kubernetes.io/managed-by=berth",
-      "--no-headers",
-      "--ignore-not-found",
-    ]);
-    assert(stdout.trim() === "", `expected no berth-managed Pods left after teardown(), got: ${stdout}`);
+    // deleteNamespacedPod() only *starts* a graceful termination (bound by
+    // the Pod's terminationGracePeriodSeconds, 30s by default) - it doesn't
+    // block until the kubelet confirms the container is actually gone, so
+    // the Pod can legitimately still show as Terminating for a while after
+    // teardown() itself has already returned. Poll for real removal rather
+    // than assuming one fixed sleep is always enough, same pattern as the
+    // status-transitions-to-running wait above.
+    let remaining = "";
+    for (let i = 0; i < 30; i++) {
+      const { stdout } = await execFileAsync("kubectl", [
+        "--context",
+        `kind-${CLUSTER_NAME}`,
+        "get",
+        "pods",
+        "-l",
+        "app.kubernetes.io/managed-by=berth",
+        "--no-headers",
+        "--ignore-not-found",
+      ]);
+      remaining = stdout.trim();
+      if (remaining === "") break;
+      await sleep(1000);
+    }
+    assert(remaining === "", `expected no berth-managed Pods left after teardown() within 30s, got: ${remaining}`);
     console.log("PASS — teardown() removed the Pod for real.");
 
     console.log(
