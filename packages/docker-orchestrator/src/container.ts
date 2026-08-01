@@ -28,6 +28,16 @@ export interface StartContainerOptions {
   workingDir?: string;
   /** Named volume used for the on_install marker file, so warm restarts skip reinstalling. */
   installMarkerVolume?: string;
+  /**
+   * Additional `host:container` bind-mount strings, appended after
+   * `bindMount`/`installMarkerVolume`'s own binds. Used by `berth snapshot
+   * restore` to pre-populate a fresh container's semantic-fs backing
+   * directory (BERTH_CONTEXT_DATA) from a restored snapshot's on-disk
+   * archive, *before* semantic-fs-daemon opens its SQLite index at boot —
+   * injecting it into an already-running container via `putArchive` instead
+   * would race that boot-time open. Omitted, this changes nothing.
+   */
+  extraBinds?: string[];
   env?: Record<string, string>;
   /**
    * Companion apps sharing this container — each gets its own real,
@@ -71,6 +81,7 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
   const binds: string[] = [];
   if (options.bindMount) binds.push(`${options.bindMount.hostPath}:${options.bindMount.containerPath}`);
   if (options.installMarkerVolume) binds.push(`${options.installMarkerVolume}:${workingDir}/.berth`);
+  if (options.extraBinds) binds.push(...options.extraBinds);
 
   // Only set when there's more than one app — entrypoint.sh's single-app
   // branch (today's exact behavior) runs whenever this is absent, so a
