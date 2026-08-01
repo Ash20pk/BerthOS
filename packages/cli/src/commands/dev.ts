@@ -4,7 +4,7 @@ import { restartContainer, startContainer, stopContainer, streamLogs, watchApp }
 import { loadManifestOrExit } from "../util/manifest.js";
 import { buildDevImage, devImageTag } from "../util/build.js";
 import { resolveDevBindMount } from "../util/workspace.js";
-import { resolveApps, assertAtMostOneBrowserApp } from "../util/multi-app.js";
+import { resolveApps, assertAtMostOneBrowserApp, assertAtMostOneTerminalApp } from "../util/multi-app.js";
 
 export default class Dev extends Command {
   static override description = "Boot the resident app in a local Agent OS instance, with hot reload";
@@ -23,6 +23,7 @@ export default class Dev extends Command {
 
     const apps = await resolveApps(appDir, flags.apps, manifest);
     assertAtMostOneBrowserApp(apps);
+    assertAtMostOneTerminalApp(apps);
     if (apps.length > 1) this.log(`Running with companion apps: ${apps.slice(1).map((a) => a.name).join(", ")}`);
 
     this.log(`Building dev image for "${manifest.name}"...`);
@@ -71,13 +72,15 @@ export default class Dev extends Command {
     process.on("SIGTERM", shutdown);
   }
 
-  private printDiagnostics(appName: string, ports: { vnc?: number; novnc?: number; cdp?: number }): void {
-    if (ports.novnc) this.log(`[berth:dev] noVNC:  http://localhost:${ports.novnc}/vnc.html`);
-    if (ports.vnc) this.log(`[berth:dev] VNC:    localhost:${ports.vnc}`);
-    if (ports.cdp) this.log(`[berth:dev] CDP:    http://localhost:${ports.cdp}`);
+  private printDiagnostics(appName: string, ports: { vnc?: number; novnc?: number; cdp?: number; terminal?: number }): void {
+    if (ports.novnc) this.log(`[berth:dev] noVNC:    http://localhost:${ports.novnc}/vnc.html`);
+    if (ports.vnc) this.log(`[berth:dev] VNC:      localhost:${ports.vnc}`);
+    if (ports.cdp) this.log(`[berth:dev] CDP:      http://localhost:${ports.cdp}`);
     if (!ports.novnc && !ports.vnc && !ports.cdp) {
       this.log(`[berth:dev] "${appName}" declares no browser:* capability — no VNC/CDP ports exposed`);
     }
+    if (ports.terminal) this.log(`[berth:dev] Terminal: http://localhost:${ports.terminal}`);
+    else this.log(`[berth:dev] "${appName}" declares no terminal:* capability — no terminal port exposed`);
   }
 
   private async tailLogs(container: Docker.Container): Promise<void> {

@@ -49,6 +49,17 @@ RUN apk add --no-cache \
     chromium chromium-chromedriver \
     xvfb x11vnc websockify novnc \
     dbus ttf-freefont \
+    # terminal:* capability support — real system binaries, not an npm native
+    # binding, since `berth dev` bind-mounts host-built node_modules straight
+    # into this (Alpine/musl) container: a node-gyp-compiled addon built on a
+    # developer's own macOS/glibc-Linux host wouldn't load here at all. tmux
+    # owns the actual pty and is the single source of truth for its content;
+    # ttyd is just a web client attaching to that same tmux session (see
+    # apps/terminal/src/tmux-controller.ts) — same "spawned as a child of the
+    # app's own already-Landlocked process" design browser-native uses for
+    # Chromium, so terminal:* composes with filesystem/network capabilities
+    # the same way, rather than needing its own kernel-enforcement path.
+    tmux ttyd \
     # fuse3 provides fusermount3, which bazil.org/fuse's Mount() execs to
     # perform the actual mount(2) syscall — the daemon itself needs no other
     # userspace FUSE library (no libfuse-dev, no cgo binding to it).
@@ -90,7 +101,7 @@ COPY docker/rpc-relay.js /usr/local/bin/berth-rpc-relay.js
 COPY docker/egress-broker.cjs /usr/local/bin/berth-egress-broker.js
 COPY docker/github-api-broker.cjs /usr/local/bin/berth-github-api-broker.js
 
-EXPOSE 5900 6080 9222
+EXPOSE 5900 6080 9222 7681
 
 ENTRYPOINT ["/sbin/tini", "--", "/entrypoint.sh"]
 

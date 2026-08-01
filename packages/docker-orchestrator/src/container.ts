@@ -2,9 +2,14 @@ import Docker from "dockerode";
 import type { BerthManifest } from "@berth/manifest-schema";
 
 const BROWSER_PORTS = { vnc: "5900", novnc: "6080", cdp: "9222" } as const;
+const TERMINAL_PORT = "7681";
 
 function declaresBrowserCapability(manifest: BerthManifest): boolean {
   return manifest.capabilities.some((cap) => cap.startsWith("browser:"));
+}
+
+function declaresTerminalCapability(manifest: BerthManifest): boolean {
+  return manifest.capabilities.some((cap) => cap.startsWith("terminal:"));
 }
 
 export interface StartContainerOptions {
@@ -65,8 +70,8 @@ export interface StartContainerOptions {
 
 export interface RunningContainer {
   container: Docker.Container;
-  /** Host-mapped ports, populated only for apps declaring a browser:* capability. */
-  ports: { vnc?: number; novnc?: number; cdp?: number };
+  /** Host-mapped ports, populated only for apps declaring a browser:* or terminal:* capability. */
+  ports: { vnc?: number; novnc?: number; cdp?: number; terminal?: number };
 }
 
 export async function startContainer(options: StartContainerOptions): Promise<RunningContainer> {
@@ -75,6 +80,10 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
     options.apps && options.apps.length > 0
       ? options.apps.some((a) => declaresBrowserCapability(a.manifest))
       : declaresBrowserCapability(options.manifest);
+  const needsTerminalPort =
+    options.apps && options.apps.length > 0
+      ? options.apps.some((a) => declaresTerminalCapability(a.manifest))
+      : declaresTerminalCapability(options.manifest);
 
   const exposedPorts: Record<string, {}> = {};
   const portBindings: Record<string, Array<{ HostPort: string }>> = {};
@@ -83,6 +92,10 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
       exposedPorts[`${port}/tcp`] = {};
       portBindings[`${port}/tcp`] = [{ HostPort: "" }]; // "" = let Docker assign a free host port
     }
+  }
+  if (needsTerminalPort) {
+    exposedPorts[`${TERMINAL_PORT}/tcp`] = {};
+    portBindings[`${TERMINAL_PORT}/tcp`] = [{ HostPort: "" }];
   }
 
   const workingDir = options.workingDir ?? options.bindMount?.containerPath ?? "/app";
@@ -136,8 +149,8 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
   await container.start();
 
   let ports: RunningContainer["ports"] = {};
-  if (needsBrowserPorts) {
-    ports = await waitForPortMappings(container);
+  if (needsBrowserPorts || needsTerminalPort) {
+    ports = await waitForPortMappings(container, { browser: needsBrowserPorts, terminal: needsTerminalPort });
   }
 
   return { container, ports };
@@ -153,22 +166,26 @@ function hostPort(binding: Array<{ HostPort: string }> | undefined): number | un
  * inspect() right after start() resolves — a brief async window before the
  * port-publishing proxy is wired up. Poll briefly rather than trusting a
  * single inspect call, so `berth dev` doesn't print an empty port summary
- * for an app that legitimately does have browser:* ports mapped.
+ * for an app that legitimately does have browser:* or terminal:* ports mapped.
  */
 async function waitForPortMappings(
   container: Docker.Container,
+  needs: { browser: boolean; terminal: boolean },
   attempts = 20,
   delayMs = 100,
 ): Promise<RunningContainer["ports"]> {
   for (let attempt = 0; attempt < attempts; attempt++) {
     const inspect = await container.inspect();
     const mapped = inspect.NetworkSettings.Ports;
-    const ports = {
+    const ports: RunningContainer["ports"] = {
       vnc: hostPort(mapped[`${BROWSER_PORTS.vnc}/tcp`]),
       novnc: hostPort(mapped[`${BROWSER_PORTS.novnc}/tcp`]),
       cdp: hostPort(mapped[`${BROWSER_PORTS.cdp}/tcp`]),
+      terminal: hostPort(mapped[`${TERMINAL_PORT}/tcp`]),
     };
-    if (ports.vnc && ports.novnc && ports.cdp) return ports;
+    const browserReady = !needs.browser || (ports.vnc && ports.novnc && ports.cdp);
+    const terminalReady = !needs.terminal || ports.terminal;
+    if (browserReady && terminalReady) return ports;
     await new Promise((resolve) => setTimeout(resolve, delayMs));
   }
   return {};

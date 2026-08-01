@@ -64,6 +64,10 @@ function declaresBrowserCapability(manifest: BerthManifest): boolean {
   return manifest.capabilities.some((cap) => cap.startsWith("browser:"));
 }
 
+function declaresTerminalCapability(manifest: BerthManifest): boolean {
+  return manifest.capabilities.some((cap) => cap.startsWith("terminal:"));
+}
+
 /**
  * v1 scope: at most one app across the whole set may declare `browser:*` —
  * two simultaneous browser-capable apps would need per-app Xvfb
@@ -75,6 +79,21 @@ export function assertAtMostOneBrowserApp(apps: AppSpec[]): void {
   if (browserApps.length > 1) {
     console.error(
       `at most one app may declare a browser:* capability when running multiple apps together — found ${browserApps.length}: ${browserApps.map((a) => a.name).join(", ")}`,
+    );
+    process.exit(1);
+  }
+}
+
+/**
+ * Same reasoning as assertAtMostOneBrowserApp: the terminal port (7681) is a
+ * single fixed container port, not allocated per-app, so two terminal:*
+ * apps sharing a container would race to bind it.
+ */
+export function assertAtMostOneTerminalApp(apps: AppSpec[]): void {
+  const terminalApps = apps.filter((a) => declaresTerminalCapability(a.manifest));
+  if (terminalApps.length > 1) {
+    console.error(
+      `at most one app may declare a terminal:* capability when running multiple apps together — found ${terminalApps.length}: ${terminalApps.map((a) => a.name).join(", ")}`,
     );
     process.exit(1);
   }
