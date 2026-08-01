@@ -245,6 +245,19 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
+  packages/grants-server:
+    dependencies:
+      fastify:
+        specifier: ^5.2.1
+        version: 5.11.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.5
+        version: 22.20.1
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
   packages/manifest-schema:
     dependencies:
       yaml:

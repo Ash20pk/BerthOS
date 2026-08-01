@@ -9,6 +9,10 @@ export default class Deploy extends Command {
   static override flags = {
     fleet: Flags.string({ description: "e2b, daytona, or an alias from ~/.berthrc", required: true }),
     apps: Flags.string({ description: "comma-separated workspace-relative paths of companion resident apps to run alongside this one" }),
+    "grants-server": Flags.string({
+      description:
+        "berth-grants server URL to consult for human-approved capability grants — must be reachable from the deployed fleet, not just localhost",
+    }),
   };
 
   async run(): Promise<void> {
@@ -28,6 +32,9 @@ export default class Deploy extends Command {
     const appsEnv: Record<string, string> = {};
     if (apps.length > 1) {
       appsEnv.BERTH_APPS = JSON.stringify(apps.map((a) => ({ name: a.name, workingDir: `/app/apps/${a.name}` })));
+    }
+    if (flags["grants-server"]) {
+      appsEnv.BERTH_GRANTS_SERVER_URL = flags["grants-server"];
     }
     const target = { imageRef, manifest, env: { ...env, ...appsEnv } };
 

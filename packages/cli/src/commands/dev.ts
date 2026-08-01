@@ -10,6 +10,9 @@ export default class Dev extends Command {
   static override description = "Boot the resident app in a local Agent OS instance, with hot reload";
   static override flags = {
     apps: Flags.string({ description: "comma-separated workspace-relative paths of companion resident apps to run alongside this one" }),
+    "grants-server": Flags.string({
+      description: "berth-grants server URL to consult for human-approved capability grants, e.g. http://localhost:4874",
+    }),
   };
 
   async run(): Promise<void> {
@@ -43,6 +46,7 @@ export default class Dev extends Command {
         apps.length > 1
           ? apps.map((a) => ({ name: a.name, workingDir: `/workspace/${a.relPath}`, manifest: a.manifest }))
           : undefined,
+      env: flags["grants-server"] ? { BERTH_GRANTS_SERVER_URL: flags["grants-server"] } : undefined,
       docker,
     });
 
