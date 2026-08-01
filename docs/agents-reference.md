@@ -83,6 +83,7 @@ export OPENAI_API_KEY=sk-...
 node examples/single-agent.mjs      # createAgent() — one Computer, one Agent
 node examples/manager-crew.mjs      # Crew.withManager() — two in-process worker agents
 node examples/networked-crew.mjs    # Crew.networked() — two independent networked agent-computers
+node examples/chat.mjs              # interactive REPL — agent.chat(), live tool-call + sandbox log output
 ```
 
 ## Verification
