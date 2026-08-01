@@ -43,7 +43,7 @@ class E2bDeployHandle implements DeployHandle {
 }
 
 export function createE2bAdapter(): DeployAdapter {
-  return {
+  const adapter: DeployAdapter = {
     name: "e2b",
 
     async upload(target: DeployTarget) {
@@ -69,17 +69,28 @@ export function createE2bAdapter(): DeployAdapter {
       await handle.stop();
     },
 
+    // Sandbox.connect(id) turns a bare id back into a real instance with
+    // working isRunning()/kill()/logs — used both directly (by `berth logs
+    // --fleet`) and by list() below.
+    async connect(id: string) {
+      const e2b = await loadE2b();
+      if (typeof e2b.Sandbox?.connect !== "function") {
+        throw new Error("this version of the e2b SDK doesn't support Sandbox.connect()");
+      }
+      const sandbox = await e2b.Sandbox.connect(id);
+      return new E2bDeployHandle(sandbox.sandboxId ?? sandbox.id, sandbox);
+    },
+
     // `Sandbox.list()` (confirmed against the actual installed e2b SDK's
     // type definitions, v1.13.2) returns plain ListedSandbox summaries —
     // {sandboxId, state, ...} — not live instances with isRunning()/kill()/
-    // logs. Sandbox.connect(sandboxId) is what turns an id back into a real
-    // instance those methods work on, same as start()'s own Sandbox.create().
+    // logs, hence reconnecting each one via connect() above.
     async list() {
       const e2b = await loadE2b();
       if (typeof e2b.Sandbox?.list !== "function" || typeof e2b.Sandbox?.connect !== "function") return [];
       const summaries = await e2b.Sandbox.list();
-      const sandboxes = await Promise.all((summaries ?? []).map((s: any) => e2b.Sandbox.connect(s.sandboxId ?? s.id)));
-      return sandboxes.map((sandbox: any) => new E2bDeployHandle(sandbox.sandboxId ?? sandbox.id, sandbox));
+      return Promise.all((summaries ?? []).map((s: any) => adapter.connect!(s.sandboxId ?? s.id)));
     },
   };
+  return adapter;
 }

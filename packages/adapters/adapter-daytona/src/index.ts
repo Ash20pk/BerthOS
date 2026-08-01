@@ -76,6 +76,16 @@ export function createDaytonaAdapter(): DeployAdapter {
       await handle.stop();
     },
 
+    // Daytona.get(sandboxIdOrName) resolves a bare id back into a live
+    // Sandbox — used by `berth logs --fleet` to re-attach without starting
+    // a new instance.
+    async connect(id: string) {
+      const daytona = await loadDaytona();
+      const client = new daytona.Daytona();
+      const sandbox = await client.get(id);
+      return new DaytonaDeployHandle(sandbox.id, sandbox);
+    },
+
     // Correct against the real SDK: daytona.list() returns an
     // AsyncIterableIterator<Sandbox> of live instances directly — no
     // separate "connect by id" step needed, unlike adapter-e2b.

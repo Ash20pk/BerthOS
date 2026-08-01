@@ -37,4 +37,11 @@ export interface DeployAdapter {
    * fleet status`) fall back to locally-persisted state instead.
    */
   list?(): Promise<DeployHandle[]>;
+  /**
+   * Reconnects to a specific already-running instance by id, if this
+   * provider's SDK supports resolving one directly — optional for the same
+   * reason list() is. Used by `berth logs --fleet` to re-attach to a
+   * previously-started remote instance without starting a new one.
+   */
+  connect?(id: string): Promise<DeployHandle>;
 }
