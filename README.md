@@ -39,9 +39,9 @@ apps/
   browser-native/      first-party resident app — headless Chromium + VNC
   filesystem/          first-party resident app — reads/writes /workspace, publishes fs.file_created
   code-editor/         first-party resident app — reacts to fs.file_created via the context bus
+  github-assistant/    first-party resident app — the PRD's example manifest, deployed and milestone-tested
 examples/
   hello-world/         minimal resident app
-  github-assistant/     the PRD's example manifest, made runnable
 ```
 
 ## Status
