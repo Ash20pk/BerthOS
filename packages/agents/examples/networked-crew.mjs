@@ -14,7 +14,7 @@ import { Agent, Crew, createOpenAIProvider, bootNetworkedAgent } from "../dist/i
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");
 const FILESYSTEM_APP_DIR = join(REPO_ROOT, "apps", "filesystem");
-const NOTES_APP_DIR = join(REPO_ROOT, "examples", "notes");
+const NOTES_APP_DIR = join(REPO_ROOT, "apps", "notes");
 
 async function main() {
   if (!process.env.OPENAI_API_KEY) {
@@ -33,7 +33,7 @@ async function main() {
     env: apiKeyEnv,
   });
 
-  console.log("Booting peer 'notetaker' (its own computer, examples/notes tools)...");
+  console.log("Booting peer 'notetaker' (its own computer, apps/notes tools)...");
   const notetaker = await bootNetworkedAgent({
     name: "notetaker",
     apps: [NOTES_APP_DIR],

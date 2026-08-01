@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Multi-agent composition, in-process: one Computer loaded with two resident
-// apps (apps/filesystem and examples/notes), one worker Agent per app, and a
+// apps (apps/filesystem and apps/notes), one worker Agent per app, and a
 // manager Agent that delegates via Crew.withManager() — the "agent-as-tool"
 // pattern (Agent.asTool()). Requires OPENAI_API_KEY — skips (not fails)
 // if absent.
@@ -11,7 +11,7 @@ import { Computer, Agent, Crew, createOpenAIProvider } from "../dist/index.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");
 const FILESYSTEM_APP_DIR = join(REPO_ROOT, "apps", "filesystem");
-const NOTES_APP_DIR = join(REPO_ROOT, "examples", "notes");
+const NOTES_APP_DIR = join(REPO_ROOT, "apps", "notes");
 
 async function main() {
   if (!process.env.OPENAI_API_KEY) {
@@ -19,7 +19,7 @@ async function main() {
     return;
   }
 
-  console.log("Booting one Computer with both apps/filesystem and examples/notes loaded...");
+  console.log("Booting one Computer with both apps/filesystem and apps/notes loaded...");
   const computer = await Computer.boot({ apps: [FILESYSTEM_APP_DIR, NOTES_APP_DIR] });
 
   try {

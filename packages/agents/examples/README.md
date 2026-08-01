@@ -36,7 +36,7 @@ Read them in that order — each introduces one new idea on top of the last:
   `Computer` from a resident app directory, get back an `Agent` whose tools
   are that app's exports.
 - **`manager-crew.mjs`** — one `Computer` loaded with two resident apps
-  (`apps/filesystem` + `examples/notes`), one worker `Agent` per app, and a
+  (`apps/filesystem` + `apps/notes`), one worker `Agent` per app, and a
   manager `Agent` that delegates via `Crew.withManager()` — the
   "agent-as-tool" pattern (`Agent.asTool()`).
 - **`networked-crew.mjs`** — the same delegation shape, but each worker is a
