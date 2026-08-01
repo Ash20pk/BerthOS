@@ -76,6 +76,7 @@ COPY --from=semantic-fs-daemon-builder /semantic-fs-daemon/semantic-fs-daemon /u
 
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
+COPY docker/rpc-relay.js /usr/local/bin/berth-rpc-relay.js
 
 EXPOSE 5900 6080 9222
 

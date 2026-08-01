@@ -28,6 +28,16 @@ export interface BuildImageOptions {
   /** Image tag, e.g. "berth/github-assistant:dev" or "berth/github-assistant:1.0.0". */
   tag: string;
   target: BuildTarget;
+  /**
+   * Companion apps for a multi-app-per-sandbox build — staged into
+   * `apps/<name>/` subdirectories instead of the single-app flattened root.
+   * Requires `appName` (the primary's own name, for its own apps/<name>/
+   * subdirectory). Omitted (or empty) preserves today's single-app layout
+   * exactly.
+   */
+  companions?: { name: string; appDir: string }[];
+  /** The primary app's own name — only needed when `companions` is non-empty. */
+  appName?: string;
   docker?: Docker;
 }
 
@@ -87,7 +97,22 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
 
   try {
     if (options.target === "production") {
-      await stageProductionSource(options.appDir, stagingDir);
+      // Multi-app builds stage each app (primary + companions) into its own
+      // apps/<name>/ subdirectory instead of flattening one app's source
+      // into the staging root — `entrypoint.sh`'s multi-app branch expects
+      // each app under /app/apps/<name>. Dev builds never need this: source
+      // arrives via a bind mount at container start (this staged copy is
+      // never COPY'd into the dev Dockerfile stage at all), so companions is
+      // simply ignored there.
+      if (options.companions && options.companions.length > 0) {
+        if (!options.appName) throw new Error("buildImage: appName is required when companions is non-empty");
+        await stageProductionSource(options.appDir, join(stagingDir, "apps", options.appName));
+        for (const companion of options.companions) {
+          await stageProductionSource(companion.appDir, join(stagingDir, "apps", companion.name));
+        }
+      } else {
+        await stageProductionSource(options.appDir, stagingDir);
+      }
     } else {
       await cp(options.appDir, stagingDir, {
         recursive: true,
