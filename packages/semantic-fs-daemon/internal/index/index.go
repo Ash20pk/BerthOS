@@ -57,6 +57,23 @@ func Open(dbPath string) (*Index, error) {
 		return nil, fmt.Errorf("create files table: %w", err)
 	}
 
+	// Sidecar, not a column on files: re-embedding (e.g. a model upgrade)
+	// shouldn't require rewriting the hot files table. No FK cascade is
+	// enabled (modernc.org/sqlite doesn't enforce `REFERENCES` without a
+	// pragma this code doesn't set), so Remove()/Rename() keep this in sync
+	// by hand.
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS files_vec (
+			path TEXT PRIMARY KEY,
+			embedding BLOB NOT NULL,
+			model TEXT NOT NULL,
+			dim INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL
+		)
+	`); err != nil {
+		return nil, fmt.Errorf("create files_vec table: %w", err)
+	}
+
 	return &Index{db: db}, nil
 }
 
@@ -78,12 +95,33 @@ func (idx *Index) RecordWrite(path, createdBy string) error {
 }
 
 func (idx *Index) Remove(path string) error {
+	if _, err := idx.db.Exec(`DELETE FROM files_vec WHERE path = ?`, path); err != nil {
+		return err
+	}
 	_, err := idx.db.Exec(`DELETE FROM files WHERE path = ?`, path)
 	return err
 }
 
 func (idx *Index) Rename(oldPath, newPath string) error {
+	if _, err := idx.db.Exec(`UPDATE files_vec SET path = ? WHERE path = ?`, newPath, oldPath); err != nil {
+		return err
+	}
 	_, err := idx.db.Exec(`UPDATE files SET path = ? WHERE path = ?`, newPath, oldPath)
+	return err
+}
+
+// SetEmbedding upserts path's embedding vector. Called after a successful
+// Tag() when the caller (the SDK's tag() control call) supplied one —
+// embeddings are an enhancement, not a correctness requirement, so a failure
+// here is logged by the caller and never turns a working Tag() into a
+// failure for the app.
+func (idx *Index) SetEmbedding(path string, embedding []float32, model string) error {
+	now := time.Now().Unix()
+	_, err := idx.db.Exec(`
+		INSERT INTO files_vec (path, embedding, model, dim, updated_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(path) DO UPDATE SET embedding = excluded.embedding, model = excluded.model, dim = excluded.dim, updated_at = excluded.updated_at
+	`, path, encodeEmbedding(embedding), model, len(embedding), now)
 	return err
 }
 
@@ -121,20 +159,38 @@ func (idx *Index) Tag(path, task string, relatedApps []string) error {
 	return nil
 }
 
-// Query is a v0 keyword-overlap ranker, not semantic/embedding search: it
-// lowercases the query into words and scores each row by how many of those
-// words appear (as substrings) in its path, task, created_by, or
-// related_apps. That's enough to satisfy the PRD's milestone ("find files
-// related to the auth bug" over a handful of tagged fixtures) without
-// pulling in an embedding model — a real ranking model is future work, not
-// required to prove the primitive.
-func (idx *Index) Query(text string, limit int) ([]FileMeta, error) {
+// embeddingMatchThreshold is the minimum cosine similarity for a purely
+// semantic match (zero keyword overlap) to be included at all — without
+// this, a row with keywordScore == 0 would never surface no matter how
+// semantically close it is, defeating the point of adding embeddings.
+// Calibrated by hand against real MiniLM output for this SDK's actual
+// embedding input shape (short "task + relatedApps + path" strings, not full
+// sentences): a genuinely related pair scored ~0.30 cosine similarity, an
+// unrelated pair in the same short/tag-like style scored ~0.04 — 0.2 sits
+// well clear of both, rather than being picked to make one example pass.
+const embeddingMatchThreshold = 0.2
+
+// Query hybridizes v0's keyword-overlap ranking with optional embedding
+// similarity: it lowercases the query into words and scores each row by how
+// many appear (as substrings) in its path, task, created_by, or
+// related_apps, AND — when the caller supplied a queryEmbedding and a row
+// has a stored embedding from the SAME model — adds a cosine-similarity
+// term. Keyword hits (small integers) dominate ranking over the 0-1 cosine
+// range, so exact-name/author lookups still win, while purely-semantic
+// matches (keywordScore 0) rank among themselves by cosine. A row is only
+// dropped if it has NEITHER a keyword hit NOR a strong-enough embedding
+// match — v0 dropped every zero-keyword-hit row outright, which would
+// silently discard exactly the matches embeddings exist to surface.
+func (idx *Index) Query(text string, queryEmbedding []float32, queryModel string, limit int) ([]FileMeta, error) {
 	words := strings.Fields(strings.ToLower(text))
-	if len(words) == 0 {
+	if len(words) == 0 && len(queryEmbedding) == 0 {
 		return nil, nil
 	}
 
-	rows, err := idx.db.Query(`SELECT path, created_by, task, related_apps, created_at, updated_at FROM files`)
+	rows, err := idx.db.Query(`
+		SELECT f.path, f.created_by, f.task, f.related_apps, f.created_at, f.updated_at, v.embedding, v.model
+		FROM files f LEFT JOIN files_vec v ON v.path = f.path
+	`)
 	if err != nil {
 		return nil, err
 	}
@@ -142,29 +198,37 @@ func (idx *Index) Query(text string, limit int) ([]FileMeta, error) {
 
 	type scored struct {
 		meta  FileMeta
-		score int
+		score float64
 	}
 	var candidates []scored
 
 	for rows.Next() {
 		var (
-			m           FileMeta
-			relatedJSON string
+			m              FileMeta
+			relatedJSON    string
+			embeddingBytes []byte
+			model          sql.NullString
 		)
-		if err := rows.Scan(&m.Path, &m.CreatedBy, &m.Task, &relatedJSON, &m.CreatedAt, &m.UpdatedAt); err != nil {
+		if err := rows.Scan(&m.Path, &m.CreatedBy, &m.Task, &relatedJSON, &m.CreatedAt, &m.UpdatedAt, &embeddingBytes, &model); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(relatedJSON), &m.RelatedApps)
 
 		haystack := strings.ToLower(m.Path + " " + m.CreatedBy + " " + m.Task + " " + strings.Join(m.RelatedApps, " "))
-		score := 0
+		keywordScore := 0
 		for _, w := range words {
 			if strings.Contains(haystack, w) {
-				score++
+				keywordScore++
 			}
 		}
-		if score > 0 {
-			candidates = append(candidates, scored{meta: m, score: score})
+
+		cosineSim := 0.0
+		if len(queryEmbedding) > 0 && len(embeddingBytes) > 0 && model.Valid && model.String == queryModel {
+			cosineSim = cosineSimilarity(queryEmbedding, decodeEmbedding(embeddingBytes))
+		}
+
+		if keywordScore > 0 || cosineSim >= embeddingMatchThreshold {
+			candidates = append(candidates, scored{meta: m, score: float64(keywordScore) + cosineSim})
 		}
 	}
 	if err := rows.Err(); err != nil {
