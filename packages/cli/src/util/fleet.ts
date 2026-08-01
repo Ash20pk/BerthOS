@@ -8,14 +8,18 @@ import { createDaytonaAdapter } from "@berth/adapter-daytona";
 interface FleetAlias {
   adapter: "e2b" | "daytona";
   env?: Record<string, string>;
+  /** How many instances `berth deploy --fleet=<alias>` starts by default. Overridable per-invocation via --count. Defaults to 1. */
+  count?: number;
 }
 
 type FleetConfig = Record<string, FleetAlias>;
 
+const DEFAULT_BERTHRC_PATH = join(homedir(), ".berthrc");
+
 /** `~/.berthrc` maps fleet aliases (e.g. "prod") to a concrete adapter + env, so `--fleet=prod` doesn't have to be a literal adapter name. */
-async function loadFleetConfig(): Promise<FleetConfig> {
+async function loadFleetConfig(configPath: string): Promise<FleetConfig> {
   try {
-    const raw = await readFile(join(homedir(), ".berthrc"), "utf-8");
+    const raw = await readFile(configPath, "utf-8");
     return JSON.parse(raw) as FleetConfig;
   } catch {
     return {};
@@ -26,17 +30,21 @@ function instantiate(adapterName: "e2b" | "daytona"): DeployAdapter {
   return adapterName === "e2b" ? createE2bAdapter() : createDaytonaAdapter();
 }
 
-export async function resolveFleet(fleetName: string): Promise<{ adapter: DeployAdapter; env?: Record<string, string> }> {
+/** `configPath` defaults to ~/.berthrc — overridable so tests don't touch the real one. */
+export async function resolveFleet(
+  fleetName: string,
+  configPath = DEFAULT_BERTHRC_PATH,
+): Promise<{ adapter: DeployAdapter; env?: Record<string, string>; count: number }> {
   if (fleetName === "e2b" || fleetName === "daytona") {
-    return { adapter: instantiate(fleetName) };
+    return { adapter: instantiate(fleetName), count: 1 };
   }
 
-  const config = await loadFleetConfig();
+  const config = await loadFleetConfig(configPath);
   const alias = config[fleetName];
   if (!alias) {
     throw new Error(
       `unknown fleet "${fleetName}" — expected "e2b", "daytona", or an alias defined in ~/.berthrc (e.g. {"prod": {"adapter": "e2b"}})`,
     );
   }
-  return { adapter: instantiate(alias.adapter), env: alias.env };
+  return { adapter: instantiate(alias.adapter), env: alias.env, count: alias.count ?? 1 };
 }
