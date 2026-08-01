@@ -24,8 +24,13 @@ type RpcResponse = { id: string; result: unknown } | { id: string; error: string
  * framing over their own Unix socket instead — reached from the host via
  * `docker exec` + a tiny relay (see docker-orchestrator's relay.ts), not a
  * new wire format.
+ *
+ * `networkPort` (or the `BERTH_NETWORK_PORT` env var) binds that same framing
+ * on a TCP listener instead of a Unix socket, reachable from *other*
+ * containers on a shared Docker network (see @berth/agent-runtime's
+ * Crew.networked()) rather than only from the host.
  */
-export function startRpcServer(app: BerthApp, options?: { socketPath?: string }): void {
+export function startRpcServer(app: BerthApp, options?: { socketPath?: string; networkPort?: number }): void {
   const rl = readline.createInterface({ input: process.stdin, terminal: false });
 
   rl.on("line", (line) => {
@@ -38,16 +43,20 @@ export function startRpcServer(app: BerthApp, options?: { socketPath?: string })
   if (options?.socketPath) {
     startSocketServer(app, options.socketPath);
   }
+
+  const networkPort = options?.networkPort ?? envNetworkPort();
+  if (networkPort) {
+    startTcpServer(app, networkPort);
+  }
 }
 
-function startSocketServer(app: BerthApp, socketPath: string): void {
-  try {
-    unlinkSync(socketPath);
-  } catch {
-    // fine if it didn't exist yet
-  }
+function envNetworkPort(): number | undefined {
+  const raw = process.env.BERTH_NETWORK_PORT;
+  return raw ? Number(raw) : undefined;
+}
 
-  const server = net.createServer((socket) => {
+function connectionHandler(app: BerthApp): (socket: net.Socket) => void {
+  return (socket) => {
     let buffer = "";
     socket.on("data", (chunk: Buffer) => {
       buffer += chunk.toString("utf-8");
@@ -58,10 +67,26 @@ function startSocketServer(app: BerthApp, socketPath: string): void {
         void handleFramedLine(app, line, (resp) => socket.write(resp + "\n"));
       }
     });
-  });
+  };
+}
 
+function startSocketServer(app: BerthApp, socketPath: string): void {
+  try {
+    unlinkSync(socketPath);
+  } catch {
+    // fine if it didn't exist yet
+  }
+
+  const server = net.createServer(connectionHandler(app));
   server.listen(socketPath, () => {
     console.error(`[berth:runtime] RPC server also listening on ${socketPath}`);
+  });
+}
+
+function startTcpServer(app: BerthApp, port: number): void {
+  const server = net.createServer(connectionHandler(app));
+  server.listen(port, "0.0.0.0", () => {
+    console.error(`[berth:runtime] RPC server also listening on 0.0.0.0:${port}`);
   });
 }
 
