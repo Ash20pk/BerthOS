@@ -1,4 +1,4 @@
-import { Command } from "@oclif/core";
+import { Command, Flags } from "@oclif/core";
 import Docker from "dockerode";
 import { restartContainer, startContainer, stopContainer, streamLogs, watchApp } from "@berth/docker-orchestrator";
 import { loadManifestOrExit } from "../util/manifest.js";
@@ -7,8 +7,14 @@ import { resolveDevBindMount } from "../util/workspace.js";
 
 export default class Dev extends Command {
   static override description = "Boot the resident app in a local Agent OS instance, with hot reload";
+  static override flags = {
+    "grants-server": Flags.string({
+      description: "berth-grants server URL to consult for human-approved capability grants, e.g. http://localhost:4874",
+    }),
+  };
 
   async run(): Promise<void> {
+    const { flags } = await this.parse(Dev);
     const appDir = process.cwd();
     const manifest = await loadManifestOrExit(appDir);
     const docker = new Docker();
@@ -30,6 +36,7 @@ export default class Dev extends Command {
       bindMount,
       workingDir,
       installMarkerVolume: volumeName,
+      env: flags["grants-server"] ? { BERTH_GRANTS_SERVER_URL: flags["grants-server"] } : undefined,
       docker,
     });
 

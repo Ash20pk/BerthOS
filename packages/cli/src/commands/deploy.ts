@@ -7,6 +7,10 @@ export default class Deploy extends Command {
   static override description = "Build and deploy the resident app to a fleet (E2B, Daytona, or an alias in ~/.berthrc)";
   static override flags = {
     fleet: Flags.string({ description: "e2b, daytona, or an alias from ~/.berthrc", required: true }),
+    "grants-server": Flags.string({
+      description:
+        "berth-grants server URL to consult for human-approved capability grants — must be reachable from the deployed fleet, not just localhost",
+    }),
   };
 
   async run(): Promise<void> {
@@ -19,7 +23,11 @@ export default class Deploy extends Command {
     const imageRef = productionImageTag(manifest);
 
     const { adapter, env } = await resolveFleet(flags.fleet);
-    const target = { imageRef, manifest, env };
+    const target = {
+      imageRef,
+      manifest,
+      env: flags["grants-server"] ? { ...env, BERTH_GRANTS_SERVER_URL: flags["grants-server"] } : env,
+    };
 
     this.log(`Uploading to ${adapter.name}...`);
     const { remoteImageRef } = await adapter.upload(target);

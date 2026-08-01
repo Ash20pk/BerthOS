@@ -16,6 +16,9 @@ export default class Test extends Command {
   static override description = "Run the resident app in an isolated test OS instance and check its export contracts";
   static override flags = {
     json: Flags.boolean({ description: "emit a structured JSON summary" }),
+    "grants-server": Flags.string({
+      description: "berth-grants server URL to consult for human-approved capability grants, e.g. http://localhost:4874",
+    }),
   };
 
   async run(): Promise<void> {
@@ -23,16 +26,19 @@ export default class Test extends Command {
     const appDir = process.cwd();
     const manifest = await loadManifestOrExit(appDir);
     const docker = new Docker();
+    const grantsServerEnv = flags["grants-server"] ? [`BERTH_GRANTS_SERVER_URL=${flags["grants-server"]}`] : [];
 
     if (!flags.json) this.log(`Building test image for "${manifest.name}"...`);
     await buildProductionImage(appDir, manifest);
     const image = productionImageTag(manifest);
 
-    const exportCheck = await this.runInContainer(docker, image, [
-      "node",
-      "node_modules/@berth/sdk/dist/check-exports.js",
-    ]);
-    const appTestCheck = await this.maybeRunAppTests(docker, image, appDir);
+    const exportCheck = await this.runInContainer(
+      docker,
+      image,
+      ["node", "node_modules/@berth/sdk/dist/check-exports.js"],
+      grantsServerEnv,
+    );
+    const appTestCheck = await this.maybeRunAppTests(docker, image, appDir, grantsServerEnv);
 
     const summary = {
       manifest: manifest.name,
@@ -55,6 +61,7 @@ export default class Test extends Command {
     docker: Docker,
     image: string,
     appDir: string,
+    grantsServerEnv: string[],
   ): Promise<{ exitCode: number; output: string } | null> {
     const fs = await import("node:fs/promises");
     const path = await import("node:path");
@@ -64,13 +71,14 @@ export default class Test extends Command {
     } catch {
       return null;
     }
-    return this.runInContainer(docker, image, ["npm", "test"]);
+    return this.runInContainer(docker, image, ["npm", "test"], grantsServerEnv);
   }
 
   private async runInContainer(
     docker: Docker,
     image: string,
     cmd: string[],
+    grantsServerEnv: string[] = [],
   ): Promise<{ exitCode: number; output: string; parsed?: ExportCheckResult }> {
     let output = "";
     const stdout = new PassThrough();
@@ -79,7 +87,7 @@ export default class Test extends Command {
     });
 
     const [result] = await docker.run(image, cmd, stdout, {
-      Env: ["BERTH_TEST_MODE=1"],
+      Env: ["BERTH_TEST_MODE=1", ...grantsServerEnv],
       HostConfig: { AutoRemove: true },
     });
 
