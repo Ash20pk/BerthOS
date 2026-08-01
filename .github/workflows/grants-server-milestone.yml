@@ -1,0 +1,34 @@
+name: Grants Server Milestone (Phase 3)
+
+# Real, running verification of the human-approval workflow — see
+# packages/docker-orchestrator/test/grants-server-milestone.mjs. Proves a
+# capability approved through a real running @berth/grants-server after the
+# fact lands in the effective capability policy at the app's next boot.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.21.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Run grants-server-milestone.mjs
+        working-directory: packages/docker-orchestrator
+        run: node test/grants-server-milestone.mjs
