@@ -6,7 +6,12 @@ capabilities:
   - github:write:issues
   - filesystem:read:/workspace
   - browser:navigate:*.github.com
-  - network:connect:443
+  # Narrowed to the GitHub API broker's own local port (see
+  # docs/github-api-scoping-reference.md) rather than the real remote 443 —
+  # same pattern apps/browser-native uses for the egress broker: the kernel
+  # only ever needs to permit reaching the local broker, which does the
+  # real host/verb-level enforcement.
+  - network:connect:8092
 
 exports:
   - name: create_issue

@@ -1,23 +1,32 @@
 #!/usr/bin/env node
 // Real, running verification that apps/github-assistant (promoted from
 // examples/github-assistant, now a deployed apps/* resident app) actually
-// calls the GitHub REST API for real — against a local mock standing in for
-// api.github.com, not a mock of the app itself.
+// calls the GitHub REST API for real.
 //
-// apps/github-assistant/berth.yml declares network:connect:443 (GitHub's
-// real port) so the app is kernel-permitted to reach out at all under
-// deny-by-default network policy, but this test's mock listens on an
-// arbitrary high port instead of 443 — so it grants network:connect:<mock
-// port> through a real running @berth/grants-server + the `berth grants
-// approve` HTTP contract (same pattern as grants-server-milestone.mjs),
-// rather than hand-editing the manifest for the test.
+// Two scenarios:
+//   runBypassScenario() — the app's own request-shaping logic (auth header,
+//   body, path construction), against a local plain-HTTP mock reached
+//   directly (GITHUB_API_BASE_URL override), independent of the broker.
+//   runBrokerScenario() — the actual github-api-broker.cjs path: the app
+//   really dials https://api.github.com through undici's ProxyAgent, the
+//   broker terminates that TLS session for real (its own generated CA/leaf
+//   cert), decrypts, checks the real method+path against declared
+//   github:read:*/github:write:* capabilities, and either forwards to a
+//   mock upstream (redirected via BERTH_GITHUB_API_UPSTREAM_HOST, matching
+//   what a real broker->api.github.com hop would do) or refuses outright
+//   for an out-of-scope request — proving real verb/path enforcement, not
+//   simulated.
 import Docker from "dockerode";
 import http from "node:http";
+import https from "node:https";
+import net from "node:net";
+import tls from "node:tls";
+import { execFileSync } from "node:child_process";
 import { spawn } from "node:child_process";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { loadManifest } from "@berth/manifest-schema";
 import { buildImage, startContainer, stopContainer } from "../dist/index.js";
@@ -29,10 +38,16 @@ const GRANTS_SERVER_ENTRY = join(REPO_ROOT, "packages", "grants-server", "dist",
 const GRANTS_PORT = 56902;
 const MOCK_GITHUB_PORT = 56900;
 const GRANTED_CAPABILITY = `network:connect:${MOCK_GITHUB_PORT}`;
+const BROKER_UPSTREAM_MOCK_PORT = 56904;
 
 const docker = new Docker();
 
 async function main() {
+  await runBypassScenario();
+  await runBrokerScenario();
+}
+
+async function runBypassScenario() {
   const manifest = await loadManifest(join(APP_DIR, "berth.yml"));
 
   const dataDir = await mkdtemp(join(tmpdir(), "berth-github-assistant-milestone-"));
@@ -119,6 +134,191 @@ async function main() {
     mock.close();
     await rm(dataDir, { recursive: true, force: true });
   }
+}
+
+async function runBrokerScenario() {
+  console.log("\n=== Broker scenario: real TLS-terminating verb/path enforcement ===");
+  const manifest = await loadManifest(join(APP_DIR, "berth.yml"));
+
+  // A cert dir under the bind-mounted REPO_ROOT, so the mock upstream's CA
+  // (generated on the host) is readable from inside the container too, via
+  // /workspace — the same trick startContainer's bindMount already provides
+  // for everything else in this repo.
+  const certDir = await mkdtemp(join(REPO_ROOT, ".tmp-github-broker-test-"));
+  const relativeCertDir = certDir.slice(REPO_ROOT.length + 1);
+
+  try {
+    const mockUpstream = await startMockUpstreamHttps(BROKER_UPSTREAM_MOCK_PORT, certDir);
+
+    console.log("\n--- Building github-assistant's dev image ---");
+    await buildImage({ appDir: APP_DIR, tag: "berth/github-assistant:dev", target: "dev", docker });
+
+    console.log("\n--- Booting github-assistant's sandbox with the real GitHub API broker active ---");
+    const running = await startContainer({
+      image: "berth/github-assistant:dev",
+      name: "berth-github-assistant-broker-milestone",
+      manifest,
+      bindMount: { hostPath: REPO_ROOT, containerPath: "/workspace" },
+      workingDir: "/workspace/apps/github-assistant",
+      env: {
+        GITHUB_TOKEN: "milestone-test-token",
+        GITHUB_REPO: "octocat/hello-world",
+        // No GITHUB_API_BASE_URL here — the app dials the real
+        // "https://api.github.com", exactly as it would in production, so
+        // the broker's CONNECT-interception of that literal hostname is
+        // genuinely exercised rather than bypassed.
+        BERTH_GITHUB_API_UPSTREAM_HOST: "host.docker.internal",
+        BERTH_GITHUB_API_UPSTREAM_PORT: String(BROKER_UPSTREAM_MOCK_PORT),
+        BERTH_GITHUB_API_UPSTREAM_CA_PATH: `/workspace/${relativeCertDir}/mock-ca.crt`,
+      },
+      docker,
+    });
+
+    const containerLog = await startLogCapture(running.container);
+    try {
+      await waitFor(
+        () => /\[github-api-broker\] listening on/.test(containerLog.text()),
+        20000,
+        "github-api-broker to start",
+      );
+      await waitFor(() => /"github-assistant" ready/.test(containerLog.text()), 20000, "github-assistant runtime ready");
+
+      const rpc = await createRpcClient(running.container);
+
+      console.log("\n--- Test 3: get_repo_summary, routed through undici's ProxyAgent + the real broker ---");
+      const summary = await rpc.call({ id: "3", export: "get_repo_summary", input: { repo: "octocat/hello-world" } });
+      console.log("response:", summary);
+      assert(!summary.error, `expected get_repo_summary to succeed through the broker, got error: ${summary.error}`);
+      assert(
+        summary.result?.summary === "A mock repo (via broker)",
+        `expected the mock upstream's real response to arrive through the broker, got: ${JSON.stringify(summary.result)}`,
+      );
+
+      const getReq = mockUpstream.requestsReceived.find((r) => r.method === "GET" && r.url === "/repos/octocat/hello-world");
+      assert(getReq, "expected the mock upstream to have received a real GET, forwarded by the broker");
+
+      const allowedLog = containerLog.text().match(/\[github-api-broker\] \{"event":"allowed".*"github:read:repos".*\}/);
+      assert(allowedLog, "expected the broker's own allow-log for this request — the app's traffic may be bypassing the broker entirely");
+      console.log("PASS — a real HTTPS request to api.github.com was genuinely decrypted, allowed, and forwarded by the broker.");
+
+      console.log("\n--- Test 4: a request for a scope NOT covered by any declared capability is really denied ---");
+      // Driven directly against the broker (not through the app, which
+      // never calls this endpoint) — proves the broker enforces scope for
+      // real, not just for whatever the app happens to call today.
+      // apps/github-assistant declares github:read:repos/github:write:issues
+      // only — "pulls" is covered by neither.
+      const denied = await execInContainer(running.container, [
+        "node",
+        "-e",
+        rawBrokerRequestScript("POST", "/repos/octocat/hello-world/pulls"),
+      ]);
+      console.log("raw broker response status:", denied.trim());
+      assert(denied.includes("403"), `expected a 403 for an out-of-scope request, got: ${denied}`);
+      assert(
+        !mockUpstream.requestsReceived.some((r) => r.url.includes("/pulls")),
+        "expected the denied request to never reach the mock upstream at all",
+      );
+      const deniedLog = containerLog.text().match(/\[github-api-broker\] \{"event":"denied".*"github:write:pulls".*\}/);
+      assert(deniedLog, "expected the broker's own denial-log for this out-of-scope request");
+      console.log("PASS — a request outside every declared github:*  capability's scope was refused by the broker before ever reaching the real API.");
+
+      rpc.close();
+      console.log(
+        "\nALL PASS — github-api-broker.cjs performs a genuine decrypt/decide/re-encrypt round trip: an in-scope " +
+          "request is forwarded for real, an out-of-scope one is refused before the real API is ever touched.",
+      );
+    } finally {
+      await containerLog.stop();
+      await stopContainer(running.container);
+    }
+
+    mockUpstream.close();
+  } finally {
+    await rm(certDir, { recursive: true, force: true });
+  }
+}
+
+/** Stands in for the real api.github.com on the far side of the broker's own outbound leg — a real HTTPS server, with a cert the broker is told to trust via BERTH_GITHUB_API_UPSTREAM_CA_PATH. */
+async function startMockUpstreamHttps(port, certDir) {
+  const caKey = join(certDir, "mock-ca.key");
+  const caCert = join(certDir, "mock-ca.crt");
+  const serverKey = join(certDir, "mock-server.key");
+  const serverCsr = join(certDir, "mock-server.csr");
+  const serverCert = join(certDir, "mock-server.crt");
+  const extFile = join(certDir, "mock-server.ext");
+
+  execFileSync("openssl", ["genrsa", "-out", caKey, "2048"], { stdio: "ignore" });
+  execFileSync("openssl", ["req", "-x509", "-new", "-key", caKey, "-sha256", "-days", "2", "-out", caCert, "-subj", "/CN=Milestone Test Mock Upstream CA"], {
+    stdio: "ignore",
+  });
+  execFileSync("openssl", ["genrsa", "-out", serverKey, "2048"], { stdio: "ignore" });
+  execFileSync("openssl", ["req", "-new", "-key", serverKey, "-out", serverCsr, "-subj", "/CN=api.github.com"], { stdio: "ignore" });
+  await writeFile(extFile, "subjectAltName=DNS:api.github.com\n");
+  execFileSync(
+    "openssl",
+    ["x509", "-req", "-in", serverCsr, "-CA", caCert, "-CAkey", caKey, "-CAcreateserial", "-out", serverCert, "-days", "2", "-sha256", "-extfile", extFile],
+    { stdio: "ignore" },
+  );
+
+  const { readFile } = await import("node:fs/promises");
+  const requestsReceived = [];
+  const server = https.createServer({ cert: await readFile(serverCert), key: await readFile(serverKey) }, (req, res) => {
+    let body = "";
+    req.on("data", (chunk) => (body += chunk));
+    req.on("end", () => {
+      requestsReceived.push({ method: req.method, url: req.url, body });
+      res.setHeader("content-type", "application/json");
+      if (req.method === "GET" && req.url === "/repos/octocat/hello-world") {
+        res.end(JSON.stringify({ description: "A mock repo (via broker)", open_issues_count: 3 }));
+      } else {
+        res.statusCode = 404;
+        res.end(JSON.stringify({ message: "not found in mock upstream" }));
+      }
+    });
+  });
+  await new Promise((resolve) => server.listen(port, "0.0.0.0", resolve));
+  return { requestsReceived, close: () => server.close() };
+}
+
+/** A tiny, self-contained script (run via `docker exec node -e ...`) that speaks raw CONNECT+TLS+HTTP/1.1 to the broker directly, printing the response status line — used to exercise a request path the app itself never makes. */
+function rawBrokerRequestScript(method, path) {
+  return `
+    const net = require("node:net");
+    const tls = require("node:tls");
+    const fs = require("node:fs");
+    const caCert = fs.readFileSync("/tmp/berth-github-api-broker/ca.crt");
+    const raw = net.connect(8092, "127.0.0.1", () => {
+      raw.write("CONNECT api.github.com:443 HTTP/1.1\\r\\nHost: api.github.com:443\\r\\n\\r\\n");
+    });
+    let buf = "";
+    raw.on("data", function onData(chunk) {
+      buf += chunk.toString("utf-8");
+      if (buf.includes("\\r\\n\\r\\n")) {
+        raw.removeListener("data", onData);
+        const tlsSocket = tls.connect({ socket: raw, servername: "api.github.com", ca: [caCert] }, () => {
+          tlsSocket.write(${JSON.stringify(`${method} ${path} HTTP/1.1\r\nHost: api.github.com\r\nConnection: close\r\n\r\n`)});
+        });
+        let out = "";
+        tlsSocket.on("data", (c) => (out += c.toString("utf-8")));
+        tlsSocket.on("end", () => { process.stdout.write(out.split("\\r\\n")[0]); process.exit(0); });
+        tlsSocket.on("error", (err) => { console.error(err); process.exit(1); });
+      }
+    });
+    raw.on("error", (err) => { console.error(err); process.exit(1); });
+  `;
+}
+
+async function execInContainer(container, cmd) {
+  const exec = await container.exec({ Cmd: cmd, AttachStdout: true, AttachStderr: true });
+  const stream = await exec.start({ hijack: true });
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  docker.modem.demuxStream(stream, stdout, stderr);
+  let out = "";
+  stdout.on("data", (chunk) => (out += chunk.toString("utf-8")));
+  stderr.on("data", (chunk) => process.stderr.write(`[exec stderr] ${chunk}`));
+  await new Promise((resolve) => stream.on("end", resolve));
+  return out;
 }
 
 async function startGrantsServer(dataDir) {

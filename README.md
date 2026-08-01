@@ -52,6 +52,8 @@ Post-Phase-5: `berth mcp --app=<name>` bridges a local dev container's declared 
 
 Post-Phase-5: `--fleet=k8s` deploys to a real Kubernetes cluster via `@berth/adapter-k8s` (the PRD lists K8s as an infra backend but never assigns it a build phase) — see [K8s adapter reference](./docs/k8s-adapter-reference.md) for the FUSE/Pod-Security-Admission caveat and what's deferred (registry-push auth).
 
+Post-Phase-5: path/verb-level GitHub API scoping (`github:read:<scope>` vs `github:write:<scope>`) is enforced via a real TLS-terminating broker (`github-api-broker.cjs`) — see [GitHub API scoping reference](./docs/github-api-scoping-reference.md) for how it wires into `apps/github-assistant` and what's deferred (multi-app containers, a general path/verb grammar beyond GitHub).
+
 ## License
 
 Apache-2.0 — see [LICENSE](./LICENSE).
