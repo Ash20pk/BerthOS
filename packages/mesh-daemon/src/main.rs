@@ -24,6 +24,19 @@ use control::SharedState;
 
 #[tokio::main]
 async fn main() {
+    // CI reproduces a freeze with ZERO output from the reconcile loop after
+    // boot — not even its own first line, which runs before any .await. A
+    // panic inside a tokio::spawn'd task whose JoinHandle is never awaited
+    // is normally still printed by Rust's default panic hook (a plain stderr
+    // write), so this should be redundant — but "should be" is exactly what
+    // three rounds of blind fixes already got wrong once. Making it
+    // impossible for a panic anywhere to vanish silently, rather than
+    // trusting the default hook still applies in whatever's different about
+    // this environment.
+    std::panic::set_hook(Box::new(|info| {
+        eprintln!("[mesh-daemon] PANIC: {info}");
+    }));
+
     let cfg = Config::from_env();
     eprintln!("[mesh-daemon] starting for peer \"{}\"", cfg.peer_name);
 
@@ -129,6 +142,11 @@ async fn main() {
             eprintln!("[mesh-daemon] WARNING: reconcile loop task ended abnormally: {err}");
         }
     });
+    // Synchronous canary: if this line appears in a run's log but neither
+    // "reconcile loop started" nor a PANIC line ever does, the task was
+    // spawned but never actually polled by the runtime at all — a different
+    // bug than a panic, and this is what tells the two apart.
+    eprintln!("[mesh-daemon] reconcile task spawned, entering shutdown wait");
 
     wait_for_shutdown().await;
     eprintln!("[mesh-daemon] shutting down");
