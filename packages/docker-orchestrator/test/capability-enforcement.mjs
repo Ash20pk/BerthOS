@@ -31,11 +31,13 @@ import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { loadManifest } from "@berth/manifest-schema";
-import { buildImage, startContainer, stopContainer } from "../dist/index.js";
+import { buildImage, startContainer, stopContainer, invokeAppExport } from "../dist/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");
 const FILESYSTEM_APP_DIR = join(REPO_ROOT, "apps", "filesystem");
+const BOUNDARY_APP_A_DIR = join(__dirname, "fixtures", "boundary-app-a");
+const BOUNDARY_APP_B_DIR = join(__dirname, "fixtures", "boundary-app-b");
 
 const docker = new Docker();
 
@@ -179,13 +181,54 @@ async function main() {
       );
     }
 
+    console.log("\n--- Test 6: symlink escape — a symlink INSIDE the declared path pointing OUTSIDE it ---");
+    // PathBeneath rules bind to a real inode hierarchy (resolved when
+    // agent-init opens the path via PathFd::new(), see main.rs), not a path
+    // string — so Landlock is expected to resolve a symlink at syscall time
+    // and deny access to whatever it actually points at, even though the
+    // symlink itself lives inside the granted /workspace hierarchy. This is
+    // the classic "escape the sandbox via a symlink" technique; proving it
+    // doesn't work here is what makes the write/read-path grants above mean
+    // anything against an app that tries to plant one.
+    await execInContainer(running.container, ["sh", "-c", "ln -sfn /opt /workspace/escape-write-link"]);
+    const symlinkWrite = await rpc.call({
+      id: "6",
+      export: "write_file",
+      input: { path: "escape-write-link/pwned-via-symlink.txt", content: "if this exists, symlink escape worked" },
+    });
+    console.log("write response:", symlinkWrite);
+    const symlinkWriteDenied = symlinkWrite.error && /EACCES|EPERM|permission/i.test(symlinkWrite.error);
+
+    await execInContainer(running.container, ["sh", "-c", "ln -sfn /opt /workspace/escape-read-link"]);
+    const symlinkRead = await rpc.call({
+      id: "7",
+      export: "read_file",
+      input: { path: "escape-read-link/berth-should-not-be-readable.txt" },
+    });
+    console.log("read response:", symlinkRead);
+    const symlinkReadDenied = symlinkRead.error && /EACCES|EPERM|permission/i.test(symlinkRead.error);
+
+    if (landlockActive) {
+      assert(
+        symlinkWriteDenied,
+        `Landlock is active but a write through a symlink pointing outside /workspace was NOT denied — real regression: ${JSON.stringify(symlinkWrite)}`,
+      );
+      assert(
+        symlinkReadDenied,
+        `Landlock is active but a read through a symlink pointing outside the declared read paths was NOT denied — real regression: ${JSON.stringify(symlinkRead)}`,
+      );
+      console.log("\nPASS — the kernel resolved both symlinks to their real target and denied access outside the declared paths.");
+    } else {
+      console.log("\nNOT VERIFIED (expected in this environment) — Landlock isn't enforced here.");
+    }
+
     rpc.close();
   } finally {
     await containerLog.stop();
     await stopContainer(running.container);
   }
 
-  console.log("\n--- Test 6: BERTH_REQUIRE_ENFORCEMENT=1 refuses to boot unrestricted ---");
+  console.log("\n--- Test 7: BERTH_REQUIRE_ENFORCEMENT=1 refuses to boot unrestricted ---");
   // A second, independent container from the same image — proves
   // agent-init's fail-closed gate (packages/agent-init/src/main.rs) without
   // touching the container Test 1-5 already tore down.
@@ -228,6 +271,86 @@ async function main() {
   } finally {
     await enforcedLog.stop();
     await stopContainer(enforcedRunning.container).catch(() => {});
+  }
+
+  console.log("\n--- Test 8: cross-app boundary — one app's grant must not reach a sibling app's directory ---");
+  // boundary-app-a/-b (test/fixtures) are each scoped ONLY to their own
+  // /workspace/apps/boundary-app-<x> subdirectory (unlike filesystem's own
+  // broad filesystem:write:/workspace grant, which legitimately covers the
+  // whole tree and so proves nothing about cross-app isolation). Both run in
+  // the SAME container via the real --apps multi-app path (see
+  // multi-app-milestone.mjs) — each gets its own independent agent-init/
+  // Landlock ruleset, and this proves app A's ruleset doesn't leak into app
+  // B's directory just because they share a container and a bind mount.
+  const boundaryAManifest = await loadManifest(join(BOUNDARY_APP_A_DIR, "berth.yml"));
+  const boundaryBManifest = await loadManifest(join(BOUNDARY_APP_B_DIR, "berth.yml"));
+
+  console.log("Building boundary-app-a's dev image (shared by both apps in this container)...");
+  await buildImage({ appDir: BOUNDARY_APP_A_DIR, tag: "berth/boundary-app-a:dev", target: "dev", docker });
+
+  const BOUNDARY_APP_A_CONTAINER_DIR = "/workspace/packages/docker-orchestrator/test/fixtures/boundary-app-a";
+  const BOUNDARY_APP_B_CONTAINER_DIR = "/workspace/packages/docker-orchestrator/test/fixtures/boundary-app-b";
+  const boundaryApps = [
+    { name: "boundary-app-a", workingDir: BOUNDARY_APP_A_CONTAINER_DIR, manifest: boundaryAManifest },
+    { name: "boundary-app-b", workingDir: BOUNDARY_APP_B_CONTAINER_DIR, manifest: boundaryBManifest },
+  ];
+  const boundaryRunning = await startContainer({
+    image: "berth/boundary-app-a:dev",
+    name: "berth-capability-enforcement-boundary",
+    manifest: boundaryAManifest,
+    bindMount: { hostPath: REPO_ROOT, containerPath: "/workspace" },
+    workingDir: BOUNDARY_APP_A_CONTAINER_DIR,
+    apps: boundaryApps,
+    docker,
+  });
+  const boundaryLog = await startLogCapture(boundaryRunning.container);
+  try {
+    await waitFor(() => /"boundary-app-a" ready/.test(boundaryLog.text()), 20000, "boundary-app-a runtime ready");
+    await waitFor(() => /"boundary-app-b" ready/.test(boundaryLog.text()), 20000, "boundary-app-b runtime ready");
+
+    // Seed a file only boundary-app-b is allowed to touch, via app B itself
+    // (not a raw docker exec) so it's a real write through B's own ruleset.
+    const seedResp = await invokeAppExport(boundaryRunning.container, "boundary-app-b", {
+      id: "1",
+      export: "write_file",
+      input: { path: "b-owned.txt", content: "only boundary-app-b should be able to write or read this" },
+    });
+    assert(!seedResp.error, `boundary-app-b seeding its own file failed unexpectedly: ${seedResp.error}`);
+
+    console.log("\n--- App A attempting to WRITE into App B's directory via relative traversal ---");
+    const crossWrite = await invokeAppExport(boundaryRunning.container, "boundary-app-a", {
+      id: "2",
+      export: "write_file",
+      input: { path: "../boundary-app-b/pwned-by-a.txt", content: "if this exists, cross-app isolation failed" },
+    });
+    console.log("response:", crossWrite);
+    const crossWriteDenied = crossWrite.error && /EACCES|EPERM|permission/i.test(crossWrite.error);
+
+    console.log("\n--- App A attempting to READ App B's file via relative traversal ---");
+    const crossRead = await invokeAppExport(boundaryRunning.container, "boundary-app-a", {
+      id: "3",
+      export: "read_file",
+      input: { path: "../boundary-app-b/b-owned.txt" },
+    });
+    console.log("response:", crossRead);
+    const crossReadDenied = crossRead.error && /EACCES|EPERM|permission/i.test(crossRead.error);
+
+    if (landlockActive) {
+      assert(
+        crossWriteDenied,
+        `Landlock is active but boundary-app-a was able to write into boundary-app-b's directory — cross-app isolation regression: ${JSON.stringify(crossWrite)}`,
+      );
+      assert(
+        crossReadDenied,
+        `Landlock is active but boundary-app-a was able to read boundary-app-b's file — cross-app isolation regression: ${JSON.stringify(crossRead)}`,
+      );
+      console.log("\nPASS — sharing a container did not let app A reach app B's declared scope.");
+    } else {
+      console.log("\nNOT VERIFIED (expected in this environment) — Landlock isn't enforced here.");
+    }
+  } finally {
+    await boundaryLog.stop();
+    await stopContainer(boundaryRunning.container).catch(() => {});
   }
 }
 
