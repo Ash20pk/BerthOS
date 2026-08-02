@@ -50,14 +50,27 @@ struct CapabilityPolicy {
     mesh_peers: Vec<String>,
 }
 
+/// Set by entrypoint.sh before anything else in the container starts —
+/// shared by every daemon and app process in this boot (context-bus,
+/// semantic-fs, mesh, every per-app agent-init). Threading it into every
+/// audit line below is what makes it possible to correlate a single
+/// production incident across process boundaries by grepping for one
+/// string, instead of matching log timestamps by hand across three
+/// runtimes. Falls back to "unknown" rather than failing — a missing boot
+/// id (e.g. this binary run standalone, outside entrypoint.sh, as some
+/// tests do) should never be why the resident app fails to boot.
+fn boot_id() -> String {
+    env::var("BERTH_BOOT_ID").unwrap_or_else(|_| "unknown".to_string())
+}
+
 /// One structured JSON line per boot — a real, greppable audit record of
 /// what was granted, since Landlock itself has no deny-notification hook to
 /// log individual denials from (see docs/capability-tokens-reference.md).
 fn log_audit_event(policy: &CapabilityPolicy, ruleset_status: &str) {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     eprintln!(
-        "[agent-init] {{\"event\":\"capability_policy_applied\",\"app\":{:?},\"writePaths\":{:?},\"readPaths\":{:?},\"networkPorts\":{:?},\"networkUnrestricted\":{},\"meshPeers\":{:?},\"ruleset\":{:?},\"timestamp\":{}}}",
-        policy.app_name, policy.write_paths, policy.read_paths, policy.network_ports, policy.network_unrestricted, policy.mesh_peers, ruleset_status, now
+        "[agent-init] {{\"event\":\"capability_policy_applied\",\"bootId\":{:?},\"app\":{:?},\"writePaths\":{:?},\"readPaths\":{:?},\"networkPorts\":{:?},\"networkUnrestricted\":{},\"meshPeers\":{:?},\"ruleset\":{:?},\"timestamp\":{}}}",
+        boot_id(), policy.app_name, policy.write_paths, policy.read_paths, policy.network_ports, policy.network_unrestricted, policy.mesh_peers, ruleset_status, now
     );
 }
 
@@ -69,7 +82,8 @@ fn log_audit_event(policy: &CapabilityPolicy, ruleset_status: &str) {
 fn log_caps_dropped_event(app_name: &str, dropped: bool) {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     eprintln!(
-        "[agent-init] {{\"event\":\"capabilities_dropped\",\"app\":{app_name:?},\"dropped\":{dropped},\"timestamp\":{now}}}"
+        "[agent-init] {{\"event\":\"capabilities_dropped\",\"bootId\":{:?},\"app\":{app_name:?},\"dropped\":{dropped},\"timestamp\":{now}}}",
+        boot_id()
     );
 }
 
