@@ -2,5 +2,6 @@ packages:
   - "packages/*"
   - "packages/adapters/*"
   - "apps/*"
-  - "examples/*"
+  - "examples/resident-apps/*"
+  - "examples/agents/*"
   - "packages/docker-orchestrator/test/fixtures/*"
