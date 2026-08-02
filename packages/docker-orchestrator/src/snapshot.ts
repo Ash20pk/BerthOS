@@ -18,6 +18,16 @@ const DEFAULT_SNAPSHOTS_DIR = join(homedir(), ".berth", "snapshots");
  */
 const DEFAULT_CONTEXT_DATA_PATH = "/var/berth/context-data";
 
+/**
+ * BERTH_CONTEXT_INDEX_DB's default (see base.Dockerfile's ENV block) — a
+ * *sibling* path to BERTH_CONTEXT_DATA, not nested inside it, so capturing
+ * BERTH_CONTEXT_DATA alone never actually includes semantic-fs's SQLite
+ * index despite this module's original assumption that it would. Archived
+ * separately below so a restored snapshot's semantic-fs index isn't left to
+ * whatever container.commit()'s image layer happened to contain.
+ */
+const DEFAULT_CONTEXT_INDEX_DB_PATH = "/var/berth/context-index.db";
+
 export interface SnapshotMetadata {
   id: string;
   appName: string;
@@ -25,6 +35,8 @@ export interface SnapshotMetadata {
   imageTag: string;
   /** BERTH_CONTEXT_DATA at capture time — restoreSnapshot() needs this to know the archive's nested top-level directory name (Docker's getArchive wraps the requested path in its own basename). */
   contextDataPath: string;
+  /** BERTH_CONTEXT_INDEX_DB at capture time — same reasoning as contextDataPath. */
+  contextIndexDbPath: string;
 }
 
 export interface CreateSnapshotOptions {
@@ -34,6 +46,7 @@ export interface CreateSnapshotOptions {
   manifest: BerthManifest;
   env?: Record<string, string>;
   contextDataPath?: string;
+  contextIndexDbPath?: string;
   snapshotsDir?: string;
   docker?: Docker;
 }
@@ -43,7 +56,10 @@ export interface CreateSnapshotOptions {
  * image layer (filesystem + installed packages), saved to disk as a real
  * image tarball (`docker save` equivalent) — not a script that re-runs
  * on_install. `container.getArchive()` on BERTH_CONTEXT_DATA captures
- * semantic-fs's real SQLite index + backing files for real.
+ * semantic-fs's real backing files, and a second `getArchive()` on
+ * BERTH_CONTEXT_INDEX_DB captures its real SQLite metadata index — a
+ * sibling path, not nested under BERTH_CONTEXT_DATA, so it needs its own
+ * archive rather than riding along with the context-data one.
  *
  * Deliberately NOT captured (see docs/computer-snapshots-reference.md):
  * BERTH_TOKEN_SECRET (regenerated fresh per boot by design — capturing it
@@ -55,6 +71,7 @@ export async function createSnapshot(options: CreateSnapshotOptions): Promise<{ 
   const docker = options.docker ?? new Docker();
   const snapshotsDir = options.snapshotsDir ?? DEFAULT_SNAPSHOTS_DIR;
   const contextDataPath = options.contextDataPath ?? DEFAULT_CONTEXT_DATA_PATH;
+  const contextIndexDbPath = options.contextIndexDbPath ?? DEFAULT_CONTEXT_INDEX_DB_PATH;
 
   const id = new Date().toISOString().replace(/[:.]/g, "-");
   const dir = join(snapshotsDir, options.appName, id);
@@ -69,7 +86,17 @@ export async function createSnapshot(options: CreateSnapshotOptions): Promise<{ 
   const contextArchive = await options.container.getArchive({ path: contextDataPath });
   await pipeline(contextArchive, createWriteStream(join(dir, "context-data.tar")));
 
-  const metadata: SnapshotMetadata = { id, appName: options.appName, createdAt: new Date().toISOString(), imageTag, contextDataPath };
+  const contextIndexDbArchive = await options.container.getArchive({ path: contextIndexDbPath });
+  await pipeline(contextIndexDbArchive, createWriteStream(join(dir, "context-index-db.tar")));
+
+  const metadata: SnapshotMetadata = {
+    id,
+    appName: options.appName,
+    createdAt: new Date().toISOString(),
+    imageTag,
+    contextDataPath,
+    contextIndexDbPath,
+  };
   await writeFile(join(dir, "metadata.json"), JSON.stringify(metadata, null, 2));
   await writeFile(join(dir, "manifest.json"), JSON.stringify(options.manifest, null, 2));
   await writeFile(join(dir, "env.json"), JSON.stringify(options.env ?? {}, null, 2));
@@ -83,6 +110,8 @@ export interface RestoredSnapshot {
   env: Record<string, string>;
   /** Host directory holding the extracted context-data archive, ready to bind-mount as StartContainerOptions.extraBinds. */
   contextDataHostDir: string;
+  /** Host file holding the extracted semantic-fs SQLite index, ready to bind-mount as StartContainerOptions.extraBinds. */
+  contextIndexDbHostFile: string;
 }
 
 /**
@@ -120,7 +149,19 @@ export async function restoreSnapshot(snapshotDir: string, docker: Docker = new 
   // should actually target, not extractDir itself.
   const contextDataHostDir = join(extractDir, basename(metadata.contextDataPath));
 
-  return { metadata, manifest, env, contextDataHostDir };
+  const extractIndexDbDir = join(snapshotDir, "restored-context-index-db");
+  await mkdir(extractIndexDbDir, { recursive: true });
+  await new Promise<void>((resolve, reject) => {
+    createReadStream(join(snapshotDir, "context-index-db.tar"))
+      .pipe(tarFs.extract(extractIndexDbDir))
+      .on("finish", resolve)
+      .on("error", reject);
+  });
+  // Same basename-wrapping behavior as above, but for a single file rather
+  // than a directory — this is the file an extraBinds entry should target.
+  const contextIndexDbHostFile = join(extractIndexDbDir, basename(metadata.contextIndexDbPath));
+
+  return { metadata, manifest, env, contextDataHostDir, contextIndexDbHostFile };
 }
 
 export async function listSnapshots(appName: string, snapshotsDir: string = DEFAULT_SNAPSHOTS_DIR): Promise<SnapshotMetadata[]> {

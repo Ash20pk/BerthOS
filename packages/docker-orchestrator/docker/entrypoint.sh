@@ -67,6 +67,8 @@ if [ -z "${BERTH_APPS:-}" ]; then
     grep -q " ${BERTH_CONTEXT_MOUNT} fuse" /proc/mounts && break
     sleep 0.1
   done
+  grep -q " ${BERTH_CONTEXT_MOUNT} fuse" /proc/mounts \
+    || echo "[berth:entrypoint] WARNING: ${BERTH_CONTEXT_MOUNT} never appeared as a FUSE mount — semantic-fs-daemon likely died on mount(2) (check AppArmor); the SDK will silently fall back to a local stub that always returns empty query results" >&2
 
   # Translates berth.yml's capabilities into the JSON policy agent-init reads
   # (see @berth/sdk's generate-capability-policy.ts for why this lives in
@@ -166,6 +168,8 @@ for _ in $(seq 1 50); do
   grep -q " ${BERTH_CONTEXT_MOUNT} fuse" /proc/mounts && break
   sleep 0.1
 done
+grep -q " ${BERTH_CONTEXT_MOUNT} fuse" /proc/mounts \
+  || echo "[berth:entrypoint] WARNING: ${BERTH_CONTEXT_MOUNT} never appeared as a FUSE mount — semantic-fs-daemon likely died on mount(2) (check AppArmor); the SDK will silently fall back to a local stub that always returns empty query results" >&2
 
 # Runs one app's lifecycle (on_install + capability policy) then hands off to
 # agent-init, given its name/dir as $1/$2 and its command as the rest of the

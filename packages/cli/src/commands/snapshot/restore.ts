@@ -29,7 +29,10 @@ export default class SnapshotRestore extends Command {
       name: containerName,
       manifest: restored.manifest,
       workingDir: "/app",
-      extraBinds: [`${restored.contextDataHostDir}:${restored.metadata.contextDataPath}`],
+      extraBinds: [
+        `${restored.contextDataHostDir}:${restored.metadata.contextDataPath}`,
+        `${restored.contextIndexDbHostFile}:${restored.metadata.contextIndexDbPath}`,
+      ],
       env: restored.env,
       docker,
     });

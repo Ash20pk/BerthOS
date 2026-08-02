@@ -80,11 +80,22 @@ const server = http.createServer((req, res) => {
   }
   logDecision("allowed", target.hostname, target.port || 80);
 
-  const upstream = http.request(target, { method: req.method, headers: req.headers }, (upstreamRes) => {
-    res.writeHead(upstreamRes.statusCode, upstreamRes.headers);
-    upstreamRes.pipe(res);
-  });
+  // family: 4 sidesteps a musl/Alpine resolver bug where a bare hostname's
+  // races A/AAAA lookups and can stall far longer than any sane timeout when
+  // IPv6 is listed in /etc/resolv.conf but not actually routable (see the
+  // 'connect' handler below for the full writeup); the explicit `timeout`
+  // turns a stalled upstream into a fast, diagnosable error instead of an
+  // indefinite hang.
+  const upstream = http.request(
+    target,
+    { method: req.method, headers: req.headers, family: 4, timeout: 10000 },
+    (upstreamRes) => {
+      res.writeHead(upstreamRes.statusCode, upstreamRes.headers);
+      upstreamRes.pipe(res);
+    },
+  );
   req.pipe(upstream);
+  upstream.on("timeout", () => upstream.destroy(new Error("upstream connect timed out")));
   upstream.on("error", (err) => res.destroy(err));
 });
 
@@ -102,13 +113,27 @@ server.on("connect", (req, clientSocket, head) => {
   }
   logDecision("allowed", host, port);
 
-  const upstream = net.connect(port, host, () => {
+  // family: 4 forces IPv4 resolution instead of letting Node's musl/Alpine
+  // resolver race A/AAAA lookups — a well-documented class of bug
+  // (alpinelinux/docker-alpine#399, #203) where that race can stall for tens
+  // of seconds when IPv6 is listed in /etc/resolv.conf but not actually
+  // routable, which reads from the RPC caller's side as an indefinite hang
+  // rather than an error. A connect-only timeout (cleared once connected, so
+  // it never cuts off a legitimately long-lived tunnel) turns a stalled
+  // upstream into a fast, diagnosable error instead.
+  const upstream = net.connect({ host, port, family: 4 });
+  const connectTimeout = setTimeout(() => {
+    upstream.destroy(new Error(`connect to ${host}:${port} timed out`));
+  }, 10000);
+  upstream.once("connect", () => {
+    clearTimeout(connectTimeout);
     clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
     upstream.write(head);
     upstream.pipe(clientSocket);
     clientSocket.pipe(upstream);
   });
   upstream.on("error", (err) => {
+    clearTimeout(connectTimeout);
     console.error(`[egress-broker] upstream connect error for ${host}:${port}: ${err.message}`);
     if (!clientSocket.destroyed) clientSocket.end("HTTP/1.1 502 Bad Gateway\r\n\r\n");
   });
