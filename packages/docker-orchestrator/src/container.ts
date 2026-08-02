@@ -150,6 +150,14 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
       // behind any manifest capability the way browser:* ports are.
       Devices: [{ PathOnHost: "/dev/fuse", PathInContainer: "/dev/fuse", CgroupPermissions: "rwm" }],
       CapAdd: ["SYS_ADMIN"],
+      // The default docker-default AppArmor profile denies the FUSE
+      // mount(2) syscall outright even with CAP_SYS_ADMIN + /dev/fuse
+      // (moby/moby#50013) — a no-op on hosts with no AppArmor LSM active
+      // (e.g. Docker Desktop's LinuxKit VM), but on real-kernel Linux
+      // (GitHub Actions' ubuntu-latest) it silently kills semantic-fs-daemon's
+      // mount, which then falls back to a stub that always returns empty
+      // query results — passing locally while failing in CI.
+      SecurityOpt: ["apparmor:unconfined"],
     },
     ...(options.network
       ? { NetworkingConfig: { EndpointsConfig: { [options.network]: {} } } }
