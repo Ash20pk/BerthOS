@@ -5,6 +5,7 @@ import {
   stopContainer,
   createStdioRpcClient,
   invokeAppExport,
+  readOsState,
   type StdioRpcClient,
 } from "@berth/docker-orchestrator";
 import { resolveComputerApps, type ComputerAppSpec } from "./resolve-apps.js";
@@ -19,6 +20,21 @@ export interface BootComputerOptions {
   network?: string;
   /** Extra container environment variables — e.g. an LLM API key for a synthesized agent-server companion app. */
   env?: Record<string, string>;
+  docker?: Docker;
+}
+
+export interface ConnectComputerOptions {
+  /** Name passed to `berth os up <name>` — resolved via ~/.berth/os/<name>.json (see docs/berth-os-reference.md). */
+  name: string;
+  /**
+   * Restrict this Computer to a subset of the OS's loaded apps, by name —
+   * e.g. an OS started with `--apps=apps/filesystem,apps/notes,apps/terminal`
+   * still exists as one shared container, but a specific agent can connect
+   * with `apps: ["filesystem"]` and get a tool list scoped to just that one
+   * app, without needing a second `berth os up` instance. Omit to get every
+   * app the OS has loaded.
+   */
+  apps?: string[];
   docker?: Docker;
 }
 
@@ -86,7 +102,9 @@ export class Computer {
     tools: Tool[],
     containerName: string,
     private readonly docker: Docker,
-    private readonly image: string,
+    private readonly image: string | undefined,
+    /** False for a Computer obtained via connect() — see stop(). */
+    private readonly ownsLifecycle: boolean,
   ) {
     this.tools = tools;
     this.containerName = containerName;
@@ -135,7 +153,59 @@ export class Computer {
 
     const tools = computerToolsFor(apps, call);
 
-    return new Computer(container, apps, stdioClient, tools, containerName, docker, image);
+    return new Computer(container, apps, stdioClient, tools, containerName, docker, image, true);
+  }
+
+  /**
+   * Attaches to a container already started by `berth os up <name>` instead
+   * of building an image and booting a fresh one — the fix for cold start:
+   * a dev iterating on agent code pays the build+boot cost once (`berth os
+   * up`), then every subsequent run just reconnects in milliseconds. Always
+   * dispatches via invokeAppExport's docker-exec + Unix-socket relay (never
+   * stdio) — `berth os up` forces entrypoint.sh's multi-app branch even for
+   * a single app specifically so this always has a per-app socket to reach,
+   * regardless of how many apps are loaded. See docs/berth-os-reference.md.
+   */
+  static async connect(options: ConnectComputerOptions): Promise<Computer> {
+    const docker = options.docker ?? new Docker();
+    const state = await readOsState(options.name);
+    if (!state) {
+      throw new Error(`no Berth OS named "${options.name}" — start one first with \`berth os up ${options.name} --apps=<dir1>,<dir2>\``);
+    }
+
+    const container = docker.getContainer(state.containerName);
+    try {
+      const info = await container.inspect();
+      if (!info.State.Running) throw new Error("not running");
+    } catch {
+      throw new Error(`"${options.name}" (container ${state.containerName}) isn't running — run \`berth os up ${options.name}\` again`);
+    }
+
+    let appRecords = state.apps;
+    if (options.apps) {
+      const missing = options.apps.filter((name) => !state.apps.some((a) => a.name === name));
+      if (missing.length > 0) {
+        throw new Error(
+          `"${options.name}" doesn't have these apps loaded: ${missing.join(", ")} — it has: ${state.apps.map((a) => a.name).join(", ") || "(none)"}`,
+        );
+      }
+      appRecords = state.apps.filter((a) => options.apps!.includes(a.name));
+    }
+
+    const apps = await resolveComputerApps(appRecords.map((a) => a.appDir));
+
+    const dispatch = async (appName: string, exportName: string, input: unknown): Promise<unknown> => {
+      const request = { id: randomUUID(), export: exportName, input };
+      const response = await invokeAppExport(container, appName, request, { docker });
+      if (response.error) throw new Error(response.error);
+      return response.result;
+    };
+
+    const call = (appName: string, exportName: string, input: unknown) => withReadyRetry(() => dispatch(appName, exportName, input));
+
+    const tools = computerToolsFor(apps, call);
+
+    return new Computer(container, apps, undefined, tools, state.containerName, docker, undefined, false);
   }
 
   async call(toolName: string, input: unknown): Promise<unknown> {
@@ -153,13 +223,21 @@ export class Computer {
    * would just leak disk space across repeated boots. Best-effort: a
    * container the caller never actually started (a failed boot) or an image
    * Docker already reclaimed shouldn't turn a normal stop() into an error.
+   *
+   * A no-op for a Computer obtained via connect(): that container is a
+   * long-lived OS other agent runs may still be using, owned by `berth os
+   * up`/`berth os down`, not by this process — tearing it down here would
+   * defeat the entire point of connecting to it instead of booting fresh.
    */
   async stop(): Promise<void> {
     this.stdioClient?.close();
+    if (!this.ownsLifecycle) return;
     await stopContainer(this.container);
-    await this.docker
-      .getImage(this.image)
-      .remove()
-      .catch(() => {});
+    if (this.image) {
+      await this.docker
+        .getImage(this.image)
+        .remove()
+        .catch(() => {});
+    }
   }
 }

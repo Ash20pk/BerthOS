@@ -11,8 +11,9 @@
 //      a fresh OS temp dir outside this repo — this IS what a genuine
 //      third-party developer has: a self-contained scaffold with its own
 //      vendored @berth/sdk, no monorepo-relative config (unlike, say,
-//      examples/hello-world, whose tsconfig.json extends "../../tsconfig.base.json"
-//      — real, but coupled to this repo, which isn't the case being tested here).
+//      examples/resident-apps/hello-world, whose tsconfig.json extends
+//      "../../../tsconfig.base.json" — real, but coupled to this repo,
+//      which isn't the case being tested here).
 //   2. `berth publish --registry=<url>` on it — a REAL Docker image build,
 //      same as any other publish, plus a real multipart upload.
 //   3. Confirms the registry actually indexed and can serve it back.

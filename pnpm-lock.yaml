@@ -140,11 +140,23 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
-  examples/hello-world:
+  examples/agents/agent-server:
+    dependencies:
+      '@berth/agents':
+        specifier: workspace:*
+        version: link:../../../packages/agents
+
+  examples/agents/simple-agent:
+    dependencies:
+      '@berth/agents':
+        specifier: workspace:*
+        version: link:../../../packages/agents
+
+  examples/resident-apps/hello-world:
     dependencies:
       '@berth/sdk':
         specifier: workspace:*
-        version: link:../../packages/sdk
+        version: link:../../../packages/sdk
       zod:
         specifier: ^3.24.1
         version: 3.25.76

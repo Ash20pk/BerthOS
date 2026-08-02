@@ -4,6 +4,8 @@ import type { AgentMessage, LLMProvider, LLMTurn, Tool } from "../types.js";
 
 export interface OpenAIProviderOptions {
   apiKey?: string;
+  /** Point at a custom OpenAI-compatible endpoint (Ollama, vLLM, OpenRouter, Azure OpenAI, ...) instead of OpenAI's default API. */
+  baseURL?: string;
   model?: string;
 }
 
@@ -39,7 +41,7 @@ function toOpenAIMessages(messages: AgentMessage[]): ChatCompletionMessageParam[
  * Anthropic's), not secretly single-vendor.
  */
 export function createOpenAIProvider(options: OpenAIProviderOptions = {}): LLMProvider {
-  const client = new OpenAI({ apiKey: options.apiKey ?? process.env.OPENAI_API_KEY });
+  const client = new OpenAI({ apiKey: options.apiKey ?? process.env.OPENAI_API_KEY, baseURL: options.baseURL });
   const model = options.model ?? DEFAULT_MODEL;
 
   return {

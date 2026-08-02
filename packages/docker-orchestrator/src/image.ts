@@ -38,8 +38,18 @@ export interface BuildImageOptions {
    * exactly.
    */
   companions?: { name: string; appDir: string }[];
-  /** The primary app's own name — only needed when `companions` is non-empty. */
+  /** The primary app's own name — only needed when `companions` is non-empty, or `forceCompanionLayout` is set. */
   appName?: string;
+  /**
+   * Stages the primary under `apps/<appName>/` even with zero real
+   * companions — used by `berth os up` so a lone app still gets
+   * entrypoint.sh's multi-app branch (a per-app RPC socket a separate host
+   * process can reconnect to via invokeAppExport, rather than the
+   * single-app stdio-only path, which only the process that started the
+   * container can attach to). Omitted, a `companions`-less build keeps
+   * today's flattened single-app layout exactly.
+   */
+  forceCompanionLayout?: boolean;
   docker?: Docker;
 }
 
@@ -106,10 +116,10 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
       // arrives via a bind mount at container start (this staged copy is
       // never COPY'd into the dev Dockerfile stage at all), so companions is
       // simply ignored there.
-      if (options.companions && options.companions.length > 0) {
-        if (!options.appName) throw new Error("buildImage: appName is required when companions is non-empty");
+      if ((options.companions && options.companions.length > 0) || options.forceCompanionLayout) {
+        if (!options.appName) throw new Error("buildImage: appName is required when companions is non-empty or forceCompanionLayout is set");
         await stageProductionSource(options.appDir, join(stagingDir, "apps", options.appName));
-        for (const companion of options.companions) {
+        for (const companion of options.companions ?? []) {
           await stageProductionSource(companion.appDir, join(stagingDir, "apps", companion.name));
         }
       } else {

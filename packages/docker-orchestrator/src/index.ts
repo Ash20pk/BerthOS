@@ -23,3 +23,11 @@ export {
   type CreateSnapshotOptions,
   type RestoredSnapshot,
 } from "./snapshot.js";
+export {
+  readOsState,
+  writeOsState,
+  removeOsState,
+  listOsNames,
+  type OsStateFile,
+  type OsAppRecord,
+} from "./os-state.js";

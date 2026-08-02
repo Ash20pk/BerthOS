@@ -75,7 +75,7 @@ export default class Dev extends Command {
     void this.tailLogs(running.container);
 
     const watcher = watchApp(appDir, () => {
-      this.log("Change detected — restarting container...");
+      this.log("Change detected, restarting container...");
       void restartContainer(running.container)
         .then(() => this.log("Restarted."))
         .catch((err) => this.error(err instanceof Error ? err.message : String(err), { exit: false }));
@@ -98,17 +98,17 @@ export default class Dev extends Command {
     if (ports.cdp) this.log(`[berth:dev] CDP:      http://localhost:${ports.cdp}`);
     if (!ports.novnc && !ports.vnc && !ports.cdp) {
       if (manifests.some(declaresBrowserCapability) && !manifests.some(needsBrowserPorts)) {
-        this.log(`[berth:dev] "${names}" sets expose.browser: false — VNC/CDP ports not published to the host`);
+        this.log(`[berth:dev] "${names}" sets expose.browser: false: VNC/CDP ports not published to the host`);
       } else {
-        this.log(`[berth:dev] "${names}" declares no browser:* capability — no VNC/CDP ports exposed`);
+        this.log(`[berth:dev] "${names}" declares no browser:* capability: no VNC/CDP ports exposed`);
       }
     }
     if (ports.terminal) {
       this.log(`[berth:dev] Terminal: http://localhost:${ports.terminal}`);
     } else if (manifests.some(declaresTerminalCapability) && !manifests.some(needsTerminalPort)) {
-      this.log(`[berth:dev] "${names}" sets expose.terminal: false — terminal port not published to the host`);
+      this.log(`[berth:dev] "${names}" sets expose.terminal: false: terminal port not published to the host`);
     } else {
-      this.log(`[berth:dev] "${names}" declares no terminal:* capability — no terminal port exposed`);
+      this.log(`[berth:dev] "${names}" declares no terminal:* capability: no terminal port exposed`);
     }
   }
 
