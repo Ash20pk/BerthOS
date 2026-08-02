@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 // The fuller form of index.mjs: explicit LLMProvider, and the Agent/Computer
-// handles kept around instead of runAgent()'s one-call boot+run+cleanup —
-// useful once you need more than one turn, want to call tools directly, or
+// handles kept around instead of runAgent()'s one-call boot+run+cleanup.
+// Useful once you need more than one turn, want to call tools directly, or
 // want to snapshot the Computer before stopping it.
 //
 // Pass --connect=<name> to attach to an already-running `berth os up <name>`
 // instance instead of booting a fresh one (see
-// ../../../docs/berth-os-reference.md) — e.g.:
+// ../../../docs/berth-os-reference.md), for example:
 //   berth os up my-agent --apps=<path to apps/filesystem, from repo root>
 //   node index-manual.mjs --connect=my-agent
 // computer.stop() is always safe to call either way: it's a no-op when
@@ -29,7 +29,7 @@ async function main() {
   const connect = connectFlag();
 
   if (!process.env.ANTHROPIC_API_KEY && !process.env.OPENAI_API_KEY) {
-    console.log("SKIP — set ANTHROPIC_API_KEY or OPENAI_API_KEY to run this example.");
+    console.log("SKIP: set ANTHROPIC_API_KEY or OPENAI_API_KEY to run this example.");
     return;
   }
   const llm = process.env.ANTHROPIC_API_KEY ? createAnthropicProvider() : createOpenAIProvider();

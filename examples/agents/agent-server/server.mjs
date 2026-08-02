@@ -1,18 +1,18 @@
 #!/usr/bin/env node
 // Exposes an Agent over HTTP: POST /task { task } -> { text, toolCalls }.
-// The agent is the thing being served here — a client (curl, a frontend,
+// The agent is the thing being served here. A client (curl, a frontend,
 // another service) sends it a task and gets the result back, rather than
 // the agent driving something itself.
 //
-// The Computer boots (or connects) once at server startup, not per request
-// — an HTTP server that rebuilt a container on every POST would make the
+// The Computer boots (or connects) once at server startup, not per request.
+// An HTTP server that rebuilt a container on every POST would make the
 // cold-start problem worse, not solve it. Pass BERTH_OS_CONNECT=<name> to
 // attach to an already-running `berth os up <name>` instance instead of
-// booting a fresh one — the natural pairing for a long-lived server
+// booting a fresh one, the natural pairing for a long-lived server
 // process. See ../../../docs/berth-os-reference.md.
 //
 // Requires ANTHROPIC_API_KEY or OPENAI_API_KEY (createAgent() auto-detects
-// whichever is set) — skips (not fails) if neither is present.
+// whichever is set), and skips (doesn't fail) if neither is present.
 import { createServer } from "node:http";
 import { createAgent } from "@berth/agents";
 import { fileURLToPath } from "node:url";
@@ -38,7 +38,7 @@ async function readJsonBody(req) {
 
 async function main() {
   if (!process.env.ANTHROPIC_API_KEY && !process.env.OPENAI_API_KEY) {
-    console.log("SKIP — set ANTHROPIC_API_KEY or OPENAI_API_KEY to run this example.");
+    console.log("SKIP: set ANTHROPIC_API_KEY or OPENAI_API_KEY to run this example.");
     return;
   }
 
@@ -59,7 +59,7 @@ async function main() {
       try {
         ({ task } = await readJsonBody(req));
       } catch {
-        sendJson(res, 400, { error: 'invalid JSON body — expected { "task": string }' });
+        sendJson(res, 400, { error: 'invalid JSON body, expected { "task": string }' });
         return;
       }
       if (typeof task !== "string" || !task) {
@@ -76,7 +76,7 @@ async function main() {
       return;
     }
 
-    sendJson(res, 404, { error: "not found — POST /task { task: string }, GET /health" });
+    sendJson(res, 404, { error: "not found: POST /task { task: string }, GET /health" });
   });
 
   server.listen(PORT, () => {
@@ -90,7 +90,7 @@ async function main() {
   const shutdown = async () => {
     console.log("\nShutting down...");
     server.close();
-    await computer.stop(); // no-op if BERTH_OS_CONNECT was used — see docs/berth-os-reference.md
+    await computer.stop(); // no-op if BERTH_OS_CONNECT was used, see docs/berth-os-reference.md
     process.exit(0);
   };
   process.on("SIGINT", shutdown);
