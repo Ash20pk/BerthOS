@@ -37,3 +37,7 @@ jobs:
       - name: Run mesh-milestone.mjs
         working-directory: packages/docker-orchestrator
         run: node test/mesh-milestone.mjs
+
+      - name: Run mesh-coordinator-resilience-milestone.mjs
+        working-directory: packages/docker-orchestrator
+        run: node test/mesh-coordinator-resilience-milestone.mjs

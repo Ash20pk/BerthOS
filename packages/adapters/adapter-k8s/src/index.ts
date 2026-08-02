@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { withTimeout, DEPLOY_CREATE_TIMEOUT_MS, DEPLOY_READ_TIMEOUT_MS } from "@berth/adapter-core";
 import type { DeployAdapter, DeployHandle, DeployStatus, DeployTarget } from "@berth/adapter-core";
 
 /**
@@ -93,7 +94,11 @@ class K8sDeployHandle implements DeployHandle {
   ) {}
 
   async status(): Promise<DeployStatus> {
-    const pod = await this.coreApi.readNamespacedPod({ name: this.id, namespace: namespace() });
+    const pod = await withTimeout<any>(
+      this.coreApi.readNamespacedPod({ name: this.id, namespace: namespace() }),
+      DEPLOY_READ_TIMEOUT_MS,
+      `k8s readNamespacedPod("${this.id}")`,
+    );
     return statusFromPhase(pod.status?.phase);
   }
 
@@ -111,7 +116,11 @@ class K8sDeployHandle implements DeployHandle {
   }
 
   async stop(): Promise<void> {
-    await this.coreApi.deleteNamespacedPod({ name: this.id, namespace: namespace() });
+    await withTimeout<any>(
+      this.coreApi.deleteNamespacedPod({ name: this.id, namespace: namespace() }),
+      DEPLOY_READ_TIMEOUT_MS,
+      `k8s deleteNamespacedPod("${this.id}")`,
+    );
   }
 }
 
@@ -139,10 +148,15 @@ export function createK8sAdapter(): DeployAdapter {
       // Generated before the Pod exists so it can be a label at creation
       // time (one API call) rather than a label patched on afterward.
       const instanceId = randomUUID().replace(/-/g, "");
-      const pod = await coreApi.createNamespacedPod({
-        namespace: namespace(),
-        body: podSpecFor(target.manifest.name, remoteImageRef, instanceId, target.env),
-      });
+      // Not retried on timeout — same reasoning as the other two adapters'
+      // create-ish calls: an ambiguous timeout here could mean the Pod was
+      // actually created server-side, and generateName means a retry would
+      // create a second one rather than safely re-attempting the same one.
+      const pod = await withTimeout<any>(
+        coreApi.createNamespacedPod({ namespace: namespace(), body: podSpecFor(target.manifest.name, remoteImageRef, instanceId, target.env) }),
+        DEPLOY_CREATE_TIMEOUT_MS,
+        `k8s createNamespacedPod("${target.manifest.name}")`,
+      );
 
       return new K8sDeployHandle(pod.metadata!.name!, target.manifest.name, coreApi, logClient, instanceId);
     },
@@ -158,7 +172,11 @@ export function createK8sAdapter(): DeployAdapter {
       const coreApi = kc.makeApiClient(k8s.CoreV1Api);
       const logClient = new k8s.Log(kc);
 
-      const podList = await coreApi.listNamespacedPod({ namespace: namespace(), labelSelector: LABEL_SELECTOR });
+      const podList = await withTimeout<any>(
+        coreApi.listNamespacedPod({ namespace: namespace(), labelSelector: LABEL_SELECTOR }),
+        DEPLOY_READ_TIMEOUT_MS,
+        "k8s listNamespacedPod()",
+      );
       return podList.items.map(
         (pod: any) =>
           new K8sDeployHandle(
@@ -187,21 +205,36 @@ export function createK8sAdapter(): DeployAdapter {
       const serviceName = `berth-preview-${handle.instanceId.slice(0, 12)}-${port}`;
       const ns = namespace();
       try {
-        await coreApi.createNamespacedService({
-          namespace: ns,
-          body: {
-            metadata: { name: serviceName },
-            spec: {
-              selector: { [INSTANCE_LABEL]: handle.instanceId },
-              ports: [{ port, targetPort: port }],
-              type: "ClusterIP",
+        await withTimeout<any>(
+          coreApi.createNamespacedService({
+            namespace: ns,
+            body: {
+              metadata: { name: serviceName },
+              spec: {
+                selector: { [INSTANCE_LABEL]: handle.instanceId },
+                ports: [{ port, targetPort: port }],
+                type: "ClusterIP",
+              },
             },
-          },
-        });
+          }),
+          DEPLOY_CREATE_TIMEOUT_MS,
+          `k8s createNamespacedService("${serviceName}")`,
+        );
       } catch (err: any) {
         // Already created by an earlier previewUrl() call for this same
         // instance/port — fine, the Service is already there and correct.
-        if (err?.body?.reason !== "AlreadyExists" && err?.code !== 409) return null;
+        if (err?.body?.reason !== "AlreadyExists" && err?.code !== 409) {
+          // Anything else (RBAC denial, quota, a genuine timeout) is a real
+          // failure, not "no preview available yet" — but the deploy itself
+          // already succeeded (the Pod is running) by the time this is
+          // called, and `berth deploy`'s own call site treats a null return
+          // as "skip this line" rather than checking for one, so throwing
+          // here would crash an otherwise-successful deploy over a
+          // nice-to-have. Logged loudly instead, so it's never confused
+          // with the ordinary "not ready yet" case.
+          console.error(`[adapter-k8s] previewUrl: createNamespacedService("${serviceName}") failed (${err?.message ?? err}) — no preview URL for this port`);
+          return null;
+        }
       }
 
       return `${serviceName}.${ns}.svc.cluster.local:${port}`;

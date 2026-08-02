@@ -1,5 +1,45 @@
 import type { BerthManifest } from "@berth/manifest-schema";
 
+/**
+ * Every deploy adapter's SDK calls are real network requests against a
+ * third-party provider (E2B, Daytona, a Kubernetes API server) with no
+ * bound of their own — a single hung request (provider outage, a dropped
+ * connection the SDK's own client never notices) previously blocked
+ * `berth deploy` forever with zero feedback. This wraps any such call with a
+ * hard deadline: on timeout, the original promise is left to settle on its
+ * own (there's no cross-SDK-safe way to cancel an arbitrary in-flight
+ * request), but the caller gets a clear, actionable error back immediately
+ * instead of hanging.
+ *
+ * Deliberately NOT bundled with a retry: retrying a create-ish call (start a
+ * sandbox, build a template, create a Pod) after an ambiguous timeout risks
+ * creating a duplicate resource if the original request actually succeeded
+ * server-side but the response never arrived — worse than the hang it would
+ * "fix." A read-ish call (status, list, connect) is safe to retry and a
+ * caller may choose to wrap withTimeout() in its own retry loop; this
+ * utility only ever bounds the wait.
+ */
+export function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
+/** Generous — a template/image build or a sandbox/Pod boot can legitimately take minutes, not seconds. */
+export const DEPLOY_CREATE_TIMEOUT_MS = 5 * 60 * 1000;
+/** A status/list/connect call is a plain read against the provider's API — if it hasn't answered in 30s, something is genuinely wrong, not just slow. */
+export const DEPLOY_READ_TIMEOUT_MS = 30 * 1000;
+
 export interface DeployTarget {
   /** Local docker image tag, e.g. "berth/github-assistant:1.0.0". */
   imageRef: string;
