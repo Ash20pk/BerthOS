@@ -102,11 +102,22 @@ async function main() {
     console.log("confirmed — mutual-match introduction correctly excluded the one-directional peer");
 
     console.log("\n--- Live reachability: fetch browser's echo server from inside planner, by mesh IP ---");
-    const fetchOutput = await execInContainer(running.planner.container, [
-      "node",
-      "-e",
-      `fetch("http://${browserIpFromPlanner}:9000",{signal:AbortSignal.timeout(8000)}).then(r=>r.json()).then(j=>console.log(JSON.stringify(j))).catch(e=>{console.log("ERR:"+e.message);process.exitCode=1})`,
-    ]);
+    // The route/peer just landed via the reconcile loop — the very first
+    // WireGuard handshake over it can take a moment, so a single attempt
+    // right away is occasionally too early (observed locally). Retrying a
+    // few times still fails fast and hard if the tunnel is genuinely broken,
+    // it just doesn't treat "the handshake hadn't finished yet" as that.
+    let fetchOutput = "";
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      fetchOutput = await execInContainer(running.planner.container, [
+        "node",
+        "-e",
+        `fetch("http://${browserIpFromPlanner}:9000",{signal:AbortSignal.timeout(8000)}).then(r=>r.json()).then(j=>console.log(JSON.stringify(j))).catch(e=>{console.log("ERR:"+e.message);process.exitCode=1})`,
+      ]);
+      if (fetchOutput.includes('"from":"mesh-echo-browser"')) break;
+      console.log(`attempt ${attempt}/5: ${fetchOutput.trim()}`);
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
     console.log("fetch result:", fetchOutput.trim());
     assert(fetchOutput.includes('"from":"mesh-echo-browser"'), `expected planner to reach browser's echo server over the mesh IP, got: ${fetchOutput}`);
     console.log("confirmed — real traffic crossed the WireGuard tunnel, not a Docker bridge (none was ever created)");

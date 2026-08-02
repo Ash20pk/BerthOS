@@ -55,7 +55,23 @@ pub struct Client {
 
 impl Client {
     pub fn new(base_url: String) -> Self {
-        Client { http: reqwest::Client::new(), base_url }
+        let http = reqwest::Client::builder()
+            // Without a request timeout, a single stuck connection (observed
+            // in CI, not reproduced locally — a native Linux Docker bridge
+            // vs. this repo's own macOS dev environment's virtualized
+            // networking is the likely difference) hangs the reconcile loop
+            // forever, since nothing here ever times out on its own and the
+            // 5s interval never gets a chance to retry. Bounding every
+            // request means a hung one just becomes a logged WARNING and the
+            // next tick tries fresh, instead of the mesh silently freezing.
+            .timeout(std::time::Duration::from_secs(5))
+            // Disables keep-alive connection reuse — a fresh TCP connection
+            // per request costs little at this call volume (one every 5s)
+            // and rules out a stale pooled connection as a hang source.
+            .pool_max_idle_per_host(0)
+            .build()
+            .expect("building the mesh-coordinator HTTP client with these options cannot fail");
+        Client { http, base_url }
     }
 
     fn authed(&self, builder: reqwest::RequestBuilder, token: Option<&str>) -> reqwest::RequestBuilder {
