@@ -156,5 +156,12 @@ CMD ["node", "node_modules/@berth/sdk/dist/runtime.js"]
 # apps — so no install step runs here at all.
 FROM base AS production
 ENV NODE_ENV=production
+# Every production image refuses to exec its resident app unrestricted —
+# agent-init (see packages/agent-init/src/main.rs) exits non-zero instead of
+# falling back to "warn and run anyway" if Landlock didn't fully enforce the
+# capability policy. Dev images leave this unset: Docker Desktop's linuxkit
+# VM (Mac) never enforces Landlock at all, and failing dev boots over that
+# would make local iteration impossible.
+ENV BERTH_REQUIRE_ENFORCEMENT=1
 COPY . /app
 CMD ["node", "node_modules/@berth/sdk/dist/runtime.js"]

@@ -1,3 +1,4 @@
+import { withTimeout, DEPLOY_CREATE_TIMEOUT_MS, DEPLOY_READ_TIMEOUT_MS } from "@berth/adapter-core";
 import type { DeployAdapter, DeployHandle, DeployStatus, DeployTarget } from "@berth/adapter-core";
 
 /**
@@ -23,7 +24,11 @@ class E2bDeployHandle implements DeployHandle {
   ) {}
 
   async status(): Promise<DeployStatus> {
-    const running = await this.sandbox.isRunning?.();
+    const running = await withTimeout<any>(
+      Promise.resolve(this.sandbox.isRunning?.()),
+      DEPLOY_READ_TIMEOUT_MS,
+      `e2b sandbox.isRunning("${this.id}")`,
+    );
     return running ? "running" : "stopped";
   }
 
@@ -60,24 +65,31 @@ export function createE2bAdapter(): DeployAdapter {
     async upload(target: DeployTarget) {
       const e2b = await loadE2b();
       // Pushes the locally-built image as an E2B template so start() can
-      // reference it by name.
-      const template = await e2b.Template.build({
-        image: target.imageRef,
-        name: target.manifest.name,
-      });
+      // reference it by name. Not retried on timeout: a template build is
+      // not cheaply idempotent to re-attempt blindly, and this is a create-
+      // ish call (see withTimeout's own doc) — the bound here is purely so a
+      // truly hung build fails loudly instead of hanging `berth deploy`
+      // forever.
+      const template = await withTimeout<any>(
+        e2b.Template.build({ image: target.imageRef, name: target.manifest.name }),
+        DEPLOY_CREATE_TIMEOUT_MS,
+        `e2b Template.build("${target.manifest.name}")`,
+      );
       return { remoteImageRef: template.templateId ?? target.imageRef };
     },
 
     async start(remoteImageRef: string, target: DeployTarget) {
       const e2b = await loadE2b();
-      const sandbox = await e2b.Sandbox.create(remoteImageRef, {
-        envVars: target.env,
-      });
+      const sandbox = await withTimeout<any>(
+        e2b.Sandbox.create(remoteImageRef, { envVars: target.env }),
+        DEPLOY_CREATE_TIMEOUT_MS,
+        `e2b Sandbox.create("${remoteImageRef}")`,
+      );
       return new E2bDeployHandle(sandbox.sandboxId ?? sandbox.id, sandbox);
     },
 
     async teardown(handle: DeployHandle) {
-      await handle.stop();
+      await withTimeout<any>(handle.stop(), DEPLOY_READ_TIMEOUT_MS, `e2b teardown("${handle.id}")`);
     },
 
     // Sandbox.connect(id) turns a bare id back into a real instance with
@@ -88,7 +100,7 @@ export function createE2bAdapter(): DeployAdapter {
       if (typeof e2b.Sandbox?.connect !== "function") {
         throw new Error("this version of the e2b SDK doesn't support Sandbox.connect()");
       }
-      const sandbox = await e2b.Sandbox.connect(id);
+      const sandbox = await withTimeout<any>(e2b.Sandbox.connect(id), DEPLOY_READ_TIMEOUT_MS, `e2b Sandbox.connect("${id}")`);
       return new E2bDeployHandle(sandbox.sandboxId ?? sandbox.id, sandbox);
     },
 
@@ -99,7 +111,7 @@ export function createE2bAdapter(): DeployAdapter {
     async list() {
       const e2b = await loadE2b();
       if (typeof e2b.Sandbox?.list !== "function" || typeof e2b.Sandbox?.connect !== "function") return [];
-      const summaries = await e2b.Sandbox.list();
+      const summaries = await withTimeout<any>(e2b.Sandbox.list(), DEPLOY_READ_TIMEOUT_MS, "e2b Sandbox.list()");
       return Promise.all((summaries ?? []).map((s: any) => adapter.connect!(s.sandboxId ?? s.id)));
     },
 

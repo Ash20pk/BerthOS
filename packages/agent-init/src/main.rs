@@ -16,7 +16,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use caps::{CapSet, Capability};
 use landlock::{
-    AccessFs, AccessNet, Access, NetPort, PathBeneath, PathFd, Ruleset, RulesetAttr, RulesetCreatedAttr, ABI,
+    AccessFs, AccessNet, Access, NetPort, PathBeneath, PathFd, Ruleset, RulesetAttr, RulesetCreatedAttr,
+    RulesetStatus, ABI,
 };
 use serde::Deserialize;
 
@@ -71,6 +72,27 @@ fn log_audit_event(policy: &CapabilityPolicy, ruleset_status: &str) {
     eprintln!(
         "[agent-init] {{\"event\":\"capability_policy_applied\",\"bootId\":{:?},\"app\":{:?},\"writePaths\":{:?},\"readPaths\":{:?},\"networkPorts\":{:?},\"networkUnrestricted\":{},\"meshPeers\":{:?},\"ruleset\":{:?},\"timestamp\":{}}}",
         boot_id(), policy.app_name, policy.write_paths, policy.read_paths, policy.network_ports, policy.network_unrestricted, policy.mesh_peers, ruleset_status, now
+    );
+}
+
+/// Checked before falling back to "warn and run unrestricted" anywhere in
+/// main(). Local dev (Mac/Docker Desktop's linuxkit VM) never enforces
+/// Landlock at the kernel level — see capability-enforcement.mjs — so that
+/// fallback stays the default. Production deploys set this to opt into the
+/// opposite: no enforcement, no exec, full stop, rather than silently running
+/// an agent with the capability policy unenforced.
+fn enforcement_required() -> bool {
+    matches!(env::var("BERTH_REQUIRE_ENFORCEMENT").as_deref(), Ok("1") | Ok("true"))
+}
+
+/// The one exit path taken when BERTH_REQUIRE_ENFORCEMENT is set and the
+/// kernel didn't (fully) enforce the policy — logged as its own greppable
+/// audit event, distinct from log_audit_event's per-boot record, since this
+/// is the refusal itself rather than a record of what was granted.
+fn log_enforcement_refused_event(app_name: &str, reason: &str) {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    eprintln!(
+        "[agent-init] {{\"event\":\"capability_enforcement_refused\",\"app\":{app_name:?},\"reason\":{reason:?},\"timestamp\":{now}}}"
     );
 }
 
@@ -133,8 +155,19 @@ fn main() {
         std::process::exit(1);
     }
 
+    let require_enforcement = enforcement_required();
+
     let app_name = match apply_policy(&policy_path) {
-        Ok(policy) => {
+        Ok((policy, ruleset_status)) => {
+            if require_enforcement && ruleset_status != RulesetStatus::FullyEnforced {
+                let reason = format!("landlock ruleset status was {ruleset_status:?}, not FullyEnforced");
+                eprintln!(
+                    "[agent-init] FATAL: BERTH_REQUIRE_ENFORCEMENT is set but {reason} for \"{}\" — refusing to exec unrestricted.",
+                    policy.app_name
+                );
+                log_enforcement_refused_event(&policy.app_name, &reason);
+                std::process::exit(1);
+            }
             eprintln!(
                 "[agent-init] restricted \"{}\" — write access allowed only under: {} (declared capabilities: {})",
                 policy.app_name,
@@ -144,6 +177,12 @@ fn main() {
             policy.app_name
         }
         Err(err) => {
+            if require_enforcement {
+                let reason = format!("could not apply capability policy from {policy_path} ({err})");
+                eprintln!("[agent-init] FATAL: BERTH_REQUIRE_ENFORCEMENT is set but {reason} — refusing to exec unrestricted.");
+                log_enforcement_refused_event("unknown", &reason);
+                std::process::exit(1);
+            }
             eprintln!(
                 "[agent-init] WARNING: could not apply capability policy from {policy_path} ({err}) — continuing unrestricted."
             );
@@ -168,7 +207,7 @@ fn main() {
     std::process::exit(1);
 }
 
-fn apply_policy(policy_path: &str) -> Result<CapabilityPolicy, Box<dyn std::error::Error>> {
+fn apply_policy(policy_path: &str) -> Result<(CapabilityPolicy, RulesetStatus), Box<dyn std::error::Error>> {
     let raw = std::fs::read_to_string(policy_path)?;
     let policy: CapabilityPolicy = serde_json::from_str(&raw)?;
 
@@ -274,5 +313,6 @@ fn apply_policy(policy_path: &str) -> Result<CapabilityPolicy, Box<dyn std::erro
         status.ruleset, status.no_new_privs
     );
     log_audit_event(&policy, &format!("{:?}", status.ruleset));
-    Ok(policy)
+    let ruleset_status = status.ruleset;
+    Ok((policy, ruleset_status))
 }

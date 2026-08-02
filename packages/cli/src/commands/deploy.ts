@@ -84,18 +84,41 @@ export default class Deploy extends Command {
     const previewPorts = previewPortsFor(manifest);
 
     this.log(`Starting ${count} instance${count === 1 ? "" : "s"} on ${adapter.name}...`);
+    // Recorded to fleet-state ONE INSTANCE AT A TIME, immediately after each
+    // start() succeeds — not batched into a single appendFleetInstances()
+    // call after the whole loop. A batched call meant that if instance N of
+    // count failed, instances 1..N-1 had already started and were very much
+    // running (and billing) on the provider, but were never persisted
+    // anywhere: `berth fleet status`/`berth fleet stop` had no idea they
+    // existed. Recording each one as it starts means a partial failure never
+    // leaves untracked resources, whatever the operator decides to do about
+    // the ones that did start.
     const handles: DeployHandle[] = [];
     try {
       for (let i = 0; i < count; i++) {
         const handle = await adapter.start(remoteImageRef, target);
         this.log(`Started instance ${i + 1}/${count}: ${handle.id}`);
         handles.push(handle);
+        await appendFleetInstances(flags.fleet, [
+          {
+            id: handle.id,
+            appName: manifest.name,
+            startedAt: new Date().toISOString(),
+            previewPorts: previewPorts.length > 0 ? previewPorts : undefined,
+          },
+        ]);
         for (const port of previewPorts) {
           const url = await adapter.previewUrl?.(handle, port);
           if (url) this.log(`  ${labelFor(port)}: ${url}`);
         }
       }
     } catch (err) {
+      if (handles.length > 0) {
+        this.log(
+          `${handles.length}/${count} instance(s) started and recorded to fleet state before this failure — ` +
+            `they are still running on ${adapter.name}. Use \`berth fleet status ${flags.fleet}\` to see them.`,
+        );
+      }
       logDeployEvent("deploy_start_failed", {
         fleet: flags.fleet,
         appName: manifest.name,
@@ -106,16 +129,6 @@ export default class Deploy extends Command {
       });
       throw err;
     }
-
-    await appendFleetInstances(
-      flags.fleet,
-      handles.map((handle) => ({
-        id: handle.id,
-        appName: manifest.name,
-        startedAt: new Date().toISOString(),
-        previewPorts: previewPorts.length > 0 ? previewPorts : undefined,
-      })),
-    );
     logDeployEvent("deploy_started", { fleet: flags.fleet, appName: manifest.name, adapter: adapter.name, count });
 
     this.log("Streaming logs from all instances (Ctrl+C to detach — this does not stop the deployment)...");
