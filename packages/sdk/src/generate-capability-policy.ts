@@ -32,7 +32,7 @@
 // can't reach the coordinator's registration API at all.
 import { writeFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { loadManifest, parseCapability } from "@berth/manifest-schema";
+import { loadManifest, parseCapability, CapabilityString, type ParsedCapability } from "@berth/manifest-schema";
 
 const MANIFEST_PATH = process.env.BERTH_MANIFEST_PATH ?? join(process.cwd(), "berth.yml");
 const POLICY_PATH = process.env.BERTH_CAPABILITY_POLICY ?? join(process.cwd(), ".berth", "capability-policy.json");
@@ -51,7 +51,7 @@ const BASELINE_WRITE_PATHS = ["/tmp"];
 // below what the runtime itself needs.
 const BASELINE_READ_PATHS = ["/usr", "/lib", "/etc", "/proc", "/dev", "/tmp", process.cwd()];
 
-interface CapabilityPolicy {
+export interface CapabilityPolicy {
   appName: string;
   declaredCapabilities: string[];
   writePaths: string[];
@@ -80,19 +80,47 @@ async function fetchApprovedCapabilities(appName: string): Promise<string[]> {
   }
 }
 
-async function main(): Promise<void> {
-  const manifest = await loadManifest(MANIFEST_PATH);
-  const approved = await fetchApprovedCapabilities(manifest.name);
-  const effectiveCapabilities = [...manifest.capabilities, ...approved];
-
+/**
+ * The pure namespace:action:scope -> CapabilityPolicy compiler, split out
+ * from main() so it can be fuzzed directly (no filesystem/network I/O) and
+ * so its two callers — the static manifest's own `capabilities:` list and
+ * the grants server's `approved` response — go through the exact same
+ * validation. That second caller matters: unlike `manifest.capabilities`,
+ * which @berth/manifest-schema's CapabilityString regex already validated
+ * at loadManifest() time, an `approved` grant string arrives straight from
+ * an HTTP JSON response with no schema check at all — a malformed or
+ * adversarial grants-server response (compromised server, or just a bug)
+ * must never crash policy generation entirely, since agent-init's own
+ * fallback for "no policy file" is to warn and run *unrestricted* (see
+ * packages/agent-init/src/main.rs) — the opposite of what an invalid
+ * capability string should ever cause.
+ */
+export function compileCapabilityPolicy(appName: string, rawCapabilities: string[]): CapabilityPolicy {
+  const effectiveCapabilities: string[] = [];
   const writePaths = new Set(BASELINE_WRITE_PATHS);
   const declaredReadPaths = new Set<string>();
   const networkPorts = new Set<number>();
   const meshPeers = new Set<string>();
   let networkUnrestricted = false;
 
-  for (const capability of effectiveCapabilities) {
-    const parsed = parseCapability(capability);
+  for (const capability of rawCapabilities) {
+    // CapabilityString mirrors the exact regex @berth/manifest-schema
+    // already enforced on manifest.capabilities — re-validating here is
+    // what makes it safe to feed grants-server strings into the same loop.
+    const validated = CapabilityString.safeParse(capability);
+    if (!validated.success) {
+      console.error(`[berth:capability-policy] WARNING: ignoring malformed capability string ${JSON.stringify(capability)} (${validated.error.issues[0]?.message ?? "invalid format"})`);
+      continue;
+    }
+    let parsed: ParsedCapability;
+    try {
+      parsed = parseCapability(validated.data);
+    } catch (err) {
+      console.error(`[berth:capability-policy] WARNING: ignoring capability string ${JSON.stringify(capability)} that failed to parse (${err})`);
+      continue;
+    }
+
+    effectiveCapabilities.push(validated.data);
     if (parsed.namespace === "filesystem" && parsed.action === "write") {
       writePaths.add(stripTrailingGlob(parsed.scope));
     } else if (parsed.namespace === "filesystem" && parsed.action === "read") {
@@ -119,8 +147,8 @@ async function main(): Promise<void> {
   // which agent-init treats as "don't touch read access."
   const readPaths = declaredReadPaths.size > 0 ? [...new Set([...BASELINE_READ_PATHS, ...declaredReadPaths])] : [];
 
-  const policy: CapabilityPolicy = {
-    appName: manifest.name,
+  return {
+    appName,
     declaredCapabilities: effectiveCapabilities,
     writePaths: [...writePaths],
     readPaths,
@@ -128,23 +156,37 @@ async function main(): Promise<void> {
     networkUnrestricted,
     meshPeers: [...meshPeers],
   };
+}
+
+async function main(): Promise<void> {
+  const manifest = await loadManifest(MANIFEST_PATH);
+  const approved = await fetchApprovedCapabilities(manifest.name);
+  const policy = compileCapabilityPolicy(manifest.name, [...manifest.capabilities, ...approved]);
 
   await mkdir(dirname(POLICY_PATH), { recursive: true });
   await writeFile(POLICY_PATH, JSON.stringify(policy, null, 2));
-  const networkSummary = networkUnrestricted
+  const networkSummary = policy.networkUnrestricted
     ? "networkPorts=* (unrestricted)"
-    : networkPorts.size > 0
-      ? `networkPorts=${[...networkPorts].join(", ")}`
+    : policy.networkPorts.length > 0
+      ? `networkPorts=${policy.networkPorts.join(", ")}`
       : "networkPorts=(none — network denied by default)";
   console.error(
     `[berth:capability-policy] wrote ${POLICY_PATH}: writePaths=${policy.writePaths.join(", ")}` +
-      (readPaths.length > 0 ? `; readPaths=${readPaths.join(", ")}` : "") +
+      (policy.readPaths.length > 0 ? `; readPaths=${policy.readPaths.join(", ")}` : "") +
       `; ${networkSummary}` +
-      (meshPeers.size > 0 ? `; meshPeers=${[...meshPeers].join(", ")}` : ""),
+      (policy.meshPeers.length > 0 ? `; meshPeers=${policy.meshPeers.join(", ")}` : ""),
   );
 }
 
-main().catch((err) => {
-  console.error("[berth:capability-policy] fatal error:", err);
-  process.exit(1);
-});
+// Guarded so generate-capability-policy.test.ts can import
+// compileCapabilityPolicy() without also running main()'s real I/O (which
+// would try to load a berth.yml relative to the test runner's cwd and
+// process.exit(1) when it inevitably doesn't find one). entrypoint.sh always
+// runs this file directly (`node .../dist/generate-capability-policy.js`),
+// so the guard changes nothing about production behavior.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((err) => {
+    console.error("[berth:capability-policy] fatal error:", err);
+    process.exit(1);
+  });
+}

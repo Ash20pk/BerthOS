@@ -1,0 +1,17 @@
+name: boundary-app-a
+version: 0.1.0
+description: "capability-enforcement.mjs's cross-app boundary fixture — scoped ONLY to its own subdirectory, sharing a container with boundary-app-b, whose subdirectory it must NOT be able to reach."
+
+capabilities:
+  - filesystem:read:/workspace/packages/docker-orchestrator/test/fixtures/boundary-app-a
+  - filesystem:write:/workspace/packages/docker-orchestrator/test/fixtures/boundary-app-a
+
+exports:
+  - name: write_file
+    input: { path: string, content: string }
+  - name: read_file
+    input: { path: string }
+    output: { content: string }
+
+on_install: []
+on_agent_ready: []
