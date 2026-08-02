@@ -33,3 +33,7 @@ jobs:
       - name: Run snapshot-milestone.mjs
         working-directory: packages/docker-orchestrator
         run: node test/snapshot-milestone.mjs
+
+      - name: Run snapshot-crash-milestone.mjs
+        working-directory: packages/docker-orchestrator
+        run: node test/snapshot-crash-milestone.mjs
