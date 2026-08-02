@@ -137,7 +137,39 @@ pnpm exec berth dev
 
 ## Building a Berth Agent
 
-Most frameworks wire agent straight to tool. `@berth/agents` flips that around: computer, then agent, then tool. Boot a Berth OS loaded with resident apps, and every export it has becomes a tool for whatever LLM provider you plug in. The simplest version needs nothing but an app directory and a task. `llm` figures itself out from whichever of `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` is set, and `runAgent()` boots, runs, and cleans up in one call.
+Most frameworks wire agent straight to tool. `@berth/agents` flips that around: computer, then agent, then tool. Build the computer first, load it with whichever resident apps this agent needs, first-party and custom mixed freely, there's no separate mechanism reserved for either one. Then build the agent on top of it. Every export the computer's apps have becomes a tool for whatever LLM provider you plug in.
+
+```ts
+import { Computer, createAgent } from "@berth/agents";
+
+const computer = await Computer.boot({
+  apps: ["apps/filesystem", "./my-custom-app"],
+});
+
+const { agent } = await createAgent({
+  computer,
+  llm: { provider: "anthropic", apiKey: "..." }, // omit llm entirely to auto-detect ANTHROPIC_API_KEY/OPENAI_API_KEY, or pass a real LLMProvider
+});
+
+const result = await agent.run("write a file called hello.txt with the text 'hi', then read it back");
+await computer.stop();
+```
+
+`computer` comes back from `createAgent()` too, so you can keep using it after the `Agent` is created: call tools directly, snapshot it, or hand that same instance to a second `createAgent()` call. You own its lifecycle regardless of who built it. `createAgent()` never calls `stop()` on a `Computer` you handed it.
+
+Want to limit a specific agent to only some of a shared OS's apps, instead of booting a fresh one? Build the computer with `Computer.connect()` instead of `Computer.boot()`, and pass an `apps` filter. Everything else about wiring it into `createAgent()` stays exactly the same.
+
+```ts
+// team-os was started once with `berth os up team-os --apps=apps/filesystem,apps/notes,apps/terminal`
+const writerComputer = await Computer.connect({ name: "team-os", apps: ["filesystem"] });
+const { agent: writer } = await createAgent({ computer: writerComputer, llm: { provider: "anthropic", apiKey: "..." } });
+```
+
+### Shortcuts for the common case
+
+Building the computer yourself pays off when you need to limit which apps an agent sees, mix in a custom resident app, or reuse one Computer across several agents. Most of the time you don't need any of that, so `@berth/agents` also gives you two shortcuts that build the Computer for you behind the scenes, from whatever you pass as `apps`.
+
+The simplest version needs nothing but an app directory and a task. `llm` figures itself out from whichever of `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` is set, and `runAgent()` boots, runs, and cleans up in one call.
 
 ```ts
 import { runAgent } from "@berth/agents";
@@ -148,7 +180,7 @@ const result = await runAgent({
 });
 ```
 
-Need more than one turn? Keep the `Agent` and `Computer` handles around with the fuller form.
+Need more than one turn, but don't need to touch the Computer yourself? Keep the `Agent` and `Computer` handles around with `createAgent({ apps })` instead of `createAgent({ computer })`.
 
 ```ts
 import { createAgent, createAnthropicProvider } from "@berth/agents";
@@ -161,39 +193,6 @@ const { agent, computer } = await createAgent({
 const result = await agent.run("write a file called hello.txt with the text 'hi', then read it back");
 await computer.stop();
 ```
-
-### Build the computer, then the agent
-
-Both forms above build the Computer for you behind the scenes, from whatever you pass as `apps`. Sometimes you want to build it yourself first: to limit which apps a specific agent is allowed to see, to mix in your own custom resident app alongside first-party ones, or to reuse one Computer across several agents. `createAgent()` takes an already-built `Computer` directly.
-
-First, build the computer. Load whichever resident apps this agent needs, first-party and custom mixed freely, there's no separate mechanism reserved for either one.
-
-```ts
-import { Computer, createAgent } from "@berth/agents";
-
-const computer = await Computer.boot({
-  apps: ["apps/filesystem", "./my-custom-app"],
-});
-```
-
-Then pass that same `computer` straight into `createAgent()`, instead of `apps`.
-
-```ts
-const { agent } = await createAgent({
-  computer,
-  llm: { provider: "anthropic", apiKey: "..." }, // omit llm entirely to auto-detect, or pass a real LLMProvider
-});
-```
-
-Want to limit a specific agent to only some of a shared OS's apps? Build the computer with `Computer.connect()` instead of `Computer.boot()`, and pass an `apps` filter. Everything else about wiring it into `createAgent()` stays exactly the same.
-
-```ts
-// team-os was started once with `berth os up team-os --apps=apps/filesystem,apps/notes,apps/terminal`
-const writerComputer = await Computer.connect({ name: "team-os", apps: ["filesystem"] });
-const { agent: writer } = await createAgent({ computer: writerComputer, llm: { provider: "anthropic", apiKey: "..." } });
-```
-
-`computer` comes back from `createAgent()` too, however you built it, so you can keep using it after the `Agent` is created: call tools directly, snapshot it, or hand that same instance to a second `createAgent()` call. You own its lifecycle regardless of who built it. `createAgent()` never calls `stop()` on a `Computer` you handed it.
 
 `Crew.withManager()` and `Crew.sequential()` compose multiple agents. `Crew.networked()` composes agents running on entirely separate Berth OS instances, joined over a real Docker network. Full details live in [docs/agents-reference.md](./docs/agents-reference.md).
 
@@ -273,7 +272,7 @@ The `namespace:action:scope` grammar is wide open. You can declare a capability 
 |---|---|---|
 | `filesystem:write:<path>` (say, `filesystem:write:/workspace`) | Kernel (Landlock), always on | Restricts write, create, delete, and rename to the paths you declared, plus a `/tmp` baseline. Declare nothing and your app can still only write to `/tmp`. |
 | `filesystem:read:<path>` (say, `filesystem:read:/context`) | Kernel (Landlock), opt in | Declare at least one and read scoping turns on: a fixed baseline (`/usr`, `/lib`, `/etc`, `/proc`, `/dev`, `/tmp`, your app's own working directory) plus whatever you added. Declare none and reads stay fully open, same as always. |
-| `network:connect:<port>` or `network:connect:*` | Kernel (Landlock), denied by default | Declare no capability at all and you get zero outbound TCP, full stop. Scoping is by port only, not domain. `*` is an explicit, audited escape hatch for apps that genuinely need arbitrary hosts (`browser-native`, for example). |
+| `network:connect:<port>` or `network:connect:*` | Kernel (Landlock), denied by default | Declare no capability at all and you get zero outbound TCP, full stop. Scoping is by port only, not domain. `*` is an explicit, audited escape hatch for apps that genuinely need to reach arbitrary ports; every first-party app avoids it, scoping instead to a single broker port (`browser-native` and `github-assistant` both do this, see below). |
 | `network:peer:<name>` or `network:peer:*` | `mesh-coordinator` (mutual consent) plus a real WireGuard mesh | Joins the mesh with any other app whose own `network:peer:<pattern>` names this app back. A one-sided declaration never gets introduced to its target. See the [mesh reference](./docs/mesh-reference.md). |
 | `browser:navigate:<pattern>` (say, `browser:navigate:*.github.com`) | The egress broker, at the host level rather than the kernel | The broker reads the CONNECT target's hostname straight off the (cleartext) proxy handshake and checks it against your pattern. You'll also need `network:connect:<broker's port>` declared (`8090` by default), since Landlock only sees ports. See the [egress broker reference](./docs/egress-broker-reference.md). |
 | `browser:screenshot:*` | Recorded and reported only | Nothing kernel- or broker-enforced here on its own. Declaring any `browser:*` capability is what makes `berth dev` publish the noVNC/CDP port. Opt out with `expose: { browser: false }`. |
@@ -309,7 +308,7 @@ Want more than one app in a single Berth OS, each still independently enforced b
 | `berth publish --registry=<url>` | Build and publish the app to a running app registry |
 | `berth snapshot create\|list\|restore` | Checkpoint and restore a container plus its semantic-fs context data |
 | `berth grants list\|approve\|deny` | Review and resolve pending human-approval capability requests |
-| `berth fleet status` | Check the state of a configured remote fleet |
+| `berth fleet status <fleet>` | Check the state of a configured remote fleet (`e2b`, `daytona`, or a `~/.berthrc` alias) |
 | `berth os up\|down\|status` | Boot a long-lived Berth OS once, then reconnect to it instantly instead of rebuilding on every dev iteration |
 
 Run `berth <command> --help` to see the flags. A few of these deserve their own doc: [MCP bridge](./docs/mcp-bridge-reference.md), [app registry](./docs/app-registry-reference.md), [computer snapshots](./docs/computer-snapshots-reference.md), [capability tokens and grants](./docs/capability-tokens-reference.md), [K8s adapter](./docs/k8s-adapter-reference.md), [what is a Berth OS](./docs/berth-os.md), and [the `berth os` command reference for cold start](./docs/berth-os-reference.md).
@@ -335,6 +334,8 @@ packages/
   semantic-fs-daemon/  Go/FUSE daemon, a filesystem queryable by intent, backed by a SQLite metadata index
   registry-server/     local app registry for publish, discover, and install (Fastify + SQLite)
   grants-server/       human approval service for capability grants (Fastify + SQLite)
+  mesh-coordinator/    coordination service for the WireGuard mesh: allocates IPs, exchanges keys, mutually matches peers
+  mesh-daemon/         Rust daemon that reconciles a sandbox's WireGuard config against mesh-coordinator's state
   adapters/            deploy adapters for E2B, Daytona, and Kubernetes
   cli/                 the `berth` CLI: init, dev, test, publish, deploy, os
   sdk-python/          Python resident app SDK, wire-protocol compatible with @berth/sdk

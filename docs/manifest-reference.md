@@ -43,7 +43,7 @@ A short human-readable summary. Unused before Phase 5; the [app registry](./app-
 
 A list of `namespace:action:scope` strings — e.g. `github:read:repos`, `browser:navigate:*.github.com`, `filesystem:read:/workspace`. `scope` may use a trailing/embedded `*` glob.
 
-**Phase 1 status: declared but not enforced.** Every capability request is logged and unconditionally granted (`@berth/sdk`'s `requestCapability()`). Phase 3 is what turns this list into a kernel-enforced grant — a compromised or misbehaving app will eventually be denied at the syscall boundary, not by a framework-level check. Declare capabilities honestly: Phase 3's enforcement trusts this list, and so does the [app registry](./app-registry-reference.md)'s listing, which shows them to anyone `berth init`-ing your app.
+**Kernel-enforced, not just declared.** `filesystem:*` and `network:connect:*` grants are compiled into a Landlock policy that `agent-init` applies before your app's runtime even execs — an undeclared write or outbound connection is refused at the syscall boundary, not caught by a framework-level check. `requestCapability()` (`@berth/sdk`) reflects that same policy back to your code, returning `granted: false` for anything you didn't declare. See the [capability tokens reference](./capability-tokens-reference.md) for exactly what's kernel-enforced versus recorded-only. Declare capabilities honestly: enforcement trusts this list, and so does the [app registry](./app-registry-reference.md)'s listing, which shows them to anyone `berth init`-ing your app.
 
 ### `exports` (default: `[]`)
 
@@ -57,7 +57,7 @@ Shell commands run once when the app's container is first built/started — e.g.
 
 ### `on_agent_ready` (default: `[]`)
 
-Shell commands (or, more commonly, effectively-named hooks like `"register_with_context_bus"`) run after `on_install` and after your app's `onAgentReady` SDK callbacks. In Phase 1 this is mostly symbolic — the real registration happens via the SDK's `ctx.contextBus.register()` call, which is a local no-op today and will talk to Phase 2's real context-bus daemon once it ships.
+Shell commands (or, more commonly, effectively-named hooks like `"register_with_context_bus"`) run after `on_install` and after your app's `onAgentReady` SDK callbacks. The actual registration happens via the SDK's `ctx.contextBus.register()` call, which talks to the real `context-bus-daemon` (Rust, one per sandbox) over a Unix socket — see the [context bus reference](./context-bus-reference.md).
 
 ### `expose` (default: `{ browser: true, terminal: true }`)
 
@@ -84,6 +84,6 @@ namespace:action:scope
 - `action` — what's being done (`read`, `write`, `navigate`, `screenshot`, `connect`, `peer`, ...)
 - `scope` — what it applies to; may contain a `*` glob (e.g. `*.github.com` matches `api.github.com` but not `example.com`)
 
-`@berth/manifest-schema`'s `matchesCapability(granted, requested)` implements glob matching on `scope` while requiring exact matches on `namespace`/`action` — this is the exact function Phase 3's kernel-level token issuer will call to decide grants.
+`@berth/manifest-schema`'s `matchesCapability(granted, requested)` implements glob matching on `scope` while requiring exact matches on `namespace`/`action` — this is the exact function the kernel-level token issuer calls to decide grants.
 
 `network:peer:<name>` (e.g. `network:peer:database-service`, or `network:peer:*` for any peer) joins a resident app to a real WireGuard mesh with other apps whose own `network:peer:<pattern>` names it back — mutual consent, decided by `mesh-coordinator`, not a flat "everyone who opts in reaches everyone else" mesh. See [mesh reference](./mesh-reference.md).

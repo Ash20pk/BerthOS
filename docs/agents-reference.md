@@ -2,32 +2,18 @@
 
 Most agent frameworks wire `agent -> tool`: the agent process calls out to stateless functions. `@berth/agents` flips that around. A `Computer` (a real Docker sandbox, built from the same `berth.yml` and manifest infrastructure every other part of Berth already uses) comes first. Resident apps loaded into it become the tools, and an `Agent` gets attached on top. It's a framework in the spirit of LangChain or CrewAI: bring your own LLM provider, define agents, compose them into multi-agent crews. The difference is that every agent's tools come from real, sandboxed resident apps, not bare functions.
 
-Here's the simplest version. `llm` defaults to whichever of `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` is set, and `runAgent()` boots, runs one task, and cleans up in one call.
+Build the computer, then attach the agent to it.
 
 ```ts
-import { runAgent } from "@berth/agents";
+import { Computer, createAgent } from "@berth/agents";
 
-const result = await runAgent({
-  apps: "apps/filesystem", // a single string is shorthand for a one-app Computer
-  task: "write a file called hello.txt with the text 'hi', then read it back",
-});
-```
+const computer = await Computer.boot({ apps: ["apps/filesystem", "./my-custom-app"] });
 
-Same defaults, but here's the fuller form, for when you want to keep the `Agent`/`Computer` handles around to run more than one turn or call tools directly.
-
-```ts
-import { createAgent, createAnthropicProvider } from "@berth/agents";
-
-const { agent, computer } = await createAgent({
-  apps: ["apps/filesystem"],
-  llm: createAnthropicProvider(), // optional, omit to auto-detect from the environment, or pass createOpenAIProvider()/your own LLMProvider
-});
+const { agent } = await createAgent({ computer, llm: createAnthropicProvider() });
 
 const result = await agent.run("write a file called hello.txt with the text 'hi', then read it back");
 await computer.stop();
 ```
-
-Both `createAgent()` and `runAgent()` also accept `connect: "<name>"` instead of `apps`. See "Cold start" below.
 
 ## `Computer`, the runtime primitive
 
@@ -100,6 +86,37 @@ const computer = await Computer.connect({ name: "my-agent" });
 **`computer.stop()` is a no-op for a connected Computer.** `Computer.boot()`'s `stop()` tears down the container and image it created. A connected Computer didn't create anything and doesn't own the container's lifecycle, so tearing it down from inside one agent run would kill it for every other run still using it. That means `runAgent({connect: "...", task: "..."})` is always safe to call over and over against the same `berth os up` instance. Its `finally { computer.stop() }` never actually stops anything when `connect` was used. Use `berth os down <name>` when you actually want to tear it down.
 
 **Scope:** local, `berth dev`-equivalent Docker only, same as the rest of `@berth/agents`. There's no `berth os` equivalent for E2B, Daytona, or K8s fleets today.
+
+## Shortcuts: `runAgent()` and `createAgent({ apps })`
+
+Building the `Computer` yourself pays off when you need to reuse it across agents, filter which apps an agent sees, or mix in a custom resident app. Most of the time you don't need any of that, so `@berth/agents` also gives you two shortcuts that build the Computer for you behind the scenes, from whatever you pass as `apps`.
+
+The simplest version needs nothing but an app directory and a task. `llm` defaults to whichever of `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` is set, and `runAgent()` boots, runs one task, and cleans up in one call.
+
+```ts
+import { runAgent } from "@berth/agents";
+
+const result = await runAgent({
+  apps: "apps/filesystem", // a single string is shorthand for a one-app Computer
+  task: "write a file called hello.txt with the text 'hi', then read it back",
+});
+```
+
+Same defaults, but here's the fuller form, for when you want to keep the `Agent`/`Computer` handles around to run more than one turn or call tools directly.
+
+```ts
+import { createAgent, createAnthropicProvider } from "@berth/agents";
+
+const { agent, computer } = await createAgent({
+  apps: ["apps/filesystem"],
+  llm: createAnthropicProvider(), // optional, omit to auto-detect from the environment, or pass createOpenAIProvider()/your own LLMProvider
+});
+
+const result = await agent.run("write a file called hello.txt with the text 'hi', then read it back");
+await computer.stop();
+```
+
+Both `createAgent()` and `runAgent()` also accept `connect: "<name>"` instead of `apps`, the same shortcut `Computer.connect()` gives you explicitly. See "Cold start" above.
 
 ## `Tool` and `LLMProvider`, the bring-your-own-LLM seam
 
