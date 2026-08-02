@@ -1,6 +1,17 @@
 import { Command, Flags } from "@oclif/core";
 import Docker from "dockerode";
-import { restartContainer, startContainer, stopContainer, streamLogs, watchApp } from "@berth/docker-orchestrator";
+import {
+  restartContainer,
+  startContainer,
+  stopContainer,
+  streamLogs,
+  watchApp,
+  declaresBrowserCapability,
+  declaresTerminalCapability,
+  needsBrowserPorts,
+  needsTerminalPort,
+} from "@berth/docker-orchestrator";
+import type { BerthManifest } from "@berth/manifest-schema";
 import { loadManifestOrExit } from "../util/manifest.js";
 import { buildDevImage, devImageTag } from "../util/build.js";
 import { resolveDevBindMount } from "../util/workspace.js";
@@ -52,7 +63,10 @@ export default class Dev extends Command {
     });
 
     this.log(`Container started. Watching ${appDir}/src and berth.yml for changes...`);
-    this.printDiagnostics(manifest.name, running.ports);
+    this.printDiagnostics(
+      apps.map((a) => a.manifest),
+      running.ports,
+    );
     void this.tailLogs(running.container);
 
     const watcher = watchApp(appDir, () => {
@@ -72,15 +86,25 @@ export default class Dev extends Command {
     process.on("SIGTERM", shutdown);
   }
 
-  private printDiagnostics(appName: string, ports: { vnc?: number; novnc?: number; cdp?: number; terminal?: number }): void {
+  private printDiagnostics(manifests: BerthManifest[], ports: { vnc?: number; novnc?: number; cdp?: number; terminal?: number }): void {
+    const names = manifests.map((m) => m.name).join(", ");
     if (ports.novnc) this.log(`[berth:dev] noVNC:    http://localhost:${ports.novnc}/vnc.html`);
     if (ports.vnc) this.log(`[berth:dev] VNC:      localhost:${ports.vnc}`);
     if (ports.cdp) this.log(`[berth:dev] CDP:      http://localhost:${ports.cdp}`);
     if (!ports.novnc && !ports.vnc && !ports.cdp) {
-      this.log(`[berth:dev] "${appName}" declares no browser:* capability — no VNC/CDP ports exposed`);
+      if (manifests.some(declaresBrowserCapability) && !manifests.some(needsBrowserPorts)) {
+        this.log(`[berth:dev] "${names}" sets expose.browser: false — VNC/CDP ports not published to the host`);
+      } else {
+        this.log(`[berth:dev] "${names}" declares no browser:* capability — no VNC/CDP ports exposed`);
+      }
     }
-    if (ports.terminal) this.log(`[berth:dev] Terminal: http://localhost:${ports.terminal}`);
-    else this.log(`[berth:dev] "${appName}" declares no terminal:* capability — no terminal port exposed`);
+    if (ports.terminal) {
+      this.log(`[berth:dev] Terminal: http://localhost:${ports.terminal}`);
+    } else if (manifests.some(declaresTerminalCapability) && !manifests.some(needsTerminalPort)) {
+      this.log(`[berth:dev] "${names}" sets expose.terminal: false — terminal port not published to the host`);
+    } else {
+      this.log(`[berth:dev] "${names}" declares no terminal:* capability — no terminal port exposed`);
+    }
   }
 
   private async tailLogs(container: Docker.Container): Promise<void> {
