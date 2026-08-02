@@ -148,7 +148,7 @@ const result = await runAgent({
 });
 ```
 
-Need more than one turn? Keep the `Agent` and `Computer` handles around with the fuller form. You can also hand `createAgent()` a `Computer` you already built, so one Berth OS can back several agents at once.
+Need more than one turn? Keep the `Agent` and `Computer` handles around with the fuller form.
 
 ```ts
 import { createAgent, createAnthropicProvider } from "@berth/agents";
@@ -161,6 +161,32 @@ const { agent, computer } = await createAgent({
 const result = await agent.run("write a file called hello.txt with the text 'hi', then read it back");
 await computer.stop();
 ```
+
+### Build the computer, then the agent
+
+Both forms above build the Computer for you behind the scenes, from whatever you pass as `apps`. Sometimes you want to build it yourself first: to limit which apps a specific agent is allowed to see, to mix in your own custom resident app alongside first-party ones, or to reuse one Computer across several agents. `createAgent()` takes an already-built `Computer` directly.
+
+```ts
+import { Computer, createAgent } from "@berth/agents";
+
+// load resident apps into a Berth OS. First-party and custom apps mix freely,
+// there's no separate mechanism reserved for either one.
+const computer = await Computer.boot({
+  apps: ["apps/filesystem", "./my-custom-app"],
+});
+
+// or connect to a shared, already-running Berth OS (see berth os up below),
+// limited to just the apps this particular agent should be able to touch
+const computer = await Computer.connect({ name: "team-os", apps: ["filesystem"] });
+
+// now build the agent on top of it
+const { agent } = await createAgent({
+  computer,
+  llm: { provider: "anthropic", apiKey: "..." }, // omit llm entirely to auto-detect, or pass a real LLMProvider
+});
+```
+
+`computer` comes back from `createAgent()` either way, so you can keep using it after the `Agent` is built: call tools directly, snapshot it, or hand the same instance to a second `createAgent()` call. You own its lifecycle regardless of who built it. `createAgent()` never calls `stop()` on a `Computer` you handed it.
 
 `Crew.withManager()` and `Crew.sequential()` compose multiple agents. `Crew.networked()` composes agents running on entirely separate Berth OS instances, joined over a real Docker network. Full details live in [docs/agents-reference.md](./docs/agents-reference.md).
 
