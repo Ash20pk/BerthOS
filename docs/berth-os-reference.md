@@ -1,5 +1,7 @@
 # `berth os` Reference — fixing agent-dev cold start
 
+This doc covers the `berth os up`/`down`/`status` commands and `Computer.connect()` — the mechanics of keeping one Berth OS running and reconnecting to it. For what a Berth OS actually *is* (resident apps, capability enforcement, context bus, semantic FS), see [What is a Berth OS?](./berth-os.md) first if you haven't already.
+
 `Computer.boot()` (`@berth/agents`) builds a fresh production image and starts a brand-new container on every call — correct for a one-shot script, but real seconds of latency (image build, container start, `on_install`, the context-bus/semantic-fs daemons, `agent-init`'s Landlock setup) paid again on *every* run while iterating on agent code. `berth os up` moves that cost out of the loop: build and boot once, then reconnect instantly for as many runs as you need.
 
 ## The commands

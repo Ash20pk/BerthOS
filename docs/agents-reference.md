@@ -2,17 +2,32 @@
 
 Every other agent framework wires `agent -> tool`: the agent process calls out to stateless functions. `@berth/agents` inverts that — a `Computer` (a real Docker sandbox, built from the same `berth.yml`/manifest infrastructure every other phase already uses) comes first, resident apps loaded into it become the tools, and an `Agent` is what gets attached on top. It's a framework in the spirit of LangChain/CrewAI — bring your own LLM provider, define agents, compose them into multi-agent crews — except every agent's tools come from real sandboxed resident apps, not bare functions.
 
+The dead-simple form — `llm` defaults to whichever of `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` is set, and `runAgent()` boots, runs one task, and cleans up in one call:
+
+```ts
+import { runAgent } from "@berth/agents";
+
+const result = await runAgent({
+  apps: "apps/filesystem", // a single string is shorthand for a one-app Computer
+  task: "write a file called hello.txt with the text 'hi', then read it back",
+});
+```
+
+The fuller form — same defaulting, but you keep the `Agent`/`Computer` handles to run more than one turn or call tools directly:
+
 ```ts
 import { createAgent, createAnthropicProvider } from "@berth/agents";
 
 const { agent, computer } = await createAgent({
   apps: ["apps/filesystem"],
-  llm: createAnthropicProvider(), // or createOpenAIProvider(), or your own LLMProvider
+  llm: createAnthropicProvider(), // optional — omit to auto-detect from the environment, or pass createOpenAIProvider()/your own LLMProvider
 });
 
 const result = await agent.run("write a file called hello.txt with the text 'hi', then read it back");
 await computer.stop();
 ```
+
+Both `createAgent()` and `runAgent()` also accept `connect: "<name>"` instead of `apps` — see "Cold start: `berth os up` + `Computer.connect()`" below.
 
 ## `Computer` — the runtime primitive
 
@@ -23,6 +38,31 @@ Reused as-is from existing infrastructure — nothing about capability enforceme
 No fabricated health-check export exists to poll for readiness — container boot (`on_install`, the context-bus/semantic-fs daemons, capability-policy generation, `agent-init`'s Landlock setup) takes a few seconds before an app's RPC server is even reading. `Computer.call()` retries a failed attempt with backoff (short per-attempt timeout, ~30s ceiling) rather than requiring every loaded app to expose a synthetic ping export.
 
 Every `Computer.boot()` builds a fresh, uniquely-tagged image (unlike `berth dev`/`deploy`'s stable, overwritten tags) — `Computer.stop()` removes it along with the container, so repeated boots in a long-running process don't leak images.
+
+## Cold start: `berth os up` + `Computer.connect()`
+
+`Computer.boot()`'s build-a-fresh-image-then-boot path is correct for a one-shot script, but it's real seconds of latency (image build, container start, `on_install`, the context-bus/semantic-fs daemons, `agent-init`'s Landlock setup) paid again on *every* run while you're iterating on agent code. `berth os up` moves that cost out of the loop: it builds once and starts a container that stays running after the CLI command returns, instead of the ephemeral, always-freshly-built container `Computer.boot()` creates per call.
+
+```bash
+berth os up my-agent --apps=apps/filesystem,apps/notes   # or --config=<path to a small YAML: name + apps: [...] + network?>
+berth os status                                          # confirm it's still running
+berth os down my-agent                                   # tear it down when you're done for the day
+```
+
+Agent code then attaches instead of booting:
+
+```ts
+import { createAgent } from "@berth/agents";
+
+const { agent, computer } = await createAgent({ connect: "my-agent", llm: createAnthropicProvider() });
+// or: const computer = await Computer.connect({ name: "my-agent" });
+```
+
+`Computer.connect()` reads `~/.berth/os/<name>.json` (written by `berth os up`), re-derives a `Docker.Container` handle by name, and dispatches every tool call through `invokeAppExport()`'s docker-exec + Unix-socket relay — the same mechanism `berth rpc`/multi-app mode already use to reach a specific already-running app from a fresh host process (see [multi-app reference](./multi-app-reference.md)). `berth os up` always forces entrypoint.sh's multi-app branch, even for a single app (`buildImage`'s `forceCompanionLayout`, `startContainer`'s `apps` array with exactly one entry) — specifically so a per-app RPC socket always exists to reconnect to, regardless of how many apps are loaded; the single-app stdio-attach path `Computer.boot()` uses can only ever be held by the process that started the container.
+
+**`computer.stop()` is a no-op for a connected Computer.** `Computer.boot()`'s `stop()` tears down the container and image it created; a connected Computer didn't create anything and doesn't own the container's lifecycle — tearing it down from inside one agent run would kill it for every other run still using it. This means `runAgent({connect: "...", task: "..."})` is always safe to call repeatedly against the same `berth os up` instance: its `finally { computer.stop() }` never actually stops anything when `connect` was used. Use `berth os down <name>` to actually tear it down.
+
+**Scope**: local `berth dev`-equivalent Docker only, same as the rest of `@berth/agents` — no `berth os` equivalent exists for E2B/Daytona/K8s fleets today.
 
 ## `Tool` and `LLMProvider` — the "bring your own LLM" seam
 
@@ -76,7 +116,17 @@ The synthesized agent-server app is generated on the fly (`berth.yml` + a plain,
 
 ## Examples
 
-Narrative, runnable demonstrations (not hard-assertion tests) live in
+Start with [`examples/agents/simple-agent`](../examples/agents/simple-agent) — depends on `@berth/agents` as an ordinary `workspace:*` package dependency (the shape an external project's `package.json` would actually use), rather than a relative import into this repo's own build output:
+
+```bash
+cd examples/agents/simple-agent
+export OPENAI_API_KEY=sk-...
+pnpm start
+```
+
+[`examples/agents/agent-server`](../examples/agents/agent-server) is the other direction: the agent isn't driving anything, it's the thing being served. A plain HTTP server boots (or `BERTH_OS_CONNECT`s to) a `Computer`/`Agent` once at startup, then answers `POST /task { task }` requests against it — the pattern for putting an agent behind a real API instead of a one-shot script.
+
+For multi-agent composition, narrative/runnable demonstrations (not hard-assertion tests) live in
 [`packages/agents/examples/`](../packages/agents/examples/README.md):
 
 ```bash

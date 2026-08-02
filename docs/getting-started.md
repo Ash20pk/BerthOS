@@ -1,6 +1,6 @@
 # Getting Started
 
-This walkthrough takes you from a clean checkout to a working resident app with a live browser you can watch over VNC. It should take under 10 minutes.
+This walkthrough takes you from a clean checkout to a working resident app with a live browser you can watch over VNC. It should take under 10 minutes. It's the resident-app-building path — for the fastest way to see a working agent, see the [README's Quickstart](../README.md#quickstart) instead; both feed into the same [Berth OS](./berth-os.md) (the sandboxed computer a resident app runs in and an agent's tools come from).
 
 ## Prerequisites
 
@@ -23,7 +23,7 @@ pnpm build
 ## 2. Run the hello-world example
 
 ```bash
-cd examples/hello-world
+cd examples/resident-apps/hello-world
 pnpm exec berth dev
 ```
 
@@ -31,7 +31,7 @@ You should see:
 
 ```
 Building dev image for "hello-world"...
-Container started. Watching .../examples/hello-world/src and berth.yml for changes...
+Container started. Watching .../examples/resident-apps/hello-world/src and berth.yml for changes...
 [berth:dev] "hello-world" declares no browser:* capability — no VNC/CDP ports exposed
 [berth:dev] [berth:runtime] "hello-world" ready
 ```
@@ -123,8 +123,11 @@ Beyond the `hello-world` → `notes` → `browser-native` ladder above:
 Everything above is about authoring and running one resident app. To wire an
 LLM agent up to one or more resident apps' exports as tools — single-agent,
 manager/worker crews, or independent agents networked across containers —
-see [`packages/agents/examples/`](../packages/agents/examples/README.md)
-and [agents-reference.md](./agents-reference.md).
+start with [`examples/agents/simple-agent`](../examples/agents/simple-agent)
+(depends on `@berth/agents` as an ordinary `workspace:*` package dependency,
+the shape an external project's `package.json` would actually use), then see
+[`packages/agents/examples/`](../packages/agents/examples/README.md)
+and [agents-reference.md](./agents-reference.md) for multi-agent composition.
 
 ## Something not working?
 
