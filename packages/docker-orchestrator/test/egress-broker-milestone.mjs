@@ -127,6 +127,10 @@ async function runPartB() {
 
     rpc.close();
     console.log("\nPASS — Chromium's real navigation was actually routed through the egress broker, which allowed it and logged the decision.");
+  } catch (err) {
+    console.error("\n--- browser-native container log (Part B failure) ---");
+    console.error(containerLog.text());
+    throw err;
   } finally {
     await containerLog.stop();
     await stopContainer(running.container);
