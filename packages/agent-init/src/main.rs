@@ -14,6 +14,7 @@ use std::os::unix::process::CommandExt;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use caps::CapSet;
 use landlock::{
     AccessFs, AccessNet, Access, NetPort, PathBeneath, PathFd, Ruleset, RulesetAttr, RulesetCreatedAttr, ABI,
 };
@@ -40,6 +41,13 @@ struct CapabilityPolicy {
     // reach arbitrary hosts). See generate-capability-policy.ts.
     #[serde(rename = "networkUnrestricted", default)]
     network_unrestricted: bool,
+    // Declared network:peer:<name> globs (see docs/mesh-reference.md). Not
+    // acted on here — mesh-daemon (which runs before this process, outside
+    // any Landlock ruleset) is what actually decides which peers get wired
+    // into wg0, via mesh-coordinator's mutual-match introduction. This field
+    // exists purely so it's captured in the audit line below.
+    #[serde(rename = "meshPeers", default)]
+    mesh_peers: Vec<String>,
 }
 
 /// One structured JSON line per boot — a real, greppable audit record of
@@ -48,9 +56,41 @@ struct CapabilityPolicy {
 fn log_audit_event(policy: &CapabilityPolicy, ruleset_status: &str) {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     eprintln!(
-        "[agent-init] {{\"event\":\"capability_policy_applied\",\"app\":{:?},\"writePaths\":{:?},\"readPaths\":{:?},\"networkPorts\":{:?},\"networkUnrestricted\":{},\"ruleset\":{:?},\"timestamp\":{}}}",
-        policy.app_name, policy.write_paths, policy.read_paths, policy.network_ports, policy.network_unrestricted, ruleset_status, now
+        "[agent-init] {{\"event\":\"capability_policy_applied\",\"app\":{:?},\"writePaths\":{:?},\"readPaths\":{:?},\"networkPorts\":{:?},\"networkUnrestricted\":{},\"meshPeers\":{:?},\"ruleset\":{:?},\"timestamp\":{}}}",
+        policy.app_name, policy.write_paths, policy.read_paths, policy.network_ports, policy.network_unrestricted, policy.mesh_peers, ruleset_status, now
     );
+}
+
+/// Separate structured line from log_audit_event above: the capability drop
+/// happens in main(), after apply_policy() has already returned (or failed),
+/// so it can't be folded into that single per-policy audit line without
+/// restructuring apply_policy's control flow for no real benefit — two
+/// greppable JSON lines per boot instead of one.
+fn log_caps_dropped_event(app_name: &str, dropped: bool) {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    eprintln!(
+        "[agent-init] {{\"event\":\"capabilities_dropped\",\"app\":{app_name:?},\"dropped\":{dropped},\"timestamp\":{now}}}"
+    );
+}
+
+/// Drops this process's entire Linux capability bounding set (plus the
+/// inheritable/ambient sets, defensively) before exec()ing into the resident
+/// app. Landlock's restrict_self() above narrows LSM-enforced syscall access
+/// but does nothing to the process's Linux capability set — those are two
+/// orthogonal kernel enforcement mechanisms. Since these containers run
+/// every process as root with no USER directive, a container-level `CapAdd`
+/// grant (e.g. NET_ADMIN for a mesh-capable app, SYS_ADMIN for semantic-fs's
+/// FUSE mount) would otherwise reach the resident app's own process just as
+/// much as the pre-exec daemon it was actually intended for. The bounding
+/// set is a hard ceiling a process can never widen for itself or anything it
+/// execs — dropping it here is what keeps "declared capability, enforced by
+/// the kernel" true for Linux capabilities, not just for Landlock's
+/// filesystem/network-port rules. See docs/mesh-reference.md.
+fn drop_all_capabilities() -> Result<(), Box<dyn std::error::Error>> {
+    caps::clear(None, CapSet::Ambient)?;
+    caps::clear(None, CapSet::Inheritable)?;
+    caps::clear(None, CapSet::Bounding)?;
+    Ok(())
 }
 
 fn main() {
@@ -63,7 +103,7 @@ fn main() {
         std::process::exit(1);
     }
 
-    match apply_policy(&policy_path) {
+    let app_name = match apply_policy(&policy_path) {
         Ok(policy) => {
             eprintln!(
                 "[agent-init] restricted \"{}\" — write access allowed only under: {} (declared capabilities: {})",
@@ -71,13 +111,27 @@ fn main() {
                 policy.write_paths.join(", "),
                 policy.declared_capabilities.join(", "),
             );
+            policy.app_name
         }
         Err(err) => {
             eprintln!(
                 "[agent-init] WARNING: could not apply capability policy from {policy_path} ({err}) — continuing unrestricted."
             );
+            "unknown".to_string()
         }
+    };
+
+    // Runs regardless of whether apply_policy() above succeeded — a process
+    // that inherited the container's full root capability set is exactly as
+    // dangerous whether or not Landlock's filesystem/network rules also
+    // applied, so this isn't gated on that Ok/Err branch.
+    let caps_dropped = drop_all_capabilities().is_ok();
+    if caps_dropped {
+        eprintln!("[agent-init] dropped capability bounding/inheritable/ambient sets before exec");
+    } else {
+        eprintln!("[agent-init] WARNING: could not drop capabilities before exec — continuing anyway");
     }
+    log_caps_dropped_event(&app_name, caps_dropped);
 
     let err = Command::new(&args[0]).args(&args[1..]).exec();
     eprintln!("[agent-init] failed to exec {args:?}: {err}");
