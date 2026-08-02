@@ -1,4 +1,5 @@
-import { Computer, type BootComputerOptions } from "./computer.js";
+import { Computer, type BootComputerOptions, type ConnectComputerOptions } from "./computer.js";
+import { resolveLLMProvider, type LLMProviderConfig } from "./providers/auto.js";
 import type { AgentMessage, LLMProvider, Tool } from "./types.js";
 
 export interface AgentOptions {
@@ -100,32 +101,107 @@ export class Agent {
   }
 }
 
-export interface CreateAgentOptions extends Pick<BootComputerOptions, "apps" | "network" | "env" | "docker"> {
-  llm: LLMProvider;
+export interface CreateAgentOptions extends Pick<BootComputerOptions, "network" | "env" | "docker"> {
+  /** A resident-app directory, or several — a bare string is shorthand for a one-app Computer. First-party (`apps/filesystem`) and custom (`./my-app`) directories mix freely; nothing distinguishes them. Ignored if `computer` or `connect` is given. */
+  apps?: string | string[];
+  /**
+   * Attach to an already-running `berth os up <name>` instance instead of
+   * building an image and booting a fresh Computer — the fix for cold start
+   * during dev iteration (build+boot only happens once, in `berth os up`).
+   * A bare string connects to every app that OS has loaded; `{name, apps}`
+   * restricts this Agent to a named subset of them — e.g. an OS shared by
+   * several agents, each scoped down to just the apps it actually needs.
+   * Mutually exclusive with `apps`/`computer`. See docs/berth-os-reference.md.
+   */
+  connect?: string | ConnectComputerOptions;
+  /**
+   * Pass an already-built Computer (from Computer.boot()/Computer.connect())
+   * instead of `apps`/`connect` — lets one Computer back several Agents
+   * (e.g. a manager and its workers, each with a different tool subset via
+   * `computer.tools`/`withTools()`) without booting or connecting more than
+   * once. Mutually exclusive with `apps`/`connect`. You own this Computer's
+   * lifecycle either way — createAgent() never calls stop() on it, whether
+   * it built the Computer itself or received one here.
+   */
+  computer?: Computer;
+  /**
+   * Defaults to whichever provider has a real API key in the environment
+   * (ANTHROPIC_API_KEY, then OPENAI_API_KEY). Pass a real LLMProvider
+   * (`createAnthropicProvider()`/`createOpenAIProvider()`/your own), or a
+   * plain config object — `{ provider: "openai", apiKey, baseURL }` — to
+   * point at a custom OpenAI/Anthropic-compatible endpoint without an extra
+   * import.
+   */
+  llm?: LLMProvider | LLMProviderConfig;
   systemPrompt?: string;
   name?: string;
   maxTurns?: number;
 }
 
+function normalizeApps(apps: string | string[] | undefined): string[] {
+  if (!apps) {
+    throw new Error("createAgent() needs `apps` (a resident app directory, or an array of them), `connect`, or `computer`");
+  }
+  return typeof apps === "string" ? [apps] : apps;
+}
+
 /**
- * The one-call developer entry point: boots a Computer from the given
- * resident-app directories and wraps its tool list into an Agent driven by
- * any LLMProvider. `computer` is exposed directly too — call tools yourself,
- * snapshot, or `stop()` it when done.
+ * The one-call developer entry point: resolves a Computer (reuses one you
+ * already built via `computer`, attaches to a shared `berth os up` instance
+ * via `connect`, or boots a fresh one from `apps`) and wraps its tool list
+ * into an Agent. `llm` defaults to whichever provider has an API key set.
+ * `computer` is exposed directly too — call tools yourself, snapshot, or
+ * `stop()` it when done.
  */
 export async function createAgent(options: CreateAgentOptions): Promise<{ agent: Agent; computer: Computer }> {
-  const computer = await Computer.boot({
-    apps: options.apps,
-    network: options.network,
-    env: options.env,
-    docker: options.docker,
-  });
+  const computer =
+    options.computer ??
+    (options.connect
+      ? await Computer.connect({
+          ...(typeof options.connect === "string" ? { name: options.connect } : options.connect),
+          docker: options.docker,
+        })
+      : await Computer.boot({
+          apps: normalizeApps(options.apps),
+          network: options.network,
+          env: options.env,
+          docker: options.docker,
+        }));
   const agent = new Agent({
     name: options.name,
     systemPrompt: options.systemPrompt,
-    llm: options.llm,
+    llm: resolveLLMProvider(options.llm),
     tools: computer.tools,
     maxTurns: options.maxTurns,
   });
   return { agent, computer };
+}
+
+export interface RunAgentOptions extends Omit<CreateAgentOptions, "computer"> {
+  /** The task to hand the agent. */
+  task: string;
+}
+
+/**
+ * The dead-simple entry point for the common case — boot/connect, run one
+ * task, clean up, all in one call:
+ *
+ *   const result = await runAgent({ apps: "apps/filesystem", task: "..." });
+ *
+ * `computer.stop()` is always safe to call here even when `connect` was
+ * used: it's a no-op for a connected Computer (see Computer.stop()), so this
+ * never tears down a shared `berth os up` instance out from under other runs.
+ * Deliberately doesn't accept a pre-built `computer`: this function always
+ * owns the Computer's whole lifecycle (create it, use it once, tear it
+ * down/disconnect) — reusing one Computer across several calls needs
+ * `createAgent({ computer })` instead, with `stop()` left to you.
+ */
+export async function runAgent(options: RunAgentOptions): Promise<AgentRunResult> {
+  const { task, ...createOptions } = options;
+  const { agent, computer } = await createAgent(createOptions);
+  try {
+    return await agent.run(task);
+  } finally {
+    await computer.stop();
+  }
 }

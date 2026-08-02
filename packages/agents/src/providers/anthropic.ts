@@ -3,6 +3,8 @@ import type { AgentMessage, LLMProvider, LLMTurn, Tool } from "../types.js";
 
 export interface AnthropicProviderOptions {
   apiKey?: string;
+  /** Point at a custom endpoint (a self-hosted gateway, a Bedrock/Vertex proxy, ...) instead of Anthropic's default API. */
+  baseURL?: string;
   model?: string;
   maxTokens?: number;
 }
@@ -39,7 +41,7 @@ function toAnthropicMessages(messages: AgentMessage[]): Anthropic.MessageParam[]
  * secretly hardcoded to one vendor — Agent/Crew never reference this module.
  */
 export function createAnthropicProvider(options: AnthropicProviderOptions = {}): LLMProvider {
-  const client = new Anthropic({ apiKey: options.apiKey ?? process.env.ANTHROPIC_API_KEY });
+  const client = new Anthropic({ apiKey: options.apiKey ?? process.env.ANTHROPIC_API_KEY, baseURL: options.baseURL });
   const model = options.model ?? DEFAULT_MODEL;
   const maxTokens = options.maxTokens ?? DEFAULT_MAX_TOKENS;
 

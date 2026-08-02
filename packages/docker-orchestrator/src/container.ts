@@ -132,11 +132,16 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
   if (options.installMarkerVolume) binds.push(`${options.installMarkerVolume}:${workingDir}/.berth`);
   if (options.extraBinds) binds.push(...options.extraBinds);
 
-  // Only set when there's more than one app — entrypoint.sh's single-app
-  // branch (today's exact behavior) runs whenever this is absent, so a
-  // one-app `apps` array is equivalent to omitting `apps` entirely.
+  // Set whenever the caller passes a non-empty `apps` array — including a
+  // single-element one. No existing caller does that today (every call site
+  // uses the `apps.length > 1 ? [...] : undefined` pattern, so a one-app
+  // array was never actually reachable before); `berth os up` is the first
+  // caller that deliberately passes exactly one app here, specifically to
+  // get entrypoint.sh's multi-app branch (and thus a per-app RPC socket a
+  // separate host process can reconnect to via invokeAppExport) even for a
+  // lone app — see @berth/agents' Computer.connect().
   const env = { ...options.env };
-  if (options.apps && options.apps.length > 1) {
+  if (options.apps && options.apps.length > 0) {
     env.BERTH_APPS = JSON.stringify(options.apps.map((a) => ({ name: a.name, workingDir: a.workingDir })));
   }
   // Unconditional (harmless when no app declares network:peer:* — mesh-daemon

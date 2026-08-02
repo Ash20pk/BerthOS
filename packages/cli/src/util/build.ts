@@ -1,6 +1,7 @@
 import { buildImage } from "@berth/docker-orchestrator";
 import type { BerthManifest } from "@berth/manifest-schema";
 import type { AppSpec } from "./multi-app.js";
+import type { OsAppSpec } from "./os-config.js";
 
 export function devImageTag(manifest: BerthManifest): string {
   return `berth/${manifest.name}:dev`;
@@ -31,6 +32,31 @@ export async function buildProductionImage(appDir: string, manifest: BerthManife
     ...(companions.length > 0
       ? { appName: manifest.name, companions: companions.map((c) => ({ name: c.name, appDir: c.appDir })) }
       : {}),
+  });
+  return tag;
+}
+
+export function osImageTag(name: string): string {
+  return `berth-os/${name}:latest`;
+}
+
+/**
+ * Used by `berth os up`. Unlike buildProductionImage(), this always stages
+ * the companion apps/<name>/ layout — even for exactly one app
+ * (forceCompanionLayout) — so the container always gets entrypoint.sh's
+ * multi-app branch and thus a per-app RPC socket a later `Computer.connect()`
+ * can reach, regardless of how many apps are loaded. See
+ * docs/berth-os-reference.md.
+ */
+export async function buildOsImage(name: string, primary: OsAppSpec, companions: OsAppSpec[]): Promise<string> {
+  const tag = osImageTag(name);
+  await buildImage({
+    appDir: primary.appDir,
+    tag,
+    target: "production",
+    appName: primary.name,
+    companions: companions.map((c) => ({ name: c.name, appDir: c.appDir })),
+    forceCompanionLayout: true,
   });
   return tag;
 }
