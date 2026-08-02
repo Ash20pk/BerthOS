@@ -57,13 +57,18 @@ async function main() {
 
   const containerLog = await startLogCapture(running.container);
 
+  // Declared here (not `const` inside the try block below) so Test 6, which
+  // needs to know whether this host can enforce anything at all, can read it
+  // after that try/finally has already torn down the Test 1-5 container.
+  let landlockActive;
+
   try {
     await waitFor(() => /"filesystem" ready/.test(containerLog.text()), 20000, "filesystem runtime ready");
     await waitFor(() => /ruleset=/.test(containerLog.text()), 5000, "agent-init's landlock status line");
 
     const statusLine = containerLog.text().match(/\[agent-init\] landlock restrict_self\(\).*$/m)?.[0] ?? "";
     console.log(statusLine);
-    const landlockActive = /ruleset=FullyEnforced|ruleset=PartiallyEnforced/.test(statusLine);
+    landlockActive = /ruleset=FullyEnforced|ruleset=PartiallyEnforced/.test(statusLine);
     if (!landlockActive) {
       assert(
         !process.env.CI,
@@ -178,6 +183,51 @@ async function main() {
   } finally {
     await containerLog.stop();
     await stopContainer(running.container);
+  }
+
+  console.log("\n--- Test 6: BERTH_REQUIRE_ENFORCEMENT=1 refuses to boot unrestricted ---");
+  // A second, independent container from the same image — proves
+  // agent-init's fail-closed gate (packages/agent-init/src/main.rs) without
+  // touching the container Test 1-5 already tore down.
+  const enforcedRunning = await startContainer({
+    image: "berth/filesystem:dev",
+    name: "berth-capability-enforcement-filesystem-require-enforcement",
+    manifest,
+    bindMount: { hostPath: REPO_ROOT, containerPath: "/workspace" },
+    workingDir: "/workspace/apps/filesystem",
+    env: { BERTH_REQUIRE_ENFORCEMENT: "1" },
+    docker,
+  });
+  const enforcedLog = await startLogCapture(enforcedRunning.container);
+  try {
+    if (landlockActive) {
+      // Enforcement is genuinely FullyEnforced/PartiallyEnforced here, so the
+      // gate must not interfere with a boot that would have passed anyway.
+      await waitFor(() => /"filesystem" ready/.test(enforcedLog.text()), 20000, "filesystem runtime ready under BERTH_REQUIRE_ENFORCEMENT");
+      console.log("\nPASS — BERTH_REQUIRE_ENFORCEMENT=1 did not block a correctly-enforced boot.");
+    } else {
+      // This host can't fully enforce the policy — agent-init must refuse to
+      // exec the app at all rather than falling back to today's warn-and-run.
+      await waitFor(
+        () => /capability_enforcement_refused/.test(enforcedLog.text()),
+        10000,
+        "agent-init's capability_enforcement_refused audit line",
+      );
+      await waitFor(
+        async () => !(await enforcedRunning.container.inspect()).State.Running,
+        10000,
+        "container to exit after agent-init's enforcement refusal",
+      );
+      const finalInspect = await enforcedRunning.container.inspect();
+      assert(
+        finalInspect.State.ExitCode !== 0,
+        `expected a non-zero exit code when enforcement couldn't be verified, got ${finalInspect.State.ExitCode}`,
+      );
+      console.log("\nPASS — BERTH_REQUIRE_ENFORCEMENT=1 refused to exec unrestricted and exited non-zero.");
+    }
+  } finally {
+    await enforcedLog.stop();
+    await stopContainer(enforcedRunning.container).catch(() => {});
   }
 }
 
