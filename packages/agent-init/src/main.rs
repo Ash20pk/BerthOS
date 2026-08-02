@@ -153,6 +153,20 @@ fn apply_policy(policy_path: &str) -> Result<CapabilityPolicy, Box<dyn std::erro
 
     if restrict_reads {
         for path in &policy.read_paths {
+            // Same reasoning as the write-path loop above: a declared read
+            // path (e.g. another app's /workspace) isn't guaranteed to exist
+            // yet when this app's own agent-init runs — in a multi-app
+            // container, entrypoint.sh starts every app's chain concurrently
+            // with no ordering barrier, so whichever app actually creates
+            // the directory (typically the one with a *write* grant there)
+            // may not have run yet. PathFd::new() below would then fail with
+            // ENOENT and silently skip the grant — permanently, since the
+            // ruleset is finalized moments later by restrict_self() — even
+            // though the path exists by the time this app actually tries to
+            // read from it.
+            if let Err(err) = std::fs::create_dir_all(path) {
+                eprintln!("[agent-init] WARNING: couldn't create \"{path}\" ahead of granting read access ({err})");
+            }
             match PathFd::new(path) {
                 Ok(fd) => {
                     ruleset = ruleset.add_rule(PathBeneath::new(fd, read_access))?;
