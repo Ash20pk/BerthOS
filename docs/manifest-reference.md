@@ -59,6 +59,21 @@ Shell commands run once when the app's container is first built/started — e.g.
 
 Shell commands (or, more commonly, effectively-named hooks like `"register_with_context_bus"`) run after `on_install` and after your app's `onAgentReady` SDK callbacks. In Phase 1 this is mostly symbolic — the real registration happens via the SDK's `ctx.contextBus.register()` call, which is a local no-op today and will talk to Phase 2's real context-bus daemon once it ships.
 
+### `expose` (default: `{ browser: true, terminal: true }`)
+
+Whether declaring `browser:*`/`terminal:*` also publishes the corresponding VNC/CDP/ttyd port to the host in `berth dev`. The capability itself (what the app is *allowed* to do) and exposure (whether a human can *watch* it happen over noVNC/ttyd) are separate decisions:
+
+```yaml
+capabilities:
+  - browser:navigate:*.github.com
+expose:
+  browser: false   # capability still granted — no VNC/CDP port published to the host
+```
+
+Both fields default to `true`, so an existing `berth.yml` with no `expose:` block keeps today's behavior unchanged (declaring the capability publishes the port). Set `browser: false` or `terminal: false` to run headless/unwatched — e.g. in CI, or for an app whose browser/terminal session shouldn't be reachable from the host at all.
+
+**Dev-only today.** This only affects `berth dev` (local Docker). `berth deploy --fleet=e2b/daytona/k8s` doesn't publish these ports or print watch URLs on any deploy target yet, regardless of `expose` — none of the deploy adapters (`packages/adapters/adapter-e2b`, `adapter-daytona`, `adapter-k8s`) implement port exposure or URL printing today.
+
 ## Capability string grammar
 
 ```
