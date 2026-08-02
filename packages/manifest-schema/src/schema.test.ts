@@ -38,9 +38,9 @@ test("defaults optional arrays to empty", () => {
   assert.deepEqual(result.exports, []);
 });
 
-test("expose defaults to true for both browser and terminal when omitted", () => {
+test("expose defaults to true for browser/terminal and false for preview when omitted", () => {
   const result = BerthManifestSchema.parse({ name: "app", version: "1.0.0" });
-  assert.deepEqual(result.expose, { browser: true, terminal: true });
+  assert.deepEqual(result.expose, { browser: true, terminal: true, preview: false });
 });
 
 test("expose lets an author disable just one of browser/terminal", () => {
@@ -49,7 +49,16 @@ test("expose lets an author disable just one of browser/terminal", () => {
     version: "1.0.0",
     expose: { browser: false },
   });
-  assert.deepEqual(result.expose, { browser: false, terminal: true });
+  assert.deepEqual(result.expose, { browser: false, terminal: true, preview: false });
+});
+
+test("expose lets an author opt in to a deploy-target preview URL", () => {
+  const result = BerthManifestSchema.parse({
+    name: "app",
+    version: "1.0.0",
+    expose: { preview: true },
+  });
+  assert.deepEqual(result.expose, { browser: true, terminal: true, preview: true });
 });
 
 test("governs defaults to false, governance.exempt defaults to false", () => {

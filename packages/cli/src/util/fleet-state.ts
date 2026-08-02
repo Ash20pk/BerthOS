@@ -13,6 +13,15 @@ export interface FleetInstanceRecord {
   id: string;
   appName: string;
   startedAt: string;
+  /**
+   * Ports `berth fleet status` should try adapter.previewUrl() against for
+   * this instance — computed once at `berth deploy` time from the deployed
+   * app's own `expose.preview` opt-in and declared browser:* or terminal:*
+   * capabilities (fleet-state has no other way to know this later, since
+   * it doesn't store the deployed app's manifest). Absent/empty means
+   * preview wasn't opted into, or the adapter/instance predates this field.
+   */
+  previewPorts?: number[];
 }
 
 export interface FleetStateFile {

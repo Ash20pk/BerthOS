@@ -40,6 +40,17 @@ class E2bDeployHandle implements DeployHandle {
   async stop(): Promise<void> {
     await this.sandbox.kill();
   }
+
+  /**
+   * Real, confirmed against the installed e2b@1.13.2 SDK's own type
+   * definitions: sandbox.getHost(port) returns a real per-port hostname
+   * backed by E2B's own HTTPS reverse proxy (e.g. "<port>-<sandboxId>.e2b.dev"),
+   * not a raw TCP passthrough. Only meaningful for web-protocol ports (noVNC,
+   * ttyd) — see adapter-core's previewUrl doc.
+   */
+  getHost(port: number): string {
+    return this.sandbox.getHost(port);
+  }
 }
 
 export function createE2bAdapter(): DeployAdapter {
@@ -90,6 +101,12 @@ export function createE2bAdapter(): DeployAdapter {
       if (typeof e2b.Sandbox?.list !== "function" || typeof e2b.Sandbox?.connect !== "function") return [];
       const summaries = await e2b.Sandbox.list();
       return Promise.all((summaries ?? []).map((s: any) => adapter.connect!(s.sandboxId ?? s.id)));
+    },
+
+    async previewUrl(handle: DeployHandle, port: number) {
+      if (!(handle instanceof E2bDeployHandle)) return null;
+      const host = handle.getHost(port);
+      return host ? `https://${host}` : null;
     },
   };
   return adapter;

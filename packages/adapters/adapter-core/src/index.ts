@@ -44,4 +44,17 @@ export interface DeployAdapter {
    * previously-started remote instance without starting a new one.
    */
   connect?(id: string): Promise<DeployHandle>;
+  /**
+   * A reachable URL for a port on this instance, if the provider exposes one
+   * — optional because not every provider/handle combination supports it
+   * (or a sandbox may not be far enough along in its boot for one to exist
+   * yet). `null` means "this provider supports the method, but no URL is
+   * available for this instance/port right now," distinct from the method
+   * being entirely absent. Only ever called when the app itself opted in via
+   * berth.yml's `expose.preview: true` — see docs/manifest-reference.md and
+   * docs/shipping-to-production.md. Scoped to web-protocol ports (noVNC,
+   * ttyd) that can actually ride each provider's own port-exposure mechanism;
+   * raw VNC/CDP have no equivalent and stay local-only regardless.
+   */
+  previewUrl?(handle: DeployHandle, port: number): Promise<string | null>;
 }

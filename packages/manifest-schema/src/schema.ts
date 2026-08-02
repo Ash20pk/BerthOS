@@ -32,13 +32,20 @@ export const ExportSpec = z.object({
  * corresponding VNC/CDP/ttyd port to the host is a separate choice, made
  * here. Both default to true so an existing berth.yml with no `expose:`
  * block keeps today's behavior (capability declared => port published).
- * Deploy targets (E2B/Daytona/K8s) don't publish these ports at all yet
- * regardless of this setting — see docs/manifest-reference.md.
+ *
+ * `preview` is a different, deliberately opt-in decision: whether `berth
+ * deploy` creates and prints a public noVNC/ttyd preview URL on a real fleet
+ * target. Defaults to false — a deployed fleet is potentially public-facing,
+ * unlike a local `berth dev` run with one trusted operator on their own
+ * machine, so declaring browser:* or terminal:* must not, by itself, cause
+ * a public URL to appear the moment an app is deployed. See
+ * docs/manifest-reference.md.
  */
 export const ExposeSpec = z
   .object({
     browser: z.boolean().default(true),
     terminal: z.boolean().default(true),
+    preview: z.boolean().default(false),
   })
   .default({});
 
