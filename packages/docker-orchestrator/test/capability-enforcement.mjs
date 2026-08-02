@@ -61,7 +61,7 @@ async function main() {
 
   // Declared here (not `const` inside the try block below) so Test 6, which
   // needs to know whether this host can enforce anything at all, can read it
-  // after that try/finally has already torn down the Test 1-5 container.
+  // after that try/finally has already torn down the Test 1-7 container.
   let landlockActive;
 
   try {
@@ -222,16 +222,59 @@ async function main() {
       console.log("\nNOT VERIFIED (expected in this environment) — Landlock isn't enforced here.");
     }
 
+    console.log("\n--- Test 7: concurrent access at the boundary — enforcement must hold under load, not just serially ---");
+    // There's no real TOCTOU window in this architecture to race against:
+    // agent-init calls restrict_self() and the ruleset is immutable for the
+    // rest of the process's life, all *before* exec() replaces the process
+    // image — so the app itself never runs for even one syscall without the
+    // policy already applied (see main.rs's comment on why write_paths are
+    // created ahead of PathFd::new(), not after). What IS worth stress-
+    // testing is this app's own RPC dispatch: every test above issued one
+    // call at a time — this fires a burst of in-scope and out-of-scope
+    // writes concurrently, on the same restricted process, to catch any
+    // reordering or partial-completion bug in the app's own request handling
+    // that a serial test would never expose.
+    const CONCURRENCY = 20;
+    const [insideResults, outsideResults] = await Promise.all([
+      Promise.all(
+        Array.from({ length: CONCURRENCY }, (_, i) =>
+          rpc.call({ id: `8-inside-${i}`, export: "write_file", input: { path: `concurrent-inside-${i}.txt`, content: "ok" } }),
+        ),
+      ),
+      Promise.all(
+        Array.from({ length: CONCURRENCY }, (_, i) =>
+          rpc.call({
+            id: `8-outside-${i}`,
+            export: "write_file",
+            input: { path: `../../../etc/berth-concurrent-${i}.txt`, content: "if any of these exist, enforcement raced" },
+          }),
+        ),
+      ),
+    ]);
+    const insideFailures = insideResults.filter((r) => r.error);
+    const outsideDenials = outsideResults.filter((r) => r.error && /EACCES|EPERM|permission/i.test(r.error));
+    console.log(`inside: ${insideResults.length - insideFailures.length}/${CONCURRENCY} succeeded; outside: ${outsideDenials.length}/${CONCURRENCY} denied`);
+    assert(insideFailures.length === 0, `expected every concurrent in-scope write to succeed, ${insideFailures.length} failed: ${JSON.stringify(insideFailures)}`);
+    if (landlockActive) {
+      assert(
+        outsideDenials.length === CONCURRENCY,
+        `Landlock is active but only ${outsideDenials.length}/${CONCURRENCY} concurrent out-of-scope writes were denied — a real race would show up as a partial count here: ${JSON.stringify(outsideResults)}`,
+      );
+      console.log("\nPASS — every one of 20 concurrent out-of-scope writes was denied; enforcement held under load, not just serially.");
+    } else {
+      console.log("\nNOT VERIFIED (expected in this environment) — Landlock isn't enforced here.");
+    }
+
     rpc.close();
   } finally {
     await containerLog.stop();
     await stopContainer(running.container);
   }
 
-  console.log("\n--- Test 7: BERTH_REQUIRE_ENFORCEMENT=1 refuses to boot unrestricted ---");
+  console.log("\n--- Test 8: BERTH_REQUIRE_ENFORCEMENT=1 refuses to boot unrestricted ---");
   // A second, independent container from the same image — proves
   // agent-init's fail-closed gate (packages/agent-init/src/main.rs) without
-  // touching the container Test 1-5 already tore down.
+  // touching the container Test 1-7 already tore down.
   const enforcedRunning = await startContainer({
     image: "berth/filesystem:dev",
     name: "berth-capability-enforcement-filesystem-require-enforcement",
@@ -273,7 +316,7 @@ async function main() {
     await stopContainer(enforcedRunning.container).catch(() => {});
   }
 
-  console.log("\n--- Test 8: cross-app boundary — one app's grant must not reach a sibling app's directory ---");
+  console.log("\n--- Test 9: cross-app boundary — one app's grant must not reach a sibling app's directory ---");
   // boundary-app-a/-b (test/fixtures) are each scoped ONLY to their own
   // /workspace/apps/boundary-app-<x> subdirectory (unlike filesystem's own
   // broad filesystem:write:/workspace grant, which legitimately covers the
