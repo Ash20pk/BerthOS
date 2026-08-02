@@ -41,6 +41,24 @@ WORKDIR /semantic-fs-daemon
 COPY semantic-fs-daemon/ .
 RUN CGO_ENABLED=0 go build -o semantic-fs-daemon .
 
+# Compiles mesh-daemon (packages/mesh-daemon) — the WireGuard mesh agent, same
+# shape as the other Rust stages above. See docs/mesh-reference.md.
+FROM rust:1-alpine AS mesh-daemon-builder
+RUN apk add --no-cache build-base
+WORKDIR /mesh-daemon
+COPY mesh-daemon/ .
+RUN cargo build --release
+
+# Cloudflare's real, published userspace WireGuard implementation — this is
+# wg-quick's own documented WG_QUICK_USERSPACE_IMPLEMENTATION fallback
+# mechanism (not a Berth invention), used only when mesh-daemon's kernel
+# WireGuard probe fails (e.g. a guest kernel with no `wireguard` module
+# loaded). Its own stage so it only rebuilds on a version bump, never on any
+# other package's changes.
+FROM rust:1-alpine AS boringtun-builder
+RUN apk add --no-cache build-base
+RUN cargo install boringtun-cli --version 0.7.1 --root /out
+
 FROM node:22-alpine AS base
 
 RUN apk add --no-cache \
@@ -68,6 +86,14 @@ RUN apk add --no-cache \
     # MITM CA + a per-boot leaf cert for api.github.com at container start —
     # Node core has no self-signing certificate API of its own.
     openssl \
+    # network:peer:* capability support (see docs/mesh-reference.md):
+    # wireguard-tools provides `wg`/`wg-quick` (real reference WireGuard
+    # tooling, not a bespoke binding — mesh-daemon shells out to these rather
+    # than talking netlink directly, the same "exec a real system binary"
+    # pattern fusermount3/openssl above already use); iproute2 provides `ip`,
+    # used both by mesh-daemon's kernel-WireGuard-support probe and by
+    # wg-quick itself.
+    wireguard-tools iproute2 \
     # PEP 668 blocks `pip install` on a system Python unless this marker is
     # removed. This is a container we fully control (unlike a developer's own
     # machine), so on_install hooks like the PRD's `pip install -r
@@ -105,6 +131,8 @@ WORKDIR /app
 COPY --from=context-bus-builder /daemon/target/release/context-bus-daemon /usr/local/bin/context-bus-daemon
 COPY --from=agent-init-builder /agent-init/target/release/agent-init /usr/local/bin/agent-init
 COPY --from=semantic-fs-daemon-builder /semantic-fs-daemon/semantic-fs-daemon /usr/local/bin/semantic-fs-daemon
+COPY --from=mesh-daemon-builder /mesh-daemon/target/release/mesh-daemon /usr/local/bin/mesh-daemon
+COPY --from=boringtun-builder /out/bin/boringtun-cli /usr/local/bin/boringtun-cli
 
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

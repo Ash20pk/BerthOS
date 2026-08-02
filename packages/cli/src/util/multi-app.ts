@@ -68,6 +68,10 @@ function declaresTerminalCapability(manifest: BerthManifest): boolean {
   return manifest.capabilities.some((cap) => cap.startsWith("terminal:"));
 }
 
+function declaresMeshCapability(manifest: BerthManifest): boolean {
+  return manifest.capabilities.some((cap) => cap.startsWith("network:peer:"));
+}
+
 /**
  * v1 scope: at most one app across the whole set may declare `browser:*` —
  * two simultaneous browser-capable apps would need per-app Xvfb
@@ -94,6 +98,23 @@ export function assertAtMostOneTerminalApp(apps: AppSpec[]): void {
   if (terminalApps.length > 1) {
     console.error(
       `at most one app may declare a terminal:* capability when running multiple apps together — found ${terminalApps.length}: ${terminalApps.map((a) => a.name).join(", ")}`,
+    );
+    process.exit(1);
+  }
+}
+
+/**
+ * Same reasoning again: wg0 is a single interface per container (see
+ * docs/mesh-reference.md) — entrypoint.sh's multi-app branch picks exactly
+ * one app's capability-policy.json to point mesh-daemon at, so two
+ * network:peer:* apps sharing a container would be ambiguous about whose
+ * declared peer patterns the mesh should actually enforce.
+ */
+export function assertAtMostOneMeshApp(apps: AppSpec[]): void {
+  const meshApps = apps.filter((a) => declaresMeshCapability(a.manifest));
+  if (meshApps.length > 1) {
+    console.error(
+      `at most one app may declare a network:peer:* capability when running multiple apps together — found ${meshApps.length}: ${meshApps.map((a) => a.name).join(", ")}`,
     );
     process.exit(1);
   }
