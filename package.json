@@ -21,7 +21,9 @@
   "pnpm": {
     "overrides": {
       "onnxruntime-node": "npm:onnxruntime-web@1.14.0",
-      "sharp": "link:packages/sdk/vendor/sharp-stub"
+      "sharp": "link:packages/sdk/vendor/sharp-stub",
+      "protobufjs": "^7.6.5",
+      "uuid": "^11.1.1"
     }
   }
 }

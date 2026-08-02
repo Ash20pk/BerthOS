@@ -30,3 +30,15 @@ jobs:
       - run: pnpm build
       - run: pnpm lint
       - run: pnpm test
+
+      # Gated at high+ (not "any finding"): moderate/low advisories often
+      # have no available fix yet, or apply to a call path this project
+      # never exercises — gating on those would make this step chronically
+      # red for issues no one can act on, which erodes trust in the gate
+      # faster than it catches anything. high/critical is the threshold most
+      # security-conscious CI setups actually block on. As of the commit
+      # that added this step, `pnpm audit` was clean (0 findings) — the
+      # protobufjs/uuid transitive vulnerabilities found at the time (via
+      # @xenova/transformers and dockerode respectively) were fixed with
+      # pnpm.overrides in package.json, not by ignoring them here.
+      - run: pnpm audit --audit-level=high
