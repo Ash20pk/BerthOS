@@ -1,6 +1,7 @@
 export { Computer, type BootComputerOptions, type ConnectComputerOptions } from "./computer.js";
 export { resolveComputerApps, type ComputerAppSpec } from "./resolve-apps.js";
-export { computerToolsFor } from "./tools.js";
+export { computerToolsFor, toolNameFor } from "./tools.js";
+export { applyGovernanceGate, GovernanceDeniedError } from "./governance.js";
 export {
   Agent,
   createAgent,

@@ -11,6 +11,7 @@ import {
 import { resolveComputerApps, type ComputerAppSpec } from "./resolve-apps.js";
 import { buildComputerImage } from "./build.js";
 import { computerToolsFor } from "./tools.js";
+import { applyGovernanceGate } from "./governance.js";
 import type { Tool } from "./types.js";
 
 export interface BootComputerOptions {
@@ -151,7 +152,7 @@ export class Computer {
     const call = (appName: string, exportName: string, input: unknown) =>
       withReadyRetry(() => dispatch(appName, exportName, input));
 
-    const tools = computerToolsFor(apps, call);
+    const tools = applyGovernanceGate(apps, computerToolsFor(apps, call));
 
     return new Computer(container, apps, stdioClient, tools, containerName, docker, image, true);
   }
@@ -203,7 +204,7 @@ export class Computer {
 
     const call = (appName: string, exportName: string, input: unknown) => withReadyRetry(() => dispatch(appName, exportName, input));
 
-    const tools = computerToolsFor(apps, call);
+    const tools = applyGovernanceGate(apps, computerToolsFor(apps, call));
 
     return new Computer(container, apps, undefined, tools, state.containerName, docker, undefined, false);
   }

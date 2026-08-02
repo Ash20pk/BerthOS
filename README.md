@@ -196,6 +196,8 @@ await computer.stop();
 
 `Crew.withManager()` and `Crew.sequential()` compose multiple agents. `Crew.networked()` composes agents running on entirely separate Berth OS instances, joined over a real Docker network. Full details live in [docs/agents-reference.md](./docs/agents-reference.md).
 
+Want an app to review every other app's tool calls before they happen, allow or deny? Any app declaring `governs: true` becomes the Computer's governance authority automatically, no first-party governance app required. See the [governance gate reference](./docs/governance-reference.md).
+
 ### What is a Berth OS?
 
 Every `runAgent()` or `createAgent()` call above needs somewhere for its tools to actually live and run. That's a Berth OS: a real, sandboxed computer (a Docker container today) loaded with one or more resident apps, each independently enforced by the kernel, all able to collaborate through a shared context bus and semantic filesystem. In code, that's the `Computer` class.

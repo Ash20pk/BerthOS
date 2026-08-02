@@ -149,6 +149,10 @@ const { agent } = await createAgent({
 
 Because `Tool` is the one interface both resident-app exports and other agents implement (through `Agent.asTool()`), a manager agent's tool list can freely mix "call a resident app export" and "delegate to another agent" through the same dispatch path.
 
+## Governance gate: gating every other app's tools
+
+An app declaring `governs: true` in its `berth.yml` becomes the Computer's governance authority: `Computer` wraps every *other* app's `Tool.invoke` to call that app's `evaluate_action` export first, and only proceeds if it returns `{ allowed: true }`. This is `Computer`-level, not kernel-level — Landlock has no per-syscall hook to build a true kernel gate on, so this is the closest real choke point that sees every tool call an agent makes across every app. Full contract, opt-out (`governance: { exempt: true }`), and fail-open behavior in the [governance gate reference](./governance-reference.md).
+
 ## `Agent` and `Crew`: single- and multi-agent composition
 
 `Agent.run(input)` is the provider-agnostic tool-use loop, identical no matter which `LLMProvider` or `Tool` implementations are plugged in. `Agent.asTool(description)` wraps an agent as a `Tool` (`{task: string}` in, `run(task).text` out), the seam `Crew.withManager({manager, workers})` uses to let a manager's own LLM decide when to delegate. `Crew.sequential(agents)` just pipes each agent's output text into the next.
