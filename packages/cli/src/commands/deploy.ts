@@ -29,6 +29,17 @@ function labelFor(port: number): string {
   return port === NOVNC_PORT ? "noVNC" : port === TERMINAL_PORT ? "Terminal" : `port ${port}`;
 }
 
+/**
+ * Greppable JSON audit line on stderr — same convention as agent-init's,
+ * mesh-daemon's, and snapshot.ts's own structured events. Before this, a
+ * `berth deploy` failure was only visible as this.error()'s formatted CLI
+ * output — fine for a human watching the terminal, nothing a log pipeline
+ * could alert on as a class of event.
+ */
+function logDeployEvent(event: string, fields: Record<string, unknown>): void {
+  console.error(JSON.stringify({ event, timestamp: new Date().toISOString(), ...fields }));
+}
+
 export default class Deploy extends Command {
   static override description = "Build and deploy the resident app to a fleet (E2B, Daytona, or an alias in ~/.berthrc)";
   static override flags = {
@@ -74,14 +85,26 @@ export default class Deploy extends Command {
 
     this.log(`Starting ${count} instance${count === 1 ? "" : "s"} on ${adapter.name}...`);
     const handles: DeployHandle[] = [];
-    for (let i = 0; i < count; i++) {
-      const handle = await adapter.start(remoteImageRef, target);
-      this.log(`Started instance ${i + 1}/${count}: ${handle.id}`);
-      handles.push(handle);
-      for (const port of previewPorts) {
-        const url = await adapter.previewUrl?.(handle, port);
-        if (url) this.log(`  ${labelFor(port)}: ${url}`);
+    try {
+      for (let i = 0; i < count; i++) {
+        const handle = await adapter.start(remoteImageRef, target);
+        this.log(`Started instance ${i + 1}/${count}: ${handle.id}`);
+        handles.push(handle);
+        for (const port of previewPorts) {
+          const url = await adapter.previewUrl?.(handle, port);
+          if (url) this.log(`  ${labelFor(port)}: ${url}`);
+        }
       }
+    } catch (err) {
+      logDeployEvent("deploy_start_failed", {
+        fleet: flags.fleet,
+        appName: manifest.name,
+        adapter: adapter.name,
+        startedCount: handles.length,
+        requestedCount: count,
+        error: String(err),
+      });
+      throw err;
     }
 
     await appendFleetInstances(
@@ -93,6 +116,7 @@ export default class Deploy extends Command {
         previewPorts: previewPorts.length > 0 ? previewPorts : undefined,
       })),
     );
+    logDeployEvent("deploy_started", { fleet: flags.fleet, appName: manifest.name, adapter: adapter.name, count });
 
     this.log("Streaming logs from all instances (Ctrl+C to detach — this does not stop the deployment)...");
 
