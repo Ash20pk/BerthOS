@@ -205,10 +205,18 @@ async function createRpcClient(container) {
   return {
     call(request) {
       return new Promise((resolve, reject) => {
+        // Deliberately above Playwright's own default navigation timeout
+        // (30000ms) — this call wraps a real page.goto() inside the
+        // container, and with the two clocks equal there was no margin for
+        // RPC/Docker-stdio round-trip overhead or CI's slower compute. A run
+        // that's genuinely slow-but-working got killed by this timer before
+        // Playwright's own timeout could produce a real, diagnosable error,
+        // which is exactly what made a prior CI failure look like an opaque
+        // hang instead of a clear navigation-timeout message.
         const timer = setTimeout(() => {
           pending.delete(request.id);
           reject(new Error(`timed out waiting for RPC response to ${JSON.stringify(request)}`));
-        }, 30000);
+        }, 45000);
         pending.set(request.id, (response) => {
           clearTimeout(timer);
           resolve(response);

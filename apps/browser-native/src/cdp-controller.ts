@@ -26,7 +26,29 @@ export function launchChromium(): Promise<Browser> {
         executablePath: process.env.CHROME_BIN,
         headless: process.env.BERTH_TEST_MODE === "1",
         proxy: { server: `http://127.0.0.1:${process.env.BERTH_EGRESS_BROKER_PORT ?? "8090"}` },
-        args: ["--remote-debugging-port=9222", "--remote-debugging-address=0.0.0.0", "--no-sandbox"],
+        args: [
+          "--remote-debugging-port=9222",
+          "--remote-debugging-address=0.0.0.0",
+          "--no-sandbox",
+          // Standard hardening for headless Chromium in a Docker/CI container,
+          // not a local-dev-only concern: Docker's default /dev/shm (64MB) is
+          // well below what Chromium's rendering pipeline wants, and a small
+          // shm has been observed to stall or crash a renderer under
+          // constrained CI compute even when the exact same image runs fine
+          // on a well-resourced local machine (see egress-broker-milestone.mjs
+          // — passes reliably locally, fails on every recorded GitHub Actions
+          // run). --disable-dev-shm-usage routes around that entirely by
+          // using /tmp instead of /dev/shm. The other three flags stop
+          // Chromium's own background telemetry/sync/update pings (visible in
+          // CI logs as unrelated "navigate_allowed" lines for Google domains)
+          // from competing for startup time and cluttering the egress
+          // broker's log with noise unrelated to whatever the agent actually
+          // navigated to.
+          "--disable-dev-shm-usage",
+          "--disable-gpu",
+          "--disable-background-networking",
+          "--no-first-run",
+        ],
       });
     })();
   }
