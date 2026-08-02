@@ -109,7 +109,10 @@ async fn main() {
     let reconcile_client = coordinator::Client::new(cfg.coordinator_url.clone());
     let reconcile_private_key = keypair.private_key.clone();
     let reconcile_listen_port = cfg.listen_port;
-    tokio::spawn(async move {
+    // A JoinHandle nobody awaits silently swallows a panic inside the task —
+    // this daemon would just go quiet with zero indication why. Await it
+    // from a second, tiny supervisor task so a panic is at least logged.
+    let reconcile_handle = tokio::spawn(async move {
         reconcile_loop(
             reconcile_client,
             peer_name,
@@ -120,6 +123,11 @@ async fn main() {
             nudge_rx,
         )
         .await;
+    });
+    tokio::spawn(async move {
+        if let Err(err) = reconcile_handle.await {
+            eprintln!("[mesh-daemon] WARNING: reconcile loop task ended abnormally: {err}");
+        }
     });
 
     wait_for_shutdown().await;
@@ -161,14 +169,23 @@ async fn reconcile_loop(
     state: control::Shared,
     mut nudge_rx: mpsc::UnboundedReceiver<()>,
 ) {
+    eprintln!("[mesh-daemon] reconcile loop started for \"{peer_name}\", polling every 5s");
     let mut interval = tokio::time::interval(Duration::from_secs(5));
+    let mut tick_n = 0u32;
     loop {
         tokio::select! {
             _ = interval.tick() => {},
             got = nudge_rx.recv() => { if got.is_none() { return; } },
         }
+        tick_n += 1;
+        eprintln!("[mesh-daemon] reconcile tick #{tick_n} for \"{peer_name}\" — polling {}", client.base_url_for_log());
         match client.poll(&peer_name, &token).await {
             Ok(peers) => {
+                eprintln!(
+                    "[mesh-daemon] reconcile tick #{tick_n}: poll returned {} peer(s): [{}]",
+                    peers.len(),
+                    peers.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", ")
+                );
                 let mesh_ip = state.read().await.mesh_ip.clone();
                 if let Err(err) = wg::write_config(&private_key, &mesh_ip, listen_port, &to_wg_peers(&peers), false).await {
                     eprintln!("[mesh-daemon] WARNING: reconcile write_config failed ({err})");

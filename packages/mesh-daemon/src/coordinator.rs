@@ -54,6 +54,10 @@ pub struct Client {
 }
 
 impl Client {
+    pub fn base_url_for_log(&self) -> &str {
+        &self.base_url
+    }
+
     pub fn new(base_url: String) -> Self {
         let http = reqwest::Client::builder()
             // Without a request timeout, a single stuck connection (observed
@@ -70,7 +74,16 @@ impl Client {
             // and rules out a stale pooled connection as a hang source.
             .pool_max_idle_per_host(0)
             .build()
-            .expect("building the mesh-coordinator HTTP client with these options cannot fail");
+            // Falls back rather than panicking: a panic here would happen
+            // inside a spawned tokio task (the reconcile loop's own client)
+            // with no JoinHandle ever awaited to surface it — the task would
+            // just silently vanish, indistinguishable from a hang. Untuned
+            // defaults (no timeout, normal pooling) are still strictly
+            // better than that.
+            .unwrap_or_else(|err| {
+                eprintln!("[mesh-daemon] WARNING: custom HTTP client build failed ({err}) — falling back to reqwest defaults");
+                reqwest::Client::new()
+            });
         Client { http, base_url }
     }
 
