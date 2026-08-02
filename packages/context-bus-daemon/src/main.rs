@@ -27,7 +27,35 @@ use pb::{Ack, Envelope, Event};
 
 type Payload = Vec<u8>;
 /// topic -> (connection id -> outgoing queue for that connection)
-type Subscribers = Arc<Mutex<HashMap<String, HashMap<u64, mpsc::UnboundedSender<Payload>>>>>;
+type Subscribers = Arc<Mutex<HashMap<String, HashMap<u64, mpsc::Sender<Payload>>>>>;
+
+/// Per-connection outgoing queue depth. Deliberately bounded, not unbounded:
+/// an unbounded queue meant a single slow or hung subscriber (its own writer
+/// task stalled on a full socket buffer, or the process itself wedged) could
+/// grow this daemon's memory without limit on every publish to a topic it
+/// subscribed to — real, unbounded memory growth from one misbehaving app in
+/// the same sandbox, not a hypothetical. Delivery is therefore at-most-once:
+/// once a subscriber's queue is full, further events to it are dropped (see
+/// try_send_payload below) rather than blocking the publisher or every other
+/// subscriber waiting on the same global `subscribers` lock. 256 is a
+/// generous burst allowance for this daemon's actual traffic (small,
+/// infrequent JSON-ish event payloads between resident apps in one sandbox,
+/// not a high-throughput message bus) — comfortably absorbing a burst
+/// without hiding a truly stuck subscriber for long.
+const SUBSCRIBER_QUEUE_CAPACITY: usize = 256;
+
+/// Non-blocking by design: a full or closed queue means this one payload is
+/// dropped for this one subscriber, logged, and everything else (this
+/// publish to other subscribers, every other topic, every other connection)
+/// proceeds unaffected. The alternative — `.send().await` while holding the
+/// `subscribers` lock — would let one wedged subscriber stall the entire
+/// daemon's publish path for every app in the sandbox, which is strictly
+/// worse than the at-most-once drop this trades for.
+fn try_send_payload(sender: &mpsc::Sender<Payload>, payload: Payload, context: &str) {
+    if let Err(err) = sender.try_send(payload) {
+        eprintln!("[context-bus] dropped a message ({context}): {err}");
+    }
+}
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
@@ -63,7 +91,7 @@ async fn main() -> std::io::Result<()> {
 
 async fn handle_connection(stream: UnixStream, conn_id: u64, subscribers: Subscribers) -> std::io::Result<()> {
     let (mut read_half, write_half) = stream.into_split();
-    let (tx, mut rx) = mpsc::unbounded_channel::<Payload>();
+    let (tx, mut rx) = mpsc::channel::<Payload>(SUBSCRIBER_QUEUE_CAPACITY);
 
     // Writer task: drains this connection's outgoing queue (events pushed to
     // it because some other connection published to a topic it subscribed
@@ -132,7 +160,7 @@ async fn handle_connection(stream: UnixStream, conn_id: u64, subscribers: Subscr
                         if *subscriber_id == conn_id {
                             continue;
                         }
-                        let _ = sender.send(buf.clone());
+                        try_send_payload(sender, buf.clone(), &format!("event on \"{}\" to conn {subscriber_id}", req.topic));
                     }
                 }
                 eprintln!("[context-bus] \"{app_name}\" published to \"{}\"", req.topic);
@@ -149,13 +177,17 @@ async fn handle_connection(stream: UnixStream, conn_id: u64, subscribers: Subscr
     Ok(())
 }
 
-fn send_ack(tx: &mpsc::UnboundedSender<Payload>, ok: bool, error: &str) {
+fn send_ack(tx: &mpsc::Sender<Payload>, ok: bool, error: &str) {
     let ack = Envelope {
         kind: Some(Kind::Ack(Ack { ok, error: error.to_string() })),
     };
     let mut buf = Vec::new();
     if ack.encode(&mut buf).is_ok() {
-        let _ = tx.send(buf);
+        // Safe to drop under backpressure exactly like a forwarded event: the
+        // TypeScript client (see @berth/sdk's context-bus/unix-socket.ts)
+        // already treats register/publish/subscribe acks as fire-and-forget
+        // and never blocks waiting for one, so there's no caller left hanging.
+        try_send_payload(tx, buf, "ack");
     }
 }
 
