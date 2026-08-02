@@ -4,6 +4,11 @@ description: "mesh-milestone.mjs fixture — declares network:peer:mesh-echo-pla
 
 capabilities:
   - network:peer:mesh-echo-planner
+  # See mesh-echo-planner/berth.yml's comment: no network:bind:<port>
+  # capability action exists yet, so this fixture's own HTTP echo listener
+  # needs network:connect:* to avoid Landlock EACCES on listen() under full
+  # enforcement.
+  - network:connect:*
 
 exports:
   - name: ping
