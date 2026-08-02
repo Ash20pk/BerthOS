@@ -21,6 +21,15 @@
 // github:*, ...) is still just recorded in `declaredCapabilities` for
 // @berth/sdk's requestCapability() to report on — see
 // docs/capability-tokens-reference.md.
+//
+// network:peer:<name> (see docs/mesh-reference.md) collects declared peer
+// name globs into `meshPeers` for mesh-daemon to read (not enforced here —
+// mesh-daemon and mesh-coordinator's mutual-match introduction are the real
+// authorization layer, since Landlock has no UDP access right to restrict
+// wg0 traffic with). The one thing this file DOES enforce: declaring any
+// network:peer:* capability adds mesh-coordinator's own TCP port to the
+// existing networkPorts allow-list, so an app that never opted into the mesh
+// can't reach the coordinator's registration API at all.
 import { writeFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { loadManifest, parseCapability } from "@berth/manifest-schema";
@@ -28,6 +37,7 @@ import { loadManifest, parseCapability } from "@berth/manifest-schema";
 const MANIFEST_PATH = process.env.BERTH_MANIFEST_PATH ?? join(process.cwd(), "berth.yml");
 const POLICY_PATH = process.env.BERTH_CAPABILITY_POLICY ?? join(process.cwd(), ".berth", "capability-policy.json");
 const GRANTS_SERVER_URL = process.env.BERTH_GRANTS_SERVER_URL;
+const MESH_COORDINATOR_PORT = Number(process.env.BERTH_MESH_COORDINATOR_PORT ?? 4875);
 
 // Always writable regardless of what's declared: /tmp (scratch files, and
 // the context-bus Unix socket lives there) plus the context-bus socket path
@@ -48,6 +58,7 @@ interface CapabilityPolicy {
   readPaths: string[];
   networkPorts: number[];
   networkUnrestricted: boolean;
+  meshPeers: string[];
 }
 
 function stripTrailingGlob(scope: string): string {
@@ -77,6 +88,7 @@ async function main(): Promise<void> {
   const writePaths = new Set(BASELINE_WRITE_PATHS);
   const declaredReadPaths = new Set<string>();
   const networkPorts = new Set<number>();
+  const meshPeers = new Set<string>();
   let networkUnrestricted = false;
 
   for (const capability of effectiveCapabilities) {
@@ -96,6 +108,9 @@ async function main(): Promise<void> {
       } else {
         console.error(`[berth:capability-policy] WARNING: ignoring invalid network:connect scope "${parsed.scope}" (expected a port 1-65535, or "*")`);
       }
+    } else if (parsed.namespace === "network" && parsed.action === "peer") {
+      meshPeers.add(parsed.scope);
+      networkPorts.add(MESH_COORDINATOR_PORT);
     }
   }
 
@@ -111,6 +126,7 @@ async function main(): Promise<void> {
     readPaths,
     networkPorts: [...networkPorts],
     networkUnrestricted,
+    meshPeers: [...meshPeers],
   };
 
   await mkdir(dirname(POLICY_PATH), { recursive: true });
@@ -123,7 +139,8 @@ async function main(): Promise<void> {
   console.error(
     `[berth:capability-policy] wrote ${POLICY_PATH}: writePaths=${policy.writePaths.join(", ")}` +
       (readPaths.length > 0 ? `; readPaths=${readPaths.join(", ")}` : "") +
-      `; ${networkSummary}`,
+      `; ${networkSummary}` +
+      (meshPeers.size > 0 ? `; meshPeers=${[...meshPeers].join(", ")}` : ""),
   );
 }
 

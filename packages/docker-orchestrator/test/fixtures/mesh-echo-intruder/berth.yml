@@ -1,0 +1,19 @@
+name: mesh-echo-intruder
+version: 0.1.0
+description: "mesh-milestone.mjs fixture — declares network:peer:* (wants everyone), but neither mesh-echo-planner nor mesh-echo-browser names it back, so mutual-match introduction must exclude it from both"
+
+capabilities:
+  - network:peer:*
+  # See mesh-echo-planner/berth.yml's comment: no network:bind:<port>
+  # capability action exists yet, so this fixture's own HTTP echo listener
+  # needs network:connect:* to avoid Landlock EACCES on listen() under full
+  # enforcement.
+  - network:connect:*
+
+exports:
+  - name: ping
+    output: { message: string }
+
+on_install: []
+on_agent_ready:
+  - "register_with_context_bus"

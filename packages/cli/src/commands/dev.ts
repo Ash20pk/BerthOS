@@ -15,7 +15,7 @@ import type { BerthManifest } from "@berth/manifest-schema";
 import { loadManifestOrExit } from "../util/manifest.js";
 import { buildDevImage, devImageTag } from "../util/build.js";
 import { resolveDevBindMount } from "../util/workspace.js";
-import { resolveApps, assertAtMostOneBrowserApp, assertAtMostOneTerminalApp } from "../util/multi-app.js";
+import { resolveApps, assertAtMostOneBrowserApp, assertAtMostOneTerminalApp, assertAtMostOneMeshApp } from "../util/multi-app.js";
 
 export default class Dev extends Command {
   static override description = "Boot the resident app in a local Agent OS instance, with hot reload";
@@ -23,6 +23,9 @@ export default class Dev extends Command {
     apps: Flags.string({ description: "comma-separated workspace-relative paths of companion resident apps to run alongside this one" }),
     "grants-server": Flags.string({
       description: "berth-grants server URL to consult for human-approved capability grants, e.g. http://localhost:4874",
+    }),
+    "mesh-coordinator": Flags.string({
+      description: "berth-mesh-coordinator URL for network:peer:* apps, e.g. http://localhost:4875 (see docs/mesh-reference.md)",
     }),
   };
 
@@ -35,6 +38,7 @@ export default class Dev extends Command {
     const apps = await resolveApps(appDir, flags.apps, manifest);
     assertAtMostOneBrowserApp(apps);
     assertAtMostOneTerminalApp(apps);
+    assertAtMostOneMeshApp(apps);
     if (apps.length > 1) this.log(`Running with companion apps: ${apps.slice(1).map((a) => a.name).join(", ")}`);
 
     this.log(`Building dev image for "${manifest.name}"...`);
@@ -59,6 +63,7 @@ export default class Dev extends Command {
           ? apps.map((a) => ({ name: a.name, workingDir: `/workspace/${a.relPath}`, manifest: a.manifest }))
           : undefined,
       env: flags["grants-server"] ? { BERTH_GRANTS_SERVER_URL: flags["grants-server"] } : undefined,
+      meshCoordinatorUrl: flags["mesh-coordinator"],
       docker,
     });
 

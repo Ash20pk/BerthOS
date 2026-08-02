@@ -28,6 +28,11 @@ export function needsTerminalPort(manifest: BerthManifest): boolean {
   return declaresTerminalCapability(manifest) && manifest.expose.terminal;
 }
 
+/** See docs/mesh-reference.md. Gates the NET_ADMIN/tun device grant below — never reaches the resident app's own process (agent-init drops the whole capability bounding set before exec-ing into it). */
+function declaresMeshCapability(manifest: BerthManifest): boolean {
+  return manifest.capabilities.some((cap) => cap.startsWith("network:peer:"));
+}
+
 export interface StartContainerOptions {
   image: string;
   name: string;
@@ -81,6 +86,8 @@ export interface StartContainerOptions {
    * Crew.networked()). The default bridge network provides no such DNS.
    */
   network?: string;
+  /** berth-mesh-coordinator URL for network:peer:* apps — passed through as BERTH_MESH_COORDINATOR_URL. Omitted, mesh-daemon falls back to its own default (see docs/mesh-reference.md). */
+  meshCoordinatorUrl?: string;
   docker?: Docker;
 }
 
@@ -100,6 +107,10 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
     options.apps && options.apps.length > 0
       ? options.apps.some((a) => needsTerminalPort(a.manifest))
       : needsTerminalPort(options.manifest);
+  const needsMesh =
+    options.apps && options.apps.length > 0
+      ? options.apps.some((a) => declaresMeshCapability(a.manifest))
+      : declaresMeshCapability(options.manifest);
 
   const exposedPorts: Record<string, {}> = {};
   const portBindings: Record<string, Array<{ HostPort: string }>> = {};
@@ -128,9 +139,34 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
   if (options.apps && options.apps.length > 1) {
     env.BERTH_APPS = JSON.stringify(options.apps.map((a) => ({ name: a.name, workingDir: a.workingDir })));
   }
+  // Unconditional (harmless when no app declares network:peer:* — mesh-daemon
+  // just never starts, per entrypoint.sh's grep gate). A stable, container-
+  // scoped identity is what lets mesh-coordinator give this container the
+  // same mesh IP across a `berth dev` restart, rather than the container's
+  // own randomly-assigned Docker hostname. See docs/mesh-reference.md.
+  env.BERTH_MESH_PEER_NAME = options.name;
+  if (options.meshCoordinatorUrl) {
+    env.BERTH_MESH_COORDINATOR_URL = options.meshCoordinatorUrl;
+  }
 
   if (options.network) {
     await ensureNetwork(docker, options.network);
+  }
+
+  // Every sandbox mounts /context via FUSE unconditionally (see the Devices/
+  // CapAdd comment below), so /dev/fuse + SYS_ADMIN are always present.
+  // /dev/net/tun + NET_ADMIN are added only when an app actually declares
+  // network:peer:* — a container-wide grant that would otherwise reach the
+  // resident app's own process too, if not for agent-init dropping the whole
+  // capability bounding set before exec-ing into it (see
+  // packages/agent-init/src/main.rs and docs/mesh-reference.md).
+  const devices: { PathOnHost: string; PathInContainer: string; CgroupPermissions: string }[] = [
+    { PathOnHost: "/dev/fuse", PathInContainer: "/dev/fuse", CgroupPermissions: "rwm" },
+  ];
+  const capAdd = ["SYS_ADMIN"];
+  if (needsMesh) {
+    devices.push({ PathOnHost: "/dev/net/tun", PathInContainer: "/dev/net/tun", CgroupPermissions: "rwm" });
+    capAdd.push("NET_ADMIN");
   }
 
   const container = await docker.createContainer({
@@ -164,8 +200,8 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
       // node plus CAP_SYS_ADMIN to call mount(2) — unconditional, the same
       // way context-bus-daemon always starts, since /context isn't gated
       // behind any manifest capability the way browser:* ports are.
-      Devices: [{ PathOnHost: "/dev/fuse", PathInContainer: "/dev/fuse", CgroupPermissions: "rwm" }],
-      CapAdd: ["SYS_ADMIN"],
+      Devices: devices,
+      CapAdd: capAdd,
       // The default docker-default AppArmor profile denies the FUSE
       // mount(2) syscall outright even with CAP_SYS_ADMIN + /dev/fuse
       // (moby/moby#50013) — a no-op on hosts with no AppArmor LSM active

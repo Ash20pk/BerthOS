@@ -1,0 +1,26 @@
+name: mesh-echo-planner
+version: 0.1.0
+description: "mesh-milestone.mjs fixture — declares network:peer:mesh-echo-browser, a mutual match with mesh-echo-browser"
+
+capabilities:
+  - network:peer:mesh-echo-browser
+  # Landlock's network restriction (triggered by declaring network:peer:*,
+  # since that's not network:connect:*) covers BOTH bind and connect under
+  # ABI v4 — but this repo's capability model only ever grants `connect`
+  # rules (see generate-capability-policy.ts), never `bind`. This fixture's
+  # own HTTP echo listener (bind 0.0.0.0:9000) has no way to be allowed
+  # without this — confirmed in CI (Landlock FullyEnforced there, unlike
+  # this repo's own dev environment): EACCES on listen(), crashing the
+  # whole container. A real, narrow gap in the capability model itself
+  # (no network:bind:<port> action exists yet), not a mesh-daemon bug —
+  # worked around here for this test fixture's own incidental need to run a
+  # listener, not fixed at the source (see docs/mesh-reference.md).
+  - network:connect:*
+
+exports:
+  - name: ping
+    output: { message: string }
+
+on_install: []
+on_agent_ready:
+  - "register_with_context_bus"

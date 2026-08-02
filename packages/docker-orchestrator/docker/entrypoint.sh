@@ -106,6 +106,25 @@ if [ -z "${BERTH_APPS:-}" ]; then
     export NODE_EXTRA_CA_CERTS="${GITHUB_BROKER_CERT_DIR}/ca.crt"
   fi
 
+  # network:peer:* capability support (see docs/mesh-reference.md). Started
+  # after generate-capability-policy.js above (unlike context-bus/semantic-fs,
+  # which start before it) because mesh-daemon reads that same
+  # capability-policy.json's meshPeers field on its own boot — same ordering
+  # reason the egress/GitHub brokers above wait for it too. Never fails boot:
+  # a missing kernel wireguard module, unreachable coordinator, etc. all just
+  # leave the mesh inert for this container, exactly like a browser:*/
+  # terminal:* port that never gets mapped.
+  if grep -q "network:peer:" "$MANIFEST_PATH" 2>/dev/null; then
+    echo "[berth:entrypoint] network:peer:* capability declared — starting mesh daemon" >&2
+    /usr/local/bin/mesh-daemon &
+    for _ in $(seq 1 50); do
+      [ -S "${BERTH_MESH_SOCKET:-/tmp/berth-mesh.sock}" ] && break
+      sleep 0.1
+    done
+    [ -S "${BERTH_MESH_SOCKET:-/tmp/berth-mesh.sock}" ] \
+      || echo "[berth:entrypoint] WARNING: mesh-daemon's control socket never appeared — continuing without mesh" >&2
+  fi
+
   # One secret per container boot, inherited by the app process (agent-init
   # execs into it, preserving the environment) — backs @berth/sdk's
   # HMAC-signed capability tokens. Generated with Node rather than openssl/apk
@@ -137,11 +156,20 @@ echo "[berth:entrypoint] multi-app mode: $(cut -f1 <<<"$APPS_TSV" | tr '\n' ' ')
 # app's own .berth/capability-policy.json the egress broker should read).
 NEEDS_BROWSER=0
 BROWSER_APP_DIR=""
+# network:peer:* support (see docs/mesh-reference.md) — wg0 is one interface
+# per container, same reasoning as BROWSER_APP_DIR above, so the CLI's
+# assertAtMostOneMeshApp guarantees at most one hit here.
+NEEDS_MESH=0
+MESH_APP_DIR=""
 while IFS=$'\t' read -r _ APP_DIR; do
   [ -z "$APP_DIR" ] && continue
   if grep -q "browser:" "$APP_DIR/berth.yml" 2>/dev/null; then
     NEEDS_BROWSER=1
     BROWSER_APP_DIR="$APP_DIR"
+  fi
+  if grep -q "network:peer:" "$APP_DIR/berth.yml" 2>/dev/null; then
+    NEEDS_MESH=1
+    MESH_APP_DIR="$APP_DIR"
   fi
 done <<<"$APPS_TSV"
 
@@ -230,6 +258,22 @@ if [ "$NEEDS_BROWSER" = "1" ]; then
   done
   echo "[berth:entrypoint] browser:* capability declared — starting egress broker on 127.0.0.1:${BERTH_EGRESS_BROKER_PORT:-8090}" >&2
   BERTH_CAPABILITY_POLICY="$BROWSER_POLICY_PATH" node /usr/local/bin/berth-egress-broker.js &
+fi
+
+if [ "$NEEDS_MESH" = "1" ]; then
+  MESH_POLICY_PATH="$MESH_APP_DIR/.berth/capability-policy.json"
+  for _ in $(seq 1 50); do
+    [ -f "$MESH_POLICY_PATH" ] && break
+    sleep 0.1
+  done
+  echo "[berth:entrypoint] network:peer:* capability declared — starting mesh daemon" >&2
+  BERTH_CAPABILITY_POLICY="$MESH_POLICY_PATH" /usr/local/bin/mesh-daemon &
+  for _ in $(seq 1 50); do
+    [ -S "${BERTH_MESH_SOCKET:-/tmp/berth-mesh.sock}" ] && break
+    sleep 0.1
+  done
+  [ -S "${BERTH_MESH_SOCKET:-/tmp/berth-mesh.sock}" ] \
+    || echo "[berth:entrypoint] WARNING: mesh-daemon's control socket never appeared — continuing without mesh" >&2
 fi
 
 # Registered only now (not via `exec`, since this script must survive to

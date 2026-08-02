@@ -1,0 +1,31 @@
+{
+  "name": "@berth/mesh-coordinator",
+  "version": "0.1.0",
+  "description": "Coordination service for Berth's WireGuard mesh: allocates stable mesh IPs, exchanges public keys, and mutually-matches peers before introducing them (see docs/mesh-reference.md)",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "berth-mesh-coordinator": "./dist/server.js"
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "test": "node --test dist/**/*.test.js",
+    "lint": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "fastify": "^5.2.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "@types/node": "^22.10.5"
+  }
+}
