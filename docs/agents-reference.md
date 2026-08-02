@@ -66,6 +66,8 @@ The synthesized agent-server app is generated on the fly (`berth.yml` + a plain,
 - **No auth/TLS between peers (deferred)**: plaintext line-JSON on a private, single-Docker-host user-defined bridge network — the same trust model the existing context-bus/semantic-fs Unix sockets already operate under, just extended across containers instead of within one.
 - **Single Docker host only (deferred)**: no cross-host/multi-machine fleet networking — blocked on the same gap as remote fleets generally (see below).
 
+`network:peer:<name>` ([mesh reference](./mesh-reference.md)) is a separate, real primitive that addresses two of the gaps above differently — a genuine encrypted WireGuard tunnel between containers (not host-mediated RPC) with mutual-consent authorization (not "no auth between peers") — but `Crew.networked()` doesn't use it yet; rewiring it onto the mesh instead of the plain Docker bridge is its own follow-up.
+
 ## Other scope boundaries (v1)
 
 - **Local Docker only.** None of the `DeployAdapter` implementations (E2B/Daytona/K8s) expose anything like `invokeAppExport` — there's no RPC bridge to a remote fleet instance today. `createAgent()`/`Computer.boot()` target local Docker, same as `berth dev`.

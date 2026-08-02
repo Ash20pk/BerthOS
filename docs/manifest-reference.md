@@ -65,8 +65,10 @@ Shell commands (or, more commonly, effectively-named hooks like `"register_with_
 namespace:action:scope
 ```
 
-- `namespace` — the resource family (`github`, `browser`, `filesystem`, ...)
-- `action` — what's being done (`read`, `write`, `navigate`, `screenshot`, ...)
+- `namespace` — the resource family (`github`, `browser`, `filesystem`, `network`, ...)
+- `action` — what's being done (`read`, `write`, `navigate`, `screenshot`, `connect`, `peer`, ...)
 - `scope` — what it applies to; may contain a `*` glob (e.g. `*.github.com` matches `api.github.com` but not `example.com`)
 
 `@berth/manifest-schema`'s `matchesCapability(granted, requested)` implements glob matching on `scope` while requiring exact matches on `namespace`/`action` — this is the exact function Phase 3's kernel-level token issuer will call to decide grants.
+
+`network:peer:<name>` (e.g. `network:peer:database-service`, or `network:peer:*` for any peer) joins a resident app to a real WireGuard mesh with other apps whose own `network:peer:<pattern>` names it back — mutual consent, decided by `mesh-coordinator`, not a flat "everyone who opts in reaches everyone else" mesh. See [mesh reference](./mesh-reference.md).
