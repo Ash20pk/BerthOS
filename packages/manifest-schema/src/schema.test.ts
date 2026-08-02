@@ -52,6 +52,41 @@ test("expose lets an author disable just one of browser/terminal", () => {
   assert.deepEqual(result.expose, { browser: false, terminal: true });
 });
 
+test("governs defaults to false, governance.exempt defaults to false", () => {
+  const result = BerthManifestSchema.parse({ name: "app", version: "1.0.0" });
+  assert.equal(result.governs, false);
+  assert.deepEqual(result.governance, { exempt: false });
+});
+
+test("governs: true requires an evaluate_action export", () => {
+  const result = BerthManifestSchema.safeParse({
+    name: "governance-app",
+    version: "1.0.0",
+    governs: true,
+    exports: [{ name: "get_history", output: { events: "array" } }],
+  });
+  assert.equal(result.success, false);
+});
+
+test("governs: true with evaluate_action export is accepted", () => {
+  const result = BerthManifestSchema.safeParse({
+    name: "governance-app",
+    version: "1.0.0",
+    governs: true,
+    exports: [{ name: "evaluate_action", input: { app: "string", export: "string", input: "object" }, output: { allowed: "boolean", reason: "string" } }],
+  });
+  assert.equal(result.success, true);
+});
+
+test("an app can opt out of governance", () => {
+  const result = BerthManifestSchema.parse({
+    name: "app",
+    version: "1.0.0",
+    governance: { exempt: true },
+  });
+  assert.deepEqual(result.governance, { exempt: true });
+});
+
 test("matchesCapability handles glob scopes", () => {
   assert.equal(matchesCapability("browser:navigate:*.github.com", "browser:navigate:api.github.com"), true);
   assert.equal(matchesCapability("browser:navigate:*.github.com", "browser:navigate:example.com"), false);

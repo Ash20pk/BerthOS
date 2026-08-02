@@ -2,10 +2,10 @@ name: Agents Milestone
 
 # Real, running verification that @berth/agents's Computer boots a
 # live sandbox and produces a callable tool list from resident-app exports —
-# see packages/agents/test/computer-boot-milestone.mjs and
-# computer-multi-app-milestone.mjs. The provider-swap/crew milestone tests
-# need real LLM API credentials and are intentionally not run here — see
-# docs/agents-reference.md.
+# see packages/agents/test/computer-boot-milestone.mjs,
+# computer-multi-app-milestone.mjs, and governance-gate-milestone.mjs. The
+# provider-swap/crew milestone tests need real LLM API credentials and are
+# intentionally not run here — see docs/agents-reference.md.
 on:
   push:
     branches: [main]
@@ -38,3 +38,7 @@ jobs:
       - name: Run computer-multi-app-milestone.mjs
         working-directory: packages/agents
         run: node test/computer-multi-app-milestone.mjs
+
+      - name: Run governance-gate-milestone.mjs
+        working-directory: packages/agents
+        run: node test/governance-gate-milestone.mjs

@@ -5,3 +5,4 @@ packages:
   - "examples/resident-apps/*"
   - "examples/agents/*"
   - "packages/docker-orchestrator/test/fixtures/*"
+  - "packages/agents/test/fixtures/*"

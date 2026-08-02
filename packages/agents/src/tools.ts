@@ -33,10 +33,18 @@ export function inputSchemaFor(exportSpec: ExportSpecType): object {
 }
 
 /**
- * One Tool per export across every app in a Computer. Tool names are
- * `<exportName>` for a single app, `<appName>__<exportName>` when there's
- * more than one (avoids collisions across apps; "__" rather than "." since
- * tool names must satisfy `^[a-zA-Z0-9_-]+$` for most LLM providers).
+ * Tool names are `<exportName>` for a single app, `<appName>__<exportName>`
+ * when there's more than one (avoids collisions across apps; "__" rather
+ * than "." since tool names must satisfy `^[a-zA-Z0-9_-]+$` for most LLM
+ * providers). Shared with governance.ts, which needs to map a Tool back to
+ * the app/export that owns it.
+ */
+export function toolNameFor(appName: string, exportName: string, namespaced: boolean): string {
+  return namespaced ? `${appName}__${exportName}` : exportName;
+}
+
+/**
+ * One Tool per export across every app in a Computer.
  *
  * `call` is Computer's own transport dispatch (createStdioRpcClient for a
  * single app, invokeAppExport per call for multi-app) — this function only
@@ -51,9 +59,8 @@ export function computerToolsFor(
 
   for (const app of apps) {
     for (const exportSpec of app.manifest.exports) {
-      const name = namespaced ? `${app.name}__${exportSpec.name}` : exportSpec.name;
       tools.push({
-        name,
+        name: toolNameFor(app.name, exportSpec.name, namespaced),
         description: `Berth resident app export "${exportSpec.name}" (from ${app.name}'s berth.yml)`,
         inputSchema: inputSchemaFor(exportSpec),
         invoke: (input: unknown) => call(app.name, exportSpec.name, input),

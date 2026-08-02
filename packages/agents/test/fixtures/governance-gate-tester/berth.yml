@@ -1,0 +1,15 @@
+name: governance-gate-tester
+version: 0.1.0
+description: "governance-gate-milestone.mjs fixture — denies write_file, allows everything else"
+
+capabilities: []
+governs: true
+
+exports:
+  - name: evaluate_action
+    input: { app: string, export: string, input: object }
+    output: { allowed: boolean, reason: string }
+
+on_install: []
+on_agent_ready:
+  - "register_with_context_bus"
