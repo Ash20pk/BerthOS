@@ -39,6 +39,18 @@ export interface SnapshotMetadata {
   contextIndexDbPath: string;
 }
 
+/**
+ * Greppable JSON audit line on stderr — same convention as agent-init's and
+ * mesh-daemon's own structured events (see docs/capability-tokens-
+ * reference.md). Before this, a snapshot create/restore failure was only
+ * ever visible as an uncaught exception with a stack trace; there was no
+ * way to alert on "snapshot outcomes" as a class of event without parsing
+ * one.
+ */
+function logSnapshotEvent(event: string, fields: Record<string, unknown>): void {
+  console.error(JSON.stringify({ event, timestamp: new Date().toISOString(), ...fields }));
+}
+
 export interface CreateSnapshotOptions {
   /** The container to snapshot — must still be running (or at least not yet removed); commit()/getArchive() both need a live container reference. */
   container: Docker.Container;
@@ -75,33 +87,40 @@ export async function createSnapshot(options: CreateSnapshotOptions): Promise<{ 
 
   const id = new Date().toISOString().replace(/[:.]/g, "-");
   const dir = join(snapshotsDir, options.appName, id);
-  await mkdir(dir, { recursive: true });
 
-  const imageTag = `berth-snapshot-${options.appName}:${id}`;
-  await options.container.commit({ repo: `berth-snapshot-${options.appName}`, tag: id });
+  try {
+    await mkdir(dir, { recursive: true });
 
-  const imageStream = await docker.getImage(imageTag).get();
-  await pipeline(imageStream, createWriteStream(join(dir, "image.tar")));
+    const imageTag = `berth-snapshot-${options.appName}:${id}`;
+    await options.container.commit({ repo: `berth-snapshot-${options.appName}`, tag: id });
 
-  const contextArchive = await options.container.getArchive({ path: contextDataPath });
-  await pipeline(contextArchive, createWriteStream(join(dir, "context-data.tar")));
+    const imageStream = await docker.getImage(imageTag).get();
+    await pipeline(imageStream, createWriteStream(join(dir, "image.tar")));
 
-  const contextIndexDbArchive = await options.container.getArchive({ path: contextIndexDbPath });
-  await pipeline(contextIndexDbArchive, createWriteStream(join(dir, "context-index-db.tar")));
+    const contextArchive = await options.container.getArchive({ path: contextDataPath });
+    await pipeline(contextArchive, createWriteStream(join(dir, "context-data.tar")));
 
-  const metadata: SnapshotMetadata = {
-    id,
-    appName: options.appName,
-    createdAt: new Date().toISOString(),
-    imageTag,
-    contextDataPath,
-    contextIndexDbPath,
-  };
-  await writeFile(join(dir, "metadata.json"), JSON.stringify(metadata, null, 2));
-  await writeFile(join(dir, "manifest.json"), JSON.stringify(options.manifest, null, 2));
-  await writeFile(join(dir, "env.json"), JSON.stringify(options.env ?? {}, null, 2));
+    const contextIndexDbArchive = await options.container.getArchive({ path: contextIndexDbPath });
+    await pipeline(contextIndexDbArchive, createWriteStream(join(dir, "context-index-db.tar")));
 
-  return { id, dir };
+    const metadata: SnapshotMetadata = {
+      id,
+      appName: options.appName,
+      createdAt: new Date().toISOString(),
+      imageTag,
+      contextDataPath,
+      contextIndexDbPath,
+    };
+    await writeFile(join(dir, "metadata.json"), JSON.stringify(metadata, null, 2));
+    await writeFile(join(dir, "manifest.json"), JSON.stringify(options.manifest, null, 2));
+    await writeFile(join(dir, "env.json"), JSON.stringify(options.env ?? {}, null, 2));
+
+    logSnapshotEvent("snapshot_created", { appName: options.appName, snapshotId: id, imageTag });
+    return { id, dir };
+  } catch (err) {
+    logSnapshotEvent("snapshot_create_failed", { appName: options.appName, snapshotId: id, error: String(err) });
+    throw err;
+  }
 }
 
 export interface RestoredSnapshot {
@@ -124,44 +143,50 @@ export interface RestoredSnapshot {
  * BERTH_CONTEXT_DATA path the archive was captured from.
  */
 export async function restoreSnapshot(snapshotDir: string, docker: Docker = new Docker()): Promise<RestoredSnapshot> {
-  const metadata = JSON.parse(await readFile(join(snapshotDir, "metadata.json"), "utf-8")) as SnapshotMetadata;
-  const manifest = JSON.parse(await readFile(join(snapshotDir, "manifest.json"), "utf-8")) as BerthManifest;
-  const env = JSON.parse(await readFile(join(snapshotDir, "env.json"), "utf-8")) as Record<string, string>;
+  try {
+    const metadata = JSON.parse(await readFile(join(snapshotDir, "metadata.json"), "utf-8")) as SnapshotMetadata;
+    const manifest = JSON.parse(await readFile(join(snapshotDir, "manifest.json"), "utf-8")) as BerthManifest;
+    const env = JSON.parse(await readFile(join(snapshotDir, "env.json"), "utf-8")) as Record<string, string>;
 
-  const loadStream = await docker.loadImage(createReadStream(join(snapshotDir, "image.tar")));
-  await new Promise<void>((resolve, reject) => {
-    loadStream.on("data", () => {});
-    loadStream.on("end", resolve);
-    loadStream.on("error", reject);
-  });
+    const loadStream = await docker.loadImage(createReadStream(join(snapshotDir, "image.tar")));
+    await new Promise<void>((resolve, reject) => {
+      loadStream.on("data", () => {});
+      loadStream.on("end", resolve);
+      loadStream.on("error", reject);
+    });
 
-  const extractDir = join(snapshotDir, "restored-context-data");
-  await mkdir(extractDir, { recursive: true });
-  await new Promise<void>((resolve, reject) => {
-    createReadStream(join(snapshotDir, "context-data.tar"))
-      .pipe(tarFs.extract(extractDir))
-      .on("finish", resolve)
-      .on("error", reject);
-  });
-  // Docker's getArchive() wraps the captured path in its own basename inside
-  // the tar (e.g. capturing "/var/berth/context-data" produces a top-level
-  // "context-data/" entry) — this is the directory an extraBinds entry
-  // should actually target, not extractDir itself.
-  const contextDataHostDir = join(extractDir, basename(metadata.contextDataPath));
+    const extractDir = join(snapshotDir, "restored-context-data");
+    await mkdir(extractDir, { recursive: true });
+    await new Promise<void>((resolve, reject) => {
+      createReadStream(join(snapshotDir, "context-data.tar"))
+        .pipe(tarFs.extract(extractDir))
+        .on("finish", resolve)
+        .on("error", reject);
+    });
+    // Docker's getArchive() wraps the captured path in its own basename inside
+    // the tar (e.g. capturing "/var/berth/context-data" produces a top-level
+    // "context-data/" entry) — this is the directory an extraBinds entry
+    // should actually target, not extractDir itself.
+    const contextDataHostDir = join(extractDir, basename(metadata.contextDataPath));
 
-  const extractIndexDbDir = join(snapshotDir, "restored-context-index-db");
-  await mkdir(extractIndexDbDir, { recursive: true });
-  await new Promise<void>((resolve, reject) => {
-    createReadStream(join(snapshotDir, "context-index-db.tar"))
-      .pipe(tarFs.extract(extractIndexDbDir))
-      .on("finish", resolve)
-      .on("error", reject);
-  });
-  // Same basename-wrapping behavior as above, but for a single file rather
-  // than a directory — this is the file an extraBinds entry should target.
-  const contextIndexDbHostFile = join(extractIndexDbDir, basename(metadata.contextIndexDbPath));
+    const extractIndexDbDir = join(snapshotDir, "restored-context-index-db");
+    await mkdir(extractIndexDbDir, { recursive: true });
+    await new Promise<void>((resolve, reject) => {
+      createReadStream(join(snapshotDir, "context-index-db.tar"))
+        .pipe(tarFs.extract(extractIndexDbDir))
+        .on("finish", resolve)
+        .on("error", reject);
+    });
+    // Same basename-wrapping behavior as above, but for a single file rather
+    // than a directory — this is the file an extraBinds entry should target.
+    const contextIndexDbHostFile = join(extractIndexDbDir, basename(metadata.contextIndexDbPath));
 
-  return { metadata, manifest, env, contextDataHostDir, contextIndexDbHostFile };
+    logSnapshotEvent("snapshot_restored", { appName: metadata.appName, snapshotId: metadata.id, imageTag: metadata.imageTag });
+    return { metadata, manifest, env, contextDataHostDir, contextIndexDbHostFile };
+  } catch (err) {
+    logSnapshotEvent("snapshot_restore_failed", { snapshotDir, error: String(err) });
+    throw err;
+  }
 }
 
 export async function listSnapshots(appName: string, snapshotsDir: string = DEFAULT_SNAPSHOTS_DIR): Promise<SnapshotMetadata[]> {
