@@ -1,0 +1,57 @@
+version: 2
+updates:
+  # The pnpm workspace root — Dependabot's npm ecosystem understands
+  # pnpm-lock.yaml natively and walks every workspace member's package.json
+  # (packages/*, packages/adapters/*, apps/*, examples/*/*, the test fixture
+  # workspaces in pnpm-workspace.yaml) from this one entry; it does not need
+  # a separate entry per workspace member.
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      # Every workspace member updates against the same lockfile — one PR
+      # per week covering all of them is far more reviewable than a
+      # separate PR per package that just churns the same pnpm-lock.yaml.
+      npm-workspace:
+        patterns:
+          - "*"
+
+  # Three independent Rust crates (no root Cargo.toml joining them into a
+  # workspace — each has its own Cargo.lock) — see packages/agent-init,
+  # packages/context-bus-daemon, packages/mesh-daemon.
+  - package-ecosystem: cargo
+    directory: "/packages/agent-init"
+    schedule:
+      interval: weekly
+  - package-ecosystem: cargo
+    directory: "/packages/context-bus-daemon"
+    schedule:
+      interval: weekly
+  - package-ecosystem: cargo
+    directory: "/packages/mesh-daemon"
+    schedule:
+      interval: weekly
+
+  # semantic-fs-daemon — the only Go module in this repo.
+  - package-ecosystem: gomod
+    directory: "/packages/semantic-fs-daemon"
+    schedule:
+      interval: weekly
+
+  # sdk-python — pyproject.toml's real, version-constrained dependencies
+  # (pyyaml, pydantic, protobuf).
+  - package-ecosystem: pip
+    directory: "/packages/sdk-python"
+    schedule:
+      interval: weekly
+
+  # The workflow files this same production-readiness effort just added
+  # (CodeQL, gitleaks, this file's own consumer) pin third-party actions by
+  # tag — those need updates tracked too, or "pinned for supply-chain
+  # safety" quietly turns into "pinned to a version that stopped getting
+  # security fixes years ago."
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
