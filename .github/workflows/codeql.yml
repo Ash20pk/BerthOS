@@ -1,0 +1,67 @@
+name: CodeQL
+
+# SAST across every real language in this repo. javascript-typescript covers
+# the whole TS codebase (including packages/docker-orchestrator and
+# packages/manifest-schema); go covers semantic-fs-daemon; rust covers the
+# three independent crates the trust boundary itself lives in — agent-init
+# (Landlock policy application), context-bus-daemon, and mesh-daemon. All
+# three language identifiers ("javascript-typescript", "go", "rust") are
+# real, current CodeQL-supported languages.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    name: Analyze
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      security-events: write
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Interpreted — no build needed to extract a database.
+          - language: javascript-typescript
+            build-mode: none
+          # Compiled, and CodeQL's own docs say build-mode: none isn't
+          # supported for Go — a single, simple module, so autobuild's
+          # heuristics (plain `go build ./...`) are enough.
+          - language: go
+            build-mode: autobuild
+          # Compiled, and NOT confirmed to support build-mode: none in
+          # CodeQL's docs (unlike javascript-typescript/python/ruby) — manual
+          # rather than autobuild because there's no root Cargo.toml joining
+          # agent-init/context-bus-daemon/mesh-daemon into one workspace
+          # autobuild could discover on its own; each is built explicitly
+          # below instead.
+          - language: rust
+            build-mode: manual
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - name: Install protoc (context-bus-daemon's build.rs needs a system protoc on PATH)
+        if: matrix.language == 'rust'
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Build every independent Rust crate (manual build mode)
+        if: matrix.language == 'rust'
+        run: |
+          cargo build --release --manifest-path packages/agent-init/Cargo.toml
+          cargo build --release --manifest-path packages/context-bus-daemon/Cargo.toml
+          cargo build --release --manifest-path packages/mesh-daemon/Cargo.toml
+
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{ matrix.language }}"
