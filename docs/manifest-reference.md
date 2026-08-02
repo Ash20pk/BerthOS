@@ -35,6 +35,10 @@ Lowercase alphanumeric with dashes (`^[a-z0-9-]+$`). Used as the Docker image na
 
 Strict semver (`x.y.z`).
 
+### `schema_version` (default: current — see below)
+
+Which version of `berth.yml`'s *own shape* this file was written against — not the app's own `version` above, which is just its semver/Docker image tag and has nothing to do with the manifest format itself. Omit it entirely unless you have a specific reason not to; every `berth.yml` in this repo omits it today, and that's the expected common case, not a legacy path. See [Schema compatibility policy](#schema-compatibility-policy) below for what it's for and when you'd ever set it.
+
 ### `description` (default: `""`)
 
 A short human-readable summary. Unused before Phase 5; the [app registry](./app-registry-reference.md) now surfaces it in `GET /apps` listings and matches it against `?q=` search terms.
@@ -94,3 +98,23 @@ namespace:action:scope
 `@berth/manifest-schema`'s `matchesCapability(granted, requested)` implements glob matching on `scope` while requiring exact matches on `namespace`/`action` — this is the exact function the kernel-level token issuer calls to decide grants.
 
 `network:peer:<name>` (e.g. `network:peer:database-service`, or `network:peer:*` for any peer) joins a resident app to a real WireGuard mesh with other apps whose own `network:peer:<pattern>` names it back — mutual consent, decided by `mesh-coordinator`, not a flat "everyone who opts in reaches everyone else" mesh. See [mesh reference](./mesh-reference.md).
+
+## Schema compatibility policy
+
+`berth.yml`'s shape is versioned via the `schema_version` field above, resolved in `@berth/manifest-schema`'s `validate.ts` before Zod ever sees the parsed object — `BerthManifestSchema` itself has no notion of versioning at all; it only ever validates "today's current shape." This section is the policy that decides when a schema change needs a version bump versus when it doesn't, and what happens at each of the three points a `berth.yml` can disagree with the schema it's validated against.
+
+**Additive, defaulted changes never need a version bump.** Adding a new optional field with a sensible default (the way `expose`, `description`, and `governance` were all added) is always safe: an old `berth.yml` that predates the field simply gets the default, and nothing about it needs to change. This is the common case — most schema evolution should stay in this category.
+
+**A version bump is required for anything that changes the *meaning* of an existing field, not just adds a new one** — renaming a field, changing a field's type or shape (e.g. a boolean becoming an object), or making a previously-optional field required. Anything in this category needs:
+
+1. Bump `CURRENT_SCHEMA_VERSION` in `packages/manifest-schema/src/migrations.ts`.
+2. Register a migration in that same file's `MIGRATIONS` map, keyed by the version it migrates *from* — it receives the old-shaped raw object and must return the new-shaped one.
+3. Add a test (see `migrations.test.ts`) loading a manifest that declares the *old* `schema_version` and asserting it validates correctly after migration.
+
+**What happens when a `berth.yml` doesn't match the schema it's checked against:**
+
+- **No `schema_version` field at all** — treated as the current version, not as an ambiguous "version 0." Every `berth.yml` written before this field existed falls here, and must keep validating exactly as it always has.
+- **`schema_version` older than current** — walked forward through the registered migrations, one version at a time, then validated against today's schema. If any step in that walk has no registered migration, this fails loudly with a clear error naming the missing step — it never silently returns the file unchanged and lets it fail Zod validation in a confusing, indirect way instead.
+- **`schema_version` newer than this installed `@berth/manifest-schema` supports** — fails immediately with an "upgrade `@berth/manifest-schema`" error. The alternative (attempting to validate a file against a schema it was never written for) is exactly the kind of silent misinterpretation this mechanism exists to prevent.
+
+Nothing in this repo has ever actually needed a migration yet — `CURRENT_SCHEMA_VERSION` is still `1`, and `MIGRATIONS[0]` in `migrations.ts` is a reference implementation proving the mechanism works, not a real historical shape this project shipped. It's there so the first real breaking change follows an established, tested pattern instead of improvising one under pressure.
