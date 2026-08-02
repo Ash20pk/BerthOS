@@ -1,0 +1,14 @@
+name: mesh-echo-planner
+version: 0.1.0
+description: "mesh-milestone.mjs fixture — declares network:peer:mesh-echo-browser, a mutual match with mesh-echo-browser"
+
+capabilities:
+  - network:peer:mesh-echo-browser
+
+exports:
+  - name: ping
+    output: { message: string }
+
+on_install: []
+on_agent_ready:
+  - "register_with_context_bus"

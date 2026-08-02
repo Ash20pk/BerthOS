@@ -1,0 +1,39 @@
+name: Mesh Milestone
+
+# Real, running verification of the WireGuard mesh — see
+# packages/docker-orchestrator/test/mesh-milestone.mjs. Boots three
+# independently-started containers (no shared Docker network passed to any
+# of them) and proves: two with mutually-matching network:peer:<name>
+# capabilities reach each other over a real WireGuard tunnel by a
+# mesh-coordinator-assigned mesh IP; a third that wants everyone but whom
+# nobody names back is excluded from both; and the resident app's own
+# process never inherits the container-level NET_ADMIN grant made for
+# mesh-daemon's benefit (the capability bounding-set drop in agent-init).
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.21.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Run mesh-milestone.mjs
+        working-directory: packages/docker-orchestrator
+        run: node test/mesh-milestone.mjs
