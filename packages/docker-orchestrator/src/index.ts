@@ -4,6 +4,10 @@ export {
   stopContainer,
   restartContainer,
   streamLogs,
+  declaresBrowserCapability,
+  declaresTerminalCapability,
+  needsBrowserPorts,
+  needsTerminalPort,
   type StartContainerOptions,
   type RunningContainer,
 } from "./container.js";

@@ -1,6 +1,6 @@
 # Context Bus Reference
 
-The Context Bus is Phase 2's first real Agent OS primitive: shared semantic working memory that every resident app in one agent sandbox can publish to and subscribe from. It's what lets apps react to each other — a filesystem app writes a file, a code-editor app notices and opens it — without either app calling the other directly or any orchestration layer wiring them together.
+The Context Bus is Phase 2's first real agent runtime primitive: shared semantic working memory that every resident app in one agent sandbox can publish to and subscribe from. It's what lets apps react to each other — a filesystem app writes a file, a code-editor app notices and opens it — without either app calling the other directly or any orchestration layer wiring them together.
 
 ## Architecture
 

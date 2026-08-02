@@ -29,3 +29,10 @@ exports:
 on_install: []
 on_agent_ready:
   - "register_with_context_bus"
+
+# Uncomment to keep the browser:* capability (and the agent's ability to
+# drive Chromium) while running headless/unwatched, e.g. in CI — this only
+# stops `berth dev` from publishing the noVNC/CDP ports to the host, it
+# doesn't narrow what the app is allowed to do. See docs/manifest-reference.md.
+# expose:
+#   browser: false
