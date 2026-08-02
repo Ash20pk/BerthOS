@@ -12,15 +12,35 @@ mod control;
 mod coordinator;
 mod wg;
 
+use std::env;
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::process::Command;
 use tokio::sync::{mpsc, RwLock};
 
 use config::Config;
 use control::SharedState;
+
+/// Same convention as packages/agent-init/src/main.rs's boot_id(): set by
+/// entrypoint.sh before any daemon in this container starts, shared by
+/// every one of them. Falls back to "unknown" rather than failing — this
+/// binary can run standalone in a test harness without entrypoint.sh ever
+/// having set it.
+fn boot_id() -> String {
+    env::var("BERTH_BOOT_ID").unwrap_or_else(|_| "unknown".to_string())
+}
+
+/// Greppable/alertable companion to the plain-text "reconcile poll failed"
+/// WARNING at the call site — see that comment for why both exist.
+fn log_reconcile_failed_event(peer_name: &str, tick_n: u32, error: &str) {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let boot_id = boot_id();
+    eprintln!(
+        "[mesh-daemon] {{\"event\":\"mesh_reconcile_failed\",\"bootId\":{boot_id:?},\"peer\":{peer_name:?},\"tick\":{tick_n},\"error\":{error:?},\"timestamp\":{now}}}"
+    );
+}
 
 #[tokio::main]
 async fn main() {
@@ -247,6 +267,14 @@ async fn reconcile_loop(
             }
             Err(err) => {
                 eprintln!("[mesh-daemon] WARNING: reconcile poll failed ({err}) — keeping last known peer set");
+                // Additive structured line alongside the human-readable
+                // WARNING above (never replacing it — mesh-coordinator-
+                // resilience-milestone.mjs and others match that exact
+                // text). This is the one that's actually greppable/
+                // alertable in a log pipeline: an operator watching for
+                // "mesh_reconcile_failed" doesn't need to know this
+                // daemon's own log wording to build a real alert on it.
+                log_reconcile_failed_event(&peer_name, tick_n, &err.to_string());
             }
         }
     }

@@ -29,6 +29,17 @@ function labelFor(port: number): string {
   return port === NOVNC_PORT ? "noVNC" : port === TERMINAL_PORT ? "Terminal" : `port ${port}`;
 }
 
+/**
+ * Greppable JSON audit line on stderr — same convention as agent-init's,
+ * mesh-daemon's, and snapshot.ts's own structured events. Before this, a
+ * `berth deploy` failure was only visible as this.error()'s formatted CLI
+ * output — fine for a human watching the terminal, nothing a log pipeline
+ * could alert on as a class of event.
+ */
+function logDeployEvent(event: string, fields: Record<string, unknown>): void {
+  console.error(JSON.stringify({ event, timestamp: new Date().toISOString(), ...fields }));
+}
+
 export default class Deploy extends Command {
   static override description = "Build and deploy the resident app to a fleet (E2B, Daytona, or an alias in ~/.berthrc)";
   static override flags = {
@@ -108,8 +119,17 @@ export default class Deploy extends Command {
             `they are still running on ${adapter.name}. Use \`berth fleet status ${flags.fleet}\` to see them.`,
         );
       }
+      logDeployEvent("deploy_start_failed", {
+        fleet: flags.fleet,
+        appName: manifest.name,
+        adapter: adapter.name,
+        startedCount: handles.length,
+        requestedCount: count,
+        error: String(err),
+      });
       throw err;
     }
+    logDeployEvent("deploy_started", { fleet: flags.fleet, appName: manifest.name, adapter: adapter.name, count });
 
     this.log("Streaming logs from all instances (Ctrl+C to detach — this does not stop the deployment)...");
 

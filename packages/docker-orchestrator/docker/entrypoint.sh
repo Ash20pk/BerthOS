@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# One id per container boot, exported before anything else starts so every
+# daemon and app process in this container (context-bus, semantic-fs, mesh,
+# every per-app agent-init) inherits the same value — the only thing that
+# lets a real incident be traced across process boundaries by grepping for
+# one string, rather than correlating log timestamps by hand across three
+# runtimes. /proc/sys/kernel/random/uuid is a kernel interface (no userland
+# package needed, unlike uuidgen) present on any real Linux kernel.
+export BERTH_BOOT_ID="$(cat /proc/sys/kernel/random/uuid)"
+echo "[berth:entrypoint] boot id: ${BERTH_BOOT_ID}" >&2
+
 if [ -z "${BERTH_APPS:-}" ]; then
   # --- Single-app mode: byte-for-byte today's script, unchanged. ---
   # Guarantees zero regression risk for every existing dev/test/deploy flow
