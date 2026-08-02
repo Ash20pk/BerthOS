@@ -86,7 +86,10 @@ async function main() {
       name: "berth-snapshot-milestone-restored",
       manifest: restored.manifest,
       workingDir: "/app",
-      extraBinds: [`${restored.contextDataHostDir}:${restored.metadata.contextDataPath}`],
+      extraBinds: [
+        `${restored.contextDataHostDir}:${restored.metadata.contextDataPath}`,
+        `${restored.contextIndexDbHostFile}:${restored.metadata.contextIndexDbPath}`,
+      ],
       env: restored.env,
       docker,
     });

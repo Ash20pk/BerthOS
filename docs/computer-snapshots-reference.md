@@ -6,10 +6,11 @@
 
 - **`berth snapshot create`** (`packages/cli/src/commands/snapshot/create.ts`): finds the running dev container (`berth-dev-<appName>` by default), then calls `@berth/docker-orchestrator`'s `createSnapshot()`:
   - `container.commit()` — a **real Docker image commit**, capturing the container's actual filesystem and installed packages as a new image layer, not a re-run of `on_install`.
-  - `container.getArchive({path: BERTH_CONTEXT_DATA})` — a **real tar archive** of semantic-fs's backing directory (its SQLite metadata index plus the files it tracks), saved alongside the image.
+  - `container.getArchive({path: BERTH_CONTEXT_DATA})` — a **real tar archive** of semantic-fs's backing directory (the files it tracks), saved alongside the image.
+  - `container.getArchive({path: BERTH_CONTEXT_INDEX_DB})` — a **second, separate real tar archive** of semantic-fs's SQLite metadata index. `BERTH_CONTEXT_INDEX_DB` is a sibling path to `BERTH_CONTEXT_DATA`, not nested inside it, so it can't ride along with the context-data archive and needs its own capture/restore step.
   - The container's real `Config.Env` (its actual inherited environment, not just this CLI process's own) plus its manifest are saved too, so a restore can reproduce the same running configuration.
   - Everything lands under `~/.berth/snapshots/<appName>/<timestamp>/`.
-- **`berth snapshot restore <id>`**: loads the saved image tar back into the local Docker daemon (`docker load` equivalent), extracts the context-data archive into a **fresh host directory first** — not injected into an already-running container via `putArchive`, which would race `semantic-fs-daemon`'s own SQLite open at boot, a real ordering hazard — then starts a new container from the restored image with that directory bind-mounted at the same `BERTH_CONTEXT_DATA` path via a new, additive `extraBinds` option on `startContainer()`.
+- **`berth snapshot restore <id>`**: loads the saved image tar back into the local Docker daemon (`docker load` equivalent), extracts both archives into **fresh host paths first** — not injected into an already-running container via `putArchive`, which would race `semantic-fs-daemon`'s own SQLite open at boot, a real ordering hazard — then starts a new container from the restored image with the context-data directory and the index db file each bind-mounted at their original `BERTH_CONTEXT_DATA`/`BERTH_CONTEXT_INDEX_DB` paths via a new, additive `extraBinds` option on `startContainer()`.
 - **`berth snapshot list`**: reads the metadata files back.
 
 ## Why the milestone test uses a production image, not a dev one
