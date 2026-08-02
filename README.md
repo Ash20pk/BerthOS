@@ -273,7 +273,7 @@ The `namespace:action:scope` grammar is wide open. You can declare a capability 
 |---|---|---|
 | `filesystem:write:<path>` (say, `filesystem:write:/workspace`) | Kernel (Landlock), always on | Restricts write, create, delete, and rename to the paths you declared, plus a `/tmp` baseline. Declare nothing and your app can still only write to `/tmp`. |
 | `filesystem:read:<path>` (say, `filesystem:read:/context`) | Kernel (Landlock), opt in | Declare at least one and read scoping turns on: a fixed baseline (`/usr`, `/lib`, `/etc`, `/proc`, `/dev`, `/tmp`, your app's own working directory) plus whatever you added. Declare none and reads stay fully open, same as always. |
-| `network:connect:<port>` or `network:connect:*` | Kernel (Landlock), denied by default | Declare no capability at all and you get zero outbound TCP, full stop. Scoping is by port only, not domain. `*` is an explicit, audited escape hatch for apps that genuinely need arbitrary hosts (`browser-native`, for example). |
+| `network:connect:<port>` or `network:connect:*` | Kernel (Landlock), denied by default | Declare no capability at all and you get zero outbound TCP, full stop. Scoping is by port only, not domain. `*` is an explicit, audited escape hatch for apps that genuinely need to reach arbitrary ports; every first-party app avoids it, scoping instead to a single broker port (`browser-native` and `github-assistant` both do this, see below). |
 | `network:peer:<name>` or `network:peer:*` | `mesh-coordinator` (mutual consent) plus a real WireGuard mesh | Joins the mesh with any other app whose own `network:peer:<pattern>` names this app back. A one-sided declaration never gets introduced to its target. See the [mesh reference](./docs/mesh-reference.md). |
 | `browser:navigate:<pattern>` (say, `browser:navigate:*.github.com`) | The egress broker, at the host level rather than the kernel | The broker reads the CONNECT target's hostname straight off the (cleartext) proxy handshake and checks it against your pattern. You'll also need `network:connect:<broker's port>` declared (`8090` by default), since Landlock only sees ports. See the [egress broker reference](./docs/egress-broker-reference.md). |
 | `browser:screenshot:*` | Recorded and reported only | Nothing kernel- or broker-enforced here on its own. Declaring any `browser:*` capability is what makes `berth dev` publish the noVNC/CDP port. Opt out with `expose: { browser: false }`. |
@@ -309,7 +309,7 @@ Want more than one app in a single Berth OS, each still independently enforced b
 | `berth publish --registry=<url>` | Build and publish the app to a running app registry |
 | `berth snapshot create\|list\|restore` | Checkpoint and restore a container plus its semantic-fs context data |
 | `berth grants list\|approve\|deny` | Review and resolve pending human-approval capability requests |
-| `berth fleet status` | Check the state of a configured remote fleet |
+| `berth fleet status <fleet>` | Check the state of a configured remote fleet (`e2b`, `daytona`, or a `~/.berthrc` alias) |
 | `berth os up\|down\|status` | Boot a long-lived Berth OS once, then reconnect to it instantly instead of rebuilding on every dev iteration |
 
 Run `berth <command> --help` to see the flags. A few of these deserve their own doc: [MCP bridge](./docs/mcp-bridge-reference.md), [app registry](./docs/app-registry-reference.md), [computer snapshots](./docs/computer-snapshots-reference.md), [capability tokens and grants](./docs/capability-tokens-reference.md), [K8s adapter](./docs/k8s-adapter-reference.md), [what is a Berth OS](./docs/berth-os.md), and [the `berth os` command reference for cold start](./docs/berth-os-reference.md).
@@ -335,6 +335,8 @@ packages/
   semantic-fs-daemon/  Go/FUSE daemon, a filesystem queryable by intent, backed by a SQLite metadata index
   registry-server/     local app registry for publish, discover, and install (Fastify + SQLite)
   grants-server/       human approval service for capability grants (Fastify + SQLite)
+  mesh-coordinator/    coordination service for the WireGuard mesh: allocates IPs, exchanges keys, mutually matches peers
+  mesh-daemon/         Rust daemon that reconciles a sandbox's WireGuard config against mesh-coordinator's state
   adapters/            deploy adapters for E2B, Daytona, and Kubernetes
   cli/                 the `berth` CLI: init, dev, test, publish, deploy, os
   sdk-python/          Python resident app SDK, wire-protocol compatible with @berth/sdk
