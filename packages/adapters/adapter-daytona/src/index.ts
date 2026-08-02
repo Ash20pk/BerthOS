@@ -1,3 +1,4 @@
+import { withTimeout, DEPLOY_CREATE_TIMEOUT_MS, DEPLOY_READ_TIMEOUT_MS } from "@berth/adapter-core";
 import type { DeployAdapter, DeployHandle, DeployStatus, DeployTarget } from "@berth/adapter-core";
 
 /**
@@ -45,7 +46,7 @@ class DaytonaDeployHandle implements DeployHandle {
    * treats that as "no preview available" rather than surfacing the error.
    */
   async getPreviewLink(port: number): Promise<string> {
-    const link = await this.sandbox.getPreviewLink(port);
+    const link = await withTimeout<any>(this.sandbox.getPreviewLink(port), DEPLOY_READ_TIMEOUT_MS, `daytona getPreviewLink(${port})`);
     return link.url;
   }
 }
@@ -69,25 +70,30 @@ export function createDaytonaAdapter(): DeployAdapter {
       // registry-resolvable reference. This mirrors the same assumption
       // the prior code made; pushing to a registry first is a separate,
       // larger fix and out of scope here.
-      const snapshot = await client.snapshot.create({
-        name: target.manifest.name,
-        image: target.imageRef,
-      });
+      // Not retried on timeout — same reasoning as adapter-e2b's
+      // Template.build: a create-ish call, not cheaply safe to re-attempt
+      // blindly on an ambiguous timeout.
+      const snapshot = await withTimeout<any>(
+        client.snapshot.create({ name: target.manifest.name, image: target.imageRef }),
+        DEPLOY_CREATE_TIMEOUT_MS,
+        `daytona snapshot.create("${target.manifest.name}")`,
+      );
       return { remoteImageRef: snapshot.name ?? target.imageRef };
     },
 
     async start(remoteImageRef: string, target: DeployTarget) {
       const daytona = await loadDaytona();
       const client = new daytona.Daytona();
-      const sandbox = await client.create({
-        snapshot: remoteImageRef,
-        envVars: target.env,
-      });
+      const sandbox = await withTimeout<any>(
+        client.create({ snapshot: remoteImageRef, envVars: target.env }),
+        DEPLOY_CREATE_TIMEOUT_MS,
+        `daytona create("${remoteImageRef}")`,
+      );
       return new DaytonaDeployHandle(sandbox.id, sandbox);
     },
 
     async teardown(handle: DeployHandle) {
-      await handle.stop();
+      await withTimeout<any>(handle.stop(), DEPLOY_READ_TIMEOUT_MS, `daytona teardown("${handle.id}")`);
     },
 
     // Daytona.get(sandboxIdOrName) resolves a bare id back into a live
@@ -96,13 +102,15 @@ export function createDaytonaAdapter(): DeployAdapter {
     async connect(id: string) {
       const daytona = await loadDaytona();
       const client = new daytona.Daytona();
-      const sandbox = await client.get(id);
+      const sandbox = await withTimeout<any>(client.get(id), DEPLOY_READ_TIMEOUT_MS, `daytona get("${id}")`);
       return new DaytonaDeployHandle(sandbox.id, sandbox);
     },
 
     // Correct against the real SDK: daytona.list() returns an
     // AsyncIterableIterator<Sandbox> of live instances directly — no
-    // separate "connect by id" step needed, unlike adapter-e2b.
+    // separate "connect by id" step needed, unlike adapter-e2b. Not wrapped
+    // in withTimeout: it's an async generator, not a single Promise — the
+    // per-sandbox iteration below has no single call to bound the same way.
     async list() {
       const daytona = await loadDaytona();
       const client = new daytona.Daytona();
