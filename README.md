@@ -6,7 +6,7 @@
 
 You don't boot into Berth, and nobody installs it as their laptop's OS. It's a library and CLI you `pnpm add`, same as you would any other framework — it just happens to give the agent it's driving a real, isolated computer to work in: a filesystem, a browser, installable tools, persistent state. You build **resident apps**: persistent, stateful processes that live on that computer, declare capability-scoped permissions, and collaborate with each other through a shared context bus.
 
-This README is written for the person deciding whether to build on Berth. If you're already building and need the technical walkthrough, skip to [Quickstart](#quickstart). If you're looking for roadmap/phase status, see [Status](#status).
+This README is written for the person deciding whether to build on Berth. If you're already building and need the technical walkthrough, skip to [Quickstart](#quickstart).
 
 ## The problem
 
@@ -46,6 +46,18 @@ Berth isn't a replacement for a sandbox provider or an LLM orchestration library
 | **Self-hostable / open source** | Yes — Apache-2.0 | Usually yes | Yes (the sandbox itself) | No |
 
 If you're already happy hand-rolling permissions, persistence, and inter-tool coordination on top of a raw sandbox, Berth mostly saves you from rebuilding that layer. If you're using an orchestration framework today, Berth is what you'd point it at instead of a bare subprocess or a single stateless sandbox call.
+
+## Use cases
+
+**A browser agent a human can babysit.** `apps/browser-native` gives an agent a real, sandboxed Chromium instance for research, QA, or form-filling — scoped to `browser:navigate:*.example.com` so it can't wander off-domain. Because it's a real container with a real display, a support engineer can open the noVNC URL and watch (or take over) the exact session the agent is driving, instead of reconstructing what happened from a log.
+
+**A coding agent that reacts to its own file changes.** `apps/filesystem` and `apps/code-editor` show the pattern: the filesystem app writes a file and publishes `fs.file_created` on the context bus; the code-editor app picks it up and opens it — with zero direct calls between them. Wire in more resident apps (a linter, a test runner) the same way, and each new one only has to know the topic name, not every other app in the sandbox.
+
+**A support/ops agent with a real, watchable shell.** `apps/terminal` hands the agent a `tmux` session it drives with `run_command`/`read_screen`/`send_keys`, while a human watches (and can type into) that identical session live via `ttyd`. Good fit for anything where you want an on-call engineer able to step in mid-task rather than kill and restart the agent.
+
+**An assistant that remembers between conversations.** `apps/notes` persists state to `/workspace` and publishes lifecycle events; `apps/activity-feed` fans those events (plus `fs.file_created`) into one queryable history. Paired with `berth snapshot create/restore`, an agent's working memory survives a container restart instead of resetting every session.
+
+**A multi-agent crew split across isolated computers.** `Crew.networked()` runs each agent on its own container, joined over a real Docker network, so a "planner" agent and a "browser" agent can collaborate without sharing a filesystem or a Landlock policy — useful when you want a compromised or misbehaving agent's blast radius contained to its own sandbox. `apps/github-assistant` is a deployed, milestone-tested example of a single scoped agent (repo-read/issue-write, nothing wider) doing real work against the GitHub API through the [egress-scoped broker](./docs/github-api-scoping-reference.md).
 
 ## Quickstart
 
@@ -237,17 +249,6 @@ examples/
 ## Something not working?
 
 File a [bug report](./.github/ISSUE_TEMPLATE/bug_report.md) or [workflow feedback](./.github/ISSUE_TEMPLATE/workflow_feedback.md) — "what was confusing" reports are exactly what we need right now.
-
-## Status
-
-All 5 phases of the roadmap are implemented: **Phase 1 — Framework Shell** (CLI, resident app SDK, manifest format, Docker-based container runtime for the agent's sandbox), **Phase 2 — Context Bus**, **Phase 3 — Capability Tokens** (kernel-enforced Landlock policy derived from `berth.yml`), **Phase 4 — Semantic FS**, and **Phase 5 — App Ecosystem** (local registry + a self-contained `@berth/sdk` build external developers can depend on).
-
-Things worth knowing before you build on this:
-
-- Landlock enforcement (write-path always, read-path and network ports opt-in when declared) is verified in CI on a real Linux kernel — it cannot be verified on this repo's own dev machine (Docker Desktop for Mac's kernel doesn't expose Landlock). See [capability tokens reference](./docs/capability-tokens-reference.md) for the CI gap and what's deferred (domain-scoped network filtering, per-syscall audit logging).
-- The human-approval workflow (`berth grants list/approve/deny`, opt-in via `--grants-server=<url>`) takes effect on an app's next restart, not live — Landlock rulesets can't be widened once applied.
-- The app registry ([reference](./docs/app-registry-reference.md)) is local/single-node — no hosted service, no billing/usage metering.
-- Post-Phase-5 additions, each with a reference doc covering what's real vs. deferred: [MCP bridge](./docs/mcp-bridge-reference.md), [K8s fleet adapter](./docs/k8s-adapter-reference.md), [GitHub API scoping](./docs/github-api-scoping-reference.md), [computer snapshots](./docs/computer-snapshots-reference.md), [Python SDK](./docs/sdk-python-reference.md) and its [context-bus support](./docs/sdk-python-context-bus-reference.md).
 
 ## License
 
