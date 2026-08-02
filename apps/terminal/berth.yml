@@ -29,3 +29,9 @@ exports:
 on_install: []
 on_agent_ready:
   - "register_with_context_bus"
+
+# Uncomment to keep the terminal:* capability (the agent can still drive the
+# shell) while running unwatched, e.g. in CI — this only stops `berth dev`
+# from publishing the ttyd port to the host. See docs/manifest-reference.md.
+# expose:
+#   terminal: false

@@ -38,6 +38,20 @@ test("defaults optional arrays to empty", () => {
   assert.deepEqual(result.exports, []);
 });
 
+test("expose defaults to true for both browser and terminal when omitted", () => {
+  const result = BerthManifestSchema.parse({ name: "app", version: "1.0.0" });
+  assert.deepEqual(result.expose, { browser: true, terminal: true });
+});
+
+test("expose lets an author disable just one of browser/terminal", () => {
+  const result = BerthManifestSchema.parse({
+    name: "app",
+    version: "1.0.0",
+    expose: { browser: false },
+  });
+  assert.deepEqual(result.expose, { browser: false, terminal: true });
+});
+
 test("matchesCapability handles glob scopes", () => {
   assert.equal(matchesCapability("browser:navigate:*.github.com", "browser:navigate:api.github.com"), true);
   assert.equal(matchesCapability("browser:navigate:*.github.com", "browser:navigate:example.com"), false);

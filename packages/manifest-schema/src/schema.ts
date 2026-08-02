@@ -26,6 +26,22 @@ export const ExportSpec = z.object({
   output: IOSpec.optional(),
 });
 
+/**
+ * Declaring browser:* or terminal:* only grants the capability (Landlock,
+ * egress broker, etc.) — whether `berth dev` also publishes the
+ * corresponding VNC/CDP/ttyd port to the host is a separate choice, made
+ * here. Both default to true so an existing berth.yml with no `expose:`
+ * block keeps today's behavior (capability declared => port published).
+ * Deploy targets (E2B/Daytona/K8s) don't publish these ports at all yet
+ * regardless of this setting — see docs/manifest-reference.md.
+ */
+export const ExposeSpec = z
+  .object({
+    browser: z.boolean().default(true),
+    terminal: z.boolean().default(true),
+  })
+  .default({});
+
 export const BerthManifestSchema = z.object({
   name: z.string().regex(/^[a-z0-9-]+$/, "name must be lowercase alphanumeric with dashes"),
   version: z.string().regex(/^\d+\.\d+\.\d+$/, "version must be semver (x.y.z)"),
@@ -35,8 +51,10 @@ export const BerthManifestSchema = z.object({
   exports: z.array(ExportSpec).default([]),
   on_install: z.array(z.string()).default([]),
   on_agent_ready: z.array(z.string()).default([]),
+  expose: ExposeSpec,
 });
 
 export type BerthManifest = z.infer<typeof BerthManifestSchema>;
 export type ExportSpecType = z.infer<typeof ExportSpec>;
 export type JsonPrimitiveTypeName = z.infer<typeof JsonPrimitiveType>;
+export type ExposeSpecType = z.infer<typeof ExposeSpec>;

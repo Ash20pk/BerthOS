@@ -4,12 +4,28 @@ import type { BerthManifest } from "@berth/manifest-schema";
 const BROWSER_PORTS = { vnc: "5900", novnc: "6080", cdp: "9222" } as const;
 const TERMINAL_PORT = "7681";
 
-function declaresBrowserCapability(manifest: BerthManifest): boolean {
+export function declaresBrowserCapability(manifest: BerthManifest): boolean {
   return manifest.capabilities.some((cap) => cap.startsWith("browser:"));
 }
 
-function declaresTerminalCapability(manifest: BerthManifest): boolean {
+export function declaresTerminalCapability(manifest: BerthManifest): boolean {
   return manifest.capabilities.some((cap) => cap.startsWith("terminal:"));
+}
+
+/**
+ * Whether `berth dev` should publish the VNC/CDP ports to the host for this
+ * app — the capability grants the app the ability to drive a browser at
+ * all (enforced independent of this), `expose.browser` is the separate,
+ * host-visibility-only choice of whether a human can watch it over noVNC.
+ * Defaults to true (today's behavior) via ExposeSpec's own default.
+ */
+export function needsBrowserPorts(manifest: BerthManifest): boolean {
+  return declaresBrowserCapability(manifest) && manifest.expose.browser;
+}
+
+/** Same reasoning as needsBrowserPorts, for the ttyd terminal port. */
+export function needsTerminalPort(manifest: BerthManifest): boolean {
+  return declaresTerminalCapability(manifest) && manifest.expose.terminal;
 }
 
 /** See docs/mesh-reference.md. Gates the NET_ADMIN/tun device grant below — never reaches the resident app's own process (agent-init drops the whole capability bounding set before exec-ing into it). */
@@ -83,14 +99,14 @@ export interface RunningContainer {
 
 export async function startContainer(options: StartContainerOptions): Promise<RunningContainer> {
   const docker = options.docker ?? new Docker();
-  const needsBrowserPorts =
+  const wantsBrowserPorts =
     options.apps && options.apps.length > 0
-      ? options.apps.some((a) => declaresBrowserCapability(a.manifest))
-      : declaresBrowserCapability(options.manifest);
-  const needsTerminalPort =
+      ? options.apps.some((a) => needsBrowserPorts(a.manifest))
+      : needsBrowserPorts(options.manifest);
+  const wantsTerminalPort =
     options.apps && options.apps.length > 0
-      ? options.apps.some((a) => declaresTerminalCapability(a.manifest))
-      : declaresTerminalCapability(options.manifest);
+      ? options.apps.some((a) => needsTerminalPort(a.manifest))
+      : needsTerminalPort(options.manifest);
   const needsMesh =
     options.apps && options.apps.length > 0
       ? options.apps.some((a) => declaresMeshCapability(a.manifest))
@@ -98,13 +114,13 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
 
   const exposedPorts: Record<string, {}> = {};
   const portBindings: Record<string, Array<{ HostPort: string }>> = {};
-  if (needsBrowserPorts) {
+  if (wantsBrowserPorts) {
     for (const port of Object.values(BROWSER_PORTS)) {
       exposedPorts[`${port}/tcp`] = {};
       portBindings[`${port}/tcp`] = [{ HostPort: "" }]; // "" = let Docker assign a free host port
     }
   }
-  if (needsTerminalPort) {
+  if (wantsTerminalPort) {
     exposedPorts[`${TERMINAL_PORT}/tcp`] = {};
     portBindings[`${TERMINAL_PORT}/tcp`] = [{ HostPort: "" }];
   }
@@ -203,8 +219,8 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
   await container.start();
 
   let ports: RunningContainer["ports"] = {};
-  if (needsBrowserPorts || needsTerminalPort) {
-    ports = await waitForPortMappings(container, { browser: needsBrowserPorts, terminal: needsTerminalPort });
+  if (wantsBrowserPorts || wantsTerminalPort) {
+    ports = await waitForPortMappings(container, { browser: wantsBrowserPorts, terminal: wantsTerminalPort });
   }
 
   return { container, ports };
