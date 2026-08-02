@@ -137,6 +137,18 @@ async function main() {
         "assigned mesh IP with no shared Docker network, a one-directional peer was correctly excluded from both, and " +
         "the resident app processes themselves never inherited the container-level NET_ADMIN grant.",
     );
+  } catch (err) {
+    // Every earlier failure on this test surfaced only the specific
+    // regex-matched line each waitFor() call was looking for, never the
+    // full captured log — which meant real, working diagnostic output from
+    // mesh-daemon (a panic hook, tick-by-tick reconcile logging) could have
+    // been sitting right there in `running[key].log.text()` this whole
+    // time, completely invisible in the CI job's own console output. Dump
+    // everything, unconditionally, before this error propagates.
+    for (const key of Object.keys(running)) {
+      console.error(`\n--- FULL ${running[key].name} container log (failure) ---\n${running[key].log.text()}`);
+    }
+    throw err;
   } finally {
     for (const key of Object.keys(running)) {
       await running[key].log.stop();
