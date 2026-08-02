@@ -43,16 +43,27 @@ Stops and removes the container, removes the image `berth os up` built, and dele
 
 ## Connecting from agent code
 
+Keep the `Computer`/`Agent` handles around:
+
 ```ts
-import { createAgent, runAgent, Computer } from "@berth/agents";
+import { createAgent, createAnthropicProvider } from "@berth/agents";
 
-// keep the Computer/Agent handles around
 const { agent, computer } = await createAgent({ connect: "my-agent", llm: createAnthropicProvider() });
+```
 
-// one call per task
+Or one call per task:
+
+```ts
+import { runAgent } from "@berth/agents";
+
 const result = await runAgent({ connect: "my-agent", task: "..." });
+```
 
-// or just the Computer, no Agent or LLM involved at all
+Or just the `Computer`, with no `Agent`/LLM involved at all:
+
+```ts
+import { Computer } from "@berth/agents";
+
 const computer = await Computer.connect({ name: "my-agent" });
 ```
 

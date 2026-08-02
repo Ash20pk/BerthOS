@@ -41,16 +41,23 @@ Every `Computer.boot()` builds a fresh, uniquely-tagged image, unlike `berth dev
 
 ### Building a Computer your own way
 
-You don't have to hand `createAgent()` a fresh set of `apps` every time. Three ways to get a `Computer`, each suited to a different situation:
+You don't have to hand `createAgent()` a fresh set of `apps` every time. Three ways to get a `Computer`, each suited to a different situation.
+
+Boot fresh from resident app directories. First-party and custom mix freely.
 
 ```ts
-// boot fresh from resident app directories, first-party and custom mix freely
 const computer = await Computer.boot({ apps: ["apps/filesystem", "./my-custom-app"] });
+```
 
-// connect to a shared, already-running berth os up instance
+Connect to a shared, already-running `berth os up` instance.
+
+```ts
 const computer = await Computer.connect({ name: "my-agent" });
+```
 
-// connect to the same shared instance, scoped to just the apps this agent needs
+Or connect to that same shared instance, scoped to just the apps this particular agent needs.
+
+```ts
 const computer = await Computer.connect({ name: "my-agent", apps: ["filesystem"] });
 ```
 
@@ -77,10 +84,15 @@ berth os down my-agent                                   # tear it down when you
 Agent code then connects instead of booting.
 
 ```ts
-import { createAgent } from "@berth/agents";
+import { createAgent, createAnthropicProvider } from "@berth/agents";
 
 const { agent, computer } = await createAgent({ connect: "my-agent", llm: createAnthropicProvider() });
-// or: const computer = await Computer.connect({ name: "my-agent" });
+```
+
+Or, if you just want the `Computer` and no `Agent`/LLM at all:
+
+```ts
+const computer = await Computer.connect({ name: "my-agent" });
 ```
 
 `Computer.connect()` reads `~/.berth/os/<name>.json` (written by `berth os up`), re-derives a `Docker.Container` handle by name, and dispatches every tool call through `invokeAppExport()`'s docker-exec-plus-Unix-socket relay. That's the same mechanism `berth rpc` and multi-app mode already use to reach a specific, already-running app from a fresh host process. See the [multi-app reference](./multi-app-reference.md). `berth os up` always forces `entrypoint.sh`'s multi-app branch, even for a single app (`buildImage`'s `forceCompanionLayout`, `startContainer`'s `apps` array with exactly one entry), specifically so a per-app RPC socket always exists to reconnect to, no matter how many apps are loaded. The single-app stdio-attach path `Computer.boot()` uses can only ever be held by the process that started the container, which is exactly the limitation this works around.
