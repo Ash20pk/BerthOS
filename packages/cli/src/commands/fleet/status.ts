@@ -22,6 +22,12 @@ export default class FleetStatus extends Command {
       }
     }
 
+    // Ports to try adapter.previewUrl() against per instance — computed and
+    // recorded once at `berth deploy` time (see deploy.ts's previewPortsFor),
+    // since this command has no access to the deployed app's own berth.yml
+    // to re-derive expose.preview/declared capabilities from.
+    const previewPortsById = new Map(state.instances.map((instance) => [instance.id, instance.previewPorts ?? []]));
+
     try {
       const { adapter } = await resolveFleet(args.fleet);
       if (!adapter.list) {
@@ -32,6 +38,10 @@ export default class FleetStatus extends Command {
       this.log(`\nLive on ${adapter.name}: ${live.length} instance${live.length === 1 ? "" : "s"}`);
       for (const handle of live) {
         this.log(`  ${handle.id}`);
+        for (const port of previewPortsById.get(handle.id) ?? []) {
+          const url = await adapter.previewUrl?.(handle, port);
+          if (url) this.log(`    preview (port ${port}): ${url}`);
+        }
       }
     } catch (err) {
       this.log(`\n(couldn't reach "${args.fleet}" for a live cross-check: ${err instanceof Error ? err.message : String(err)})`);

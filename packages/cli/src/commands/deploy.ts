@@ -5,6 +5,29 @@ import { resolveFleet } from "../util/fleet.js";
 import { resolveApps, assertAtMostOneBrowserApp } from "../util/multi-app.js";
 import { appendFleetInstances } from "../util/fleet-state.js";
 import type { DeployHandle } from "@berth/adapter-core";
+import type { BerthManifest } from "@berth/manifest-schema";
+import { declaresBrowserCapability, declaresTerminalCapability } from "@berth/docker-orchestrator";
+
+const NOVNC_PORT = 6080;
+const TERMINAL_PORT = 7681;
+
+/**
+ * Only the primary app's own expose.preview opt-in is consulted here (not
+ * every companion app's) — same v1 simplification the plan calls for, since
+ * aggregating preview opt-in across a whole --apps group is a real design
+ * question this doesn't need to answer yet.
+ */
+function previewPortsFor(manifest: BerthManifest): number[] {
+  if (!manifest.expose.preview) return [];
+  const ports: number[] = [];
+  if (declaresBrowserCapability(manifest)) ports.push(NOVNC_PORT);
+  if (declaresTerminalCapability(manifest)) ports.push(TERMINAL_PORT);
+  return ports;
+}
+
+function labelFor(port: number): string {
+  return port === NOVNC_PORT ? "noVNC" : port === TERMINAL_PORT ? "Terminal" : `port ${port}`;
+}
 
 export default class Deploy extends Command {
   static override description = "Build and deploy the resident app to a fleet (E2B, Daytona, or an alias in ~/.berthrc)";
@@ -47,17 +70,28 @@ export default class Deploy extends Command {
     this.log(`Uploading to ${adapter.name}...`);
     const { remoteImageRef } = await adapter.upload(target);
 
+    const previewPorts = previewPortsFor(manifest);
+
     this.log(`Starting ${count} instance${count === 1 ? "" : "s"} on ${adapter.name}...`);
     const handles: DeployHandle[] = [];
     for (let i = 0; i < count; i++) {
       const handle = await adapter.start(remoteImageRef, target);
       this.log(`Started instance ${i + 1}/${count}: ${handle.id}`);
       handles.push(handle);
+      for (const port of previewPorts) {
+        const url = await adapter.previewUrl?.(handle, port);
+        if (url) this.log(`  ${labelFor(port)}: ${url}`);
+      }
     }
 
     await appendFleetInstances(
       flags.fleet,
-      handles.map((handle) => ({ id: handle.id, appName: manifest.name, startedAt: new Date().toISOString() })),
+      handles.map((handle) => ({
+        id: handle.id,
+        appName: manifest.name,
+        startedAt: new Date().toISOString(),
+        previewPorts: previewPorts.length > 0 ? previewPorts : undefined,
+      })),
     );
 
     this.log("Streaming logs from all instances (Ctrl+C to detach — this does not stop the deployment)...");

@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 // Real, running verification of @berth/adapter-k8s against a live (if
 // throwaway) Kubernetes cluster — provisioned via `kind` (Kubernetes-in-
-// Docker), which needs no cloud account, unlike adapter-e2b/adapter-daytona
-// (which ship with zero tests today, real or mocked, since they need paid
-// live accounts). Exercises the full DeployAdapter lifecycle for real:
-// upload (no-op) -> start (creates a real Pod) -> status transitions to
-// running -> list sees it -> streamLogs yields real container output ->
-// teardown deletes it.
+// Docker), which needs no cloud account, unlike adapter-e2b (zero tests,
+// real or mocked) and adapter-daytona (mocked-only) — both need paid live
+// accounts for anything beyond that. Exercises the full DeployAdapter
+// lifecycle for real: upload (no-op) -> start (creates a real Pod) ->
+// status transitions to running -> list sees it -> streamLogs yields real
+// container output -> previewUrl() creates a real Service whose DNS name
+// actually resolves inside the cluster -> teardown deletes it.
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -68,7 +69,37 @@ async function main() {
     assert(collected.matched, `expected to see real runtime startup output in the streamed logs, got: ${JSON.stringify(collected.text)}`);
     console.log("PASS — streamLogs() carried real output from the container:\n" + collected.text.trim());
 
-    console.log("\n--- Test 5: teardown() deletes the real Pod ---");
+    console.log("\n--- Test 5: previewUrl() creates a real Service whose DNS name resolves inside the cluster ---");
+    const previewPort = 8080;
+    const previewUrl = await adapter.previewUrl(handle, previewPort);
+    assert(previewUrl, "expected previewUrl() to return an in-cluster DNS name, got null");
+    assert(previewUrl.endsWith(`:${previewPort}`), `expected previewUrl to end with ":${previewPort}", got ${previewUrl}`);
+    const dnsName = previewUrl.slice(0, previewUrl.lastIndexOf(":"));
+    console.log("preview DNS name:", dnsName);
+
+    // Resolve the Service's DNS name from *inside* the cluster (cluster DNS
+    // is only reachable there, not from the host running kind) — reuses the
+    // already-running filesystem Pod itself as the lookup point, via a
+    // plain `node -e` dns.lookup() call, since every Berth image already
+    // has Node installed. Kubernetes creates a real ClusterIP + DNS entry
+    // for a Service regardless of whether anything's actually listening on
+    // the target port yet, so this proves Service creation and DNS wiring
+    // are real without needing filesystem to run a server on previewPort.
+    const dnsCheckScript = `require('dns').lookup(${JSON.stringify(dnsName)},(e,a)=>{if(e){console.error(e.message);process.exit(1);}console.log(a);process.exit(0);})`;
+    const { stdout: dnsStdout } = await execFileAsync("kubectl", [
+      "--context",
+      `kind-${CLUSTER_NAME}`,
+      "exec",
+      handle.id,
+      "--",
+      "node",
+      "-e",
+      dnsCheckScript,
+    ]);
+    assert(dnsStdout.trim().length > 0, "expected the preview Service's DNS name to resolve to a real address inside the cluster");
+    console.log("PASS — previewUrl()'s Service DNS name resolved inside the cluster to", dnsStdout.trim());
+
+    console.log("\n--- Test 6: teardown() deletes the real Pod ---");
     await adapter.teardown(handle);
     // deleteNamespacedPod() only *starts* a graceful termination (bound by
     // the Pod's terminationGracePeriodSeconds, 30s by default) - it doesn't
@@ -97,7 +128,7 @@ async function main() {
     console.log("PASS — teardown() removed the Pod for real.");
 
     console.log(
-      "\nALL PASS — @berth/adapter-k8s's full DeployAdapter lifecycle (upload/start/status/list/streamLogs/teardown) " +
+      "\nALL PASS — @berth/adapter-k8s's full DeployAdapter lifecycle (upload/start/status/list/streamLogs/previewUrl/teardown) " +
         "works against a real, live Kubernetes API, not a mock.",
     );
   } finally {

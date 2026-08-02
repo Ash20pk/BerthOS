@@ -52,3 +52,51 @@ test("start() calls client.create({snapshot, envVars}) and wraps the returned sa
   });
   assert.equal(await handle.status(), "running");
 });
+
+test("previewUrl() dials the sandbox's getPreviewLink(port)", async (t) => {
+  const sandbox = {
+    id: "sbx-2",
+    state: "started",
+    getPreviewLink: async (port: number) => ({ url: `https://${port}-sbx-2.daytona.example`, token: "tok" }),
+  };
+  const create = t.mock.fn(async (_params: unknown) => sandbox);
+  t.mock.module("@daytonaio/sdk", {
+    namedExports: {
+      Daytona: class {
+        create = create;
+      },
+    },
+  });
+
+  const { createDaytonaAdapter } = await import("./index.js");
+  const adapter = createDaytonaAdapter();
+  const handle = await adapter.start("snap-abc", { imageRef: "berth/x:1.0.0", manifest });
+
+  const url = await adapter.previewUrl!(handle, 6080);
+  assert.equal(url, "https://6080-sbx-2.daytona.example");
+});
+
+test("previewUrl() returns null when the sandbox's getPreviewLink rejects (port not open)", async (t) => {
+  const sandbox = {
+    id: "sbx-3",
+    state: "started",
+    getPreviewLink: async () => {
+      throw new Error("port not open");
+    },
+  };
+  const create = t.mock.fn(async (_params: unknown) => sandbox);
+  t.mock.module("@daytonaio/sdk", {
+    namedExports: {
+      Daytona: class {
+        create = create;
+      },
+    },
+  });
+
+  const { createDaytonaAdapter } = await import("./index.js");
+  const adapter = createDaytonaAdapter();
+  const handle = await adapter.start("snap-abc", { imageRef: "berth/x:1.0.0", manifest });
+
+  const url = await adapter.previewUrl!(handle, 7681);
+  assert.equal(url, null);
+});

@@ -59,7 +59,7 @@ Shell commands run once when the app's container is first built/started — e.g.
 
 Shell commands (or, more commonly, effectively-named hooks like `"register_with_context_bus"`) run after `on_install` and after your app's `onAgentReady` SDK callbacks. The actual registration happens via the SDK's `ctx.contextBus.register()` call, which talks to the real `context-bus-daemon` (Rust, one per sandbox) over a Unix socket — see the [context bus reference](./context-bus-reference.md).
 
-### `expose` (default: `{ browser: true, terminal: true }`)
+### `expose` (default: `{ browser: true, terminal: true, preview: false }`)
 
 Whether declaring `browser:*`/`terminal:*` also publishes the corresponding VNC/CDP/ttyd port to the host in `berth dev`. The capability itself (what the app is *allowed* to do) and exposure (whether a human can *watch* it happen over noVNC/ttyd) are separate decisions:
 
@@ -70,9 +70,16 @@ expose:
   browser: false   # capability still granted — no VNC/CDP port published to the host
 ```
 
-Both fields default to `true`, so an existing `berth.yml` with no `expose:` block keeps today's behavior unchanged (declaring the capability publishes the port). Set `browser: false` or `terminal: false` to run headless/unwatched — e.g. in CI, or for an app whose browser/terminal session shouldn't be reachable from the host at all.
+`browser`/`terminal` both default to `true`, so an existing `berth.yml` with no `expose:` block keeps today's behavior unchanged (declaring the capability publishes the port). Set `browser: false` or `terminal: false` to run headless/unwatched — e.g. in CI, or for an app whose browser/terminal session shouldn't be reachable from the host at all.
 
-**Dev-only today.** This only affects `berth dev` (local Docker). `berth deploy --fleet=e2b/daytona/k8s` doesn't publish these ports or print watch URLs on any deploy target yet, regardless of `expose` — none of the deploy adapters (`packages/adapters/adapter-e2b`, `adapter-daytona`, `adapter-k8s`) implement port exposure or URL printing today.
+**`preview` is a separate, deliberately opt-in decision for deployed fleets.** `browser`/`terminal` only ever govern local `berth dev` (one trusted operator, on their own machine). A deployed fleet instance is potentially public-facing, so declaring `browser:*`/`terminal:*` must never, by itself, cause a live noVNC/ttyd URL to appear the moment the app is deployed. `preview` defaults to `false` for exactly that reason:
+
+```yaml
+expose:
+  preview: true   # opt in to a public/reachable noVNC/ttyd URL when this app is deployed
+```
+
+`berth deploy`/`berth fleet status` only create or print a preview URL when `preview: true` **and** the corresponding capability is declared — `preview: true` with no `browser:*`/`terminal:*` capability is a no-op, not an error, same as any other declared-but-unbacked intent elsewhere in this file. Scoped to noVNC/ttyd specifically, since both are WebSocket-based web protocols each deploy target's own port-exposure mechanism can carry; raw VNC (5900) and CDP (9222) aren't web protocols and stay local-only regardless. E2B exposes this via `sandbox.getHost(port)` (a real HTTPS reverse-proxy hostname), Daytona via `sandbox.getPreviewLink(port)` (same idea), and Kubernetes via a `Service` this adapter creates alongside the Pod, reporting the in-cluster DNS name — a real public URL there needs the cluster's own Ingress/LoadBalancer, which this adapter doesn't provision. See [Shipping to production](./shipping-to-production.md) for the full picture.
 
 ## Capability string grammar
 

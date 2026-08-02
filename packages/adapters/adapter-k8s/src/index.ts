@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { DeployAdapter, DeployHandle, DeployStatus, DeployTarget } from "@berth/adapter-core";
 
 /**
@@ -18,6 +19,15 @@ async function loadK8s(): Promise<any> {
 const MANAGED_BY_LABEL = "app.kubernetes.io/managed-by";
 const MANAGED_BY_VALUE = "berth";
 const LABEL_SELECTOR = `${MANAGED_BY_LABEL}=${MANAGED_BY_VALUE}`;
+/**
+ * A per-instance label, distinct from "berth.dev/app-name" — that one is
+ * shared by every instance of the same app (relevant once --count starts
+ * more than one), so it can't be what a preview Service selects on. This one
+ * is unique per start() call, generated before the Pod exists (so it can be
+ * set as a label at creation time — no separate patch call needed) and
+ * reused as the Service's own selector when previewUrl() is called.
+ */
+const INSTANCE_LABEL = "berth.dev/instance";
 
 function namespace(): string {
   return process.env.BERTH_K8S_NAMESPACE ?? "default";
@@ -34,11 +44,11 @@ function namespace(): string {
  * a real, named rough edge, not silently worked around with
  * `privileged: true`.
  */
-function podSpecFor(name: string, image: string, env?: Record<string, string>): Record<string, unknown> {
+function podSpecFor(name: string, image: string, instanceId: string, env?: Record<string, string>): Record<string, unknown> {
   return {
     metadata: {
       generateName: `${name}-`,
-      labels: { [MANAGED_BY_LABEL]: MANAGED_BY_VALUE, "berth.dev/app-name": name },
+      labels: { [MANAGED_BY_LABEL]: MANAGED_BY_VALUE, "berth.dev/app-name": name, [INSTANCE_LABEL]: instanceId },
     },
     spec: {
       restartPolicy: "Never",
@@ -78,6 +88,8 @@ class K8sDeployHandle implements DeployHandle {
     private containerName: string,
     private coreApi: any,
     private logClient: any,
+    /** This instance's INSTANCE_LABEL value — the Service selector previewUrl() creates targets exactly this Pod, not every Pod sharing this app's name. */
+    public readonly instanceId: string,
   ) {}
 
   async status(): Promise<DeployStatus> {
@@ -124,12 +136,15 @@ export function createK8sAdapter(): DeployAdapter {
       const coreApi = kc.makeApiClient(k8s.CoreV1Api);
       const logClient = new k8s.Log(kc);
 
+      // Generated before the Pod exists so it can be a label at creation
+      // time (one API call) rather than a label patched on afterward.
+      const instanceId = randomUUID().replace(/-/g, "");
       const pod = await coreApi.createNamespacedPod({
         namespace: namespace(),
-        body: podSpecFor(target.manifest.name, remoteImageRef, target.env),
+        body: podSpecFor(target.manifest.name, remoteImageRef, instanceId, target.env),
       });
 
-      return new K8sDeployHandle(pod.metadata!.name!, target.manifest.name, coreApi, logClient);
+      return new K8sDeployHandle(pod.metadata!.name!, target.manifest.name, coreApi, logClient, instanceId);
     },
 
     async teardown(handle: DeployHandle) {
@@ -145,8 +160,51 @@ export function createK8sAdapter(): DeployAdapter {
 
       const podList = await coreApi.listNamespacedPod({ namespace: namespace(), labelSelector: LABEL_SELECTOR });
       return podList.items.map(
-        (pod: any) => new K8sDeployHandle(pod.metadata.name, pod.spec.containers[0].name, coreApi, logClient),
+        (pod: any) =>
+          new K8sDeployHandle(
+            pod.metadata.name,
+            pod.spec.containers[0].name,
+            coreApi,
+            logClient,
+            pod.metadata.labels?.[INSTANCE_LABEL] ?? "",
+          ),
       );
+    },
+
+    // Creates a ClusterIP Service selecting this exact Pod (via its
+    // INSTANCE_LABEL, not the app-wide name label, so this targets one
+    // instance even when --count started several). Reports the in-cluster
+    // DNS name, not a public URL — a real public URL needs the cluster's own
+    // Ingress/LoadBalancer setup, same honesty as upload()'s no-op above.
+    // Only ever called when the app opted in via berth.yml's expose.preview.
+    async previewUrl(handle: DeployHandle, port: number) {
+      if (!(handle instanceof K8sDeployHandle) || !handle.instanceId) return null;
+      const k8s = await loadK8s();
+      const kc = new k8s.KubeConfig();
+      kc.loadFromDefault();
+      const coreApi = kc.makeApiClient(k8s.CoreV1Api);
+
+      const serviceName = `berth-preview-${handle.instanceId.slice(0, 12)}-${port}`;
+      const ns = namespace();
+      try {
+        await coreApi.createNamespacedService({
+          namespace: ns,
+          body: {
+            metadata: { name: serviceName },
+            spec: {
+              selector: { [INSTANCE_LABEL]: handle.instanceId },
+              ports: [{ port, targetPort: port }],
+              type: "ClusterIP",
+            },
+          },
+        });
+      } catch (err: any) {
+        // Already created by an earlier previewUrl() call for this same
+        // instance/port — fine, the Service is already there and correct.
+        if (err?.body?.reason !== "AlreadyExists" && err?.code !== 409) return null;
+      }
+
+      return `${serviceName}.${ns}.svc.cluster.local:${port}`;
     },
   };
 }

@@ -34,6 +34,20 @@ class DaytonaDeployHandle implements DeployHandle {
   async stop(): Promise<void> {
     await this.sandbox.stop();
   }
+
+  /**
+   * Real, confirmed against the installed @daytonaio/sdk@0.202.0 types:
+   * sandbox.getPreviewLink(port) returns a real per-port HTTPS preview URL
+   * ({url, token}) backed by Daytona's own reverse proxy. The token is only
+   * needed for a signed/expiring link (see the SDK's separate
+   * getSignedPreviewUrl) — an ordinary preview URL like noVNC's doesn't need
+   * it. Throws if the port isn't actually open on the sandbox; the caller
+   * treats that as "no preview available" rather than surfacing the error.
+   */
+  async getPreviewLink(port: number): Promise<string> {
+    const link = await this.sandbox.getPreviewLink(port);
+    return link.url;
+  }
 }
 
 export function createDaytonaAdapter(): DeployAdapter {
@@ -98,6 +112,15 @@ export function createDaytonaAdapter(): DeployAdapter {
         handles.push(new DaytonaDeployHandle(sandbox.id, sandbox));
       }
       return handles;
+    },
+
+    async previewUrl(handle: DeployHandle, port: number) {
+      if (!(handle instanceof DaytonaDeployHandle)) return null;
+      try {
+        return await handle.getPreviewLink(port);
+      } catch {
+        return null;
+      }
     },
   };
 }
