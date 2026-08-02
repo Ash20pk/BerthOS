@@ -2,7 +2,7 @@
   "name": "berth",
   "private": true,
   "version": "0.1.0",
-  "description": "Berth — the operating system and framework for AI agent workers",
+  "description": "Berth — the runtime and framework for AI agent workers",
   "packageManager": "pnpm@10.21.0",
   "engines": {
     "node": ">=22"

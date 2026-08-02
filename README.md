@@ -1,20 +1,61 @@
 # Berth
 
-Berth is the operating system and framework that treats the AI agent as the primary user — and humans as administrators.
+**Berth is a runtime for AI agent workers** — the layer that sits between your agent and a real computer, so the agent gets a persistent, permissioned, multi-app workspace instead of a bag of stateless API calls.
 
 > Agents are not functions. They are workers. Workers need desks.
 
-Berth gives an agent a real, isolated computer to work in — a filesystem, a browser, installable tools, persistent state — instead of a bag of API calls. You build **resident apps**: persistent, stateful processes that live on the agent's computer, declare capability-scoped permissions, and collaborate with each other through a shared context bus.
+You don't boot into Berth, and nobody installs it as their laptop's OS. It's a library and CLI you `pnpm add`, same as you would any other framework — it just happens to give the agent it's driving a real, isolated computer to work in: a filesystem, a browser, installable tools, persistent state. You build **resident apps**: persistent, stateful processes that live on that computer, declare capability-scoped permissions, and collaborate with each other through a shared context bus.
 
-This README is written for developers building on Berth. If you're looking for roadmap/phase status instead, see [Status](#status) below.
+This README is written for the person deciding whether to build on Berth. If you're already building and need the technical walkthrough, skip to [Quickstart](#quickstart). If you're looking for roadmap/phase status, see [Status](#status).
 
-## Prerequisites
+## The problem
+
+Most agent frameworks give you a loop and a tool registry. The actual "computer" the agent acts on is whatever you wire up yourself — a Python subprocess, a raw sandbox VM, a pile of API clients — and none of it persists, remembers what other tools did, or stops the agent from doing something you didn't intend.
+
+That gap shows up as the same handful of problems on every team that ships an agent past a demo:
+
+- **No permission boundary.** The agent either has full shell access or none. There's no middle ground like "this tool can write to `/workspace` and nothing else" that's actually enforced, rather than just requested nicely in a system prompt.
+- **No persistence between runs.** Every session starts from zero. State the agent built up — files, notes, browser context — has to be re-derived or manually snapshotted and stitched back in.
+- **No way for tools to know about each other.** A search tool and a file-writer tool that need to coordinate either get glued together by hand in your orchestration code, or don't coordinate at all.
+- **No shared, watchable workspace.** When something goes wrong, you're reading logs after the fact instead of watching the agent's browser or terminal live.
+
+Berth exists to make those four things load-bearing infrastructure instead of homework every team redoes.
+
+## Why Berth
+
+| | What you get |
+|---|---|
+| **Enforced permissions, not requested ones** | Every resident app declares `namespace:action:scope` capabilities in its manifest (`filesystem:write:/workspace`, `browser:navigate:*.github.com`). A Landlock policy, derived from that manifest, is applied to the process *before your code runs* — an undeclared write isn't caught by a try/catch, the syscall itself is refused by the kernel. |
+| **State that survives the session** | A semantic filesystem (queryable by intent, not just path) plus `berth snapshot create/restore` mean an agent's work — files, tags, context — outlives any one run. |
+| **Apps that talk to each other without you wiring it** | The context bus is pub/sub between resident apps in the same sandbox. A filesystem app writes a file, a code-editor app reacts to it — neither one imports or calls the other. |
+| **A workspace a human can watch, not just log-tail** | `apps/browser-native` exposes a live noVNC view of the sandboxed Chromium instance; `apps/terminal` exposes a live, typeable `ttyd` session over the same shell the agent is driving. You watch the actual session, not a transcript of it. |
+| **Bring your own LLM, own your deploy target** | `@berth/agents` wires any LLM provider (Anthropic, OpenAI, or a custom `LLMProvider`) to a Computer's resident apps as tools, and `berth deploy --fleet=e2b\|daytona\|k8s` ships the same sandbox definition to whichever provider you already run on. |
+
+## How Berth compares
+
+Berth isn't a replacement for a sandbox provider or an LLM orchestration library — it's the layer most teams end up hand-building on top of one or both. Here's where it sits relative to the tools people typically reach for first:
+
+| | **Berth** | Orchestration frameworks (LangChain, CrewAI, AutoGen) | Raw sandbox providers (E2B, Daytona) used directly | Hosted agent platforms (OpenAI Assistants/Operator) |
+|---|---|---|---|---|
+| **Execution environment** | Real container per agent, with resident apps as long-lived processes on it | None provided — you supply your own execution environment | A VM/container, but no app model on top of it | Fully hosted, opaque to you |
+| **Permission model** | Kernel-enforced (Landlock) capability tokens, declared per app, denied by default | None built in — usually whatever access your glue code has | All-or-nothing root access inside the sandbox | Vendor-controlled, not configurable |
+| **State across runs** | Persistent semantic FS + explicit snapshot/restore | Not built in — DIY vector store or memory object | Ephemeral by default; resets unless you build persistence yourself | Vendor-managed, limited control |
+| **Inter-tool/app coordination** | Context bus (pub/sub) — apps react to each other with zero direct wiring | Manual — you wire tool outputs into the next call yourself | None — it's a shell, not an app model | None exposed |
+| **Live human visibility** | Watch/join the same browser (VNC) or terminal (ttyd) session the agent is using | Not applicable — no environment to watch | Only if you build a viewer yourself | None |
+| **Where it runs** | Local Docker for dev, then E2B / Daytona / Kubernetes for deploy — your choice | Wherever you host your own code | Whichever single provider you picked | Vendor's infrastructure only |
+| **Self-hostable / open source** | Yes — Apache-2.0 | Usually yes | Yes (the sandbox itself) | No |
+
+If you're already happy hand-rolling permissions, persistence, and inter-tool coordination on top of a raw sandbox, Berth mostly saves you from rebuilding that layer. If you're using an orchestration framework today, Berth is what you'd point it at instead of a bare subprocess or a single stateless sandbox call.
+
+## Quickstart
+
+### Prerequisites
 
 - Node.js 22+ (`nvm use` picks up `.nvmrc`)
 - Docker, running locally
 - `corepack enable` (ships with Node 22, manages pnpm for you)
 
-## Install and build
+### Install and build
 
 ```bash
 git clone <this-repo>
@@ -26,7 +67,7 @@ pnpm build
 
 `pnpm build` compiles every package in dependency order via Turborepo — `@berth/manifest-schema` first, then `@berth/sdk`, `@berth/docker-orchestrator`, the deploy adapters, and finally `@berth/cli`.
 
-## Run an example
+### Run an example
 
 ```bash
 cd examples/hello-world
@@ -49,7 +90,7 @@ cd apps/browser-native
 pnpm exec berth dev
 ```
 
-## Scaffold your own app
+### Scaffold your own app
 
 ```bash
 pnpm exec berth init my-app
@@ -170,7 +211,7 @@ berth deploy --fleet=e2b          # or --fleet=daytona, --fleet=k8s, or an alias
 packages/
   manifest-schema/     berth.yml schema, validation, capability parsing
   sdk/                 resident app SDK — defineApp(), lifecycle hooks, context bus client
-  docker-orchestrator/ Alpine-based "OS stand-in" container lifecycle
+  docker-orchestrator/ Alpine-based container lifecycle for the agent's sandbox
   context-bus-daemon/  Rust daemon — shared semantic memory for apps in one sandbox
   agent-init/          Rust — applies a kernel-enforced (Landlock) capability policy before exec-ing the runtime
   semantic-fs-daemon/  Go/FUSE daemon — filesystem queryable by intent, backed by a SQLite metadata index
@@ -199,7 +240,7 @@ File a [bug report](./.github/ISSUE_TEMPLATE/bug_report.md) or [workflow feedbac
 
 ## Status
 
-All 5 phases of the roadmap are implemented: **Phase 1 — Framework Shell** (CLI, resident app SDK, manifest format, Docker-based OS stand-in), **Phase 2 — Context Bus**, **Phase 3 — Capability Tokens** (kernel-enforced Landlock policy derived from `berth.yml`), **Phase 4 — Semantic FS**, and **Phase 5 — App Ecosystem** (local registry + a self-contained `@berth/sdk` build external developers can depend on).
+All 5 phases of the roadmap are implemented: **Phase 1 — Framework Shell** (CLI, resident app SDK, manifest format, Docker-based container runtime for the agent's sandbox), **Phase 2 — Context Bus**, **Phase 3 — Capability Tokens** (kernel-enforced Landlock policy derived from `berth.yml`), **Phase 4 — Semantic FS**, and **Phase 5 — App Ecosystem** (local registry + a self-contained `@berth/sdk` build external developers can depend on).
 
 Things worth knowing before you build on this:
 
