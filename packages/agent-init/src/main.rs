@@ -14,7 +14,7 @@ use std::os::unix::process::CommandExt;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use caps::CapSet;
+use caps::{CapSet, Capability};
 use landlock::{
     AccessFs, AccessNet, Access, NetPort, PathBeneath, PathFd, Ruleset, RulesetAttr, RulesetCreatedAttr, ABI,
 };
@@ -73,23 +73,39 @@ fn log_caps_dropped_event(app_name: &str, dropped: bool) {
     );
 }
 
-/// Drops this process's entire Linux capability bounding set (plus the
-/// inheritable/ambient sets, defensively) before exec()ing into the resident
-/// app. Landlock's restrict_self() above narrows LSM-enforced syscall access
-/// but does nothing to the process's Linux capability set — those are two
-/// orthogonal kernel enforcement mechanisms. Since these containers run
-/// every process as root with no USER directive, a container-level `CapAdd`
-/// grant (e.g. NET_ADMIN for a mesh-capable app, SYS_ADMIN for semantic-fs's
-/// FUSE mount) would otherwise reach the resident app's own process just as
-/// much as the pre-exec daemon it was actually intended for. The bounding
-/// set is a hard ceiling a process can never widen for itself or anything it
-/// execs — dropping it here is what keeps "declared capability, enforced by
+/// Drops only the two capabilities this repo's `container.ts` ever adds
+/// beyond Docker's own default set (SYS_ADMIN for semantic-fs's FUSE mount,
+/// NET_ADMIN for mesh-daemon's wg0) — not the whole bounding set. Landlock's
+/// restrict_self() above narrows LSM-enforced syscall access but does
+/// nothing to the process's Linux capability set — those are two orthogonal
+/// kernel enforcement mechanisms. Since these containers run every process
+/// as root with no USER directive, a container-level `CapAdd` grant would
+/// otherwise reach the resident app's own process just as much as the
+/// pre-exec daemon it was actually intended for. The bounding set is a hard
+/// ceiling a process can never widen for itself or anything it execs —
+/// dropping these two here is what keeps "declared capability, enforced by
 /// the kernel" true for Linux capabilities, not just for Landlock's
-/// filesystem/network-port rules. See docs/mesh-reference.md.
+/// filesystem/network-port rules.
+///
+/// Deliberately NOT `caps::clear` (drop everything): a real CI run on a
+/// kernel where Landlock is actually enforced caught that dropping the
+/// entire set also strips CAP_DAC_OVERRIDE, which root normally relies on to
+/// write into a bind-mounted directory it doesn't literally own (e.g. this
+/// repo's own CI checkout, owned by a non-root runner user) — every write
+/// inside the declared /workspace path started failing with EACCES. Docker's
+/// own default capability set (CAP_DAC_OVERRIDE, CAP_CHOWN, CAP_FOWNER,
+/// CAP_NET_RAW, ...) is unaffected by this repo's `CapAdd`; only the two
+/// explicitly-added ones need to be revoked before the resident app runs.
+/// See docs/mesh-reference.md.
 fn drop_all_capabilities() -> Result<(), Box<dyn std::error::Error>> {
-    caps::clear(None, CapSet::Ambient)?;
-    caps::clear(None, CapSet::Inheritable)?;
-    caps::clear(None, CapSet::Bounding)?;
+    for cap in [Capability::CAP_SYS_ADMIN, Capability::CAP_NET_ADMIN] {
+        // caps::drop() on a capability that was never in the set (e.g.
+        // CAP_NET_ADMIN for an app that never declared network:peer:*) is a
+        // documented no-op, not an error.
+        caps::drop(None, CapSet::Bounding, cap)?;
+        caps::drop(None, CapSet::Inheritable, cap)?;
+        caps::drop(None, CapSet::Ambient, cap)?;
+    }
     Ok(())
 }
 
