@@ -3,3 +3,4 @@ packages:
   - "packages/adapters/*"
   - "apps/*"
   - "examples/*"
+  - "packages/docker-orchestrator/test/fixtures/*"
