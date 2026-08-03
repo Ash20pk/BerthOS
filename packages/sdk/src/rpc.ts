@@ -3,13 +3,13 @@ import * as net from "node:net";
 import { unlinkSync } from "node:fs";
 import type { BerthApp } from "./app.js";
 
-interface RpcRequest {
+export interface RpcRequest {
   id: string;
   export: string;
   input?: unknown;
 }
 
-type RpcResponse = { id: string; result: unknown } | { id: string; error: string };
+export type RpcResponse = { id: string; result: unknown } | { id: string; error: string };
 
 /**
  * A minimal line-delimited JSON RPC server over stdin/stdout (and,

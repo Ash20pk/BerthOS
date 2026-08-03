@@ -10,6 +10,7 @@ import type { SemanticFsClient } from "./semantic-fs/client.js";
 import { createLocalSemanticFs } from "./semantic-fs/local.js";
 import { createUnixSocketSemanticFs } from "./semantic-fs/unix-socket.js";
 import { startRpcServer } from "./rpc.js";
+import { startHttpRpcServer } from "./http-rpc.js";
 
 const APP_ROOT = process.cwd();
 const MANIFEST_PATH = process.env.BERTH_MANIFEST_PATH ?? path.join(APP_ROOT, "berth.yml");
@@ -73,6 +74,25 @@ async function main(): Promise<void> {
   }
 
   startRpcServer(app, { socketPath: process.env.BERTH_RPC_SOCKET });
+
+  // Only set for an instance deployed to a remote fleet (E2B/Daytona/K8s) via
+  // @berth/agents's bootNetworkedAgent({fleet}) — never by berth dev/os up.
+  // BERTH_HTTP_RPC_PORT/TOKEN are container-wide env (see container.ts's
+  // env: Object.entries(...) — every app in a multi-app instance gets the
+  // same ones), but only ONE app (the synthesized agent-server, in
+  // bootNetworkedAgent's case) should ever bind the listener — every other
+  // sibling app's runtime.ts process would otherwise race to bind the exact
+  // same port. BERTH_HTTP_RPC_APP names which one; omitted entirely for a
+  // single-app deploy, where there's no sibling to collide with.
+  const httpRpcPort = process.env.BERTH_HTTP_RPC_PORT ? Number(process.env.BERTH_HTTP_RPC_PORT) : undefined;
+  const httpRpcAppName = process.env.BERTH_HTTP_RPC_APP;
+  if (httpRpcPort && (!httpRpcAppName || httpRpcAppName === manifest.name)) {
+    if (!process.env.BERTH_HTTP_RPC_TOKEN) {
+      throw new Error("BERTH_HTTP_RPC_PORT is set but BERTH_HTTP_RPC_TOKEN is not — refusing to listen unauthenticated");
+    }
+    startHttpRpcServer(app, { port: httpRpcPort, authToken: process.env.BERTH_HTTP_RPC_TOKEN });
+  }
+
   console.error(`[berth:runtime] "${manifest.name}" ready`);
 }
 

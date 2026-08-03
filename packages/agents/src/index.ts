@@ -1,4 +1,5 @@
-export { Computer, type BootComputerOptions, type ConnectComputerOptions } from "./computer.js";
+export { Computer, type BootComputerOptions, type ConnectComputerOptions, type ComputerHandle } from "./computer.js";
+export { HttpBridgeComputer, type DeployComputerOptions } from "./fleet-computer.js";
 export { resolveComputerApps, type ComputerAppSpec } from "./resolve-apps.js";
 export { computerToolsFor, toolNameFor } from "./tools.js";
 export { applyGovernanceGate, GovernanceDeniedError } from "./governance.js";
@@ -19,6 +20,7 @@ export {
   type GenerateAgentServerAppOptions,
   type GeneratedAgentServerApp,
   type NetworkedAgentOptions,
+  type NetworkedAgentFleetOptions,
   type NetworkedAgent,
 } from "./network.js";
 export { createAnthropicProvider, type AnthropicProviderOptions } from "./providers/anthropic.js";

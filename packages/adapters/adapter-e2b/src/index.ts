@@ -120,6 +120,16 @@ export function createE2bAdapter(): DeployAdapter {
       const host = handle.getHost(port);
       return host ? `https://${host}` : null;
     },
+
+    // Same reverse-proxy mechanism previewUrl() uses — E2B's getHost(port)
+    // needs no separate query-param/token handling the way Daytona's does,
+    // since bootNetworkedAgent({fleet})'s own bearer token (sent as a header
+    // by the HTTP RPC client) is the only auth layer here.
+    async rpcUrl(handle: DeployHandle, port: number) {
+      if (!(handle instanceof E2bDeployHandle)) return null;
+      const host = handle.getHost(port);
+      return host ? `https://${host}` : null;
+    },
   };
   return adapter;
 }

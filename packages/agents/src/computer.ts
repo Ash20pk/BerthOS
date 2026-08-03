@@ -52,11 +52,11 @@ export interface ConnectComputerOptions {
  * inside the ceiling instead of the ceiling and one attempt being the same
  * number (which would leave no room to retry at all).
  */
-const READY_RETRY_CEILING_MS = 30_000;
+export const READY_RETRY_CEILING_MS = 30_000;
 const READY_ATTEMPT_TIMEOUT_MS = 3_000;
 const READY_RETRY_INITIAL_DELAY_MS = 250;
 
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`attempt timed out after ${ms}ms`)), ms);
     promise.then(
@@ -72,18 +72,40 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   });
 }
 
-async function withReadyRetry<T>(fn: () => Promise<T>): Promise<T> {
+/**
+ * Exported for fleet-computer.ts to reuse against a completely different
+ * "is it ready yet" check (a deployed instance reaching `running` status,
+ * or its RPC bridge answering /healthz) — same retry/backoff shape, no
+ * reason to duplicate it just because the thing being polled differs.
+ */
+export async function withReadyRetry<T>(fn: () => Promise<T>, ceilingMs = READY_RETRY_CEILING_MS): Promise<T> {
   const start = Date.now();
   let delay = READY_RETRY_INITIAL_DELAY_MS;
   for (;;) {
     try {
       return await withTimeout(fn(), READY_ATTEMPT_TIMEOUT_MS);
     } catch (err) {
-      if (Date.now() - start >= READY_RETRY_CEILING_MS) throw err;
+      if (Date.now() - start >= ceilingMs) throw err;
       await new Promise((resolve) => setTimeout(resolve, delay));
       delay = Math.min(delay * 2, 2000);
     }
   }
+}
+
+/**
+ * What createAgent()/bootNetworkedAgent() actually need from a Computer,
+ * regardless of whether it's a local Docker container (Computer itself) or a
+ * remote fleet instance (fleet-computer.ts's HttpBridgeComputer) — the only
+ * two things ever consumed across that boundary are the tool list and a way
+ * to call one, plus lifecycle teardown. Local Docker's stop() also removes a
+ * built image and closes a stdio client; a fleet instance's stop() tears
+ * down the deployed instance via its DeployAdapter — different internals,
+ * identical shape from the caller's side.
+ */
+export interface ComputerHandle {
+  readonly tools: Tool[];
+  call(toolName: string, input: unknown): Promise<unknown>;
+  stop(): Promise<void>;
 }
 
 /**
@@ -92,7 +114,7 @@ async function withReadyRetry<T>(fn: () => Promise<T>): Promise<T> {
  * "computer" in computer -> agent -> tool — Agent/Crew build on top of this,
  * but Computer has zero knowledge of any LLM.
  */
-export class Computer {
+export class Computer implements ComputerHandle {
   readonly tools: Tool[];
   readonly containerName: string;
 

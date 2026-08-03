@@ -251,6 +251,9 @@ importers:
       '@anthropic-ai/sdk':
         specifier: ^0.115.0
         version: 0.115.0(zod@4.4.3)
+      '@berth/adapter-core':
+        specifier: workspace:*
+        version: link:../adapters/adapter-core
       '@berth/docker-orchestrator':
         specifier: workspace:*
         version: link:../docker-orchestrator

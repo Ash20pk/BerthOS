@@ -49,6 +49,26 @@ class DaytonaDeployHandle implements DeployHandle {
     const link = await withTimeout<any>(this.sandbox.getPreviewLink(port), DEPLOY_READ_TIMEOUT_MS, `daytona getPreviewLink(${port})`);
     return link.url;
   }
+
+  /**
+   * Same underlying call as getPreviewLink(), but keeps the `token` a
+   * private sandbox's preview link carries instead of discarding it.
+   * Confirmed against the installed @daytonaio/sdk@0.202.0's own
+   * utils/WebSocket.js, which authenticates a WebSocket connection to a
+   * private sandbox's preview URL with exactly
+   * `${url}${separator}DAYTONA_SANDBOX_AUTH_KEY=${token}` — appending it the
+   * same way here lets a plain HTTP client (no WebSocket, no Daytona SDK)
+   * reach a private sandbox's RPC bridge the same way the SDK's own helper
+   * would. A non-private sandbox's link has no `token`, so this is a no-op
+   * in that case.
+   */
+  async getAuthenticatedPreviewLink(port: number): Promise<string> {
+    const link = await withTimeout<any>(this.sandbox.getPreviewLink(port), DEPLOY_READ_TIMEOUT_MS, `daytona getPreviewLink(${port})`);
+    if (!link.token) return link.url;
+    const url = new URL(link.url);
+    url.searchParams.set("DAYTONA_SANDBOX_AUTH_KEY", link.token);
+    return url.toString();
+  }
 }
 
 export function createDaytonaAdapter(): DeployAdapter {
@@ -126,6 +146,15 @@ export function createDaytonaAdapter(): DeployAdapter {
       if (!(handle instanceof DaytonaDeployHandle)) return null;
       try {
         return await handle.getPreviewLink(port);
+      } catch {
+        return null;
+      }
+    },
+
+    async rpcUrl(handle: DeployHandle, port: number) {
+      if (!(handle instanceof DaytonaDeployHandle)) return null;
+      try {
+        return await handle.getAuthenticatedPreviewLink(port);
       } catch {
         return null;
       }
