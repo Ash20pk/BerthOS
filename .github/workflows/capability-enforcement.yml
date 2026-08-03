@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Report host LSM stack
         run: cat /sys/kernel/security/lsm || echo "could not read /sys/kernel/security/lsm (non-fatal, diagnostic only)"
