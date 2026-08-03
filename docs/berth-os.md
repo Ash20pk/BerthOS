@@ -1,6 +1,6 @@
 # What is a Berth OS?
 
-A Berth OS is the real, sandboxed computer a Berth agent's tools actually come from. Today that means a Docker container (E2B, Daytona, and Kubernetes support are on the way for `berth deploy`), loaded with one or more resident apps. Each app runs under its own kernel-enforced capability policy, and all of them can collaborate through a shared context bus and semantic filesystem. In code, this is the `Computer` class. `berth os up` is what lets you keep one running as a named, reconnectable instance instead of throwing it away after a single agent run.
+A Berth OS is the real, sandboxed computer a Berth agent's tools actually come from. Today that means a Docker container, loaded with one or more resident apps — `berth deploy --fleet=e2b|daytona|k8s` already ships the same sandbox definition to a remote provider too, though `berth os up`/`Computer.connect()`'s instant-reconnect is local-Docker-only so far (see [Where it runs](#where-it-runs)). Each app runs under its own kernel-enforced capability policy, and all of them can collaborate through a shared context bus and semantic filesystem. In code, this is the `Computer` class. `berth os up` is what lets you keep one running as a named, reconnectable instance instead of throwing it away after a single agent run.
 
 If you've called `Computer.boot()` or `createAgent({apps: [...]})`, you've already created one. Just an ephemeral, single-use one. This doc is about what's actually inside it, and about the persistent version.
 

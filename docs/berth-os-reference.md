@@ -89,10 +89,11 @@ This is the natural pairing for a long-lived server process. [`examples/agents/a
   "containerName": "berth-os-my-agent",
   "image": "berth-os/my-agent:latest",
   "apps": [{ "name": "filesystem", "appDir": "/absolute/path/to/apps/filesystem" }],
-  "network": null,
   "startedAt": "2026-08-02T12:00:00.000Z"
 }
 ```
+
+`network` is an optional field (`OsStateFile["network"]?: string` in `os-state.ts`) — when `--network` wasn't given, it's `undefined` on the object passed to `JSON.stringify()`, which drops the key entirely rather than emitting `"network": null`. It only appears in the file at all when an instance actually joined a Docker network.
 
 ## Scope
 

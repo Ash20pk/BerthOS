@@ -1,6 +1,8 @@
 # Computer Snapshots Reference
 
-`berth snapshot create/restore/list` is a real, if deliberately narrow, MVP of the PRD's "Computer Snapshots" primitive (Section 4.4: "Checkpoint the entire OS state... Rollback or fork at any point. Git for agent computers.") — not the full vision, which spans browser tabs, active tokens, and fork-and-run-in-parallel. This primitive has no build phase in the PRD's Section 7 at all; it's vision/primitive-level language only, so this is a standalone addition.
+See [What is a Berth OS?](./berth-os.md) and the README's [Resident apps](../README.md#resident-apps) section first if you're not yet familiar with those terms — a "snapshot" here is a snapshot of a Berth OS.
+
+`berth snapshot create/restore/list` is a real, if deliberately narrow, MVP of the "Computer Snapshots" primitive ("Checkpoint the entire OS state... Rollback or fork at any point. Git for agent computers.") — not the full vision, which spans browser tabs, active tokens, and fork-and-run-in-parallel. This primitive has no build phase in the original scope at all; it's vision/primitive-level language only, so this is a standalone addition.
 
 ## How it works
 
@@ -16,6 +18,15 @@
 ## Why the milestone test uses a production image, not a dev one
 
 A `berth dev` container bind-mounts the whole workspace root at `/workspace` from the host — so a file written there during dev already lives on the host filesystem, and would trivially "survive" being committed/restored regardless of whether snapshotting actually works. `packages/docker-orchestrator/test/snapshot-milestone.mjs` instead builds and boots a **production** (self-contained, no bind mount) `apps/filesystem` image, so a file written via RPC genuinely lands in the container's own writable layer — making the test a real proof that `docker commit()` captured it, not an artifact of the bind mount.
+
+## Verified against a real crash, not just a clean shutdown
+
+`snapshot-milestone.mjs` only ever snapshots a container that's still healthy and then stops it cleanly afterward — it never proves anything about a container that died first. `packages/docker-orchestrator/test/snapshot-crash-milestone.mjs` closes that gap: it kills the original container with a real `SIGKILL` (no graceful shutdown, no RPC close) *before* ever calling `createSnapshot()`, so `commit()`/`getArchive()` run against exactly what a crashed container looks like, not an idealized clean-shutdown one. It also acknowledges one write before the kill and fires a second, unawaited write racing the kill itself, then asserts that `createSnapshot()` still succeeds against the now-exited container, that the restored container boots and becomes ready, and that the acknowledged pre-crash write survived intact — the racing write's outcome is only logged, not asserted, since there's no durability guarantee for a write that was never acknowledged. This is the strongest reliability proof this feature has: snapshot/restore holds up even when the source container never got to shut down cleanly.
+
+```bash
+cd packages/docker-orchestrator
+node test/snapshot-crash-milestone.mjs
+```
 
 ## What's explicitly deferred (named here, not silently promised)
 
