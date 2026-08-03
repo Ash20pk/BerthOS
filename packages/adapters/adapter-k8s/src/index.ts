@@ -239,5 +239,91 @@ export function createK8sAdapter(): DeployAdapter {
 
       return `${serviceName}.${ns}.svc.cluster.local:${port}`;
     },
+
+    // Same Service-per-instance-per-port pattern as previewUrl(), but
+    // NodePort instead of ClusterIP: bootNetworkedAgent({fleet})'s manager
+    // agent dials this from wherever it's actually running (a laptop, CI),
+    // not from inside the cluster, so an in-cluster-only DNS name (what
+    // previewUrl() returns) is useless here. A distinct Service name/prefix
+    // keeps the two from colliding if both are ever requested for the same
+    // instance+port.
+    async rpcUrl(handle: DeployHandle, port: number) {
+      if (!(handle instanceof K8sDeployHandle) || !handle.instanceId) return null;
+      const k8s = await loadK8s();
+      const kc = new k8s.KubeConfig();
+      kc.loadFromDefault();
+      const coreApi = kc.makeApiClient(k8s.CoreV1Api);
+
+      const serviceName = `berth-rpc-${handle.instanceId.slice(0, 12)}-${port}`;
+      const ns = namespace();
+      let nodePort: number | undefined;
+      try {
+        const service = await withTimeout<any>(
+          coreApi.createNamespacedService({
+            namespace: ns,
+            body: {
+              metadata: { name: serviceName },
+              spec: {
+                selector: { [INSTANCE_LABEL]: handle.instanceId },
+                ports: [{ port, targetPort: port }],
+                type: "NodePort",
+              },
+            },
+          }),
+          DEPLOY_CREATE_TIMEOUT_MS,
+          `k8s createNamespacedService("${serviceName}")`,
+        );
+        nodePort = service.spec?.ports?.[0]?.nodePort;
+      } catch (err: any) {
+        if (err?.body?.reason !== "AlreadyExists" && err?.code !== 409) {
+          console.error(`[adapter-k8s] rpcUrl: createNamespacedService("${serviceName}") failed (${err?.message ?? err}) — no RPC URL for this port`);
+          return null;
+        }
+        // Already created by an earlier rpcUrl() call for this same
+        // instance/port — the node port the API server assigned isn't
+        // available on this branch (the create() call itself is what just
+        // failed), so read the existing Service back to recover it.
+        const existing = await withTimeout<any>(
+          coreApi.readNamespacedService({ name: serviceName, namespace: ns }),
+          DEPLOY_READ_TIMEOUT_MS,
+          `k8s readNamespacedService("${serviceName}")`,
+        );
+        nodePort = existing.spec?.ports?.[0]?.nodePort;
+      }
+
+      if (!nodePort) {
+        console.error(`[adapter-k8s] rpcUrl: Service "${serviceName}" has no assigned nodePort yet — no RPC URL for this port`);
+        return null;
+      }
+
+      const nodeIp = await reachableNodeIp(coreApi);
+      if (!nodeIp) {
+        console.error(`[adapter-k8s] rpcUrl: no node with a reachable address found — no RPC URL for this port`);
+        return null;
+      }
+
+      return `http://${nodeIp}:${nodePort}`;
+    },
   };
+}
+
+/**
+ * A NodePort Service is reachable at *any* node's IP on the assigned port —
+ * not a Service-specific address — so this only needs one working node
+ * address, not a specific node. Prefers ExternalIP (the only address type
+ * actually reachable from outside the cluster's own network on most real
+ * clusters) and falls back to InternalIP, which is what makes this testable
+ * against a local `kind` cluster at all (kind's InternalIP is the kind node
+ * container's own Docker-network address, reachable from the host running
+ * kind/tests). On a real cloud cluster with no ExternalIP and a firewalled
+ * InternalIP, this legitimately has no answer — same class of caveat
+ * previewUrl() already documents for its own Ingress/LoadBalancer gap.
+ */
+async function reachableNodeIp(coreApi: any): Promise<string | null> {
+  const nodeList = await withTimeout<any>(coreApi.listNode(), DEPLOY_READ_TIMEOUT_MS, "k8s listNode()");
+  const addresses: Array<{ type: string; address: string }> = nodeList.items.flatMap((node: any) => node.status?.addresses ?? []);
+  const external = addresses.find((a) => a.type === "ExternalIP");
+  if (external) return external.address;
+  const internal = addresses.find((a) => a.type === "InternalIP");
+  return internal?.address ?? null;
 }

@@ -15,7 +15,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
-    "test": "node --test dist/**/*.test.js",
+    "test": "node --experimental-test-module-mocks --test dist/**/*.test.js",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
