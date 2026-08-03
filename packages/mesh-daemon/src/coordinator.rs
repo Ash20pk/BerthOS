@@ -48,6 +48,18 @@ struct PeersResponseWire {
     peers: Vec<PeerView>,
 }
 
+/// What a poll can mean: either the coordinator answered with the (possibly
+/// empty) mutual-match roster, or it no longer has any record of this peer
+/// at all (a 404) — e.g. the coordinator restarted without its data
+/// directory intact. The two need different handling: an ordinary error
+/// (network blip, 500) is safe to just retry on the next tick, but a 404
+/// means re-registering is the only way this peer is ever seen again —
+/// silently retrying the same poll forever never recovers.
+pub enum PollOutcome {
+    Peers(Vec<PeerView>),
+    NotFound,
+}
+
 pub struct Client {
     http: reqwest::Client,
     base_url: String,
@@ -119,16 +131,21 @@ impl Client {
     }
 
     /// The 5s reconcile poll — returns exactly the mutual-match-filtered
-    /// roster the coordinator has decided this peer is authorized to see.
-    pub async fn poll(&self, name: &str, token: &str) -> Result<Vec<PeerView>> {
+    /// roster the coordinator has decided this peer is authorized to see,
+    /// or `PollOutcome::NotFound` if the coordinator has no record of this
+    /// peer at all (see `PollOutcome`'s own doc comment).
+    pub async fn poll(&self, name: &str, token: &str) -> Result<PollOutcome> {
         let req = self.http.get(format!("{}/peers?name={name}", self.base_url)).bearer_auth(token);
         let res = req.send().await?;
+        if res.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(PollOutcome::NotFound);
+        }
         if !res.status().is_success() {
             let status = res.status();
             return Err(format!("mesh-coordinator poll failed ({status})").into());
         }
         let wire: PeersResponseWire = res.json().await?;
-        Ok(wire.peers)
+        Ok(PollOutcome::Peers(wire.peers))
     }
 
     /// Best-effort — a failure here just leaves a stale row the coordinator
@@ -138,5 +155,62 @@ impl Client {
         let req = self.http.delete(format!("{}/peers/{name}", self.base_url)).bearer_auth(token);
         let _ = req.send().await;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    /// A minimal one-shot raw-TCP HTTP server: accepts exactly one
+    /// connection, ignores the request, and writes back the given
+    /// status/body. No mock-HTTP crate needed for a canned single response.
+    async fn serve_once(status_line: &'static str, body: &'static str) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("local_addr");
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut buf = [0u8; 1024];
+            let _ = socket.read(&mut buf).await;
+            let response = format!("{status_line}\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{body}", body.len());
+            let _ = socket.write_all(response.as_bytes()).await;
+        });
+        format!("http://{addr}")
+    }
+
+    /// Regression test for the fix: poll() must distinguish a 404 (the
+    /// coordinator has no record of this peer — reconcile_loop needs to
+    /// re-register) from an ordinary success, not collapse both into the
+    /// same "here are the peers" shape.
+    #[tokio::test]
+    async fn poll_returns_not_found_outcome_on_a_404() {
+        let base_url = serve_once("HTTP/1.1 404 Not Found", r#"{"error":"no peer named \"x\""}"#).await;
+        let client = Client::new(base_url);
+
+        let outcome = client.poll("x", "tok").await.expect("poll should not error on a 404");
+        assert!(matches!(outcome, PollOutcome::NotFound));
+    }
+
+    #[tokio::test]
+    async fn poll_returns_peers_outcome_on_success() {
+        let base_url = serve_once("HTTP/1.1 200 OK", r#"{"peers":[]}"#).await;
+        let client = Client::new(base_url);
+
+        let outcome = client.poll("x", "tok").await.expect("poll should succeed");
+        match outcome {
+            PollOutcome::Peers(peers) => assert!(peers.is_empty()),
+            PollOutcome::NotFound => panic!("expected Peers, got NotFound"),
+        }
+    }
+
+    #[tokio::test]
+    async fn poll_returns_an_error_for_a_non_404_failure_status() {
+        let base_url = serve_once("HTTP/1.1 500 Internal Server Error", r#"{"error":"boom"}"#).await;
+        let client = Client::new(base_url);
+
+        let result = client.poll("x", "tok").await;
+        assert!(result.is_err(), "a 500 should still be a plain error, not NotFound or success");
     }
 }
