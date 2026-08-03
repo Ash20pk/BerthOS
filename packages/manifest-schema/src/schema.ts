@@ -47,7 +47,7 @@ export const ExposeSpec = z
     terminal: z.boolean().default(true),
     preview: z.boolean().default(false),
   })
-  .default({});
+  .default({ browser: true, terminal: true, preview: false });
 
 /**
  * `governance.exempt` lets an app opt out of another loaded app's `governs: true`
@@ -58,7 +58,7 @@ export const GovernanceSpec = z
   .object({
     exempt: z.boolean().default(false),
   })
-  .default({});
+  .default({ exempt: false });
 
 export const BerthManifestSchema = z
   .object({

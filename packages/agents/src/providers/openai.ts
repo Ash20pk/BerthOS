@@ -62,11 +62,15 @@ export function createOpenAIProvider(options: OpenAIProviderOptions = {}): LLMPr
 
       const choice = response.choices[0];
       const message = choice?.message;
-      const toolCalls = (message?.tool_calls ?? []).map((call) => ({
-        id: call.id,
-        name: call.function.name,
-        input: call.function.arguments ? JSON.parse(call.function.arguments) : {},
-      }));
+      // We only ever advertise `type: "function"` tools above, so OpenAI never returns
+      // the newer custom tool-call variant here — this narrows the union for the type checker.
+      const toolCalls = (message?.tool_calls ?? [])
+        .filter((call): call is Extract<typeof call, { type: "function" }> => call.type === "function")
+        .map((call) => ({
+          id: call.id,
+          name: call.function.name,
+          input: call.function.arguments ? JSON.parse(call.function.arguments) : {},
+        }));
 
       return {
         text: message?.content ?? undefined,

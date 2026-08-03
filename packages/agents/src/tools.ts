@@ -29,7 +29,9 @@ function zodFor(type: JsonPrimitiveTypeName): z.ZodTypeAny {
 export function inputSchemaFor(exportSpec: ExportSpecType): object {
   const input = exportSpec.input ?? {};
   const shape = Object.fromEntries(Object.entries(input).map(([field, type]) => [field, zodFor(type)]));
-  return zodToJsonSchema(z.object(shape));
+  // zod-to-json-schema's published types still target zod v3's ZodType shape; the zod v4
+  // object we build here is runtime-compatible but doesn't structurally match those types.
+  return zodToJsonSchema(z.object(shape) as unknown as Parameters<typeof zodToJsonSchema>[0]);
 }
 
 /**
