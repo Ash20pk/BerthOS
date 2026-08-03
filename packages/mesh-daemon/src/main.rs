@@ -141,7 +141,11 @@ async fn main() {
     let reconcile_token = token.clone();
     let reconcile_client = coordinator::Client::new(cfg.coordinator_url.clone());
     let reconcile_private_key = keypair.private_key.clone();
+    let reconcile_public_key = keypair.public_key.clone();
     let reconcile_listen_port = cfg.listen_port;
+    let reconcile_endpoint_host = endpoint_host.clone();
+    let reconcile_mesh_peer_patterns = cfg.mesh_peer_patterns.clone();
+    let reconcile_token_path = cfg.token_path.clone();
     // A JoinHandle nobody awaits silently swallows a panic inside the task —
     // this daemon would just go quiet with zero indication why. Await it
     // from a second, tiny supervisor task so a panic is at least logged.
@@ -151,7 +155,11 @@ async fn main() {
             peer_name,
             reconcile_token,
             reconcile_private_key,
+            reconcile_public_key,
             reconcile_listen_port,
+            reconcile_endpoint_host,
+            reconcile_mesh_peer_patterns,
+            reconcile_token_path,
             reconcile_state,
             nudge_rx,
         )
@@ -198,12 +206,75 @@ fn to_wg_peers(peers: &[coordinator::PeerView]) -> Vec<wg::PeerConfig> {
         .collect()
 }
 
+/// Applies a freshly-polled (or freshly-re-registered) peer set: writes the
+/// WireGuard config, syncs it into the live device, and adds/removes routes
+/// for whatever changed since `state`'s last-known set. Shared by the
+/// ordinary poll path and the re-registration-after-404 path below, which
+/// both end up needing to do exactly this once they have a peer list.
+async fn apply_peer_set(private_key: &str, mesh_ip: &str, listen_port: u16, peers: Vec<coordinator::PeerView>, state: &control::Shared) {
+    if let Err(err) = wg::write_config(private_key, mesh_ip, listen_port, &to_wg_peers(&peers), false).await {
+        eprintln!("[mesh-daemon] WARNING: reconcile write_config failed ({err})");
+        return;
+    }
+    if let Err(err) = wg::syncconf().await {
+        eprintln!("[mesh-daemon] WARNING: wg syncconf failed ({err})");
+        return;
+    }
+
+    let old_peers = state.read().await.peers.clone();
+    let old_names: std::collections::HashSet<_> = old_peers.iter().map(|p| p.name.clone()).collect();
+    let new_names: std::collections::HashSet<_> = peers.iter().map(|p| p.name.clone()).collect();
+
+    // `wg syncconf` only ever updates the device's crypto/peer config via
+    // netlink — it never touches the routing table (only wg-quick's own
+    // `up`/`down` scripts do, and only for whatever peers existed in the
+    // config file at that exact moment). A peer introduced later, via this
+    // reconcile loop, needs its AllowedIPs route added by hand or packets to
+    // it silently fall through to the default route and vanish.
+    for peer in &peers {
+        if !old_names.contains(&peer.name) {
+            eprintln!("[mesh-daemon] peer \"{}\" -> {} (via reconcile)", peer.name, peer.mesh_ip);
+            if let Err(err) = wg::add_route(&peer.mesh_ip).await {
+                eprintln!("[mesh-daemon] WARNING: could not add route to \"{}\" ({err})", peer.name);
+            }
+        }
+    }
+    for peer in &old_peers {
+        if !new_names.contains(&peer.name) {
+            eprintln!("[mesh-daemon] peer \"{}\" removed (via reconcile)", peer.name);
+            if let Err(err) = wg::remove_route(&peer.mesh_ip).await {
+                eprintln!("[mesh-daemon] WARNING: could not remove route to \"{}\" ({err})", peer.name);
+            }
+        }
+    }
+
+    let mut s = state.write().await;
+    s.peers = peers;
+}
+
+/// Persists a freshly-minted owner token to disk, same as main()'s own
+/// first-boot logic — factored out so the re-registration path below (after
+/// a coordinator 404) can reuse it instead of duplicating it.
+async fn persist_token(token_path: &str, token: &str) {
+    if let Some(parent) = Path::new(token_path).parent() {
+        let _ = tokio::fs::create_dir_all(parent).await;
+    }
+    if let Err(err) = tokio::fs::write(token_path, format!("{token}\n")).await {
+        eprintln!("[mesh-daemon] WARNING: could not persist owner token ({err}) — re-registration after a restart may fail");
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn reconcile_loop(
     client: coordinator::Client,
     peer_name: String,
-    token: String,
+    mut token: String,
     private_key: String,
+    public_key: String,
     listen_port: u16,
+    endpoint_host: String,
+    mesh_peer_patterns: Vec<String>,
+    token_path: String,
     state: control::Shared,
     mut nudge_rx: mpsc::UnboundedReceiver<()>,
 ) {
@@ -218,52 +289,57 @@ async fn reconcile_loop(
         tick_n += 1;
         eprintln!("[mesh-daemon] reconcile tick #{tick_n} for \"{peer_name}\" — polling {}", client.base_url_for_log());
         match client.poll(&peer_name, &token).await {
-            Ok(peers) => {
+            Ok(coordinator::PollOutcome::Peers(peers)) => {
                 eprintln!(
                     "[mesh-daemon] reconcile tick #{tick_n}: poll returned {} peer(s): [{}]",
                     peers.len(),
                     peers.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", ")
                 );
                 let mesh_ip = state.read().await.mesh_ip.clone();
-                if let Err(err) = wg::write_config(&private_key, &mesh_ip, listen_port, &to_wg_peers(&peers), false).await {
-                    eprintln!("[mesh-daemon] WARNING: reconcile write_config failed ({err})");
-                    continue;
-                }
-                if let Err(err) = wg::syncconf().await {
-                    eprintln!("[mesh-daemon] WARNING: wg syncconf failed ({err})");
-                    continue;
-                }
-
-                let old_peers = state.read().await.peers.clone();
-                let old_names: std::collections::HashSet<_> = old_peers.iter().map(|p| p.name.clone()).collect();
-                let new_names: std::collections::HashSet<_> = peers.iter().map(|p| p.name.clone()).collect();
-
-                // `wg syncconf` only ever updates the device's crypto/peer
-                // config via netlink — it never touches the routing table
-                // (only wg-quick's own `up`/`down` scripts do, and only for
-                // whatever peers existed in the config file at that exact
-                // moment). A peer introduced later, via this reconcile loop,
-                // needs its AllowedIPs route added by hand or packets to it
-                // silently fall through to the default route and vanish.
-                for peer in &peers {
-                    if !old_names.contains(&peer.name) {
-                        eprintln!("[mesh-daemon] peer \"{}\" -> {} (via reconcile)", peer.name, peer.mesh_ip);
-                        if let Err(err) = wg::add_route(&peer.mesh_ip).await {
-                            eprintln!("[mesh-daemon] WARNING: could not add route to \"{}\" ({err})", peer.name);
+                apply_peer_set(&private_key, &mesh_ip, listen_port, peers, &state).await;
+            }
+            Ok(coordinator::PollOutcome::NotFound) => {
+                // The coordinator has no record of this peer at all — most
+                // likely it restarted without its data directory intact.
+                // Retrying the same poll forever would never recover (see
+                // PollOutcome's doc comment); re-registering is the only way
+                // this peer is ever seen by the mesh again.
+                eprintln!(
+                    "[mesh-daemon] WARNING: mesh-coordinator no longer recognizes \"{peer_name}\" (404) — attempting to re-register (tick #{tick_n})"
+                );
+                match client
+                    .register(&peer_name, &public_key, &endpoint_host, listen_port, &mesh_peer_patterns, Some(token.as_str()))
+                    .await
+                {
+                    Ok(resp) => {
+                        if let Some(fresh) = resp.owner_token {
+                            token = fresh;
+                            persist_token(&token_path, &token).await;
                         }
+                        let current_mesh_ip = state.read().await.mesh_ip.clone();
+                        if resp.mesh_ip != current_mesh_ip {
+                            // This daemon's own wg0 interface address was set
+                            // once at boot (wg-quick up) — `wg syncconf`
+                            // can't change it, so applying peers under a
+                            // mesh IP other peers now know us by would be
+                            // silently wrong. A restart is the only way to
+                            // rebind wg0 itself to the new address.
+                            eprintln!(
+                                "[mesh-daemon] WARNING: re-registered but mesh-coordinator assigned a new mesh IP ({} vs. this boot's {}) — this daemon can't rebind wg0's own address without a restart; restart this sandbox to fully recover",
+                                resp.mesh_ip, current_mesh_ip
+                            );
+                            continue;
+                        }
+                        eprintln!(
+                            "[mesh-daemon] re-registered with mesh-coordinator successfully (mesh IP unchanged) — resuming normal reconciliation"
+                        );
+                        apply_peer_set(&private_key, &current_mesh_ip, listen_port, resp.peers, &state).await;
+                    }
+                    Err(err) => {
+                        eprintln!("[mesh-daemon] WARNING: re-registration after coordinator 404 failed ({err}) — will retry next tick");
+                        log_reconcile_failed_event(&peer_name, tick_n, &err.to_string());
                     }
                 }
-                for peer in &old_peers {
-                    if !new_names.contains(&peer.name) {
-                        eprintln!("[mesh-daemon] peer \"{}\" removed (via reconcile)", peer.name);
-                        if let Err(err) = wg::remove_route(&peer.mesh_ip).await {
-                            eprintln!("[mesh-daemon] WARNING: could not remove route to \"{}\" ({err})", peer.name);
-                        }
-                    }
-                }
-
-                let mut s = state.write().await;
-                s.peers = peers;
             }
             Err(err) => {
                 eprintln!("[mesh-daemon] WARNING: reconcile poll failed ({err}) — keeping last known peer set");
