@@ -18,7 +18,7 @@ pnpm install
 pnpm build
 ```
 
-`pnpm build` compiles every package in dependency order through Turborepo: `@berth/manifest-schema` first, then `@berth/sdk`, `@berth/docker-orchestrator`, the deploy adapters, and finally `@berth/cli`.
+`pnpm build` compiles every package in dependency order through Turborepo: `@berth/manifest-schema` first, then `@berth/sdk`, `@berth/docker-orchestrator`, `@berth/agents` and the deploy adapters, and finally `@berth/cli`.
 
 ## 2. Run the hello-world example
 
@@ -33,6 +33,7 @@ You should see:
 Building dev image for "hello-world"...
 Container started. Watching .../examples/resident-apps/hello-world/src and berth.yml for changes...
 [berth:dev] "hello-world" declares no browser:* capability: no VNC/CDP ports exposed
+[berth:dev] "hello-world" declares no terminal:* capability: no terminal port exposed
 [berth:dev] [berth:runtime] "hello-world" ready
 ```
 
@@ -62,6 +63,7 @@ Because this app declares `browser:navigate:*` in its `berth.yml`, `berth dev` p
 [berth:dev] noVNC:  http://localhost:<port>/vnc.html
 [berth:dev] VNC:    localhost:<port>
 [berth:dev] CDP:    http://localhost:<port>
+[berth:dev] "browser-native" declares no terminal:* capability: no terminal port exposed
 ```
 
 Open the noVNC URL in a browser tab. You're looking at the headless Chromium instance running inside the sandboxed container, live.
@@ -74,7 +76,7 @@ cd my-app
 pnpm exec berth dev
 ```
 
-`berth init` prompts for a name and a starting template (`hello-world` or `browser-native`), scaffolds `berth.yml` plus SDK boilerplate, runs `pnpm install`, and validates the manifest before handing control back to you. Pass `--template` to skip the prompt, useful for scripting: `berth init my-app --template hello-world`.
+`berth init` prompts for a name and a starting template (`hello-world` or `browser-native`), scaffolds `berth.yml` plus SDK boilerplate, runs `pnpm install`, and validates the manifest before handing control back to you. Pass `--template` to skip the prompt, useful for scripting: `berth init my-app --template hello-world`. Building on an app someone already published instead of a bundled template? `berth init my-app --registry=<url> --template=<published-app-name>` scaffolds from there — see [app-registry-reference.md](./app-registry-reference.md).
 
 ## 6. Test before you deploy
 
@@ -87,7 +89,7 @@ This builds the production image (not the dev one), checks that your `berth.yml`
 ## 7. Deploy
 
 ```bash
-berth deploy --fleet=e2b   # or --fleet=daytona, or an alias from ~/.berthrc
+berth deploy --fleet=e2b   # or --fleet=daytona, --fleet=k8s, or an alias from ~/.berthrc
 ```
 
 See [manifest-reference.md](./manifest-reference.md) for the full `berth.yml` schema and [sdk-reference.md](./sdk-reference.md) for the resident app SDK.
