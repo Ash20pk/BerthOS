@@ -5,7 +5,7 @@ Most agent frameworks wire `agent -> tool`: the agent process calls out to state
 Build the computer, then attach the agent to it.
 
 ```ts
-import { Computer, createAgent } from "@berth/agents";
+import { Computer, createAgent, createAnthropicProvider } from "@berth/agents";
 
 const computer = await Computer.boot({ apps: ["apps/filesystem", "./my-custom-app"] });
 
