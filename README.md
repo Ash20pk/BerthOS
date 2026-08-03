@@ -2,7 +2,7 @@
 
 **A real agent framework — with a real computer under every agent it runs.**
 
-`@berth/agents` is a framework in the spirit of LangChain or CrewAI: bring your own LLM provider, define agents, compose them into multi-agent crews. Call `createAgent()` or `runAgent()` and get a working agent in one line. The difference is what its tools are actually made of: every agent's tools come from real, sandboxed resident apps running on a persistent, permissioned sandbox we call a **Berth OS** — a real filesystem, a real browser, a real shell — not bare functions glued together by hand.
+`@berth/agents` is a real agent framework: bring your own LLM provider, define agents, compose them into multi-agent crews. Call `createAgent()` or `runAgent()` and get a working agent in one line. What makes it different is what its tools are actually made of: every agent's tools come from real, sandboxed resident apps running on a persistent, permissioned sandbox we call a **Berth OS** — a real filesystem, a real browser, a real shell — not bare functions glued together by hand.
 
 > Agents are not functions. They are workers. Workers need desks.
 
@@ -71,9 +71,7 @@ Worth being precise about: this gates tool calls made through `Computer`/`Agent`
 
 ## How Berth fits with what you already use
 
-If you're choosing an agent framework: `@berth/agents` is a real alternative to LangChain, CrewAI, or AutoGen when you want the sandbox, kernel-enforced permissions, and genuine multi-agent networking built in from the start instead of hand-wired on top later.
-
-If you're already committed to one of those: Berth OS still slots in underneath it as the same sandbox and permission substrate `@berth/agents` itself runs on — the layer most teams end up hand-building anyway (a permission boundary that's actually enforced, state that survives a run, apps that talk to each other without you wiring it). And if you're already on E2B or Daytona directly, Berth is the app model and kernel-enforced permission layer on top of that.
+Already have an agent stack you're happy with? Berth OS still slots in underneath it as the sandbox and permission substrate `@berth/agents` itself runs on — a permission boundary that's actually enforced, state that survives a run, apps that talk to each other without you wiring it, the same things most teams end up hand-building anyway. If you're already on E2B or Daytona directly, Berth is the app model and kernel-enforced permission layer on top of that.
 
 ## Use cases
 
