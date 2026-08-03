@@ -5,6 +5,7 @@ import { mkdir, writeFile, readFile, readdir } from "node:fs/promises";
 import { pipeline } from "node:stream/promises";
 import { join, basename } from "node:path";
 import { homedir } from "node:os";
+import { randomUUID } from "node:crypto";
 import type { BerthManifest } from "@berth/manifest-schema";
 
 const DEFAULT_SNAPSHOTS_DIR = join(homedir(), ".berth", "snapshots");
@@ -141,6 +142,14 @@ export interface RestoredSnapshot {
  * hazard, not a hypothetical one). The caller starts a new container with
  * this directory as an `extraBinds` entry targeting the same
  * BERTH_CONTEXT_DATA path the archive was captured from.
+ *
+ * Extraction happens into a directory unique to *this call*, not just to
+ * `snapshotDir` — "fork and run in parallel" (two `restoreSnapshot()` calls
+ * against the same snapshot ID, each starting its own container) is a
+ * documented, supported workflow, and a fixed path derived only from
+ * `snapshotDir` would give both forks the exact same host directory and
+ * SQLite index file, opened by two independent, uncoordinated semantic-fs-
+ * daemon instances — shared, racy state, not two isolated forks.
  */
 export async function restoreSnapshot(snapshotDir: string, docker: Docker = new Docker()): Promise<RestoredSnapshot> {
   try {
@@ -155,7 +164,9 @@ export async function restoreSnapshot(snapshotDir: string, docker: Docker = new 
       loadStream.on("error", reject);
     });
 
-    const extractDir = join(snapshotDir, "restored-context-data");
+    const restoreId = randomUUID();
+
+    const extractDir = join(snapshotDir, "restored", restoreId, "context-data");
     await mkdir(extractDir, { recursive: true });
     await new Promise<void>((resolve, reject) => {
       createReadStream(join(snapshotDir, "context-data.tar"))
@@ -169,7 +180,7 @@ export async function restoreSnapshot(snapshotDir: string, docker: Docker = new 
     // should actually target, not extractDir itself.
     const contextDataHostDir = join(extractDir, basename(metadata.contextDataPath));
 
-    const extractIndexDbDir = join(snapshotDir, "restored-context-index-db");
+    const extractIndexDbDir = join(snapshotDir, "restored", restoreId, "context-index-db");
     await mkdir(extractIndexDbDir, { recursive: true });
     await new Promise<void>((resolve, reject) => {
       createReadStream(join(snapshotDir, "context-index-db.tar"))
@@ -181,7 +192,7 @@ export async function restoreSnapshot(snapshotDir: string, docker: Docker = new 
     // than a directory — this is the file an extraBinds entry should target.
     const contextIndexDbHostFile = join(extractIndexDbDir, basename(metadata.contextIndexDbPath));
 
-    logSnapshotEvent("snapshot_restored", { appName: metadata.appName, snapshotId: metadata.id, imageTag: metadata.imageTag });
+    logSnapshotEvent("snapshot_restored", { appName: metadata.appName, snapshotId: metadata.id, imageTag: metadata.imageTag, restoreId });
     return { metadata, manifest, env, contextDataHostDir, contextIndexDbHostFile };
   } catch (err) {
     logSnapshotEvent("snapshot_restore_failed", { snapshotDir, error: String(err) });
