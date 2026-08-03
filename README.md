@@ -6,7 +6,7 @@ Most agent code looks the same underneath: a loop, a tool registry, and a pile o
 
 > Agents are not functions. They are workers. Workers need desks.
 
-You don't install Berth as your laptop's operating system, and nobody expects you to understand container internals to use it. It's a library and CLI you add to your project like any other agent framework. It just happens to hand the agent it's driving a real, isolated computer to work on instead of a pile of disconnected API calls. We call that computer a Berth OS (more on exactly what that means in [What is a Berth OS?](#what-is-a-berth-os)), and you extend what one can do by building your own resident app (see [Resident apps](#resident-apps)), though you rarely need to. Every first-party app (filesystem, browser, notes, terminal) is ready to load into an agent the moment you `pnpm add @berth/agents`.
+You don't install Berth as your laptop's operating system, and nobody expects you to understand container internals to use it. It's a library and CLI you add to your project like any other agent framework. It just happens to hand the agent it's driving a real, isolated computer to work on instead of a pile of disconnected API calls. We call that computer a Berth OS (more on exactly what that means in [What is a Berth OS?](#what-is-a-berth-os)), and you extend what one can do by building your own resident app (see [Resident apps](#resident-apps)), though you rarely need to. Every first-party app (filesystem, browser, notes, terminal) is ready to load into an agent the moment you clone and build this repo — see [Quickstart](#quickstart). `@berth/*` isn't published to npm yet; today you build it from source.
 
 This README is written for the person deciding whether to build on Berth. Already building? Jump straight to [Quickstart](#quickstart).
 
@@ -34,21 +34,9 @@ Berth exists so these four things are infrastructure you get for free, not homew
 | **A workspace you can actually watch, and you decide how much** | In local `berth dev`, `apps/browser-native` opens a live noVNC view of the sandboxed Chromium instance, and `apps/terminal` opens a live, typeable `ttyd` session. You're watching the real thing, not a transcript of it. Set `expose: { browser: false }` or `{ terminal: false }` in `berth.yml` to keep the capability while running headless in CI. Deployed to E2B, Daytona, or K8s? Opt in with `expose: { preview: true }` and `berth deploy`/`berth fleet status` print the same live view's URL there too — off by default, since a deployed fleet is potentially public-facing. See [Resident apps](#resident-apps). |
 | **Bring your own LLM, own your deploy target** | `@berth/agents` wires any LLM provider (Anthropic, OpenAI, a custom endpoint through `{provider, apiKey, baseURL}`, or your own `LLMProvider`) into a Berth OS's resident apps as tools. `berth deploy --fleet=e2b\|daytona\|k8s` ships the same sandbox definition to whatever provider you already run on. |
 
-## How Berth compares
+## How Berth fits with what you already use
 
-Berth isn't trying to replace your sandbox provider or your orchestration library. It's the layer most teams end up hand-building on top of one or both anyway. Here's where it sits next to the tools you'd normally reach for first.
-
-| | **Berth** | Orchestration frameworks (LangChain, CrewAI, AutoGen) | Raw sandbox providers (E2B, Daytona) used directly | Hosted agent platforms (OpenAI Assistants/Operator) |
-|---|---|---|---|---|
-| **Execution environment** | A real container per agent (a Berth OS), with resident apps running as long-lived processes on it | None provided. You supply your own execution environment | A VM or container, but no app model on top of it | Fully hosted and opaque to you |
-| **Permission model** | Kernel-enforced (Landlock) capability tokens, declared per app, denied by default | Nothing built in. Usually whatever access your glue code happens to have | All-or-nothing root access inside the sandbox | Vendor-controlled, not configurable |
-| **State across runs** | Persistent semantic FS plus explicit snapshot and restore | Not built in. You bring your own vector store or memory object | Ephemeral by default. Resets unless you build persistence yourself | Vendor-managed, limited control |
-| **Inter-tool/app coordination** | Context bus (pub/sub). Apps react to each other with zero direct wiring | Manual. You wire tool outputs into the next call yourself | None. It's a shell, not an app model | None exposed |
-| **Live human visibility** | Watch or join the same browser (VNC) or terminal (ttyd) session the agent is using, opt out per app. Local `berth dev` only today | Not applicable. No environment to watch | Only if you build a viewer yourself | None |
-| **Where it runs** | Local Docker for dev, then E2B, Daytona, or Kubernetes for deploy. Your choice | Wherever you host your own code | Whichever single provider you picked | Vendor's infrastructure only |
-| **Self-hostable / open source** | Yes. Apache-2.0 | Usually yes | Yes, the sandbox itself | No |
-
-If you're already happy hand-rolling permissions, persistence, and coordination on top of a raw sandbox, Berth mostly saves you from rebuilding that layer yourself. If you're using an orchestration framework today, Berth is what you'd point it at instead of a bare subprocess or a single stateless sandbox call.
+Berth isn't a replacement for your sandbox provider or your orchestration library — it's the layer most teams end up hand-building on top of one or both anyway: a permission boundary that's actually enforced, state that survives a run, and apps that can talk to each other without you wiring it. If you're already on E2B or Daytona directly, Berth is the app model and kernel-enforced permission layer on top. If you're using LangChain, CrewAI, or AutoGen, Berth is what you'd point them at instead of a bare subprocess or a single stateless sandbox call.
 
 ## Use cases
 
@@ -296,6 +284,8 @@ Apps sharing a Berth OS get two things for free, both reachable from `AppContext
 
 Want more than one app in a single Berth OS, each still independently enforced by Landlock? Check [docs/multi-app-reference.md](./docs/multi-app-reference.md) and pass `--apps` to `berth dev`, or to `berth os up`.
 
+**Looking for something to build?** The first-party apps above are a small starting set. [CONTRIBUTING.md](./CONTRIBUTING.md#resident-apps-wed-love-to-see) has a running wishlist (Slack, Postgres, Gmail, Stripe, and more) plus the exact `berth init` → PR path.
+
 ## CLI reference
 
 | Command | What it does |
@@ -358,7 +348,7 @@ examples/
 
 ## Something not working?
 
-Found a [bug](./.github/ISSUE_TEMPLATE/bug_report.md), or just something confusing about the [workflow](./.github/ISSUE_TEMPLATE/workflow_feedback.md)? Tell us. Those reports are exactly what we need right now.
+Found a [bug](./.github/ISSUE_TEMPLATE/bug_report.md), something confusing about the [workflow](./.github/ISSUE_TEMPLATE/workflow_feedback.md), or want to pitch a [resident app](./.github/ISSUE_TEMPLATE/resident_app_proposal.md)? Tell us. Those reports are exactly what we need right now.
 
 ## License
 
