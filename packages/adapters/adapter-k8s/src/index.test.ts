@@ -90,6 +90,51 @@ test("rpcUrl() returns null when no node has any reachable address", async (t) =
   assert.equal(url, null);
 });
 
+test("teardown() deletes the Pod and every Service created for this instance's rpcUrl()/previewUrl()", async (t) => {
+  const deletedServiceCalls: unknown[] = [];
+  let deletedPod: unknown;
+  const coreApi = {
+    createNamespacedPod: async () => ({ metadata: { name: "x-abc12" } }),
+    createNamespacedService: async () => ({ spec: { ports: [{ nodePort: 31234 }] } }),
+    listNode: async () => ({ items: [{ status: { addresses: [{ type: "ExternalIP", address: "203.0.113.9" }] } }] }),
+    deleteNamespacedPod: async (args: unknown) => {
+      deletedPod = args;
+    },
+    deleteCollectionNamespacedService: async (args: unknown) => {
+      deletedServiceCalls.push(args);
+    },
+  };
+  const { adapter, handle } = await startedHandle(t, coreApi);
+
+  // Simulate the app having opted into a preview/rpc URL before teardown.
+  await adapter.rpcUrl!(handle, 7300);
+
+  await adapter.teardown(handle);
+
+  assert.deepEqual(deletedPod, { name: "x-abc12", namespace: "default" });
+  assert.equal(deletedServiceCalls.length, 1);
+  assert.equal((deletedServiceCalls[0] as any).namespace, "default");
+  assert.match((deletedServiceCalls[0] as any).labelSelector, /^berth\.dev\/instance=/);
+});
+
+test("teardown() doesn't blow up if Service cleanup fails — the Pod still gets deleted", async (t) => {
+  let deletedPod: unknown;
+  const coreApi = {
+    createNamespacedPod: async () => ({ metadata: { name: "x-abc12" } }),
+    deleteNamespacedPod: async (args: unknown) => {
+      deletedPod = args;
+    },
+    deleteCollectionNamespacedService: async () => {
+      throw new Error("RBAC denied");
+    },
+  };
+  const { adapter, handle } = await startedHandle(t, coreApi);
+
+  await adapter.teardown(handle);
+
+  assert.deepEqual(deletedPod, { name: "x-abc12", namespace: "default" });
+});
+
 test("rpcUrl() returns null for a handle this adapter didn't create", async (t) => {
   t.mock.module("@kubernetes/client-node", mockK8sModule({}));
   const { createK8sAdapter } = await import("./index.js");
