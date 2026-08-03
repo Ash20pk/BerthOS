@@ -98,6 +98,21 @@ export async function createSnapshot(options: CreateSnapshotOptions): Promise<{ 
     const imageStream = await docker.getImage(imageTag).get();
     await pipeline(imageStream, createWriteStream(join(dir, "image.tar")));
 
+    // image.tar (just written above) is the durable artifact — restoreSnapshot()
+    // reloads from it independently via docker.loadImage() and never reuses
+    // this committed image directly, so leaving it in the local daemon's
+    // image store is a pure leak: every `berth snapshot create` would
+    // otherwise grow `docker images` forever, invisible to and not reclaimed
+    // by deleting ~/.berth/snapshots/. Best-effort — a cleanup failure (e.g.
+    // still referenced by a running container) shouldn't fail an otherwise-
+    // successful snapshot.
+    await docker
+      .getImage(imageTag)
+      .remove()
+      .catch((err: unknown) => {
+        logSnapshotEvent("snapshot_image_cleanup_failed", { appName: options.appName, snapshotId: id, imageTag, error: String(err) });
+      });
+
     const contextArchive = await options.container.getArchive({ path: contextDataPath });
     await pipeline(contextArchive, createWriteStream(join(dir, "context-data.tar")));
 
