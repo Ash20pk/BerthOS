@@ -67,7 +67,7 @@ import { Computer } from "@berth/agents";
 const computer = await Computer.connect({ name: "my-agent" });
 ```
 
-`connect` and `apps` are mutually exclusive on `createAgent()`/`runAgent()`. Pass one or the other.
+`connect` and `apps` aren't validated against each other on `createAgent()`/`runAgent()` the way `--apps`/`--config` are on `berth os up` (which hard-errors if you pass both). Pass `connect` and it silently takes precedence — `apps` is just never read. Pass one or the other to avoid relying on that precedence.
 
 This is the natural pairing for a long-lived server process. [`examples/agents/agent-server`](../examples/agents/agent-server) boots (or connects, via `BERTH_OS_CONNECT=<name>`) a `Computer`/`Agent` once at startup and answers HTTP requests against it. Restarting the server itself, say on every code change during development, no longer means rebuilding the sandbox too.
 
