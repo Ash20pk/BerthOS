@@ -122,6 +122,29 @@ class K8sDeployHandle implements DeployHandle {
       `k8s deleteNamespacedPod("${this.id}")`,
     );
   }
+
+  /**
+   * Deletes every Service previewUrl()/rpcUrl() may have created for this
+   * instance (selected via INSTANCE_LABEL, not by name — there can be one
+   * per port requested) — otherwise they outlive the Pod forever, since
+   * nothing else ever removes them (no ownerReference ties them to the Pod
+   * for Kubernetes' own garbage collector to act on). Best-effort: a
+   * cluster that denies list/delete on Services shouldn't block tearing
+   * down the Pod itself, so failures are logged rather than thrown.
+   */
+  async deleteServices(): Promise<void> {
+    try {
+      await withTimeout<any>(
+        this.coreApi.deleteCollectionNamespacedService({ namespace: namespace(), labelSelector: `${INSTANCE_LABEL}=${this.instanceId}` }),
+        DEPLOY_READ_TIMEOUT_MS,
+        `k8s deleteCollectionNamespacedService(instance="${this.instanceId}")`,
+      );
+    } catch (err: any) {
+      console.error(
+        `[adapter-k8s] teardown: failed to delete Services for instance "${this.instanceId}" (${err?.message ?? err}) — they may be left behind`,
+      );
+    }
+  }
 }
 
 export function createK8sAdapter(): DeployAdapter {
@@ -163,6 +186,9 @@ export function createK8sAdapter(): DeployAdapter {
 
     async teardown(handle: DeployHandle) {
       await handle.stop();
+      if (handle instanceof K8sDeployHandle && handle.instanceId) {
+        await handle.deleteServices();
+      }
     },
 
     async list() {
