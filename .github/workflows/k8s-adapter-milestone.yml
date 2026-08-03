@@ -22,7 +22,7 @@ jobs:
           install_only: true
           version: v0.32.0
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 10.21.0
 

@@ -20,7 +20,7 @@ jobs:
       - name: Report host LSM stack
         run: cat /sys/kernel/security/lsm || echo "could not read /sys/kernel/security/lsm (non-fatal, diagnostic only)"
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 10.21.0
 
