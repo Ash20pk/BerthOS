@@ -1,4 +1,5 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import * as path from "node:path";
 import { loadManifest, matchesCapability, type CapabilityTokenRequest } from "@berth/manifest-schema";
 
@@ -20,6 +21,10 @@ export interface CapabilityGrant {
 }
 
 const MANIFEST_PATH = process.env.BERTH_MANIFEST_PATH ?? path.join(process.cwd(), "berth.yml");
+// Same default generate-capability-policy.ts itself uses — this is the file
+// it writes at boot, merging berth.yml's static `capabilities:` with
+// whatever's been approved via `berth grants approve` since.
+const CAPABILITY_POLICY_PATH = process.env.BERTH_CAPABILITY_POLICY ?? path.join(process.cwd(), ".berth", "capability-policy.json");
 const TOKEN_TTL_MS = 5 * 60 * 1000;
 const GRANTS_SERVER_URL = process.env.BERTH_GRANTS_SERVER_URL;
 
@@ -66,12 +71,40 @@ export function verifyCapabilityToken(
   return expectedBuf.length === tokenBuf.length && timingSafeEqual(expectedBuf, tokenBuf);
 }
 
+/**
+ * The policy file's `declaredCapabilities` is berth.yml's static list merged
+ * with whatever's been approved via `berth grants approve` since (see
+ * generate-capability-policy.ts's `main()`) — reading it, rather than
+ * berth.yml directly, is what lets requestCapability() ever see an approved
+ * grant at all. Returns undefined (not an empty array) when the file isn't
+ * there or isn't parseable JSON, so the caller can fall back to berth.yml
+ * rather than treating "no policy file" as "nothing is granted."
+ */
+async function readPolicyDeclaredCapabilities(): Promise<string[] | undefined> {
+  try {
+    const raw = await readFile(CAPABILITY_POLICY_PATH, "utf-8");
+    const policy = JSON.parse(raw) as { declaredCapabilities?: unknown };
+    return Array.isArray(policy.declaredCapabilities) ? (policy.declaredCapabilities as string[]) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // Loaded once per process — requestCapability() may be called many times
-// and berth.yml doesn't change at runtime.
+// and neither berth.yml nor the policy file change at runtime.
 let declaredCapabilitiesPromise: Promise<string[]> | undefined;
 
 function declaredCapabilities(): Promise<string[]> {
-  declaredCapabilitiesPromise ??= loadManifest(MANIFEST_PATH).then((manifest) => manifest.capabilities);
+  declaredCapabilitiesPromise ??= (async () => {
+    const fromPolicy = await readPolicyDeclaredCapabilities();
+    if (fromPolicy) return fromPolicy;
+    // No policy file (running outside a real Berth container — e.g. a unit
+    // test, or before generate-capability-policy.ts has run at boot) — fall
+    // back to berth.yml's own static list, same as this function's original
+    // behavior before the policy file existed.
+    const manifest = await loadManifest(MANIFEST_PATH);
+    return manifest.capabilities;
+  })();
   return declaredCapabilitiesPromise;
 }
 
