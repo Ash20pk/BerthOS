@@ -4,12 +4,17 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type Docker from "dockerode";
+import type { DeployAdapter } from "@berth/adapter-core";
 import { inputSchemaFor } from "./tools.js";
 import { resolveComputerApps, type ComputerAppSpec } from "./resolve-apps.js";
-import { Computer } from "./computer.js";
+import { Computer, type ComputerHandle } from "./computer.js";
+import { buildComputerImage } from "./build.js";
+import { HttpBridgeComputer } from "./fleet-computer.js";
 import type { Tool } from "./types.js";
 
 const DEFAULT_NETWORK_NAME = "berth-agent-net";
+/** Arbitrary, chosen only to avoid the handful of ports first-party apps already use (8090 egress broker, 8092 GitHub broker, 4875 mesh-coordinator) — fully overridable per bootNetworkedAgent({fleet: {port}}) call. */
+const DEFAULT_FLEET_RPC_PORT = 7300;
 
 export interface AgentServerLLMConfig {
   provider: "anthropic" | "openai";
@@ -299,6 +304,13 @@ export async function generateAgentServerApp(options: GenerateAgentServerAppOpti
   return { name: options.name, appDir };
 }
 
+export interface NetworkedAgentFleetOptions {
+  /** Deploys this peer to a remote fleet (E2B, Daytona, K8s) instead of a local Docker container — the adapter must implement rpcUrl(). */
+  adapter: DeployAdapter;
+  /** Port the deployed instance's HTTP RPC bridge listens on. Defaults to DEFAULT_FLEET_RPC_PORT. */
+  port?: number;
+}
+
 export interface NetworkedAgentOptions {
   /** Peer identity — also used to name its synthesized agent-server companion app. */
   name: string;
@@ -306,24 +318,29 @@ export interface NetworkedAgentOptions {
   apps: string[];
   llm: AgentServerLLMConfig;
   systemPrompt?: string;
-  /** Shared Docker network peers join — defaults to one shared name so callers don't have to coordinate it themselves. */
+  /** Shared Docker network peers join — defaults to one shared name so callers don't have to coordinate it themselves. Ignored when `fleet` is set. */
   network?: string;
+  /** Deploy this peer to a remote fleet instead of booting it locally — see NetworkedAgentFleetOptions. Omit for today's local-Docker behavior, unchanged. */
+  fleet?: NetworkedAgentFleetOptions;
   env?: Record<string, string>;
   docker?: Docker;
 }
 
 export interface NetworkedAgent {
-  computer: Computer;
+  computer: ComputerHandle;
   /**
    * Delegates a task to this peer's own in-container agent loop — hand this
-   * to Crew.networked() as one of the manager's tools. Dispatches through
-   * Computer's existing invokeAppExport/createStdioRpcClient transport (host
-   * mediated); the peer's container is also joined to `network`, which is
-   * the substrate for direct container-to-container reachability — wiring a
-   * mesh dispatch path through that instead of the host is deferred (see
-   * docs/agents-reference.md).
+   * to Crew.networked() as one of the manager's tools. For a local peer,
+   * dispatches through Computer's existing invokeAppExport/createStdioRpcClient
+   * transport (host mediated); the peer's container is also joined to
+   * `network`, which is the substrate for direct container-to-container
+   * reachability — wiring a mesh dispatch path through that instead of the
+   * host is deferred (see docs/agents-reference.md). For a fleet-deployed
+   * peer, dispatches over its HTTP RPC bridge instead (see `transport`).
    */
   tool: Tool;
+  /** Which transport this peer ended up on — informational only, for logging/debugging. Crew.networked() never reads it. */
+  transport: "local" | "http";
   stop(): Promise<void>;
 }
 
@@ -332,6 +349,13 @@ export interface NetworkedAgent {
  * synthesized agent-server companion app that runs its own agent loop over
  * them — i.e. the agent itself lives on this computer, not just its tools.
  * Returns a Tool a manager Agent can delegate to via Crew.networked().
+ *
+ * Without `fleet`, this peer boots as a local Docker container, byte-for-
+ * byte the same as before `fleet` existed. With `fleet`, it's deployed
+ * through the given DeployAdapter (E2B, Daytona, K8s) instead, reached over
+ * an HTTP RPC bridge rather than docker exec/attach — see fleet-computer.ts.
+ * Either way, the returned `tool` looks identical to a caller; Crew.networked()
+ * needs no awareness of which one it got.
  */
 export async function bootNetworkedAgent(options: NetworkedAgentOptions): Promise<NetworkedAgent> {
   const siblingApps = await resolveComputerApps(options.apps);
@@ -344,12 +368,14 @@ export async function bootNetworkedAgent(options: NetworkedAgentOptions): Promis
     siblingApps,
   });
 
-  const computer = await Computer.boot({
-    apps: [...options.apps, agentServerApp.appDir],
-    network: options.network ?? DEFAULT_NETWORK_NAME,
-    env: options.env,
-    docker: options.docker,
-  });
+  const computer: ComputerHandle = options.fleet
+    ? await bootFleetComputer(options, agentServerName, agentServerApp.appDir)
+    : await Computer.boot({
+        apps: [...options.apps, agentServerApp.appDir],
+        network: options.network ?? DEFAULT_NETWORK_NAME,
+        env: options.env,
+        docker: options.docker,
+      });
 
   const runTaskToolName = `${agentServerName}__run_task`;
   const tool: Tool = {
@@ -367,5 +393,23 @@ export async function bootNetworkedAgent(options: NetworkedAgentOptions): Promis
     },
   };
 
-  return { computer, tool, stop: () => computer.stop() };
+  return { computer, tool, transport: options.fleet ? "http" : "local", stop: () => computer.stop() };
+}
+
+async function bootFleetComputer(options: NetworkedAgentOptions, agentServerName: string, agentServerAppDir: string): Promise<HttpBridgeComputer> {
+  // Same [siblings..., agent-server] ordering Computer.boot() uses for the
+  // local path — buildComputerImage() treats the first app as primary
+  // (naming only; every app's exports still end up as tools either way).
+  const allApps = await resolveComputerApps([...options.apps, agentServerAppDir]);
+  const imageRef = await buildComputerImage(allApps);
+
+  return HttpBridgeComputer.deploy({
+    adapter: options.fleet!.adapter,
+    port: options.fleet!.port ?? DEFAULT_FLEET_RPC_PORT,
+    imageRef,
+    manifest: allApps[0]!.manifest,
+    apps: allApps,
+    rpcAppName: agentServerName,
+    env: options.env,
+  });
 }
