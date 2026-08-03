@@ -10,7 +10,7 @@ import {
   assertAtMostOneTerminalApp,
   assertAtMostOneMeshApp,
 } from "../../util/os-config.js";
-import { isContainerRunning } from "../../util/os-docker.js";
+import { isContainerRunning, removeStaleContainer } from "../../util/os-docker.js";
 
 export default class OsUp extends Command {
   static override description =
@@ -63,9 +63,17 @@ export default class OsUp extends Command {
     const docker = new Docker();
 
     const existing = await readOsState(name);
-    if (existing && (await isContainerRunning(docker, existing.containerName))) {
-      this.log(`"${name}" is already up (container ${existing.containerName}). Run \`berth os down ${name}\` first to rebuild it.`);
-      return;
+    if (existing) {
+      if (await isContainerRunning(docker, existing.containerName)) {
+        this.log(`"${name}" is already up (container ${existing.containerName}). Run \`berth os down ${name}\` first to rebuild it.`);
+        return;
+      }
+      // Not running, but still holding the name (crashed, OOM-killed, or
+      // stopped outside `berth os down`) — clear it so createContainer()
+      // below doesn't fail with a raw "name already in use" 409.
+      if (await removeStaleContainer(docker, existing.containerName)) {
+        this.warn(`"${name}" had a stopped container (${existing.containerName}) left over from a previous run — removed it before rebuilding.`);
+      }
     }
 
     const [primary, ...companions] = apps;
