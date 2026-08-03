@@ -130,33 +130,32 @@ func (idx *Index) SetEmbedding(path string, embedding []float32, model string) e
 // created_by, which the daemon infers automatically from the writing
 // process's pid, "task" and "related_apps" are semantic judgments only the
 // calling app can make.
+//
+// A single INSERT ... ON CONFLICT statement, not a separate UPDATE followed
+// by a conditional INSERT when RowsAffected() == 0 (this function's original
+// shape) — that was a TOCTOU race: the "check" (did the UPDATE affect any
+// rows?) and the "act" (INSERT if not) were two independent statements with
+// no transaction spanning them, so two concurrent Tag() calls on the same
+// not-yet-indexed path (e.g. a file written before the daemon started, per
+// the comment this used to have on the INSERT branch) could both see 0 rows
+// affected and both attempt to INSERT, one hitting `UNIQUE constraint
+// failed: files.path` — a legitimate, non-conflicting operation surfaced as
+// a raw driver error. db.SetMaxOpenConns(1) only serializes individual Exec
+// calls, not this whole two-statement sequence; a single atomic statement
+// removes the race entirely rather than trying to add a transaction around
+// the old two-step shape.
 func (idx *Index) Tag(path, task string, relatedApps []string) error {
 	relatedJSON, err := json.Marshal(relatedApps)
 	if err != nil {
 		return fmt.Errorf("marshal related_apps: %w", err)
 	}
 	now := time.Now().Unix()
-	res, err := idx.db.Exec(`
-		UPDATE files SET task = ?, related_apps = ?, updated_at = ? WHERE path = ?
-	`, task, string(relatedJSON), now, path)
-	if err != nil {
-		return err
-	}
-	affected, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if affected == 0 {
-		// Tagging a path the daemon hasn't observed a write for yet (e.g. a
-		// file written before the daemon started) — insert rather than
-		// silently drop the tag.
-		_, err = idx.db.Exec(`
-			INSERT INTO files (path, created_by, task, related_apps, created_at, updated_at)
-			VALUES (?, '', ?, ?, ?, ?)
-		`, path, task, string(relatedJSON), now, now)
-		return err
-	}
-	return nil
+	_, err = idx.db.Exec(`
+		INSERT INTO files (path, created_by, task, related_apps, created_at, updated_at)
+		VALUES (?, '', ?, ?, ?, ?)
+		ON CONFLICT(path) DO UPDATE SET task = excluded.task, related_apps = excluded.related_apps, updated_at = excluded.updated_at
+	`, path, task, string(relatedJSON), now, now)
+	return err
 }
 
 // embeddingMatchThreshold is the minimum cosine similarity for a purely
