@@ -44,7 +44,7 @@ Edit `src/index.ts` and save. The container restarts on its own (on_install hook
 `hello-world` declares zero capabilities. `apps/notes` is the next step up: a stateful, first-party resident app (`add_note`/`list_notes`/`complete_note`, persisted to a JSON file) that declares `filesystem:write:/workspace` and publishes to the context bus on every write.
 
 ```bash
-cd apps/notes
+cd ../../../apps/notes
 pnpm exec berth dev
 ```
 
