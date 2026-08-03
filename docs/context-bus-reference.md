@@ -58,5 +58,6 @@ node test/context-bus-milestone.mjs
 ## Known limitations (Phase 2 scope)
 
 - One daemon per sandbox, but this is no longer a hard one-app-per-container limitation: `--apps=<dir1>,<dir2>` (see [Multi-App Sandbox Reference](./multi-app-reference.md)) and `berth os up --apps=...` / `--config=<path>` (see [`berth os` reference](./berth-os-reference.md)) both run multiple resident apps together in one sandbox, each with its own enforced process. The bind-mount-plus-`docker exec` approach in `context-bus-milestone.mjs` predates both of those and is kept as a from-scratch protocol check for the daemon itself, not as the recommended way to actually run multiple apps today.
+- No wildcard subscribe — topics are matched by exact string, so fanning in several topics (as `apps/activity-feed` does) means naming every one explicitly.
 - No message persistence or replay — a subscriber only sees events published after it subscribes.
 - The `.proto` schema is duplicated (by hand) across three places — `packages/context-bus-daemon`, `packages/sdk`, and `packages/sdk-python` — rather than living in one shared package. This is overdue debt, not a future hypothetical: the third copy has already landed.
