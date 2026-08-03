@@ -100,3 +100,49 @@ test("previewUrl() returns null when the sandbox's getPreviewLink rejects (port 
   const url = await adapter.previewUrl!(handle, 7681);
   assert.equal(url, null);
 });
+
+test("rpcUrl() appends the sandbox's preview-link token as a DAYTONA_SANDBOX_AUTH_KEY query param", async (t) => {
+  const sandbox = {
+    id: "sbx-4",
+    state: "started",
+    getPreviewLink: async (port: number) => ({ url: `https://${port}-sbx-4.daytona.example`, token: "sekrit-tok" }),
+  };
+  const create = t.mock.fn(async (_params: unknown) => sandbox);
+  t.mock.module("@daytonaio/sdk", {
+    namedExports: {
+      Daytona: class {
+        create = create;
+      },
+    },
+  });
+
+  const { createDaytonaAdapter } = await import("./index.js");
+  const adapter = createDaytonaAdapter();
+  const handle = await adapter.start("snap-abc", { imageRef: "berth/x:1.0.0", manifest });
+
+  const url = await adapter.rpcUrl!(handle, 7300);
+  assert.equal(url, "https://7300-sbx-4.daytona.example/?DAYTONA_SANDBOX_AUTH_KEY=sekrit-tok");
+});
+
+test("rpcUrl() leaves the URL bare when the preview link carries no token (non-private sandbox)", async (t) => {
+  const sandbox = {
+    id: "sbx-5",
+    state: "started",
+    getPreviewLink: async (port: number) => ({ url: `https://${port}-sbx-5.daytona.example` }),
+  };
+  const create = t.mock.fn(async (_params: unknown) => sandbox);
+  t.mock.module("@daytonaio/sdk", {
+    namedExports: {
+      Daytona: class {
+        create = create;
+      },
+    },
+  });
+
+  const { createDaytonaAdapter } = await import("./index.js");
+  const adapter = createDaytonaAdapter();
+  const handle = await adapter.start("snap-abc", { imageRef: "berth/x:1.0.0", manifest });
+
+  const url = await adapter.rpcUrl!(handle, 7300);
+  assert.equal(url, "https://7300-sbx-5.daytona.example");
+});
