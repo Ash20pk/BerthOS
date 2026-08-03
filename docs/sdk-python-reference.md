@@ -1,6 +1,6 @@
 # Python SDK Reference (Slice 1 — core)
 
-`packages/sdk-python` (`berth_sdk` on PyPI-style import) is a real second-language SDK for Berth resident apps — not a stub, not a design doc. Per the PRD's Section 11 open question ("Primary SDK language: Python or TypeScript?") and Section 4.1's "Resident app SDK (Python / TypeScript)" stack line, this closes that gap for real, split into two branches given its size: this slice (manifest + RPC + a real demo app, proving wire-protocol compatibility) and a follow-up slice (the context-bus client + `entrypoint.sh`'s runtime-selection wiring — see `docs/sdk-python-context-bus-reference.md` once that lands).
+`packages/sdk-python` (`berth_sdk` on PyPI-style import) is a real second-language SDK for Berth resident apps — not a stub, not a design doc. Whether the primary SDK language would be Python or TypeScript was an open question, and a resident-app SDK for both languages was a stated goal — this closes that gap for real, split into two branches given its size: this slice (manifest + RPC + a real demo app, proving wire-protocol compatibility) and a follow-up slice (the context-bus client + `entrypoint.sh`'s runtime-selection wiring — see `docs/sdk-python-context-bus-reference.md` once that lands).
 
 ## What's reused vs. rewritten
 

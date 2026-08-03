@@ -1,6 +1,6 @@
 # App Registry Reference (Phase 5)
 
-Phase 5 opens the framework to external developers: a place to publish resident apps, discover what others have published, and scaffold a new project from a published one — plus making `@berth/sdk` itself something a genuinely external project can depend on. Per the PRD, this phase's registry/marketplace and SDK-openness goals are in scope here; usage-based billing and a hosted, multi-tenant service are not (the PRD's "first external revenue" is a Section 9 success metric, not a Phase 5 build item) — see the [README](../README.md)'s Status section.
+Phase 5 opens the framework to external developers: a place to publish resident apps, discover what others have published, and scaffold a new project from a published one — plus making `@berth/sdk` itself something a genuinely external project can depend on. This phase's registry/marketplace and SDK-openness goals are in scope here; usage-based billing and a hosted, multi-tenant service are not — those remain longer-term goals, not a Phase 5 build item (see [Scope](#scope) below).
 
 ## Architecture
 
@@ -65,7 +65,7 @@ This makes the vendoring step, not tarball construction, the part worth trusting
 ## Scope
 
 - **Single-node, no auth.** Anyone who can reach the HTTP port can publish. There's no user/org model, no API key, no rate limiting. Fine for a local registry or a trusted internal one; not what you'd run as a public multi-tenant service.
-- **No billing/usage metering.** The PRD's Persona 3 (Jordan, earning usage-based revenue from a published app) and the "first external revenue" success metric aren't implemented — they need a real payments integration and real paying users, neither of which exists yet.
+- **No billing/usage metering.** Usage-based revenue for a published app's author, and any "first external revenue" milestone, aren't implemented — they need a real payments integration and real paying users, neither of which exists yet.
 - **`latest` means highest semver**, not most-recently-published — publishing `1.5.0` after `2.0.0` doesn't make `1.5.0` "latest".
 
 ## Verification status
