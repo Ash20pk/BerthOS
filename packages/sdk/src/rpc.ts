@@ -111,10 +111,15 @@ export async function invokeExport(app: BerthApp, request: RpcRequest): Promise<
 
   try {
     const input = exportDef.input ? exportDef.input.parse(request.input) : request.input;
-    const result = await exportDef.handler(input);
-    if (exportDef.output) {
-      exportDef.output.parse(result);
-    }
+    const rawResult = await exportDef.handler(input);
+    // Send the *parsed* result, not the handler's raw return value — a Zod
+    // schema with `.default(...)`/transforms can produce a value that
+    // differs from what the handler returned, and the wire response must
+    // reflect that (not just validate it), or two exports with identical
+    // output schemas serialize differently depending on which SDK
+    // implements them. rpc.py's invoke_export() already does this by
+    // re-serializing through its Pydantic model.
+    const result = exportDef.output ? exportDef.output.parse(rawResult) : rawResult;
     return { id: request.id, result };
   } catch (err) {
     return { id: request.id, error: err instanceof Error ? err.message : String(err) };
