@@ -1,12 +1,12 @@
 # Berth
 
-**Give your agent a real computer, not a bag of stateless API calls.**
+**A real agent framework — with a real computer under every agent it runs.**
 
-Most agent code looks the same underneath: a loop, a tool registry, and a pile of glue you wrote yourself so the agent can actually do something useful. Berth replaces that glue. Call `createAgent()` or `runAgent()` and your agent gets a persistent, permissioned sandbox we call a **Berth OS**: a real filesystem, a real browser, a real shell, loaded with whatever the agent needs.
+`@berth/agents` is a real agent framework: bring your own LLM provider, define agents, compose them into multi-agent crews. Call `createAgent()` or `runAgent()` and get a working agent in one line. What makes it different is what its tools are actually made of: every agent's tools come from real, sandboxed resident apps running on a persistent, permissioned sandbox we call a **Berth OS** — a real filesystem, a real browser, a real shell — not bare functions glued together by hand.
 
 > Agents are not functions. They are workers. Workers need desks.
 
-You don't install Berth as your laptop's operating system, and nobody expects you to understand container internals to use it. It's a library and CLI you add to your project like any other agent framework. It just happens to hand the agent it's driving a real, isolated computer to work on instead of a pile of disconnected API calls. We call that computer a Berth OS (more on exactly what that means in [What is a Berth OS?](#what-is-a-berth-os)), and you extend what one can do by building your own resident app (see [Resident apps](#resident-apps)), though you rarely need to. Every first-party app (filesystem, browser, notes, terminal) is ready to load into an agent the moment you clone and build this repo — see [Quickstart](#quickstart). `@berth/*` isn't published to npm yet; today you build it from source.
+Most agent code looks the same underneath: a loop, a tool registry, and a pile of glue you wrote yourself so the agent can actually do something useful. Berth replaces that glue, and the desk it's missing. You don't install Berth as your laptop's operating system, and nobody expects you to understand container internals to use it — it's a library and CLI you add to your project like any other agent framework. It just happens to hand the agent it's driving a real, isolated computer to work on instead of a pile of disconnected API calls. We call that computer a Berth OS (more on exactly what that means in [What is a Berth OS?](#what-is-a-berth-os)), and you extend what one can do by building your own resident app (see [Resident apps](#resident-apps)), though you rarely need to. Every first-party app (filesystem, browser, notes, terminal) is ready to load into an agent the moment you clone and build this repo — see [Quickstart](#quickstart). `@berth/*` isn't published to npm yet; today you build it from source.
 
 This README is written for the person deciding whether to build on Berth. Already building? Jump straight to [Quickstart](#quickstart), or to [docs/getting-started.md](./docs/getting-started.md) for the longer, resident-app-focused walkthrough.
 
@@ -23,20 +23,55 @@ That gap turns into the same four problems on every team that ships an agent pas
 
 Berth exists so these four things are infrastructure you get for free, not homework every team rebuilds from scratch.
 
-## Why Berth
+## Why `@berth/agents`
 
 | | What you get |
 |---|---|
 | **One call to a working agent, instant reconnects while you iterate** | `runAgent({ apps: "apps/filesystem", task: "..." })` figures out your LLM provider on its own and cleans up after itself. No boilerplate. `berth os up` boots the sandbox once, then `connect: "<name>"` reattaches in milliseconds instead of rebuilding it on every dev loop run. |
+| **Multi-agent by default, not bolted on** | `Crew.sequential()`/`Crew.withManager()` compose agents in-process; `Crew.networked()` goes further — each peer is a full, independently-LLM-driven agent on its own Berth OS, joined over a real Docker network, not just a delegated tool call. See [Multi-agent architecture](#multi-agent-architecture). |
+| **A governance gate any app can become** | Declare `governs: true` and export `evaluate_action`, and every other app's tool calls route through your policy first — human approval, an ML classifier, whatever you want — before they execute. See [Governance and scoping](#governance-and-scoping). |
+| **Bring your own LLM, own your deploy target** | `@berth/agents` wires any LLM provider (Anthropic, OpenAI, a custom endpoint through `{provider, apiKey, baseURL}`, or your own `LLMProvider`) into a Berth OS's resident apps as tools. `berth deploy --fleet=e2b\|daytona\|k8s` ships the same sandbox definition to whatever provider you already run on. |
+
+What backs every one of those calls, in brief — full picture in [What is a Berth OS?](#what-is-a-berth-os):
+
+| | What you get |
+|---|---|
 | **Permissions that are enforced, not just requested** | Every resident app declares `namespace:action:scope` capabilities in its manifest, things like `filesystem:write:/workspace` or `browser:navigate:*.github.com`. A Landlock policy built from that manifest applies before your code even runs. An undeclared write isn't caught by a try/catch. The kernel refuses the syscall outright. |
 | **State that survives the session** | A semantic filesystem you can query by intent, not just by path, plus `berth snapshot create/restore`, means an agent's work (files, tags, context) outlives any single run. |
 | **Apps that talk to each other without you wiring it** | The context bus is pub/sub between resident apps in the same Berth OS. A filesystem app writes a file, a code editor app reacts to it. Neither one imports or calls the other. |
 | **A workspace you can actually watch, and you decide how much** | In local `berth dev`, `apps/browser-native` opens a live noVNC view of the sandboxed Chromium instance, and `apps/terminal` opens a live, typeable `ttyd` session. You're watching the real thing, not a transcript of it. Set `expose: { browser: false }` or `{ terminal: false }` in `berth.yml` to keep the capability while running headless in CI. Deployed to E2B or Daytona? Opt in with `expose: { preview: true }` and `berth deploy`/`berth fleet status` print that same live view as a real, platform-hosted URL — off by default, since a deployed fleet is potentially public-facing. On Kubernetes, that same opt-in only gets you the in-cluster DNS name; a real public URL there still needs your own Ingress/LoadBalancer. See [Resident apps](#resident-apps). |
-| **Bring your own LLM, own your deploy target** | `@berth/agents` wires any LLM provider (Anthropic, OpenAI, a custom endpoint through `{provider, apiKey, baseURL}`, or your own `LLMProvider`) into a Berth OS's resident apps as tools. `berth deploy --fleet=e2b\|daytona\|k8s` ships the same sandbox definition to whatever provider you already run on. |
+
+## Multi-agent architecture
+
+Most frameworks compose agents in-process: a manager calls a worker's function, all inside one Node process. `Crew.sequential(agents)` and `Crew.withManager({ manager, workers })` do exactly that here too — pipe outputs forward, or hand a manager one `Tool` per worker and let its own LLM decide when to delegate.
+
+`Crew.networked()` goes further, because it can: each peer is a full Berth OS with its own `Agent` and its own LLM loop, not just a function call. `bootNetworkedAgent()` boots one independent `Computer` per peer — its own resident apps, its own synthesized agent-server companion — joined to a shared Docker network. A manager `Agent` then gets one delegation `Tool` per peer, over a real network, not an in-process call:
+
+```ts
+import { Agent, Crew, createOpenAIProvider, bootNetworkedAgent } from "@berth/agents";
+
+const filer = await bootNetworkedAgent({ name: "filer", apps: ["apps/filesystem"], llm: { provider: "openai", apiKeyEnvVar: "OPENAI_API_KEY" } });
+const notetaker = await bootNetworkedAgent({ name: "notetaker", apps: ["apps/notes"], llm: { provider: "openai", apiKeyEnvVar: "OPENAI_API_KEY" } });
+
+const manager = new Agent({ name: "manager", llm: createOpenAIProvider(), tools: [] });
+const crew = Crew.networked({ manager, peers: [filer, notetaker] });
+
+const output = await crew.run("Ask notetaker to log this run, then ask filer to write the result to a file.");
+```
+
+Each peer keeps driving its own agent loop independently, on its own sandboxed computer — this is the architecture, not a demo trick, and it's why multi-agent here scales past "one process calling itself." Full API, and what's real vs. deferred today (host-mediated dispatch, a genuine container-to-container mesh as follow-up work): [docs/agents-reference.md](./docs/agents-reference.md).
+
+## Governance and scoping
+
+Capabilities (see [Available capabilities](#available-capabilities)) control what a single app can do, enforced by the kernel or a broker before the call happens. Governance controls what happens next: any app can put itself in front of every *other* app's tool calls in the same Berth OS and decide, per call, whether it's allowed to run at all.
+
+Declare `governs: true` in your `berth.yml` and export a fixed-contract `evaluate_action({ app, export, input }) -> { allowed, reason }`. Load it alongside whatever else the Computer needs, and every other app's tool calls now route through it automatically — no other wiring required. Any app can opt out with `governance: { exempt: true }`.
+
+Worth being precise about: this gates tool calls made through `Computer`/`Agent` — an LLM-driven agent's tool use. It is **not** kernel-level like Landlock's per-syscall capability enforcement, and it doesn't cover `berth rpc` or direct `invokeAppExport()` calls. It also fails open by default — if `evaluate_action` errors or times out, the call goes through rather than wedging the agent, unless your own governance app is built to fail closed. Full contract: [docs/governance-reference.md](./docs/governance-reference.md).
 
 ## How Berth fits with what you already use
 
-Berth isn't a replacement for your sandbox provider or your orchestration library — it's the layer most teams end up hand-building on top of one or both anyway: a permission boundary that's actually enforced, state that survives a run, and apps that can talk to each other without you wiring it. If you're already on E2B or Daytona directly, Berth is the app model and kernel-enforced permission layer on top. If you're using LangChain, CrewAI, or AutoGen, Berth is what you'd point them at instead of a bare subprocess or a single stateless sandbox call.
+Already have an agent stack you're happy with? Berth OS still slots in underneath it as the sandbox and permission substrate `@berth/agents` itself runs on — a permission boundary that's actually enforced, state that survives a run, apps that talk to each other without you wiring it, the same things most teams end up hand-building anyway. If you're already on E2B or Daytona directly, Berth is the app model and kernel-enforced permission layer on top of that.
 
 ## Use cases
 
@@ -48,7 +83,7 @@ Each of these is a real job people give an agent. What actually makes it shippab
 
 **An assistant that actually remembers you.** `apps/notes` gives it real persisted state instead of a context window that resets every session, and `apps/activity-feed` gives it one queryable history across everything that happened. `berth snapshot create/restore` checkpoints the whole Berth OS, files, tags, context and all, so a container restart doesn't wipe what the agent knows.
 
-**A team of agents, each scoped to only what it needs, sharing one sandbox.** Boot one shared Berth OS with `berth os up team --apps=apps/filesystem,apps/notes,apps/terminal`, then get a writer agent scoped to just `apps/filesystem` and a notetaker scoped to just `apps/notes` with `createAgent({ connect: { name: "team", apps: ["filesystem"] } })` and `createAgent({ connect: { name: "team", apps: ["notes"] } })`. One running sandbox, least privilege per agent, nothing to rebuild between runs. Want each agent driving its own LLM loop on its own computer instead of a scoped tool view of a shared one? `bootNetworkedAgent()` boots one independent Computer per peer, and `Crew.networked({ manager, peers })` lets a manager agent delegate tasks to them over a real Docker network.
+**A team of agents, each scoped to only what it needs, sharing one sandbox.** Boot one shared Berth OS with `berth os up team --apps=apps/filesystem,apps/notes,apps/terminal`, then get a writer agent scoped to just `apps/filesystem` and a notetaker scoped to just `apps/notes` with `createAgent({ connect: { name: "team", apps: ["filesystem"] } })` and `createAgent({ connect: { name: "team", apps: ["notes"] } })`. One running sandbox, least privilege per agent, nothing to rebuild between runs. Need each agent driving its own LLM loop on its own computer instead? See [Multi-agent architecture](#multi-agent-architecture).
 
 **An agent behind a real API, not a one-shot script.** [`examples/agents/agent-server`](./examples/agents/agent-server) boots once and answers `POST /task` requests against the same `Agent` for as long as the process runs. Pair it with `berth os up` and `BERTH_OS_CONNECT`, and restarting the server during development reconnects to the sandbox in milliseconds instead of rebuilding it on every code change.
 
@@ -183,9 +218,9 @@ const result = await agent.run("write a file called hello.txt with the text 'hi'
 await computer.stop();
 ```
 
-`Crew.withManager()` and `Crew.sequential()` compose multiple agents. `Crew.networked()` composes agents running on entirely separate Berth OS instances, joined over a real Docker network. Full details live in [docs/agents-reference.md](./docs/agents-reference.md).
+Composing multiple agents — in-process, or fully networked peers each on their own computer — is a first-class pattern here, not an afterthought. See [Multi-agent architecture](#multi-agent-architecture).
 
-Want an app to review every other app's tool calls before they happen, allow or deny? Any app declaring `governs: true` becomes the Computer's governance authority automatically, no first-party governance app required. See the [governance gate reference](./docs/governance-reference.md).
+Want an app to review every other app's tool calls before they happen, allow or deny? See [Governance and scoping](#governance-and-scoping).
 
 ### What is a Berth OS?
 
@@ -258,6 +293,8 @@ A few things worth knowing up front, because they'll bite you otherwise:
 ### Available capabilities
 
 The `namespace:action:scope` grammar is wide open. You can declare a capability in a namespace nobody's used before, and `requestCapability()` will honestly tell you `granted: false`, because nothing actually backs it. The table below is what has real enforcement or brokering behind it today, the full list of permissions a resident app in a Berth OS can actually be given.
+
+Looking to control what happens *after* a call is allowed, not just whether it's allowed at all? That's a different layer — see [Governance and scoping](#governance-and-scoping).
 
 | Capability | Enforced by | Notes |
 |---|---|---|
