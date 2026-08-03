@@ -174,7 +174,7 @@ export class Computer implements ComputerHandle {
     const call = (appName: string, exportName: string, input: unknown) =>
       withReadyRetry(() => dispatch(appName, exportName, input));
 
-    const tools = applyGovernanceGate(apps, computerToolsFor(apps, call));
+    const tools = applyGovernanceGate(apps, apps, computerToolsFor(apps, call), call);
 
     return new Computer(container, apps, stdioClient, tools, containerName, docker, image, true);
   }
@@ -216,6 +216,13 @@ export class Computer implements ComputerHandle {
     }
 
     const apps = await resolveComputerApps(appRecords.map((a) => a.appDir));
+    // Deliberately the OS's *full* loaded-app list, not just `apps` — a
+    // governance app running in this container still has to gate tool calls
+    // even when this particular connect() only exposes a subset that
+    // doesn't happen to include it by name. See applyGovernanceGate's own
+    // doc comment. Only resolved a second time when scoping actually
+    // narrowed the list; otherwise `apps` already covers everything.
+    const allApps = options.apps ? await resolveComputerApps(state.apps.map((a) => a.appDir)) : apps;
 
     const dispatch = async (appName: string, exportName: string, input: unknown): Promise<unknown> => {
       const request = { id: randomUUID(), export: exportName, input };
@@ -226,7 +233,7 @@ export class Computer implements ComputerHandle {
 
     const call = (appName: string, exportName: string, input: unknown) => withReadyRetry(() => dispatch(appName, exportName, input));
 
-    const tools = applyGovernanceGate(apps, computerToolsFor(apps, call));
+    const tools = applyGovernanceGate(allApps, apps, computerToolsFor(apps, call), call);
 
     return new Computer(container, apps, undefined, tools, state.containerName, docker, undefined, false);
   }

@@ -53,14 +53,37 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
  * see docs/governance-reference.md for the full contract. A no-op (returns
  * `tools` unchanged) when no app in this Computer declares `governs: true`.
  *
+ * `allApps` and `scopedApps` are deliberately separate: `Computer.connect({
+ * apps })` lets a caller expose only a subset of a shared `berth os up`
+ * instance's loaded apps as tools (`scopedApps`/`tools`), but the governor
+ * itself runs as a resident process in that same container regardless of
+ * whether it's in that subset. Detecting `governs: true` from `scopedApps`
+ * alone (as this used to) meant a caller who simply didn't name the
+ * governance app in `apps` got ungated tool calls with no warning — the
+ * gate silently depended on which apps a caller happened to list, even
+ * though every call still dispatched into the one container where the
+ * governor is actually running. Checking `allApps` instead means gating
+ * still applies whenever the underlying OS/Computer has a governor loaded
+ * at all, however the caller scoped their own tool list. `call` (the same
+ * transport dispatch computerToolsFor() uses to build `tools`) is what
+ * actually invokes the governor's `evaluate_action` — reaching it doesn't
+ * require the governor's own tool to be present in `tools`, only that
+ * `call(governorName, "evaluate_action", ...)` can reach that resident app,
+ * which is always true within one Computer/OS instance.
+ *
  * This is @berth/agents' own choke point, not a kernel mechanism: it only
  * gates tool calls made through Computer/Agent, not `berth rpc` or direct
  * multi-app `invokeAppExport()` calls. Landlock has no per-syscall callback
  * to build a kernel-level version of this on — see
  * docs/capability-tokens-reference.md's "what's deliberately deferred".
  */
-export function applyGovernanceGate(apps: ComputerAppSpec[], tools: Tool[]): Tool[] {
-  const governors = apps.filter((app) => app.manifest.governs);
+export function applyGovernanceGate(
+  allApps: ComputerAppSpec[],
+  scopedApps: ComputerAppSpec[],
+  tools: Tool[],
+  call: (appName: string, exportName: string, input: unknown) => Promise<unknown>,
+): Tool[] {
+  const governors = allApps.filter((app) => app.manifest.governs);
   if (governors.length === 0) return tools;
   if (governors.length > 1) {
     throw new Error(
@@ -68,18 +91,10 @@ export function applyGovernanceGate(apps: ComputerAppSpec[], tools: Tool[]): Too
     );
   }
   const governorName = governors[0]!.name;
-  const namespaced = apps.length > 1;
-  const evaluateToolName = toolNameFor(governorName, "evaluate_action", namespaced);
-  const evaluateTool = tools.find((tool) => tool.name === evaluateToolName);
-  if (!evaluateTool) {
-    // Shouldn't happen: BerthManifestSchema already requires an evaluate_action
-    // export whenever governs: true is set, so this would mean apps/tools got
-    // out of sync with each other, not a normal user-facing misconfiguration.
-    throw new Error(`governance app "${governorName}" is missing its "evaluate_action" tool`);
-  }
+  const namespaced = scopedApps.length > 1;
 
   const ownerByToolName = new Map<string, { appName: string; exportName: string; exempt: boolean }>();
-  for (const app of apps) {
+  for (const app of scopedApps) {
     for (const exportSpec of app.manifest.exports) {
       ownerByToolName.set(toolNameFor(app.name, exportSpec.name, namespaced), {
         appName: app.name,
@@ -99,7 +114,7 @@ export function applyGovernanceGate(apps: ComputerAppSpec[], tools: Tool[]): Too
         let verdict: EvaluateActionResult;
         try {
           verdict = (await withTimeout(
-            evaluateTool.invoke({ app: owner.appName, export: owner.exportName, input }),
+            call(governorName, "evaluate_action", { app: owner.appName, export: owner.exportName, input }),
             GOVERNANCE_CALL_TIMEOUT_MS,
           )) as EvaluateActionResult;
         } catch (err) {
