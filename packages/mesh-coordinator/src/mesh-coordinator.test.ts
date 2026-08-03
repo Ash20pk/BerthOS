@@ -178,3 +178,31 @@ test("DELETE /peers/:name removes a peer, requiring its token", async () => {
     assert.equal(reregister.statusCode, 201, "name should be free again after delete, minting a fresh token");
   });
 });
+
+/**
+ * Regression test: mesh IP allocation used to derive the next IP from
+ * `COUNT(*) FROM peers`, a row count rather than a persistent sequence.
+ * Removing a non-last peer lowers that count, so the next brand-new peer
+ * would get an IP already held by a still-registered peer further along in
+ * the range — a real UNIQUE constraint violation, not a hypothetical one.
+ */
+test("mesh IP allocation doesn't collide after a non-last peer is removed", async () => {
+  await withServer(async (app) => {
+    const a = JSON.parse((await register(app, { name: "a", publicKey: "pk-a", endpointHost: "h1", endpointPort: 1 })).body);
+    const b = JSON.parse((await register(app, { name: "b", publicKey: "pk-b", endpointHost: "h2", endpointPort: 2 })).body);
+    const c = JSON.parse((await register(app, { name: "c", publicKey: "pk-c", endpointHost: "h3", endpointPort: 3 })).body);
+    assert.equal(a.meshIp, "100.64.0.2");
+    assert.equal(b.meshIp, "100.64.0.3");
+    assert.equal(c.meshIp, "100.64.0.4");
+
+    // Removing "b" (not the last-registered peer) used to reset the row
+    // count to 2 — the same count "c" was allocated from.
+    await app.inject({ method: "DELETE", url: "/peers/b", headers: { authorization: `Bearer ${b.ownerToken}` } });
+
+    const dRes = await register(app, { name: "d", publicKey: "pk-d", endpointHost: "h4", endpointPort: 4 });
+    assert.equal(dRes.statusCode, 201, `expected a fresh peer to register cleanly, got: ${dRes.body}`);
+    const d = JSON.parse(dRes.body);
+    assert.notEqual(d.meshIp, c.meshIp, "new peer's mesh IP must not collide with a still-registered peer's");
+    assert.equal(d.meshIp, "100.64.0.5", "the sequence should keep advancing rather than reusing a freed slot");
+  });
+});

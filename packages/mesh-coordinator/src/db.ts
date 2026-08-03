@@ -101,7 +101,17 @@ export class MeshCoordinatorDb {
         registered_at TEXT NOT NULL,
         last_seen TEXT NOT NULL
       );
+      -- A single-row counter for mesh IP allocation. Deliberately NOT
+      -- derived from COUNT(*)/MAX(rowid) on peers — either would let a
+      -- removed peer's slot be re-handed to the next new registration,
+      -- colliding with any peer that's still holding an IP further along
+      -- in the range. This only ever increments, so an IP is never reused
+      -- for as long as this database file lives.
+      CREATE TABLE IF NOT EXISTS mesh_ip_seq (next_seq INTEGER NOT NULL);
     `);
+    if (!this.#db.prepare(`SELECT 1 FROM mesh_ip_seq`).get()) {
+      this.#db.prepare(`INSERT INTO mesh_ip_seq (next_seq) VALUES (0)`).run();
+    }
   }
 
   close(): void {
@@ -133,8 +143,11 @@ export class MeshCoordinatorDb {
   }
 
   #nextMeshIp(): string {
-    const row = this.#db.prepare(`SELECT COUNT(*) as n FROM peers`).get() as { n: number };
-    return ipFromSequence(row.n);
+    // Atomically claims and advances the counter in one statement — no
+    // separate read-then-write pair that a future refactor could split
+    // across an await and reintroduce a race.
+    const row = this.#db.prepare(`UPDATE mesh_ip_seq SET next_seq = next_seq + 1 RETURNING next_seq - 1 as seq`).get() as { seq: number };
+    return ipFromSequence(row.seq);
   }
 
   /**
