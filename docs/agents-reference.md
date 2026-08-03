@@ -212,9 +212,10 @@ node examples/networked-crew.mjs    # Crew.networked(), two independent networke
 cd packages/agents
 node test/computer-boot-milestone.mjs          # real: single-app Computer, live tool list, write_file/read_file round trip
 node test/computer-multi-app-milestone.mjs     # real: filesystem + code-editor, namespaced tools, both independently callable
+node test/governance-gate-milestone.mjs        # real: a governs:true app's evaluate_action gates every other app's Tool.invoke, blocking calls that don't return {allowed: true}
 node test/provider-swap-milestone.mjs          # real: same Computer's tools, driven once by each built-in provider (needs ANTHROPIC_API_KEY + OPENAI_API_KEY)
 node test/crew-manager-milestone.mjs           # real: manager agent delegates across two in-process worker agents (needs ANTHROPIC_API_KEY)
 node test/crew-networked-milestone.mjs         # real: two independent networked agent-computers complete delegated tasks (needs ANTHROPIC_API_KEY)
 ```
 
-The first two need only a local Docker daemon and run in CI (`.github/workflows/agents-milestone.yml`). The other three need real LLM API credentials and stay manual, local-only runs, consistent with how this repo treats anything needing external credentials.
+The first three need only a local Docker daemon and run in CI (`.github/workflows/agents-milestone.yml`). The other three need real LLM API credentials and stay manual, local-only runs, consistent with how this repo treats anything needing external credentials.

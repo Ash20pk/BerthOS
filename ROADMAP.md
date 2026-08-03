@@ -12,22 +12,22 @@ Berth was built against an original 5-phase plan. All five phases have at least 
 | 2 | Context bus: pub/sub between resident apps in one Berth OS | Shipped, milestone-tested. [docs/context-bus-reference.md](./docs/context-bus-reference.md) lists known Phase 2 scope limits |
 | 3 | Capability tokens: kernel-enforced (Landlock) permissions, denied by default | Shipped, milestone-tested — **with a caveat**: Landlock enforcement needs a real Linux LSM stack. Docker Desktop for Mac's linuxkit VM doesn't have it active, so a green local run isn't proof of enforcement. Read [docs/capability-tokens-reference.md](./docs/capability-tokens-reference.md)'s verification section before trusting this in any environment you haven't checked `cat /sys/kernel/security/lsm` in |
 | 4 | Semantic filesystem: query `/context` by intent, not just by path | Shipped, milestone-tested |
-| 5 | App registry: publish/discover/install resident apps (`berth publish`) | Shipped, milestone-tested. Not yet paired with a public hosted registry — `berth publish --registry=<url>` targets a registry you run yourself today |
+| 5 | App registry: publish/discover/install resident apps (`berth publish`) | Shipped. `packages/cli/test/registry-milestone.mjs` is a real integration test, but unlike the phases above, it isn't wired into any `.github/workflows/*.yml` — it doesn't run in CI yet. Not yet paired with a public hosted registry either — `berth publish --registry=<url>` targets a registry you run yourself today |
 
 ## Beyond the original plan
 
-Built after the initial 5 phases, each with its own milestone test and CI workflow:
+Built after the initial 5 phases. Most have their own milestone test and CI workflow; two exceptions are called out below.
 
-- **WireGuard mesh networking** (`network:peer:<name>`) — real mesh, not simulated, coordinated by `mesh-coordinator` and reconciled by `mesh-daemon`
+- **WireGuard mesh networking** (`network:peer:<name>`) — real mesh, not simulated, coordinated by `mesh-coordinator` and reconciled by `mesh-daemon`. A crash-resilience test (`mesh-coordinator-resilience-milestone.mjs`, proves the tunnel survives a coordinator SIGKILL) exists but isn't CI-wired yet either
 - **Egress broker** — scoped outbound HTTP/browser access by hostname pattern, at the host level
 - **Grants server** — human-in-the-loop approval for capability requests, instead of just declare-and-deny
 - **Governance gate** — any app declaring `governs: true` can review other apps' tool calls before they execute
-- **Snapshot / restore** — checkpoint a whole Berth OS (files, semantic-fs tags, context) and restore it, including after a hard crash
+- **Snapshot / restore** — checkpoint a whole Berth OS (files, semantic-fs tags, context) and restore it, including after a hard crash (`snapshot-crash-milestone.mjs` kills the container with a real `SIGKILL` mid-write)
 - **Deploy adapters** — E2B, Daytona, and Kubernetes, behind one `DeployAdapter` interface
 - **MCP bridge** (`berth mcp`) — expose a resident app's exports as MCP tools
 - **Python SDK** — wire-compatible with the TypeScript SDK
-- **`@berth/agents`** — the agent-facing layer (`Computer`, `createAgent`, `runAgent`, `Crew`)
-- **`berth os up`/`down`/`status`** — long-lived Berth OS with instant reconnect, instead of a fresh boot every dev-loop iteration
+- **`@berth/agents`** — the agent-facing layer (`Computer`, `createAgent`, `runAgent`, `Crew`). `Computer`'s milestone tests run in CI credential-free; `Crew`'s (`crew-manager-`, `crew-networked-`, `provider-swap-milestone.mjs`) need real LLM API keys and are intentionally not run there — see `docs/agents-reference.md`
+- **`berth os up`/`down`/`status`** — long-lived Berth OS with instant reconnect, instead of a fresh boot every dev-loop iteration. No milestone test or CI workflow exists for this one yet, unlike the rest of this list
 
 ## Known gaps
 

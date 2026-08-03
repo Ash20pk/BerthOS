@@ -8,7 +8,7 @@ Most agent code looks the same underneath: a loop, a tool registry, and a pile o
 
 You don't install Berth as your laptop's operating system, and nobody expects you to understand container internals to use it. It's a library and CLI you add to your project like any other agent framework. It just happens to hand the agent it's driving a real, isolated computer to work on instead of a pile of disconnected API calls. We call that computer a Berth OS (more on exactly what that means in [What is a Berth OS?](#what-is-a-berth-os)), and you extend what one can do by building your own resident app (see [Resident apps](#resident-apps)), though you rarely need to. Every first-party app (filesystem, browser, notes, terminal) is ready to load into an agent the moment you clone and build this repo — see [Quickstart](#quickstart). `@berth/*` isn't published to npm yet; today you build it from source.
 
-This README is written for the person deciding whether to build on Berth. Already building? Jump straight to [Quickstart](#quickstart).
+This README is written for the person deciding whether to build on Berth. Already building? Jump straight to [Quickstart](#quickstart), or to [docs/getting-started.md](./docs/getting-started.md) for the longer, resident-app-focused walkthrough.
 
 ## The problem
 
@@ -74,7 +74,7 @@ pnpm install
 pnpm build
 ```
 
-`pnpm build` compiles every package in dependency order through Turborepo: `@berth/manifest-schema` first, then `@berth/sdk`, `@berth/docker-orchestrator`, the deploy adapters, and finally `@berth/cli`.
+`pnpm build` compiles every package in dependency order through Turborepo: `@berth/manifest-schema` first, then `@berth/sdk`, `@berth/docker-orchestrator`, `@berth/agents` and the deploy adapters, and finally `@berth/cli`.
 
 ### Run an agent
 
@@ -101,6 +101,7 @@ pnpm exec berth dev
 Building dev image for "hello-world"...
 Container started. Watching .../examples/resident-apps/hello-world/src and berth.yml for changes...
 [berth:dev] "hello-world" declares no browser:* capability: no VNC/CDP ports exposed
+[berth:dev] "hello-world" declares no terminal:* capability: no terminal port exposed
 [berth:dev] [berth:runtime] "hello-world" ready
 ```
 
@@ -121,7 +122,7 @@ cd my-app
 pnpm exec berth dev
 ```
 
-`berth init` asks for a name and a starting template (`hello-world` or `browser-native`), scaffolds `berth.yml` plus SDK boilerplate, runs `pnpm install`, and validates the manifest before handing control back to you. Pass `--template` to skip the prompt. Check [Resident apps](#resident-apps) for the full anatomy of what just got scaffolded.
+`berth init` asks for a name and a starting template (`hello-world` or `browser-native`), scaffolds `berth.yml` plus SDK boilerplate, runs `pnpm install`, and validates the manifest before handing control back to you. Pass `--template` to skip the prompt, or `--registry=<url>` to scaffold from a published app instead of a bundled template. Check [Resident apps](#resident-apps) for the full anatomy of what just got scaffolded.
 
 ## Building a Berth Agent
 
@@ -336,7 +337,7 @@ apps/
   browser-native/      first-party resident app: headless Chromium plus VNC
   filesystem/          first-party resident app that reads and writes /workspace, publishes fs.file_created
   code-editor/         first-party resident app that reacts to fs.file_created through the context bus
-  github-assistant/    first-party resident app, the PRD's example manifest, deployed and milestone-tested
+  github-assistant/    first-party resident app, the original example manifest for this pattern, deployed and milestone-tested
   hello-world-py/      minimal Python resident app proving the Python SDK's RPC wire compatibility
   terminal/            first-party resident app: a shared shell (tmux + ttyd), driven by the agent and watchable live over the web
   activity-feed/       first-party resident app that fans in fs.file_created and notes.* into one queryable feed

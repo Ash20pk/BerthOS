@@ -4,7 +4,7 @@ The Context Bus is Phase 2's first real agent runtime primitive: shared semantic
 
 ## Architecture
 
-One `context-bus-daemon` process (Rust, `packages/context-bus-daemon`) runs per agent sandbox (per container), started by `entrypoint.sh` before any resident app's runtime. Every resident app process in that sandbox connects to the same Unix socket (`$BERTH_CONTEXT_BUS_SOCKET`, default `/tmp/berth-context-bus.sock`) and exchanges length-prefixed protobuf `Envelope` frames — the schema lives at `packages/context-bus-daemon/proto/context_bus.proto` (canonical) with an identical copy shipped in `@berth/sdk` for the TypeScript client to load at runtime.
+One `context-bus-daemon` process (Rust, `packages/context-bus-daemon`) runs per agent sandbox (per container), started by `entrypoint.sh` before any resident app's runtime. Every resident app process in that sandbox connects to the same Unix socket (`$BERTH_CONTEXT_BUS_SOCKET`, default `/tmp/berth-context-bus.sock`) and exchanges length-prefixed protobuf `Envelope` frames — the schema lives at `packages/context-bus-daemon/proto/context_bus.proto` (canonical) with identical copies shipped in `@berth/sdk` (for the TypeScript client) and `packages/sdk-python` (for the Python client) to load at runtime.
 
 ```
 resident app A ──┐                      ┌── resident app B
@@ -48,7 +48,7 @@ app.onAgentReady(async (ctx) => { contextBus = ctx.contextBus; });
 
 ## Verifying it
 
-`packages/docker-orchestrator/test/context-bus-milestone.mjs` is a real (not mocked) integration test: it boots a container for `apps/filesystem`, starts `apps/code-editor`'s runtime as a second process in the *same* sandbox via `docker exec`, invokes `filesystem`'s `write_file` export over its live RPC interface, and asserts that `code-editor` reactively opens the new file — proving the milestone (PRD Outcome 3) end-to-end rather than just compiling. Run it with:
+`packages/docker-orchestrator/test/context-bus-milestone.mjs` is a real (not mocked) integration test: it boots a container for `apps/filesystem`, starts `apps/code-editor`'s runtime as a second process in the *same* sandbox via `docker exec`, invokes `filesystem`'s `write_file` export over its live RPC interface, and asserts that `code-editor` reactively opens the new file — proving apps can react to each other end-to-end rather than just compiling. Run it with:
 
 ```bash
 cd packages/docker-orchestrator
@@ -57,6 +57,6 @@ node test/context-bus-milestone.mjs
 
 ## Known limitations (Phase 2 scope)
 
-- One daemon per sandbox — the current `berth dev`/`test`/`deploy` commands are still one-app-per-container. Running multiple resident apps together (as the milestone test does) currently requires bind-mounting the whole pnpm workspace root and using `docker exec` for additional apps, same as the integration test does; there's no `berth compose`-style CLI command yet for this.
+- One daemon per sandbox, but this is no longer a hard one-app-per-container limitation: `--apps=<dir1>,<dir2>` (see [Multi-App Sandbox Reference](./multi-app-reference.md)) and `berth os up --apps=...` / `--config=<path>` (see [`berth os` reference](./berth-os-reference.md)) both run multiple resident apps together in one sandbox, each with its own enforced process. The bind-mount-plus-`docker exec` approach in `context-bus-milestone.mjs` predates both of those and is kept as a from-scratch protocol check for the daemon itself, not as the recommended way to actually run multiple apps today.
 - No message persistence or replay — a subscriber only sees events published after it subscribes.
-- The `.proto` schema is duplicated (by hand) between `packages/context-bus-daemon` and `packages/sdk` rather than living in one shared package — acceptable at this scale, worth revisiting if a third consumer shows up.
+- The `.proto` schema is duplicated (by hand) across three places — `packages/context-bus-daemon`, `packages/sdk`, and `packages/sdk-python` — rather than living in one shared package. This is overdue debt, not a future hypothetical: the third copy has already landed.
