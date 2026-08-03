@@ -84,4 +84,6 @@ const grant = await requestCapability("my-app", "filesystem:write:/workspace");
 
 ## The RPC layer
 
-You don't call this directly — `@berth/sdk`'s runtime starts a line-delimited JSON RPC server over stdio once your app boots, dispatching `{ id, export, input }` requests to your registered `app.export()` handlers. This is what `berth test`'s stub-payload invocation (and, eventually, an agent's own tool-calling layer) talks to.
+You don't call this directly — `@berth/sdk`'s runtime starts a line-delimited JSON RPC server over stdio once your app boots, dispatching `{ id, export, input }` requests to your registered `app.export()` handlers. This is what an agent's own tool-calling layer talks to at runtime.
+
+`berth test`'s stub-payload invocation is a separate, non-overlapping path: `packages/cli/src/commands/test.ts` calls into `packages/sdk/src/check-exports.ts`, which invokes `def.handler(input)` directly in-process — it never goes through this RPC layer's line-delimited JSON framing at all.

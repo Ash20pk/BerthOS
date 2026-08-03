@@ -47,7 +47,7 @@ A short human-readable summary. Unused before Phase 5; the [app registry](./app-
 
 A list of `namespace:action:scope` strings — e.g. `github:read:repos`, `browser:navigate:*.github.com`, `filesystem:read:/workspace`. `scope` may use a trailing/embedded `*` glob.
 
-**Kernel-enforced, not just declared.** `filesystem:*` and `network:connect:*` grants are compiled into a Landlock policy that `agent-init` applies before your app's runtime even execs — an undeclared write or outbound connection is refused at the syscall boundary, not caught by a framework-level check. `requestCapability()` (`@berth/sdk`) reflects that same policy back to your code, returning `granted: false` for anything you didn't declare. See the [capability tokens reference](./capability-tokens-reference.md) for exactly what's kernel-enforced versus recorded-only. Declare capabilities honestly: enforcement trusts this list, and so does the [app registry](./app-registry-reference.md)'s listing, which shows them to anyone `berth init`-ing your app.
+**Kernel-enforced, not just declared.** `filesystem:*` and `network:connect:*` grants are compiled into a Landlock policy that `agent-init` applies before your app's runtime even execs — an undeclared write or outbound connection is refused at the syscall boundary, not caught by a framework-level check. `requestCapability()` ([`@berth/sdk`](./sdk-reference.md)) reflects that same policy back to your code, returning `granted: false` for anything you didn't declare. See the [capability tokens reference](./capability-tokens-reference.md) for exactly what's kernel-enforced versus recorded-only. Declare capabilities honestly: enforcement trusts this list, and so does the [app registry](./app-registry-reference.md)'s listing, which shows them to anyone `berth init`-ing your app.
 
 ### `exports` (default: `[]`)
 
@@ -57,11 +57,13 @@ The RPC surface your app exposes. Each entry has a `name` and optional `input`/`
 
 ### `on_install` (default: `[]`)
 
-Shell commands run once when the app's container is first built/started — e.g. `pip install -r requirements.txt`, `apt-get install -y <tool>`. These aren't Node-specific: they run via `bash -c` inside the container, so any interpreter available in the base image (Python, Node, etc.) works. Skipped on warm restarts (`berth dev` hot reload) via a marker file, so editing your app's source doesn't re-run these every time.
+Shell commands run once when the app's container is first built/started — e.g. `pip install -r requirements.txt`, `apt-get install -y <tool>`. These aren't Node-specific: they run via `sh -c` inside the container (`packages/sdk/src/run-lifecycle.ts` calls `execSync` with no shell override, which defaults to `/bin/sh` — the container base image is Alpine, whose `/bin/sh` is BusyBox ash, not bash), so stick to POSIX-portable shell syntax and avoid bashisms. Any interpreter available in the base image (Python, Node, etc.) still works as the thing being invoked — it's just the wrapping shell that's `sh`, not `bash`. Skipped on warm restarts (`berth dev` hot reload) via a marker file, so editing your app's source doesn't re-run these every time.
 
 ### `on_agent_ready` (default: `[]`)
 
-Shell commands (or, more commonly, effectively-named hooks like `"register_with_context_bus"`) run after `on_install` and after your app's `onAgentReady` SDK callbacks. The actual registration happens via the SDK's `ctx.contextBus.register()` call, which talks to the real `context-bus-daemon` (Rust, one per sandbox) over a Unix socket — see the [context bus reference](./context-bus-reference.md).
+Accepted and schema-validated, but **not currently executed by the runtime.** Nothing in `packages/sdk/src/runtime.ts` or `run-lifecycle.ts` reads or runs this list today — it's reserved/vestigial: you can declare it in `berth.yml` without error, but the shell commands you list here will not actually run.
+
+Don't confuse this with the SDK's `app.onAgentReady(fn)` callback (see [`@berth/sdk` reference](./sdk-reference.md#apponagentreadyfn)), which is a completely different, real mechanism — a TypeScript callback registered in your app's code, run once your app's exports are registered and `on_install` has completed. The similar name is coincidental; only the SDK callback actually fires. If you need something to happen when your app comes up, use `app.onAgentReady(fn)`, not this manifest field.
 
 ### `expose` (default: `{ browser: true, terminal: true, preview: false }`)
 
@@ -83,7 +85,22 @@ expose:
   preview: true   # opt in to a public/reachable noVNC/ttyd URL when this app is deployed
 ```
 
-`berth deploy`/`berth fleet status` only create or print a preview URL when `preview: true` **and** the corresponding capability is declared — `preview: true` with no `browser:*`/`terminal:*` capability is a no-op, not an error, same as any other declared-but-unbacked intent elsewhere in this file. Scoped to noVNC/ttyd specifically, since both are WebSocket-based web protocols each deploy target's own port-exposure mechanism can carry; raw VNC (5900) and CDP (9222) aren't web protocols and stay local-only regardless. E2B exposes this via `sandbox.getHost(port)` (a real HTTPS reverse-proxy hostname), Daytona via `sandbox.getPreviewLink(port)` (same idea), and Kubernetes via a `Service` this adapter creates alongside the Pod, reporting the in-cluster DNS name — a real public URL there needs the cluster's own Ingress/LoadBalancer, which this adapter doesn't provision. See [Shipping to production](./shipping-to-production.md) for the full picture.
+`berth deploy`/`berth fleet status` only create or print a preview URL when `preview: true` **and** the corresponding capability is declared — `preview: true` with no `browser:*`/`terminal:*` capability is a no-op, not an error, same as any other declared-but-unbacked intent elsewhere in this file. Scoped to noVNC/ttyd specifically, since both are WebSocket-based web protocols each deploy target's own port-exposure mechanism can carry; raw VNC (5900) and CDP (9222) aren't web protocols and stay local-only regardless. E2B exposes this via `sandbox.getHost(port)` (a real HTTPS reverse-proxy hostname), Daytona via `sandbox.getPreviewLink(port)` (same idea), and Kubernetes via a `Service` this adapter creates alongside the Pod, reporting the in-cluster DNS name — a real public URL there needs the cluster's own Ingress/LoadBalancer, which this adapter doesn't provision. See the [Kubernetes adapter reference](./k8s-adapter-reference.md#how-it-maps-to-deployadapter) for the K8s case in more depth.
+
+### `governs` (default: `false`)
+
+Declares this app as the governance authority for its `Computer` — every other loaded app's tool calls get wrapped so `Computer` awaits this app's `evaluate_action` export before the real call happens, and `allowed: false` throws a `GovernanceDeniedError` instead of calling through.
+
+**Validated, not just declared.** `@berth/manifest-schema` hard-fails manifest loading if `governs: true` is set without a matching `evaluate_action` export declared in `exports:` — the same severity as the exports-must-match-code check above. At most one app per `Computer` may set `governs: true`; `Computer.boot()`/`Computer.connect()` throws at boot if more than one is loaded. See the [governance gate reference](./governance-reference.md) for the full `evaluate_action` contract, the fail-open timeout behavior, and how to build a governance app.
+
+### `governance` (default: `{ exempt: false }`)
+
+```yaml
+governance:
+  exempt: true
+```
+
+Lets an app opt out of being gated by whichever app declares `governs: true` in the same `Computer`. Only relevant when a governance app is actually loaded — with none loaded, this field has no effect. See the [governance gate reference](./governance-reference.md) for how the gate applies and its fail-open failure mode.
 
 ## Capability string grammar
 
