@@ -23,20 +23,57 @@ That gap turns into the same four problems on every team that ships an agent pas
 
 Berth exists so these four things are infrastructure you get for free, not homework every team rebuilds from scratch.
 
-## Why Berth
+## Why `@berth/agents`
 
 | | What you get |
 |---|---|
 | **One call to a working agent, instant reconnects while you iterate** | `runAgent({ apps: "apps/filesystem", task: "..." })` figures out your LLM provider on its own and cleans up after itself. No boilerplate. `berth os up` boots the sandbox once, then `connect: "<name>"` reattaches in milliseconds instead of rebuilding it on every dev loop run. |
+| **Multi-agent by default, not bolted on** | `Crew.sequential()`/`Crew.withManager()` compose agents in-process; `Crew.networked()` goes further — each peer is a full, independently-LLM-driven agent on its own Berth OS, joined over a real Docker network, not just a delegated tool call. See [Multi-agent architecture](#multi-agent-architecture). |
+| **A governance gate any app can become** | Declare `governs: true` and export `evaluate_action`, and every other app's tool calls route through your policy first — human approval, an ML classifier, whatever you want — before they execute. See [Governance and scoping](#governance-and-scoping). |
+| **Bring your own LLM, own your deploy target** | `@berth/agents` wires any LLM provider (Anthropic, OpenAI, a custom endpoint through `{provider, apiKey, baseURL}`, or your own `LLMProvider`) into a Berth OS's resident apps as tools. `berth deploy --fleet=e2b\|daytona\|k8s` ships the same sandbox definition to whatever provider you already run on. |
+
+What backs every one of those calls, in brief — full picture in [What is a Berth OS?](#what-is-a-berth-os):
+
+| | What you get |
+|---|---|
 | **Permissions that are enforced, not just requested** | Every resident app declares `namespace:action:scope` capabilities in its manifest, things like `filesystem:write:/workspace` or `browser:navigate:*.github.com`. A Landlock policy built from that manifest applies before your code even runs. An undeclared write isn't caught by a try/catch. The kernel refuses the syscall outright. |
 | **State that survives the session** | A semantic filesystem you can query by intent, not just by path, plus `berth snapshot create/restore`, means an agent's work (files, tags, context) outlives any single run. |
 | **Apps that talk to each other without you wiring it** | The context bus is pub/sub between resident apps in the same Berth OS. A filesystem app writes a file, a code editor app reacts to it. Neither one imports or calls the other. |
 | **A workspace you can actually watch, and you decide how much** | In local `berth dev`, `apps/browser-native` opens a live noVNC view of the sandboxed Chromium instance, and `apps/terminal` opens a live, typeable `ttyd` session. You're watching the real thing, not a transcript of it. Set `expose: { browser: false }` or `{ terminal: false }` in `berth.yml` to keep the capability while running headless in CI. Deployed to E2B or Daytona? Opt in with `expose: { preview: true }` and `berth deploy`/`berth fleet status` print that same live view as a real, platform-hosted URL — off by default, since a deployed fleet is potentially public-facing. On Kubernetes, that same opt-in only gets you the in-cluster DNS name; a real public URL there still needs your own Ingress/LoadBalancer. See [Resident apps](#resident-apps). |
-| **Bring your own LLM, own your deploy target** | `@berth/agents` wires any LLM provider (Anthropic, OpenAI, a custom endpoint through `{provider, apiKey, baseURL}`, or your own `LLMProvider`) into a Berth OS's resident apps as tools. `berth deploy --fleet=e2b\|daytona\|k8s` ships the same sandbox definition to whatever provider you already run on. |
+
+## Multi-agent architecture
+
+Most frameworks compose agents in-process: a manager calls a worker's function, all inside one Node process. `Crew.sequential(agents)` and `Crew.withManager({ manager, workers })` do exactly that here too — pipe outputs forward, or hand a manager one `Tool` per worker and let its own LLM decide when to delegate.
+
+`Crew.networked()` goes further, because it can: each peer is a full Berth OS with its own `Agent` and its own LLM loop, not just a function call. `bootNetworkedAgent()` boots one independent `Computer` per peer — its own resident apps, its own synthesized agent-server companion — joined to a shared Docker network. A manager `Agent` then gets one delegation `Tool` per peer, over a real network, not an in-process call:
+
+```ts
+import { Agent, Crew, createOpenAIProvider, bootNetworkedAgent } from "@berth/agents";
+
+const filer = await bootNetworkedAgent({ name: "filer", apps: ["apps/filesystem"], llm: { provider: "openai", apiKeyEnvVar: "OPENAI_API_KEY" } });
+const notetaker = await bootNetworkedAgent({ name: "notetaker", apps: ["apps/notes"], llm: { provider: "openai", apiKeyEnvVar: "OPENAI_API_KEY" } });
+
+const manager = new Agent({ name: "manager", llm: createOpenAIProvider(), tools: [] });
+const crew = Crew.networked({ manager, peers: [filer, notetaker] });
+
+const output = await crew.run("Ask notetaker to log this run, then ask filer to write the result to a file.");
+```
+
+Each peer keeps driving its own agent loop independently, on its own sandboxed computer — this is the architecture, not a demo trick, and it's why multi-agent here scales past "one process calling itself." Full API, and what's real vs. deferred today (host-mediated dispatch, a genuine container-to-container mesh as follow-up work): [docs/agents-reference.md](./docs/agents-reference.md).
+
+## Governance and scoping
+
+Capabilities (see [Available capabilities](#available-capabilities)) control what a single app can do, enforced by the kernel or a broker before the call happens. Governance controls what happens next: any app can put itself in front of every *other* app's tool calls in the same Berth OS and decide, per call, whether it's allowed to run at all.
+
+Declare `governs: true` in your `berth.yml` and export a fixed-contract `evaluate_action({ app, export, input }) -> { allowed, reason }`. Load it alongside whatever else the Computer needs, and every other app's tool calls now route through it automatically — no other wiring required. Any app can opt out with `governance: { exempt: true }`.
+
+Worth being precise about: this gates tool calls made through `Computer`/`Agent` — an LLM-driven agent's tool use. It is **not** kernel-level like Landlock's per-syscall capability enforcement, and it doesn't cover `berth rpc` or direct `invokeAppExport()` calls. It also fails open by default — if `evaluate_action` errors or times out, the call goes through rather than wedging the agent, unless your own governance app is built to fail closed. Full contract: [docs/governance-reference.md](./docs/governance-reference.md).
 
 ## How Berth fits with what you already use
 
-Berth isn't a replacement for your sandbox provider or your orchestration library — it's the layer most teams end up hand-building on top of one or both anyway: a permission boundary that's actually enforced, state that survives a run, and apps that can talk to each other without you wiring it. If you're already on E2B or Daytona directly, Berth is the app model and kernel-enforced permission layer on top. If you're using LangChain, CrewAI, or AutoGen, Berth is what you'd point them at instead of a bare subprocess or a single stateless sandbox call.
+If you're choosing an agent framework: `@berth/agents` is a real alternative to LangChain, CrewAI, or AutoGen when you want the sandbox, kernel-enforced permissions, and genuine multi-agent networking built in from the start instead of hand-wired on top later.
+
+If you're already committed to one of those: Berth OS still slots in underneath it as the same sandbox and permission substrate `@berth/agents` itself runs on — the layer most teams end up hand-building anyway (a permission boundary that's actually enforced, state that survives a run, apps that talk to each other without you wiring it). And if you're already on E2B or Daytona directly, Berth is the app model and kernel-enforced permission layer on top of that.
 
 ## Use cases
 
