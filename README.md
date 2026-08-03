@@ -85,7 +85,7 @@ Each of these is a real job people give an agent. What actually makes it shippab
 
 **An assistant that actually remembers you.** `apps/notes` gives it real persisted state instead of a context window that resets every session, and `apps/activity-feed` gives it one queryable history across everything that happened. `berth snapshot create/restore` checkpoints the whole Berth OS, files, tags, context and all, so a container restart doesn't wipe what the agent knows.
 
-**A team of agents, each scoped to only what it needs, sharing one sandbox.** Boot one shared Berth OS with `berth os up team --apps=apps/filesystem,apps/notes,apps/terminal`, then get a writer agent scoped to just `apps/filesystem` and a notetaker scoped to just `apps/notes` with `createAgent({ connect: { name: "team", apps: ["filesystem"] } })` and `createAgent({ connect: { name: "team", apps: ["notes"] } })`. One running sandbox, least privilege per agent, nothing to rebuild between runs. Want each agent driving its own LLM loop on its own computer instead of a scoped tool view of a shared one? `bootNetworkedAgent()` boots one independent Computer per peer, and `Crew.networked({ manager, peers })` lets a manager agent delegate tasks to them over a real Docker network.
+**A team of agents, each scoped to only what it needs, sharing one sandbox.** Boot one shared Berth OS with `berth os up team --apps=apps/filesystem,apps/notes,apps/terminal`, then get a writer agent scoped to just `apps/filesystem` and a notetaker scoped to just `apps/notes` with `createAgent({ connect: { name: "team", apps: ["filesystem"] } })` and `createAgent({ connect: { name: "team", apps: ["notes"] } })`. One running sandbox, least privilege per agent, nothing to rebuild between runs. Need each agent driving its own LLM loop on its own computer instead? See [Multi-agent architecture](#multi-agent-architecture).
 
 **An agent behind a real API, not a one-shot script.** [`examples/agents/agent-server`](./examples/agents/agent-server) boots once and answers `POST /task` requests against the same `Agent` for as long as the process runs. Pair it with `berth os up` and `BERTH_OS_CONNECT`, and restarting the server during development reconnects to the sandbox in milliseconds instead of rebuilding it on every code change.
 
@@ -220,9 +220,9 @@ const result = await agent.run("write a file called hello.txt with the text 'hi'
 await computer.stop();
 ```
 
-`Crew.withManager()` and `Crew.sequential()` compose multiple agents. `Crew.networked()` composes agents running on entirely separate Berth OS instances, joined over a real Docker network. Full details live in [docs/agents-reference.md](./docs/agents-reference.md).
+Composing multiple agents — in-process, or fully networked peers each on their own computer — is a first-class pattern here, not an afterthought. See [Multi-agent architecture](#multi-agent-architecture).
 
-Want an app to review every other app's tool calls before they happen, allow or deny? Any app declaring `governs: true` becomes the Computer's governance authority automatically, no first-party governance app required. See the [governance gate reference](./docs/governance-reference.md).
+Want an app to review every other app's tool calls before they happen, allow or deny? See [Governance and scoping](#governance-and-scoping).
 
 ### What is a Berth OS?
 
@@ -295,6 +295,8 @@ A few things worth knowing up front, because they'll bite you otherwise:
 ### Available capabilities
 
 The `namespace:action:scope` grammar is wide open. You can declare a capability in a namespace nobody's used before, and `requestCapability()` will honestly tell you `granted: false`, because nothing actually backs it. The table below is what has real enforcement or brokering behind it today, the full list of permissions a resident app in a Berth OS can actually be given.
+
+Looking to control what happens *after* a call is allowed, not just whether it's allowed at all? That's a different layer — see [Governance and scoping](#governance-and-scoping).
 
 | Capability | Enforced by | Notes |
 |---|---|---|
