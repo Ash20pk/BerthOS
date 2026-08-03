@@ -94,6 +94,81 @@ test("HttpBridgeComputer.deploy() brings up a real HTTP RPC bridge and dispatche
   }
 });
 
+/**
+ * Regression test for a bug where healthCheck()/dispatch() built request
+ * URLs via `new URL(path, rpcUrl)` — a path-absolute reference that drops
+ * the base's entire query string per WHATWG URL resolution. adapter-daytona's
+ * rpcUrl() deliberately carries a `DAYTONA_SANDBOX_AUTH_KEY` query param for
+ * private sandboxes (see its getAuthenticatedPreviewLink); this mock server
+ * mimics Daytona's own reverse proxy by rejecting any request missing that
+ * param, so a URL-construction regression that drops it fails loudly here
+ * instead of only in production against a real private sandbox.
+ */
+test("HttpBridgeComputer.deploy() preserves rpcUrl()'s query string on every request", async () => {
+  const port = 22000 + Math.floor(Math.random() * 5000);
+  const proxyToken = "sekrit-proxy-tok";
+
+  let server: http.Server | undefined;
+  const adapter: DeployAdapter = {
+    name: "fake-with-proxy-auth",
+    async upload(_target: DeployTarget) {
+      return { remoteImageRef: "fake-image" };
+    },
+    async start(_remoteImageRef: string, target: DeployTarget) {
+      const authToken = target.env!.BERTH_HTTP_RPC_TOKEN!;
+
+      server = http.createServer((req, res) => {
+        const url = new URL(req.url!, "http://127.0.0.1");
+        if (url.searchParams.get("DAYTONA_SANDBOX_AUTH_KEY") !== proxyToken) {
+          res.writeHead(403).end(JSON.stringify({ error: "missing/invalid proxy auth query param" }));
+          return;
+        }
+        if (url.pathname === "/healthz") {
+          res.writeHead(200).end(JSON.stringify({ ok: true }));
+          return;
+        }
+        if (req.headers.authorization !== `Bearer ${authToken}`) {
+          res.writeHead(401).end(JSON.stringify({ error: "unauthorized" }));
+          return;
+        }
+        let body = "";
+        req.on("data", (chunk) => (body += chunk));
+        req.on("end", () => {
+          const { id, export: exportName, input } = JSON.parse(body);
+          const result = exportName === "greet" ? `hello ${(input as { name: string }).name}` : undefined;
+          res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(result !== undefined ? { id, result } : { id, error: `no such export "${exportName}"` }));
+        });
+      });
+      await new Promise<void>((resolve) => server!.listen(port, "127.0.0.1", resolve));
+
+      const handle: DeployHandle = {
+        id: "fake-1",
+        status: async () => "running",
+        streamLogs: async function* () {},
+        stop: async () => {
+          await new Promise((resolve) => server!.close(resolve));
+        },
+      };
+      return handle;
+    },
+    async teardown(handle: DeployHandle) {
+      await handle.stop();
+    },
+    async rpcUrl(_handle: DeployHandle, rpcPort: number) {
+      return `http://127.0.0.1:${rpcPort}/?DAYTONA_SANDBOX_AUTH_KEY=${proxyToken}`;
+    },
+  };
+
+  const computer = await HttpBridgeComputer.deploy({ adapter, port, imageRef: "fake-image", manifest, apps });
+
+  try {
+    const result = await computer.call("greet", { name: "world" });
+    assert.equal(result, "hello world");
+  } finally {
+    await computer.stop();
+  }
+});
+
 test("HttpBridgeComputer.deploy() throws if the adapter doesn't support rpcUrl()", async () => {
   const adapter: DeployAdapter = {
     name: "no-rpc-url",

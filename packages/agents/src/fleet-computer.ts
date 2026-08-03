@@ -118,14 +118,30 @@ async function bringUpRpcBridge(
   return rpcUrl;
 }
 
+/**
+ * `new URL(path, rpcUrl)` looks equivalent but isn't: a path-absolute
+ * reference like "/healthz" replaces the base's entire path *and* query
+ * string per WHATWG URL resolution. adapter-daytona's rpcUrl() deliberately
+ * appends a `DAYTONA_SANDBOX_AUTH_KEY` query param for private sandboxes
+ * (see its getAuthenticatedPreviewLink) — resolving against it that way
+ * silently drops the token before the request ever goes out, so build the
+ * request URL by mutating a parsed copy's pathname instead, which preserves
+ * the base's search string.
+ */
+function withPath(rpcUrl: string, pathname: string): URL {
+  const url = new URL(rpcUrl);
+  url.pathname = pathname;
+  return url;
+}
+
 async function healthCheck(rpcUrl: string, authToken: string): Promise<void> {
-  const res = await fetch(new URL("/healthz", rpcUrl), { headers: { authorization: `Bearer ${authToken}` } });
+  const res = await fetch(withPath(rpcUrl, "/healthz"), { headers: { authorization: `Bearer ${authToken}` } });
   if (!res.ok) throw new Error(`healthz check against ${rpcUrl} returned ${res.status}`);
 }
 
 async function dispatch(rpcUrl: string, authToken: string, exportName: string, input: unknown): Promise<unknown> {
   const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const res = await fetch(new URL("/rpc", rpcUrl), {
+  const res = await fetch(withPath(rpcUrl, "/rpc"), {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${authToken}` },
     body: JSON.stringify({ id, export: exportName, input }),
