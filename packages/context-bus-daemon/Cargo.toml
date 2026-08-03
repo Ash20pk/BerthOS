@@ -8,7 +8,7 @@ name = "context-bus-daemon"
 path = "src/main.rs"
 
 [dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "sync", "macros", "signal"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "sync", "macros", "signal", "time"] }
 prost = "0.14"
 bytes = "1"
 

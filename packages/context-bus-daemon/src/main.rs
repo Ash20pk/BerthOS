@@ -77,14 +77,9 @@ async fn main() -> std::io::Result<()> {
         let conn_id = next_conn_id.fetch_add(1, Ordering::SeqCst);
 
         tokio::spawn(async move {
-            if let Err(err) = handle_connection(stream, conn_id, subscribers.clone()).await {
+            if let Err(err) = handle_connection(stream, conn_id, subscribers).await {
                 eprintln!("[context-bus] connection {conn_id} error: {err}");
             }
-            let mut subs = subscribers.lock().await;
-            for topic_subs in subs.values_mut() {
-                topic_subs.remove(&conn_id);
-            }
-            subs.retain(|_, v| !v.is_empty());
         });
     }
 }
@@ -172,6 +167,26 @@ async fn handle_connection(stream: UnixStream, conn_id: u64, subscribers: Subscr
         }
     }
 
+    // Remove every Sender clone this connection stashed in `subscribers` (one
+    // per topic it subscribed to) *before* dropping our own `tx` and waiting
+    // on the writer task below — otherwise this is a circular wait: the
+    // writer's `rx.recv()` only returns `None` once every clone of `tx` is
+    // dropped, but the clones held in `subscribers` were only ever removed by
+    // cleanup code that used to run in main()'s spawned task *after*
+    // handle_connection() returned — which can't happen until `writer.await`
+    // resolves. Nothing broke that cycle except a subsequent publish to one
+    // of this connection's topics failing to write to the now-closed socket,
+    // which is what let the writer's loop `break` from the outside. Doing
+    // the removal here — before drop(tx)/writer.await — breaks the cycle
+    // directly instead of waiting on an unrelated future event.
+    {
+        let mut subs = subscribers.lock().await;
+        for topic_subs in subs.values_mut() {
+            topic_subs.remove(&conn_id);
+        }
+        subs.retain(|_, v| !v.is_empty());
+    }
+
     drop(tx);
     let _ = writer.await;
     Ok(())
@@ -209,4 +224,81 @@ async fn write_frame(writer: &mut (impl AsyncWrite + Unpin), bytes: &[u8]) -> st
     writer.write_all(&len).await?;
     writer.write_all(bytes).await?;
     writer.flush().await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pb::SubscribeRequest;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    /// `std::env::temp_dir()` (e.g. macOS's `/var/folders/.../T/`) plus a
+    /// descriptive name easily blows past AF_UNIX's ~100-byte `sun_path`
+    /// limit — using `/tmp` directly (short on every platform this runs on)
+    /// and just the low bits of a nanosecond timestamp keeps this well
+    /// under it while still being unique per test run.
+    fn unique_socket_path(label: &str) -> std::path::PathBuf {
+        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() as u64;
+        std::path::PathBuf::from(format!("/tmp/cb-{label}-{nanos}.sock"))
+    }
+
+    async fn write_envelope(stream: &mut UnixStream, kind: Kind) {
+        let envelope = Envelope { kind: Some(kind) };
+        let mut buf = Vec::new();
+        envelope.encode(&mut buf).unwrap();
+        write_frame(stream, &buf).await.unwrap();
+    }
+
+    /// Regression test for the fix: a connection that subscribes and then
+    /// disconnects (no unsubscribe, and — crucially — no *subsequent*
+    /// publish from anyone) used to leak its Sender clone in `subscribers`
+    /// forever. Cleanup only ran in main()'s spawned task after
+    /// handle_connection() returned, which couldn't happen until the writer
+    /// task's `rx.recv()` saw every clone of `tx` dropped — a circular wait
+    /// only ever broken from the outside, by some future publish attempt
+    /// failing to write to the now-dead socket. This drives real
+    /// connections through a real listener/handle_connection() and asserts
+    /// the map is already empty, with no publish ever sent by anyone.
+    #[tokio::test]
+    async fn subscriber_cleanup_does_not_require_a_subsequent_publish() {
+        let socket_path = unique_socket_path("cleanup");
+        let _ = std::fs::remove_file(&socket_path);
+        let listener = UnixListener::bind(&socket_path).unwrap();
+
+        let subscribers: Subscribers = Arc::new(Mutex::new(HashMap::new()));
+        let next_conn_id = Arc::new(AtomicU64::new(1));
+
+        let accept_subscribers = subscribers.clone();
+        let accept_task = tokio::spawn(async move {
+            loop {
+                let (stream, _addr) = match listener.accept().await {
+                    Ok(v) => v,
+                    Err(_) => break,
+                };
+                let subscribers = accept_subscribers.clone();
+                let conn_id = next_conn_id.fetch_add(1, Ordering::SeqCst);
+                tokio::spawn(async move {
+                    let _ = handle_connection(stream, conn_id, subscribers).await;
+                });
+            }
+        });
+
+        for _ in 0..20 {
+            let mut client = UnixStream::connect(&socket_path).await.unwrap();
+            write_envelope(&mut client, Kind::Subscribe(SubscribeRequest { topic: "some-topic".to_string() })).await;
+            drop(client); // disconnect immediately — no unsubscribe, no publish from anyone, ever
+        }
+
+        // Give the spawned handler tasks a moment to observe EOF and run
+        // their cleanup tail.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let subs = subscribers.lock().await;
+        let remaining: usize = subs.values().map(|m| m.len()).sum();
+        assert_eq!(remaining, 0, "every disconnected subscriber should have been cleaned up without needing a subsequent publish");
+        drop(subs);
+
+        accept_task.abort();
+        let _ = std::fs::remove_file(&socket_path);
+    }
 }
