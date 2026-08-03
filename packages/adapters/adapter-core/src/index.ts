@@ -97,4 +97,18 @@ export interface DeployAdapter {
    * raw VNC/CDP have no equivalent and stay local-only regardless.
    */
   previewUrl?(handle: DeployHandle, port: number): Promise<string | null>;
+  /**
+   * A reachable URL for this instance's HTTP RPC bridge (see @berth/sdk's
+   * startHttpRpcServer / BERTH_HTTP_RPC_PORT), used by @berth/agents's
+   * bootNetworkedAgent({fleet}) to dispatch tool calls to a peer deployed to
+   * this provider instead of a local Docker container. Deliberately
+   * separate from previewUrl(): that one is a human-facing, opt-in-via-
+   * berth.yml capability (noVNC/ttyd); this one is only ever requested when
+   * bootNetworkedAgent({fleet}) itself deployed through this adapter, and
+   * the URL it returns is meant to carry its own bearer-token auth (see each
+   * adapter's implementation) rather than being a bare, unauthenticated
+   * endpoint. `null` means the same thing previewUrl()'s null does:
+   * supported in principle, not available for this instance/port right now.
+   */
+  rpcUrl?(handle: DeployHandle, port: number): Promise<string | null>;
 }
