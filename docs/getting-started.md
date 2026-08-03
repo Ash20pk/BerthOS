@@ -11,8 +11,8 @@ This walkthrough takes you from a clean checkout to a working resident app with 
 ## 1. Install and build
 
 ```bash
-git clone <this-repo>
-cd agentOS
+git clone https://github.com/Ash20pk/BerthOS
+cd BerthOS
 corepack enable
 pnpm install
 pnpm build
@@ -53,7 +53,7 @@ Call an export (through `berth rpc`, or the MCP bridge, see [mcp-bridge-referenc
 ## 4. Run the browser-native example (with a live VNC view)
 
 ```bash
-cd examples/../../apps/browser-native
+cd ../browser-native
 pnpm exec berth dev
 ```
 

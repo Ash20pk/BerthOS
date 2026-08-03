@@ -67,8 +67,8 @@ Convinced, or just curious? Let's get something running.
 ### Install and build
 
 ```bash
-git clone <this-repo>
-cd agentOS
+git clone https://github.com/Ash20pk/BerthOS
+cd BerthOS
 corepack enable
 pnpm install
 pnpm build
