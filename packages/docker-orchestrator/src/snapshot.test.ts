@@ -8,7 +8,8 @@ import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import tarFs from "tar-fs";
 import type Docker from "dockerode";
-import { restoreSnapshot } from "./snapshot.js";
+import type { BerthManifest } from "@berth/manifest-schema";
+import { restoreSnapshot, createSnapshot } from "./snapshot.js";
 
 /**
  * Builds a snapshot directory on disk with the same shape createSnapshot()
@@ -100,4 +101,72 @@ test("restoreSnapshot() returns the metadata/manifest/env captured at snapshot t
   assert.equal(restored.metadata.imageTag, "berth-snapshot-fixture-app:fixture-id");
   assert.deepEqual(restored.manifest, { name: "fixture-app" });
   assert.deepEqual(restored.env, {});
+});
+
+function emptyReadable(): Readable {
+  const stream = new Readable();
+  stream.push(null);
+  return stream;
+}
+
+function fakeContainer(): Docker.Container {
+  return {
+    commit: async () => {},
+    getArchive: async () => emptyReadable(),
+  } as unknown as Docker.Container;
+}
+
+/**
+ * Regression test for the bug: createSnapshot() committed a real Docker
+ * image (container.commit()) and streamed it out to image.tar, but never
+ * removed the committed image from the local daemon's image store —
+ * restoreSnapshot() reloads from image.tar independently and never reuses
+ * it, so every `berth snapshot create` left a permanent, ever-growing image
+ * behind in `docker images`.
+ */
+test("createSnapshot() removes the committed image from the local Docker daemon after exporting it", async () => {
+  const snapshotsDir = await mkdtemp(join(tmpdir(), "berth-snapshot-create-test-"));
+  const removedImageTags: string[] = [];
+  const docker = {
+    getImage: (imageTag: string) => ({
+      get: async () => emptyReadable(),
+      remove: async () => {
+        removedImageTags.push(imageTag);
+      },
+    }),
+  } as unknown as Docker;
+
+  const { id, dir } = await createSnapshot({
+    container: fakeContainer(),
+    appName: "fixture-app",
+    manifest: { name: "fixture-app" } as unknown as BerthManifest,
+    snapshotsDir,
+    docker,
+  });
+
+  assert.deepEqual(removedImageTags, [`berth-snapshot-fixture-app:${id}`]);
+  // image.tar (the durable artifact) still exists even though the live image was cleaned up.
+  await assert.doesNotReject(readFile(join(dir, "image.tar")));
+});
+
+test("createSnapshot() still succeeds even if removing the committed image fails", async () => {
+  const snapshotsDir = await mkdtemp(join(tmpdir(), "berth-snapshot-create-test-"));
+  const docker = {
+    getImage: () => ({
+      get: async () => emptyReadable(),
+      remove: async () => {
+        throw new Error("image is in use by a running container");
+      },
+    }),
+  } as unknown as Docker;
+
+  const result = await createSnapshot({
+    container: fakeContainer(),
+    appName: "fixture-app",
+    manifest: { name: "fixture-app" } as unknown as BerthManifest,
+    snapshotsDir,
+    docker,
+  });
+
+  assert.ok(result.id);
 });
