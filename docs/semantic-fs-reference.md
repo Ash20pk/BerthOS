@@ -1,10 +1,10 @@
 # Semantic Filesystem Reference (Phase 4)
 
-Phase 4 gives resident apps a filesystem that carries queryable metadata about *why* a file exists — `created_by`, `task`, `related_apps` — and a query API to find files by intent ("find files related to the auth bug") rather than by path. Per the PRD, this is a userspace primitive on a stock kernel, with **no dependency on Phase 3**.
+Phase 4 gives resident apps a filesystem that carries queryable metadata about *why* a file exists — `created_by`, `task`, `related_apps` — and a query API to find files by intent ("find files related to the auth bug") rather than by path. This is a userspace primitive on a stock kernel, with **no dependency on Phase 3**.
 
 ## Architecture
 
-`semantic-fs-daemon` (`packages/semantic-fs-daemon`, Go) mounts a FUSE filesystem at `$BERTH_CONTEXT_MOUNT` (default `/context`), backed by a real directory (`$BERTH_CONTEXT_DATA`, default `/var/berth/context-data`). Every read/write through `/context` is forwarded verbatim to that backing directory — resident apps see ordinary POSIX semantics — while every write also updates a SQLite sidecar index (`$BERTH_CONTEXT_INDEX_DB`) keyed by path.
+`semantic-fs-daemon` (`packages/semantic-fs-daemon`, Go) mounts a FUSE filesystem at `$BERTH_CONTEXT_MOUNT` (default `/context`), backed by a real directory (`$BERTH_CONTEXT_DATA`, default `/var/berth/context-data`). Every read/write through `/context` is forwarded verbatim to that backing directory — resident apps see ordinary POSIX semantics — while every write also updates a SQLite sidecar index (`$BERTH_CONTEXT_INDEX_DB`, default `/var/berth/context-index.db`) keyed by path.
 
 ```
 resident app ──┐
@@ -17,7 +17,9 @@ resident app ──┐
   register/tag/query ───┘  (Unix control socket, length-prefixed JSON)
 ```
 
-A sidecar SQLite index was chosen over real extended attributes (the PRD's other suggested option): xattrs would round-trip through FUSE's getxattr/setxattr on every access, and the actual deliverable — a query API — needs SQL regardless of where the raw values live. `modernc.org/sqlite` (pure Go, no cgo) keeps the daemon a single static binary, cross-compiled the same way `agent-init` and `context-bus-daemon`'s Rust binaries are, via its own Docker builder stage in `base.Dockerfile`.
+The control socket path is `$BERTH_SEMANTIC_FS_SOCKET` (default `/tmp/berth-semantic-fs.sock`) — the semantic-fs equivalent of the context bus's `$BERTH_CONTEXT_BUS_SOCKET` (see [Context Bus Reference](./context-bus-reference.md)).
+
+A sidecar SQLite index was chosen over real extended attributes (the other option considered): xattrs would round-trip through FUSE's getxattr/setxattr on every access, and the actual deliverable — a query API — needs SQL regardless of where the raw values live. `modernc.org/sqlite` (pure Go, no cgo) keeps the daemon a single static binary, cross-compiled the same way `agent-init` and `context-bus-daemon`'s Rust binaries are, via its own Docker builder stage in `base.Dockerfile`.
 
 **`created_by` is inferred automatically**, not declared: every FUSE request carries the calling process's pid, and the daemon maps pid → app name via a registry populated by `ctx.semanticFs.register({app})` (called once, in `onAgentReady` — the same pattern as `ctx.contextBus.register()`). A resident app gets attribution for free just by writing through `/context`.
 
@@ -78,7 +80,7 @@ External consumers of `@berth/sdk` (via `berth init --registry=<url>`) don't inh
 
 ## Verification status
 
-**Fully verified in this dev environment** — unlike Phase 3's Landlock gap, FUSE-in-Docker-Desktop-for-Mac works end-to-end: confirmed via a standalone mount test (`/dev/fuse` present, `fusermount3` present, a real `bazil.org/fuse` mount serves reads) and via `packages/docker-orchestrator/test/semantic-fs-milestone.mjs`, which builds the real image, starts a real container with `--device /dev/fuse --cap-add SYS_ADMIN`, writes and tags fixtures through the actual FUSE mount, and asserts query correctness against the real daemon (not a mock) — including a purely-semantic match (zero keyword overlap with the query) that v0's keyword-only ranker would have silently dropped, confirming the embedding half of the hybrid ranking is actually running inside Alpine, not silently falling back.
+**Fully verified in this dev environment** — unlike Phase 3's Landlock gap (see [Capability Tokens Reference](./capability-tokens-reference.md)), FUSE-in-Docker-Desktop-for-Mac works end-to-end: confirmed via a standalone mount test (`/dev/fuse` present, `fusermount3` present, a real `bazil.org/fuse` mount serves reads) and via `packages/docker-orchestrator/test/semantic-fs-milestone.mjs`, which builds the real image, starts a real container with `--device /dev/fuse --cap-add SYS_ADMIN`, writes and tags fixtures through the actual FUSE mount, and asserts query correctness against the real daemon (not a mock) — including a purely-semantic match (zero keyword overlap with the query) that v0's keyword-only ranker would have silently dropped, confirming the embedding half of the hybrid ranking is actually running inside Alpine, not silently falling back.
 
 ## Running it yourself
 
