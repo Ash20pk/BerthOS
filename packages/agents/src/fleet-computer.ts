@@ -65,7 +65,7 @@ export class HttpBridgeComputer implements ComputerHandle {
     try {
       const rpcUrl = await bringUpRpcBridge(options.adapter, handle, options.port, authToken, options.readyTimeoutMs ?? READY_RETRY_CEILING_MS);
       const call = (_appName: string, exportName: string, input: unknown) => dispatch(rpcUrl, authToken, exportName, input);
-      const tools = applyGovernanceGate(options.apps, computerToolsFor(options.apps, call));
+      const tools = applyGovernanceGate(options.apps, options.apps, computerToolsFor(options.apps, call), call);
       return new HttpBridgeComputer(options.adapter, handle, tools);
     } catch (err) {
       await options.adapter.teardown(handle).catch(() => {});
