@@ -61,6 +61,8 @@ const output = await crew.run("Ask notetaker to log this run, then ask filer to 
 
 Each peer keeps driving its own agent loop independently, on its own sandboxed computer — this is the architecture, not a demo trick, and it's why multi-agent here scales past "one process calling itself." Full API, and what's real vs. deferred today (host-mediated dispatch, a genuine container-to-container mesh as follow-up work): [docs/agents-reference.md](./docs/agents-reference.md).
 
+Peers don't have to be local either. `bootNetworkedAgent({ fleet: { adapter, port } })` deploys a peer to a remote E2B/Daytona/K8s instance instead of a local Docker container, and `Crew.networked()` dispatches to it the same way — over a per-boot-authenticated HTTP RPC bridge instead of the Docker network. See [docs/agents-reference.md](./docs/agents-reference.md#networked-crew-over-a-remote-fleet-e2b-daytona-k8s) for what's verified end-to-end versus reasoned-but-not-live-tested.
+
 ## Governance and scoping
 
 Capabilities (see [Available capabilities](#available-capabilities)) control what a single app can do, enforced by the kernel or a broker before the call happens. Governance controls what happens next: any app can put itself in front of every *other* app's tool calls in the same Berth OS and decide, per call, whether it's allowed to run at all.
