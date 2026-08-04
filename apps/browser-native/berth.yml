@@ -25,6 +25,9 @@ exports:
     input: { selector: string }
   - name: get_page_text
     output: { text: string }
+  - name: search
+    input: { query: string, maxResults: number }
+    output: { results: array }
 
 on_install: []
 on_agent_ready:
