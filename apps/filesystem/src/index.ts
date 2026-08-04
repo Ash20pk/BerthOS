@@ -61,6 +61,15 @@ export default defineApp((app) => {
   });
 
   app.export({
+    name: "read_context_file",
+    input: z.object({ path: z.string() }),
+    output: z.object({ content: z.string() }),
+    handler: async ({ path: relativePath }) => ({
+      content: await readFile(resolveInContext(relativePath), "utf-8"),
+    }),
+  });
+
+  app.export({
     name: "tag_context_file",
     input: z.object({ path: z.string(), task: z.string(), relatedApps: z.array(z.string()) }),
     handler: async ({ path: relativePath, task, relatedApps }) => {

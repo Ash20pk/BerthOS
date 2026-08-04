@@ -17,6 +17,9 @@ exports:
     output: { files: array }
   - name: write_context_file
     input: { path: string, content: string }
+  - name: read_context_file
+    input: { path: string }
+    output: { content: string }
   - name: tag_context_file
     input: { path: string, task: string, relatedApps: array }
   - name: query_context

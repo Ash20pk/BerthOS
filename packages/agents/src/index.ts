@@ -13,6 +13,7 @@ export {
   type RunAgentOptions,
 } from "./agent.js";
 export { Crew, type CrewRun } from "./crew.js";
+export { createSemanticFsCheckpointStore, type CheckpointStore, type CheckpointedRun } from "./checkpoint.js";
 export {
   generateAgentServerApp,
   bootNetworkedAgent,
