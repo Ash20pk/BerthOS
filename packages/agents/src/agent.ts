@@ -1,8 +1,10 @@
+import type { z } from "zod";
 import { Computer, type BootComputerOptions, type ConnectComputerOptions } from "./computer.js";
 import { resolveLLMProvider, type LLMProviderConfig } from "./providers/auto.js";
 import { createSemanticFsCheckpointStore, type CheckpointedRun, type CheckpointStore } from "./checkpoint.js";
 import { createAgentTracer, type StepTracer } from "./tracing.js";
 import { applyHumanApprovalGate, type HumanApprovalGateOptions } from "./approval.js";
+import { parseStructuredOutput, structuredOutputRepairPrompt, StructuredOutputError } from "./structured-output.js";
 import { createSemanticFsRetriever, type Retriever } from "./retrieval.js";
 import type { AgentMessage, LLMProvider, Tool } from "./types.js";
 
@@ -34,7 +36,24 @@ export interface AgentRunResult {
   toolCalls: { name: string; input: unknown; result: unknown }[];
 }
 
+/** Extra options accepted by run()/resume() for the response-schema repair loop. See structured-output.ts. */
+export interface StructuredOutputRunOptions<T> {
+  /**
+   * When set, a final turn (no tool calls) has its text parsed as JSON and
+   * validated against this schema before run()/resume() returns. On failure,
+   * the model gets the parse/validation error back as a fresh user turn and
+   * another chance to respond — up to `maxRepairAttempts` (default 2) — the
+   * same "feed the failure back to the model" shape gap #2's tool-error
+   * handling already uses, applied to the agent's own final answer instead
+   * of a tool call. Exceeding the repair budget throws StructuredOutputError
+   * rather than returning invalid data silently.
+   */
+  responseSchema?: z.ZodType<T>;
+  maxRepairAttempts?: number;
+}
+
 const DEFAULT_MAX_TURNS = 25;
+const DEFAULT_MAX_REPAIR_ATTEMPTS = 2;
 
 /**
  * The provider-agnostic tool-use loop: identical regardless of which
@@ -60,8 +79,11 @@ export class Agent {
     this.tracer = options.trace;
   }
 
-  async run(input: string, opts: { runId?: string; onText?: (delta: string) => void } = {}): Promise<AgentRunResult> {
-    return this.loop([{ role: "user", text: input }], [], 0, opts.runId, opts.onText);
+  async run<T = never>(
+    input: string,
+    opts: { runId?: string; onText?: (delta: string) => void } & StructuredOutputRunOptions<T> = {},
+  ): Promise<AgentRunResult & { data?: T }> {
+    return this.loop([{ role: "user", text: input }], [], 0, opts.runId, opts.onText, opts.responseSchema, opts.maxRepairAttempts);
   }
 
   /**
@@ -74,7 +96,10 @@ export class Agent {
    * prior progress reachable from a process that doesn't share any memory
    * with the one that made it.
    */
-  async resume(runId: string, opts: { onText?: (delta: string) => void } = {}): Promise<AgentRunResult> {
+  async resume<T = never>(
+    runId: string,
+    opts: { onText?: (delta: string) => void } & StructuredOutputRunOptions<T> = {},
+  ): Promise<AgentRunResult & { data?: T }> {
     if (!this.checkpointStore) {
       throw new Error(`Agent "${this.name}" has no checkpoint store configured — pass { checkpoint } when constructing it to resume a run`);
     }
@@ -85,18 +110,21 @@ export class Agent {
     if (checkpoint.status === "done") {
       return { text: checkpoint.text ?? "", toolCalls: checkpoint.toolCalls };
     }
-    return this.loop(checkpoint.messages, checkpoint.toolCalls, checkpoint.turnCount, runId, opts.onText);
+    return this.loop(checkpoint.messages, checkpoint.toolCalls, checkpoint.turnCount, runId, opts.onText, opts.responseSchema, opts.maxRepairAttempts);
   }
 
-  private async loop(
+  private async loop<T = never>(
     initialMessages: AgentMessage[],
     initialExecuted: AgentRunResult["toolCalls"],
     startTurn: number,
     runId: string | undefined,
     onText: ((delta: string) => void) | undefined,
-  ): Promise<AgentRunResult> {
+    responseSchema?: z.ZodType<T>,
+    maxRepairAttempts = DEFAULT_MAX_REPAIR_ATTEMPTS,
+  ): Promise<AgentRunResult & { data?: T }> {
     const messages = [...initialMessages];
     const executed = [...initialExecuted];
+    let repairAttempts = 0;
 
     const checkpoint = async (turnCount: number, status: CheckpointedRun["status"], text?: string) => {
       if (!this.checkpointStore || !runId) return;
@@ -129,6 +157,29 @@ export class Agent {
 
       if (turn.toolCalls.length === 0) {
         const text = turn.text ?? "";
+
+        if (responseSchema) {
+          const parsed = parseStructuredOutput(text, responseSchema);
+          if (parsed.success) {
+            await checkpoint(turnCount, "done", text);
+            return { text, toolCalls: executed, data: parsed.data };
+          }
+
+          if (repairAttempts >= maxRepairAttempts) {
+            await checkpoint(turnCount, "error", text);
+            throw new StructuredOutputError(
+              `Agent "${this.name}" failed to produce output matching responseSchema after ${maxRepairAttempts} repair attempt(s): ${parsed.error}`,
+              text,
+            );
+          }
+
+          repairAttempts++;
+          messages.push({ role: "assistant", text });
+          messages.push({ role: "user", text: structuredOutputRepairPrompt(parsed.error) });
+          await checkpoint(turnCount + 1, "running");
+          continue;
+        }
+
         await checkpoint(turnCount, "done", text);
         return { text, toolCalls: executed };
       }
@@ -338,7 +389,7 @@ export async function createAgent(options: CreateAgentOptions): Promise<{ agent:
   return { agent, computer };
 }
 
-export interface RunAgentOptions extends Omit<CreateAgentOptions, "computer"> {
+export interface RunAgentOptions<T = never> extends Omit<CreateAgentOptions, "computer">, StructuredOutputRunOptions<T> {
   /** The task to hand the agent. */
   task: string;
   /**
@@ -373,11 +424,11 @@ export interface RunAgentOptions extends Omit<CreateAgentOptions, "computer"> {
  * down/disconnect) — reusing one Computer across several calls needs
  * `createAgent({ computer })` instead, with `stop()` left to you.
  */
-export async function runAgent(options: RunAgentOptions): Promise<AgentRunResult> {
-  const { task, runId, onText, ...createOptions } = options;
+export async function runAgent<T = never>(options: RunAgentOptions<T>): Promise<AgentRunResult & { data?: T }> {
+  const { task, runId, onText, responseSchema, maxRepairAttempts, ...createOptions } = options;
   const { agent, computer } = await createAgent(createOptions);
   try {
-    return await agent.run(task, { runId, onText });
+    return await agent.run(task, { runId, onText, responseSchema, maxRepairAttempts });
   } finally {
     await computer.stop();
   }

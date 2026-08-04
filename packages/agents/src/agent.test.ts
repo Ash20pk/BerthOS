@@ -1,8 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { z } from "zod";
 import { Agent } from "./agent.js";
 import type { CheckpointedRun, CheckpointStore } from "./checkpoint.js";
 import type { AgentStepEvent, StepTracer } from "./tracing.js";
+import { StructuredOutputError } from "./structured-output.js";
 import type { LLMProvider, LLMTurn, Tool } from "./types.js";
 
 function scriptedLLM(turns: LLMTurn[]): { llm: LLMProvider; callCount: () => number } {
@@ -335,4 +337,81 @@ test("resume() with onText streams the remaining turns after a checkpointed cras
   assert.deepEqual(seen, ["fin", "ished"]);
   assert.equal(result.text, "finished");
   assert.equal(chatStreamCallCount(), 1);
+});
+
+const personSchema = z.object({ name: z.string(), age: z.number() });
+
+test("run() with a responseSchema returns parsed data when the first attempt already matches", async () => {
+  const { llm, callCount } = scriptedLLM([{ text: '{"name": "ash", "age": 5}', toolCalls: [], stop: true }]);
+  const agent = new Agent({ llm, tools: [] });
+
+  const result = await agent.run("describe ash", { responseSchema: personSchema });
+
+  assert.equal(callCount(), 1, "a valid first attempt needs no repair turn");
+  assert.deepEqual(result.data, { name: "ash", age: 5 });
+  assert.equal(result.text, '{"name": "ash", "age": 5}');
+});
+
+test("run() with a responseSchema feeds a repair prompt back to the model and succeeds on retry", async () => {
+  const { llm, callCount } = scriptedLLM([
+    { text: "not json at all", toolCalls: [], stop: true },
+    { text: '{"name": "ash", "age": 5}', toolCalls: [], stop: true },
+  ]);
+  const agent = new Agent({ llm, tools: [] });
+
+  const result = await agent.run("describe ash", { responseSchema: personSchema });
+
+  assert.equal(callCount(), 2, "one initial attempt, one after the repair prompt");
+  assert.deepEqual(result.data, { name: "ash", age: 5 });
+});
+
+test("run() with a responseSchema throws StructuredOutputError once maxRepairAttempts is exhausted", async () => {
+  const { llm, callCount } = scriptedLLM([
+    { text: "still not json", toolCalls: [], stop: true },
+    { text: "still not json either", toolCalls: [], stop: true },
+  ]);
+  const agent = new Agent({ llm, tools: [] });
+
+  await assert.rejects(
+    () => agent.run("describe ash", { responseSchema: personSchema, maxRepairAttempts: 1 }),
+    (err: unknown) => {
+      assert.ok(err instanceof StructuredOutputError);
+      assert.equal(err.rawText, "still not json either");
+      return true;
+    },
+  );
+  assert.equal(callCount(), 2, "one initial attempt, one repair attempt, then give up");
+});
+
+test("run() with a responseSchema doesn't apply schema validation to intermediate tool-call turns", async () => {
+  const { llm, callCount } = scriptedLLM([
+    { toolCalls: [{ id: "1", name: "search", input: {} }], stop: false },
+    { text: '{"name": "ash", "age": 5}', toolCalls: [], stop: true },
+  ]);
+  const agent = new Agent({ llm, tools: [echoTool("search")] });
+
+  const result = await agent.run("describe ash", { responseSchema: personSchema });
+
+  assert.equal(callCount(), 2);
+  assert.deepEqual(result.data, { name: "ash", age: 5 });
+  assert.equal(result.toolCalls.length, 1);
+});
+
+test("resume() with a responseSchema still validates the final answer after picking the loop back up", async () => {
+  const checkpoint = memoryCheckpointStore();
+  await checkpoint.save({
+    runId: "run-g",
+    agentName: "agent",
+    status: "running",
+    turnCount: 1,
+    messages: [{ role: "user", text: "describe ash" }],
+    toolCalls: [],
+  });
+
+  const { llm } = scriptedLLM([{ text: '{"name": "ash", "age": 5}', toolCalls: [], stop: true }]);
+  const agent = new Agent({ llm, tools: [], checkpoint });
+
+  const result = await agent.resume("run-g", { responseSchema: personSchema });
+
+  assert.deepEqual(result.data, { name: "ash", age: 5 });
 });
