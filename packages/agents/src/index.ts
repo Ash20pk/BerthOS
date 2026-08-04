@@ -24,6 +24,20 @@ export {
   type StructuredOutputResult,
 } from "./structured-output.js";
 export {
+  runEvalSuite,
+  containsText,
+  matchesPattern,
+  calledTool,
+  llmJudge,
+  type EvalRunnable,
+  type EvalAssertion,
+  type EvalAssertionResult,
+  type EvalCase,
+  type EvalCaseResult,
+  type EvalSuiteResult,
+  type LlmJudgeOptions,
+} from "./eval.js";
+export {
   createAgentTracer,
   createContextBusStepTracer,
   createSemanticFsStepTracer,
