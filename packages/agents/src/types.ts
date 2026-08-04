@@ -35,4 +35,16 @@ export interface LLMTurn {
 export interface LLMProvider {
   readonly name: string;
   chat(params: { system?: string; messages: AgentMessage[]; tools: Tool[] }): Promise<LLMTurn>;
+  /**
+   * Same request/response contract as chat(), but calls onText(delta) for
+   * each chunk of assistant text as the model produces it, instead of only
+   * returning the full text once the turn is complete. Optional: a provider
+   * that doesn't implement this can still drive an Agent exactly as before —
+   * Agent.run()/resume() fall back to chat() when it's absent, simply
+   * without incremental text events.
+   */
+  chatStream?(
+    params: { system?: string; messages: AgentMessage[]; tools: Tool[] },
+    onText: (delta: string) => void,
+  ): Promise<LLMTurn>;
 }

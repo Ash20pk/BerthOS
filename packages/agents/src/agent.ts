@@ -48,8 +48,8 @@ export class Agent {
     this.checkpointStore = options.checkpoint;
   }
 
-  async run(input: string, opts: { runId?: string } = {}): Promise<AgentRunResult> {
-    return this.loop([{ role: "user", text: input }], [], 0, opts.runId);
+  async run(input: string, opts: { runId?: string; onText?: (delta: string) => void } = {}): Promise<AgentRunResult> {
+    return this.loop([{ role: "user", text: input }], [], 0, opts.runId, opts.onText);
   }
 
   /**
@@ -62,7 +62,7 @@ export class Agent {
    * prior progress reachable from a process that doesn't share any memory
    * with the one that made it.
    */
-  async resume(runId: string): Promise<AgentRunResult> {
+  async resume(runId: string, opts: { onText?: (delta: string) => void } = {}): Promise<AgentRunResult> {
     if (!this.checkpointStore) {
       throw new Error(`Agent "${this.name}" has no checkpoint store configured — pass { checkpoint } when constructing it to resume a run`);
     }
@@ -73,7 +73,7 @@ export class Agent {
     if (checkpoint.status === "done") {
       return { text: checkpoint.text ?? "", toolCalls: checkpoint.toolCalls };
     }
-    return this.loop(checkpoint.messages, checkpoint.toolCalls, checkpoint.turnCount, runId);
+    return this.loop(checkpoint.messages, checkpoint.toolCalls, checkpoint.turnCount, runId, opts.onText);
   }
 
   private async loop(
@@ -81,6 +81,7 @@ export class Agent {
     initialExecuted: AgentRunResult["toolCalls"],
     startTurn: number,
     runId: string | undefined,
+    onText: ((delta: string) => void) | undefined,
   ): Promise<AgentRunResult> {
     const messages = [...initialMessages];
     const executed = [...initialExecuted];
@@ -91,7 +92,10 @@ export class Agent {
     };
 
     for (let turnCount = startTurn; turnCount < this.maxTurns; turnCount++) {
-      const turn = await this.llm.chat({ system: this.systemPrompt, messages, tools: this.tools });
+      const turn =
+        onText && this.llm.chatStream
+          ? await this.llm.chatStream({ system: this.systemPrompt, messages, tools: this.tools }, onText)
+          : await this.llm.chat({ system: this.systemPrompt, messages, tools: this.tools });
 
       if (turn.toolCalls.length === 0) {
         const text = turn.text ?? "";
@@ -270,6 +274,13 @@ export interface RunAgentOptions extends Omit<CreateAgentOptions, "computer"> {
    * runAgent() again.
    */
   runId?: string;
+  /**
+   * Called with each chunk of assistant text as the model produces it,
+   * instead of only getting the full text back once run() resolves. Only
+   * fires when the resolved `llm` provider implements `chatStream` (both
+   * built-in providers do); silently has no effect otherwise.
+   */
+  onText?: (delta: string) => void;
 }
 
 /**
@@ -287,10 +298,10 @@ export interface RunAgentOptions extends Omit<CreateAgentOptions, "computer"> {
  * `createAgent({ computer })` instead, with `stop()` left to you.
  */
 export async function runAgent(options: RunAgentOptions): Promise<AgentRunResult> {
-  const { task, runId, ...createOptions } = options;
+  const { task, runId, onText, ...createOptions } = options;
   const { agent, computer } = await createAgent(createOptions);
   try {
-    return await agent.run(task, { runId });
+    return await agent.run(task, { runId, onText });
   } finally {
     await computer.stop();
   }

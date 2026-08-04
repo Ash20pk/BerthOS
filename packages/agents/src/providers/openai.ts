@@ -78,5 +78,57 @@ export function createOpenAIProvider(options: OpenAIProviderOptions = {}): LLMPr
         stop: toolCalls.length === 0,
       };
     },
+
+    async chatStream(
+      { system, messages, tools }: { system?: string; messages: AgentMessage[]; tools: Tool[] },
+      onText: (delta: string) => void,
+    ): Promise<LLMTurn> {
+      const chatMessages: ChatCompletionMessageParam[] = system
+        ? [{ role: "system", content: system }, ...toOpenAIMessages(messages)]
+        : toOpenAIMessages(messages);
+
+      const stream = await client.chat.completions.create({
+        model,
+        messages: chatMessages,
+        tools: tools.map((t) => ({
+          type: "function" as const,
+          function: { name: t.name, description: t.description, parameters: t.inputSchema as Record<string, unknown> },
+        })),
+        stream: true,
+      });
+
+      let text = "";
+      // Tool-call deltas arrive fragmented across chunks, keyed by their position
+      // in the response (not by id, which only shows up on the first fragment) —
+      // accumulate each field until the stream ends.
+      const toolCallsByIndex = new Map<number, { id?: string; name?: string; arguments: string }>();
+
+      for await (const chunk of stream) {
+        const delta = chunk.choices[0]?.delta;
+        if (delta?.content) {
+          text += delta.content;
+          onText(delta.content);
+        }
+        for (const toolCallDelta of delta?.tool_calls ?? []) {
+          const acc = toolCallsByIndex.get(toolCallDelta.index) ?? { arguments: "" };
+          if (toolCallDelta.id) acc.id = toolCallDelta.id;
+          if (toolCallDelta.function?.name) acc.name = (acc.name ?? "") + toolCallDelta.function.name;
+          if (toolCallDelta.function?.arguments) acc.arguments += toolCallDelta.function.arguments;
+          toolCallsByIndex.set(toolCallDelta.index, acc);
+        }
+      }
+
+      const toolCalls = [...toolCallsByIndex.values()].map((acc) => ({
+        id: acc.id ?? "",
+        name: acc.name ?? "",
+        input: acc.arguments ? JSON.parse(acc.arguments) : {},
+      }));
+
+      return {
+        text: text || undefined,
+        toolCalls,
+        stop: toolCalls.length === 0,
+      };
+    },
   };
 }

@@ -69,5 +69,33 @@ export function createAnthropicProvider(options: AnthropicProviderOptions = {}):
         stop: toolUseBlocks.length === 0,
       };
     },
+
+    async chatStream(
+      { system, messages, tools }: { system?: string; messages: AgentMessage[]; tools: Tool[] },
+      onText: (delta: string) => void,
+    ): Promise<LLMTurn> {
+      const stream = client.messages.stream({
+        model,
+        max_tokens: maxTokens,
+        system,
+        messages: toAnthropicMessages(messages),
+        tools: tools.map((t) => ({
+          name: t.name,
+          description: t.description,
+          input_schema: t.inputSchema as Anthropic.Tool.InputSchema,
+        })),
+      });
+      stream.on("text", (textDelta) => onText(textDelta));
+
+      const response = await stream.finalMessage();
+      const textBlocks = response.content.filter((b): b is Anthropic.TextBlock => b.type === "text");
+      const toolUseBlocks = response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
+
+      return {
+        text: textBlocks.map((b) => b.text).join("\n") || undefined,
+        toolCalls: toolUseBlocks.map((b) => ({ id: b.id, name: b.name, input: b.input })),
+        stop: toolUseBlocks.length === 0,
+      };
+    },
   };
 }
