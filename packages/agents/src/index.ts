@@ -12,9 +12,16 @@ export {
   type AgentRunResult,
   type CreateAgentOptions,
   type RunAgentOptions,
+  type StructuredOutputRunOptions,
 } from "./agent.js";
 export { Crew, type CrewRun } from "./crew.js";
 export { createSemanticFsCheckpointStore, type CheckpointStore, type CheckpointedRun } from "./checkpoint.js";
+export {
+  parseStructuredOutput,
+  structuredOutputRepairPrompt,
+  StructuredOutputError,
+  type StructuredOutputResult,
+} from "./structured-output.js";
 export {
   createAgentTracer,
   createContextBusStepTracer,
