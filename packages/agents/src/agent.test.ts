@@ -20,6 +20,34 @@ function scriptedLLM(turns: LLMTurn[]): { llm: LLMProvider; callCount: () => num
   };
 }
 
+/** Each scripted turn also carries the text deltas its chatStream() should emit before resolving. */
+function scriptedStreamingLLM(
+  turns: { deltas: string[]; turn: LLMTurn }[],
+): { llm: LLMProvider; chatCallCount: () => number; chatStreamCallCount: () => number } {
+  let chatCalls = 0;
+  let streamCalls = 0;
+  return {
+    llm: {
+      name: "fake",
+      async chat() {
+        const scripted = turns[chatCalls];
+        if (!scripted) throw new Error("script exhausted — llm.chat() called more times than the test expected");
+        chatCalls++;
+        return scripted.turn;
+      },
+      async chatStream(_params, onText) {
+        const scripted = turns[streamCalls];
+        if (!scripted) throw new Error("script exhausted — llm.chatStream() called more times than the test expected");
+        streamCalls++;
+        for (const delta of scripted.deltas) onText(delta);
+        return scripted.turn;
+      },
+    },
+    chatCallCount: () => chatCalls,
+    chatStreamCallCount: () => streamCalls,
+  };
+}
+
 function echoTool(name: string, result: unknown = "tool-result"): Tool {
   return { name, description: "", inputSchema: {}, invoke: async () => result };
 }
@@ -166,4 +194,68 @@ test("exceeding maxTurns saves a status: error checkpoint before throwing", asyn
 
   const last = checkpoint.saved.at(-1)!;
   assert.equal(last.status, "error");
+});
+
+test("run() with onText drives chatStream() instead of chat(), delivering deltas as they arrive", async () => {
+  const { llm, chatCallCount, chatStreamCallCount } = scriptedStreamingLLM([
+    { deltas: ["Hel", "lo, ", "world"], turn: { text: "Hello, world", toolCalls: [], stop: true } },
+  ]);
+  const agent = new Agent({ llm, tools: [] });
+
+  const seen: string[] = [];
+  const result = await agent.run("say hi", { onText: (delta) => seen.push(delta) });
+
+  assert.deepEqual(seen, ["Hel", "lo, ", "world"]);
+  assert.equal(result.text, "Hello, world");
+  assert.equal(chatStreamCallCount(), 1);
+  assert.equal(chatCallCount(), 0);
+});
+
+test("run() without onText never calls chatStream(), even when the provider supports it", async () => {
+  const { llm, chatCallCount, chatStreamCallCount } = scriptedStreamingLLM([
+    { deltas: ["ignored"], turn: { text: "done", toolCalls: [], stop: true } },
+  ]);
+  const agent = new Agent({ llm, tools: [] });
+
+  const result = await agent.run("say hi");
+
+  assert.equal(result.text, "done");
+  assert.equal(chatCallCount(), 1);
+  assert.equal(chatStreamCallCount(), 0);
+});
+
+test("run() with onText falls back to chat() when the provider has no chatStream, instead of throwing", async () => {
+  const { llm, callCount } = scriptedLLM([{ text: "done", toolCalls: [], stop: true }]);
+  const agent = new Agent({ llm, tools: [] });
+
+  const seen: string[] = [];
+  const result = await agent.run("say hi", { onText: (delta) => seen.push(delta) });
+
+  assert.equal(result.text, "done");
+  assert.equal(callCount(), 1);
+  assert.deepEqual(seen, [], "no chatStream on the provider means no incremental events, not an error");
+});
+
+test("resume() with onText streams the remaining turns after a checkpointed crash", async () => {
+  const checkpoint = memoryCheckpointStore();
+  await checkpoint.save({
+    runId: "run-f",
+    agentName: "agent",
+    status: "running",
+    turnCount: 1,
+    messages: [{ role: "user", text: "do the thing" }],
+    toolCalls: [],
+  });
+
+  const { llm, chatStreamCallCount } = scriptedStreamingLLM([
+    { deltas: ["fin", "ished"], turn: { text: "finished", toolCalls: [], stop: true } },
+  ]);
+  const agent = new Agent({ llm, tools: [], checkpoint });
+
+  const seen: string[] = [];
+  const result = await agent.resume("run-f", { onText: (delta) => seen.push(delta) });
+
+  assert.deepEqual(seen, ["fin", "ished"]);
+  assert.equal(result.text, "finished");
+  assert.equal(chatStreamCallCount(), 1);
 });
