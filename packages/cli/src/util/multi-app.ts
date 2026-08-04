@@ -73,6 +73,15 @@ function declaresMeshCapability(manifest: BerthManifest): boolean {
 }
 
 /**
+ * browser:navigate:* and network:host:* are the same underlying mechanism
+ * (see packages/docker-orchestrator/docker/egress-broker.cjs) — either name
+ * triggers entrypoint.sh's egress broker.
+ */
+function declaresEgressBrokerCapability(manifest: BerthManifest): boolean {
+  return manifest.capabilities.some((cap) => cap.startsWith("browser:navigate:") || cap.startsWith("network:host:"));
+}
+
+/**
  * v1 scope: at most one app across the whole set may declare `browser:*` —
  * two simultaneous browser-capable apps would need per-app Xvfb
  * displays/VNC/CDP port allocation, which is real additional work this pass
@@ -115,6 +124,26 @@ export function assertAtMostOneMeshApp(apps: AppSpec[]): void {
   if (meshApps.length > 1) {
     console.error(
       `at most one app may declare a network:peer:* capability when running multiple apps together — found ${meshApps.length}: ${meshApps.map((a) => a.name).join(", ")}`,
+    );
+    process.exit(1);
+  }
+}
+
+/**
+ * Same reasoning again: entrypoint.sh's multi-app branch starts one shared
+ * egress broker on one fixed port and points it at exactly one app's
+ * capability-policy.json (see egress-broker-reference.md) — real per-app
+ * broker instances (own port, own isolated allowed-host list) would be a
+ * further, currently unbuilt step, same as multi-app Landlock rulesets
+ * already are per-app but this shared-port broker isn't yet. Both
+ * browser:navigate:* and network:host:* trigger the same broker, so this
+ * one check covers whichever name an app used.
+ */
+export function assertAtMostOneEgressBrokerApp(apps: AppSpec[]): void {
+  const egressApps = apps.filter((a) => declaresEgressBrokerCapability(a.manifest));
+  if (egressApps.length > 1) {
+    console.error(
+      `at most one app may declare a browser:navigate:*/network:host:* capability when running multiple apps together — found ${egressApps.length}: ${egressApps.map((a) => a.name).join(", ")}`,
     );
     process.exit(1);
   }

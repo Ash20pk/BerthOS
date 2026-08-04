@@ -31,6 +31,7 @@
 // existing networkPorts allow-list, so an app that never opted into the mesh
 // can't reach the coordinator's registration API at all.
 import { writeFile, mkdir } from "node:fs/promises";
+import { realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { loadManifest, parseCapability, CapabilityString, type ParsedCapability } from "@berth/manifest-schema";
 
@@ -184,7 +185,28 @@ async function main(): Promise<void> {
 // process.exit(1) when it inevitably doesn't find one). entrypoint.sh always
 // runs this file directly (`node .../dist/generate-capability-policy.js`),
 // so the guard changes nothing about production behavior.
-if (import.meta.url === `file://${process.argv[1]}`) {
+//
+// process.argv[1] must be realpath'd before comparing: every real
+// invocation goes through the node_modules/@berth/sdk pnpm SYMLINK (every
+// resident app has one), and Node's ESM loader resolves import.meta.url
+// through that symlink to the package's real location
+// (.../packages/sdk/dist/...) while leaving process.argv[1] as the
+// as-invoked (symlinked) path — a bare `file://${process.argv[1]}` never
+// matches, so main() silently never ran and this file never wrote a policy
+// at all. Confirmed by hand inside a real container: import.meta.url
+// resolved to the real packages/sdk path, process.argv[1] stayed the
+// symlinked apps/<app>/node_modules/@berth/sdk path, and the guard was
+// false on every single real boot. realpathSync() on the argv side is what
+// makes both sides agree.
+function isRunDirectly(): boolean {
+  try {
+    return import.meta.url === `file://${realpathSync(process.argv[1] ?? "")}`;
+  } catch {
+    return false;
+  }
+}
+
+if (isRunDirectly()) {
   main().catch((err) => {
     console.error("[berth:capability-policy] fatal error:", err);
     process.exit(1);

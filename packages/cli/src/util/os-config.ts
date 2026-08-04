@@ -94,8 +94,8 @@ export async function resolveOsApps(appDirs: string[]): Promise<OsAppSpec[]> {
   return apps;
 }
 
-function declaresCapabilityPrefix(manifest: BerthManifest, prefix: string): boolean {
-  return manifest.capabilities.some((cap) => cap.startsWith(prefix));
+function declaresCapabilityPrefix(manifest: BerthManifest, prefixes: string[]): boolean {
+  return manifest.capabilities.some((cap) => prefixes.some((prefix) => cap.startsWith(prefix)));
 }
 
 /**
@@ -106,8 +106,8 @@ function declaresCapabilityPrefix(manifest: BerthManifest, prefix: string): bool
  * relative `relPath` field `berth os up` has no use for and would have to
  * fake).
  */
-function assertAtMostOne(apps: OsAppSpec[], prefix: string, label: string): void {
-  const matching = apps.filter((a) => declaresCapabilityPrefix(a.manifest, prefix));
+function assertAtMostOne(apps: OsAppSpec[], prefixes: string[], label: string): void {
+  const matching = apps.filter((a) => declaresCapabilityPrefix(a.manifest, prefixes));
   if (matching.length > 1) {
     console.error(`at most one app may declare a ${label} capability in one \`berth os\` instance — found ${matching.length}: ${matching.map((a) => a.name).join(", ")}`);
     process.exit(1);
@@ -115,13 +115,18 @@ function assertAtMostOne(apps: OsAppSpec[], prefix: string, label: string): void
 }
 
 export function assertAtMostOneBrowserApp(apps: OsAppSpec[]): void {
-  assertAtMostOne(apps, "browser:", "browser:*");
+  assertAtMostOne(apps, ["browser:"], "browser:*");
 }
 
 export function assertAtMostOneTerminalApp(apps: OsAppSpec[]): void {
-  assertAtMostOne(apps, "terminal:", "terminal:*");
+  assertAtMostOne(apps, ["terminal:"], "terminal:*");
 }
 
 export function assertAtMostOneMeshApp(apps: OsAppSpec[]): void {
-  assertAtMostOne(apps, "network:peer:", "network:peer:*");
+  assertAtMostOne(apps, ["network:peer:"], "network:peer:*");
+}
+
+/** browser:navigate:* and network:host:* both trigger the same shared-port egress broker — see multi-app.ts's assertAtMostOneEgressBrokerApp. */
+export function assertAtMostOneEgressBrokerApp(apps: OsAppSpec[]): void {
+  assertAtMostOne(apps, ["browser:navigate:", "network:host:"], "browser:navigate:*/network:host:*");
 }
