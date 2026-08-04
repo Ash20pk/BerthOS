@@ -1,6 +1,7 @@
 import { Computer, type BootComputerOptions, type ConnectComputerOptions } from "./computer.js";
 import { resolveLLMProvider, type LLMProviderConfig } from "./providers/auto.js";
 import { createSemanticFsCheckpointStore, type CheckpointedRun, type CheckpointStore } from "./checkpoint.js";
+import { createAgentTracer, type StepTracer } from "./tracing.js";
 import type { AgentMessage, LLMProvider, Tool } from "./types.js";
 
 export interface AgentOptions {
@@ -17,6 +18,13 @@ export interface AgentOptions {
    * saved turn instead of re-running from scratch. See checkpoint.ts.
    */
   checkpoint?: CheckpointStore;
+  /**
+   * When set alongside `runId`, run()/resume() emit an AgentStepEvent after
+   * every LLM turn and every tool call — turn number, duration, and error if
+   * any. See tracing.ts. No `runId` means no events, same "constructor-level
+   * seam, run-level activation" shape as `checkpoint`.
+   */
+  trace?: StepTracer;
 }
 
 export interface AgentRunResult {
@@ -38,6 +46,7 @@ export class Agent {
   private readonly systemPrompt: string | undefined;
   private readonly maxTurns: number;
   private readonly checkpointStore: CheckpointStore | undefined;
+  private readonly tracer: StepTracer | undefined;
 
   constructor(options: AgentOptions) {
     this.name = options.name ?? "agent";
@@ -46,6 +55,7 @@ export class Agent {
     this.tools = options.tools;
     this.maxTurns = options.maxTurns ?? DEFAULT_MAX_TURNS;
     this.checkpointStore = options.checkpoint;
+    this.tracer = options.trace;
   }
 
   async run(input: string, opts: { runId?: string; onText?: (delta: string) => void } = {}): Promise<AgentRunResult> {
@@ -91,11 +101,29 @@ export class Agent {
       await this.checkpointStore.save({ runId, agentName: this.name, status, turnCount, messages, toolCalls: executed, text });
     };
 
+    const trace = async (event: Omit<Parameters<StepTracer["emit"]>[0], "runId" | "agentName">) => {
+      if (!this.tracer || !runId) return;
+      await this.tracer.emit({ ...event, runId, agentName: this.name });
+    };
+
     for (let turnCount = startTurn; turnCount < this.maxTurns; turnCount++) {
-      const turn =
-        onText && this.llm.chatStream
-          ? await this.llm.chatStream({ system: this.systemPrompt, messages, tools: this.tools }, onText)
-          : await this.llm.chat({ system: this.systemPrompt, messages, tools: this.tools });
+      const turnStart = Date.now();
+      let turn;
+      try {
+        turn =
+          onText && this.llm.chatStream
+            ? await this.llm.chatStream({ system: this.systemPrompt, messages, tools: this.tools }, onText)
+            : await this.llm.chat({ system: this.systemPrompt, messages, tools: this.tools });
+      } catch (err) {
+        await trace({
+          turn: turnCount,
+          kind: "llm-turn",
+          durationMs: Date.now() - turnStart,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        throw err;
+      }
+      await trace({ turn: turnCount, kind: "llm-turn", durationMs: Date.now() - turnStart });
 
       if (turn.toolCalls.length === 0) {
         const text = turn.text ?? "";
@@ -107,9 +135,12 @@ export class Agent {
 
       for (const call of turn.toolCalls) {
         const tool = this.tools.find((t) => t.name === call.name);
+        const callStart = Date.now();
         let result: unknown;
+        let error: string | undefined;
         if (!tool) {
-          result = { error: `no such tool "${call.name}"` };
+          error = `no such tool "${call.name}"`;
+          result = { error };
         } else {
           try {
             result = await tool.invoke(call.input);
@@ -119,9 +150,11 @@ export class Agent {
             // of the whole loop — the model gets a chance to retry with
             // different input, try another tool, or surface the failure
             // itself, rather than one bad call silently killing the run.
-            result = { error: err instanceof Error ? err.message : String(err) };
+            error = err instanceof Error ? err.message : String(err);
+            result = { error };
           }
         }
+        await trace({ turn: turnCount, kind: "tool-call", toolName: call.name, durationMs: Date.now() - callStart, error });
         executed.push({ name: call.name, input: call.input, result });
         messages.push({ role: "tool", toolResult: { id: call.id, name: call.name, output: result } });
       }
@@ -147,6 +180,7 @@ export class Agent {
       tools: [...this.tools, ...extraTools],
       maxTurns: this.maxTurns,
       checkpoint: this.checkpointStore,
+      trace: this.tracer,
     });
   }
 
@@ -218,6 +252,17 @@ export interface CreateAgentOptions extends Pick<BootComputerOptions, "network" 
    * different backend (a plain file, a real database).
    */
   checkpoint?: "semantic-fs" | CheckpointStore;
+  /**
+   * "full" builds a StepTracer that both publishes each step to the Context
+   * Bus (topic "agent.step", live tailing) and durably records it to
+   * Semantic FS (agent-traces/<runId>.json, replay after the fact) — see
+   * createAgentTracer(). Needs an app like apps/filesystem exposing
+   * publish_context_event alongside the checkpoint exports, or construction
+   * throws immediately. Pass a StepTracer directly for just one channel
+   * (createContextBusStepTracer()/createSemanticFsStepTracer()) or a
+   * different backend entirely.
+   */
+  trace?: "full" | StepTracer;
 }
 
 function normalizeApps(apps: string | string[] | undefined): string[] {
@@ -250,6 +295,7 @@ export async function createAgent(options: CreateAgentOptions): Promise<{ agent:
           docker: options.docker,
         }));
   const checkpoint = options.checkpoint === "semantic-fs" ? createSemanticFsCheckpointStore(computer) : options.checkpoint;
+  const trace = options.trace === "full" ? createAgentTracer(computer) : options.trace;
 
   const agent = new Agent({
     name: options.name,
@@ -258,6 +304,7 @@ export async function createAgent(options: CreateAgentOptions): Promise<{ agent:
     tools: computer.tools,
     maxTurns: options.maxTurns,
     checkpoint,
+    trace,
   });
   return { agent, computer };
 }

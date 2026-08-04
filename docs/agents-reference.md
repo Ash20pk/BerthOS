@@ -213,6 +213,27 @@ const result = await agent.resume("task-42"); // picks the loop back up, doesn't
 
 **What this does and doesn't fix:** this closes "a crash mid-loop loses everything" for a single `Agent`. A checkpoint means the *previous* turns survive a crash, not that a crash itself is recoverable mid-turn — a hard crash inside `tool.invoke()` (the process dying, not the call throwing) still loses that turn. It's also Agent-level only for now: `Crew.sequential`/`withManager`/`networked` don't checkpoint the crew's own composition state (which sub-agent ran, in what order) — only whichever individual `Agent`s you construct with a `checkpoint` store get durable turn-by-turn progress.
 
+## Tracing a run: `agent.step` events, not a LangSmith-style tracer
+
+There's no structured logging of reasoning steps out of the box — no token/cost accounting, no trace IDs, no replay UI comparable to LangSmith. Same non-goal as checkpointing above: no new tracing daemon, no dedicated subsystem. Instead, `StepTracer` (`packages/agents/src/tracing.ts`) is another narrow seam `Agent.run()`/`Agent.resume()` write through, this time for one `AgentStepEvent` (`{runId, agentName, turn, kind: "llm-turn"|"tool-call", toolName?, durationMs, error?}`) per LLM turn and per tool call:
+
+```ts
+const { agent, computer } = await createAgent({ apps: "apps/filesystem", trace: "full" });
+await agent.run("long task", { runId: "task-42" }); // emits a step after every LLM turn and every tool call
+
+const trace = await readAgentTrace(computer, "task-42"); // full step-by-step history, in order
+```
+
+`"full"` (`createAgentTracer()`) is two channels at once, matching the two different jobs "observability" actually means here:
+- **Live tailing** — `createContextBusStepTracer()` publishes each event to the Context Bus topic `"agent.step"`, fire-and-forget, for whatever's tailing it in real time. Reached the same way Semantic FS is: an `Agent` runs outside the sandbox, so the only way to reach the bus at all is through a resident app's export — `apps/filesystem` gained `publish_context_event({topic, payload})`, a thin pass-through to the `contextBus` client it already held from registering for `fs.file_created`. A small, real addition, same as `read_context_file`/`tag_context_file` were for checkpointing.
+- **Durable replay** — `createSemanticFsStepTracer()` writes to Semantic FS, since the Context Bus is ephemeral pub/sub (a tailer that wasn't listening at the time sees nothing, ever). Reuses the exact `write_context_file`/`read_context_file`/`tag_context_file` exports checkpointing already depends on — one JSON array per `runId` at `/context/agent-traces/<runId>.json`, appended to (read-modify-write, not a true append) on every `emit()`. `readAgentTrace(computer, runId)` reads it back in order; `[]` if nothing was ever traced for that `runId`, same "can't tell missing from a real read error" caveat `CheckpointStore.load()` already has.
+
+Both `createContextBusStepTracer()`/`createSemanticFsStepTracer()` throw immediately at construction (not on the first `emit()`) if the Computer is missing the export(s) they need — same fail-fast contract as `createSemanticFsCheckpointStore()`. Pass either one alone as `trace` instead of `"full"` for just one channel, or your own `StepTracer` for a different backend entirely.
+
+Like checkpointing, tracing only activates with a `runId` — `trace` configured but no `runId` passed to `run()`/`resume()` means zero events, not an error. An LLM call that throws still emits an `llm-turn` step (duration + error) before the error propagates out of `run()` exactly as before — tracing observes failures, it doesn't swallow them.
+
+**What this does and doesn't fix:** no token/cost accounting — no `LLMProvider` in this package surfaces usage numbers today, so `AgentStepEvent` doesn't carry a `tokens` field; adding one only when a provider actually reports something is future work, not a placeholder here. No trace-ID correlation across a `Crew` — each `Agent` traces its own `runId` independently, same Agent-level-only scope checkpointing has for crew composition state. No query/browse-all-traces UI — `readAgentTrace()` needs a known `runId`; there's no "list every trace ever recorded" primitive (Semantic FS's `query_context` is fuzzy text search, not an exact tag filter).
+
 ## Networked Crew: agents as peers on a real LAN
 
 A `Computer` is a full sandboxed OS with real networking, so agents built on separate computers can be genuine network peers, not just composed in-process. `bootNetworkedAgent({name, apps, llm, systemPrompt})` boots a `Computer` for the peer's own tool-providing apps, plus a synthesized companion app (`generateAgentServerApp`) that runs its own agent loop over those tools, exposed through one `run_task` export. The agent itself lives on that computer, not just its tools. `Crew.networked({manager, peers})` gives a manager agent one `Tool` per peer.

@@ -46,6 +46,22 @@ app.onAgentReady(async (ctx) => { contextBus = ctx.contextBus; });
 
 `@berth/sdk`'s `runtime.ts` tries the real Unix-socket client first and falls back to the Phase 1 local no-op if the daemon isn't reachable (e.g. running a bare `node dist/index.js` outside a sandbox, or in a unit test) — so app code is never forced to depend on a daemon being present.
 
+## Publishing from outside the sandbox
+
+`ctx.contextBus` is only ever handed to code running *inside* the sandbox — a host process (`@berth/agents`'s `Agent`, which runs outside it) has no direct socket to reach the daemon at all. `apps/filesystem` closes that gap with one export, `publish_context_event({topic, payload})`, a thin pass-through to the same `contextBus` reference it already captures for `fs.file_created`:
+
+```ts
+let contextBus: ContextBusClient | undefined;
+app.export({
+  name: "publish_context_event",
+  input: z.object({ topic: z.string(), payload: z.any() }),
+  handler: async ({ topic, payload }) => { await contextBus?.publish(topic, payload); },
+});
+app.onAgentReady(async (ctx) => { contextBus = ctx.contextBus; });
+```
+
+`packages/agents/src/tracing.ts`'s `createContextBusStepTracer()` calls this the same way any other host-to-sandbox call happens — as a tool invocation, resolved off `Computer.tools` by export name — to publish `agent.step` events for live tailing. See [`docs/agents-reference.md`](./agents-reference.md#tracing-a-run-agentstep-events-not-a-langsmith-style-tracer).
+
 ## Verifying it
 
 `packages/docker-orchestrator/test/context-bus-milestone.mjs` is a real (not mocked) integration test: it boots a container for `apps/filesystem`, starts `apps/code-editor`'s runtime as a second process in the *same* sandbox via `docker exec`, invokes `filesystem`'s `write_file` export over its live RPC interface, and asserts that `code-editor` reactively opens the new file — proving apps can react to each other end-to-end rather than just compiling. Run it with:
