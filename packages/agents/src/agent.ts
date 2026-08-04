@@ -1,5 +1,6 @@
 import { Computer, type BootComputerOptions, type ConnectComputerOptions } from "./computer.js";
 import { resolveLLMProvider, type LLMProviderConfig } from "./providers/auto.js";
+import { createSemanticFsCheckpointStore, type CheckpointedRun, type CheckpointStore } from "./checkpoint.js";
 import type { AgentMessage, LLMProvider, Tool } from "./types.js";
 
 export interface AgentOptions {
@@ -9,6 +10,13 @@ export interface AgentOptions {
   tools: Tool[];
   /** Safety cap on the tool-use loop, in case a provider never stops requesting tool calls. */
   maxTurns?: number;
+  /**
+   * When set, run()/resume() persist progress after every turn — the fix for
+   * "a crash mid-loop loses everything": a fresh process can call
+   * agent.resume(runId) and pick the tool-use loop back up from the last
+   * saved turn instead of re-running from scratch. See checkpoint.ts.
+   */
+  checkpoint?: CheckpointStore;
 }
 
 export interface AgentRunResult {
@@ -29,6 +37,7 @@ export class Agent {
   private readonly llm: LLMProvider;
   private readonly systemPrompt: string | undefined;
   private readonly maxTurns: number;
+  private readonly checkpointStore: CheckpointStore | undefined;
 
   constructor(options: AgentOptions) {
     this.name = options.name ?? "agent";
@@ -36,17 +45,58 @@ export class Agent {
     this.llm = options.llm;
     this.tools = options.tools;
     this.maxTurns = options.maxTurns ?? DEFAULT_MAX_TURNS;
+    this.checkpointStore = options.checkpoint;
   }
 
-  async run(input: string): Promise<AgentRunResult> {
-    const messages: AgentMessage[] = [{ role: "user", text: input }];
-    const executed: AgentRunResult["toolCalls"] = [];
+  async run(input: string, opts: { runId?: string } = {}): Promise<AgentRunResult> {
+    return this.loop([{ role: "user", text: input }], [], 0, opts.runId);
+  }
 
-    for (let turnCount = 0; turnCount < this.maxTurns; turnCount++) {
+  /**
+   * Continues a run a prior run()/resume() call persisted (via `checkpoint`)
+   * but never finished — a crashed process, a killed container, anything
+   * that lost the original call stack. Reads the last saved messages/tool
+   * log for `runId` and picks the tool-use loop back up from there, rather
+   * than re-sending the original task and starting over. Needs `checkpoint`
+   * to have been passed to this Agent's constructor: that's what makes the
+   * prior progress reachable from a process that doesn't share any memory
+   * with the one that made it.
+   */
+  async resume(runId: string): Promise<AgentRunResult> {
+    if (!this.checkpointStore) {
+      throw new Error(`Agent "${this.name}" has no checkpoint store configured — pass { checkpoint } when constructing it to resume a run`);
+    }
+    const checkpoint = await this.checkpointStore.load(runId);
+    if (!checkpoint) {
+      throw new Error(`no checkpoint found for run "${runId}"`);
+    }
+    if (checkpoint.status === "done") {
+      return { text: checkpoint.text ?? "", toolCalls: checkpoint.toolCalls };
+    }
+    return this.loop(checkpoint.messages, checkpoint.toolCalls, checkpoint.turnCount, runId);
+  }
+
+  private async loop(
+    initialMessages: AgentMessage[],
+    initialExecuted: AgentRunResult["toolCalls"],
+    startTurn: number,
+    runId: string | undefined,
+  ): Promise<AgentRunResult> {
+    const messages = [...initialMessages];
+    const executed = [...initialExecuted];
+
+    const checkpoint = async (turnCount: number, status: CheckpointedRun["status"], text?: string) => {
+      if (!this.checkpointStore || !runId) return;
+      await this.checkpointStore.save({ runId, agentName: this.name, status, turnCount, messages, toolCalls: executed, text });
+    };
+
+    for (let turnCount = startTurn; turnCount < this.maxTurns; turnCount++) {
       const turn = await this.llm.chat({ system: this.systemPrompt, messages, tools: this.tools });
 
       if (turn.toolCalls.length === 0) {
-        return { text: turn.text ?? "", toolCalls: executed };
+        const text = turn.text ?? "";
+        await checkpoint(turnCount, "done", text);
+        return { text, toolCalls: executed };
       }
 
       messages.push({ role: "assistant", text: turn.text, toolCalls: turn.toolCalls });
@@ -57,15 +107,19 @@ export class Agent {
         executed.push({ name: call.name, input: call.input, result });
         messages.push({ role: "tool", toolResult: { id: call.id, name: call.name, output: result } });
       }
+
+      await checkpoint(turnCount + 1, "running");
     }
 
+    await checkpoint(this.maxTurns, "error");
     throw new Error(`Agent "${this.name}" exceeded its maxTurns (${this.maxTurns}) without reaching a final answer`);
   }
 
   /**
-   * Returns a new Agent with the same identity/llm/systemPrompt but an
-   * extended tool list — used by Crew.withManager() to give a manager agent
-   * one Tool per worker (via worker.asTool()) without mutating either agent.
+   * Returns a new Agent with the same identity/llm/systemPrompt/checkpoint
+   * but an extended tool list — used by Crew.withManager() to give a manager
+   * agent one Tool per worker (via worker.asTool()) without mutating either
+   * agent.
    */
   withTools(extraTools: Tool[]): Agent {
     return new Agent({
@@ -74,6 +128,7 @@ export class Agent {
       llm: this.llm,
       tools: [...this.tools, ...extraTools],
       maxTurns: this.maxTurns,
+      checkpoint: this.checkpointStore,
     });
   }
 
@@ -136,6 +191,15 @@ export interface CreateAgentOptions extends Pick<BootComputerOptions, "network" 
   systemPrompt?: string;
   name?: string;
   maxTurns?: number;
+  /**
+   * "semantic-fs" builds a CheckpointStore backed by this Computer's own
+   * write_context_file/read_context_file/tag_context_file tools (see
+   * createSemanticFsCheckpointStore) — needs an app like apps/filesystem
+   * exposing those three exports somewhere in this Computer's app list, or
+   * construction throws immediately. Pass a CheckpointStore directly for a
+   * different backend (a plain file, a real database).
+   */
+  checkpoint?: "semantic-fs" | CheckpointStore;
 }
 
 function normalizeApps(apps: string | string[] | undefined): string[] {
@@ -167,12 +231,15 @@ export async function createAgent(options: CreateAgentOptions): Promise<{ agent:
           env: options.env,
           docker: options.docker,
         }));
+  const checkpoint = options.checkpoint === "semantic-fs" ? createSemanticFsCheckpointStore(computer) : options.checkpoint;
+
   const agent = new Agent({
     name: options.name,
     systemPrompt: options.systemPrompt,
     llm: resolveLLMProvider(options.llm),
     tools: computer.tools,
     maxTurns: options.maxTurns,
+    checkpoint,
   });
   return { agent, computer };
 }
@@ -180,6 +247,15 @@ export async function createAgent(options: CreateAgentOptions): Promise<{ agent:
 export interface RunAgentOptions extends Omit<CreateAgentOptions, "computer"> {
   /** The task to hand the agent. */
   task: string;
+  /**
+   * Persists progress under this id when `checkpoint` is set. Note this
+   * function always runs the task start-to-finish and tears the Computer
+   * down in its own `finally` — resuming a run that crashed *during* a
+   * runAgent() call means calling createAgent()+agent.resume(runId)
+   * yourself against a Computer that's still around, not calling
+   * runAgent() again.
+   */
+  runId?: string;
 }
 
 /**
@@ -197,10 +273,10 @@ export interface RunAgentOptions extends Omit<CreateAgentOptions, "computer"> {
  * `createAgent({ computer })` instead, with `stop()` left to you.
  */
 export async function runAgent(options: RunAgentOptions): Promise<AgentRunResult> {
-  const { task, ...createOptions } = options;
+  const { task, runId, ...createOptions } = options;
   const { agent, computer } = await createAgent(createOptions);
   try {
-    return await agent.run(task);
+    return await agent.run(task, { runId });
   } finally {
     await computer.stop();
   }

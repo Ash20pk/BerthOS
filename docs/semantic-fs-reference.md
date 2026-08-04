@@ -41,6 +41,11 @@ app.export({
 });
 
 app.export({
+  name: "read_context_file",
+  handler: async ({ path }) => ({ content: await readFile(join("/context", path), "utf-8") }),
+});
+
+app.export({
   name: "tag_context_file",
   handler: async ({ path, task, relatedApps }) => {
     await ctx.semanticFs.tag(path, { task, relatedApps });

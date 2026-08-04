@@ -157,6 +157,26 @@ An app declaring `governs: true` in its `berth.yml` becomes the Computer's gover
 
 `Agent.run(input)` is the provider-agnostic tool-use loop, identical no matter which `LLMProvider` or `Tool` implementations are plugged in. `Agent.asTool(description)` wraps an agent as a `Tool` (`{task: string}` in, `run(task).text` out), the seam `Crew.withManager({manager, workers})` uses to let a manager's own LLM decide when to delegate. `Crew.sequential(agents)` just pipes each agent's output text into the next.
 
+## Checkpointing and resuming a run: state without a graph
+
+`Agent.run()`'s tool-use loop keeps its `messages`/executed-tool-calls state as a plain in-process array — it's gone the moment the call returns or the process dies mid-loop. There's no LangGraph-style checkpointer here, and deliberately no graph to attach one to; instead, checkpointing is exposed as a `CheckpointStore` seam (`packages/agents/src/checkpoint.ts`) that `Agent.run()`/`Agent.resume()` write through directly:
+
+```ts
+const { agent, computer } = await createAgent({ apps: "apps/filesystem", checkpoint: "semantic-fs" });
+await agent.run("long task", { runId: "task-42" }); // saves progress after every turn
+
+// ...process crashes, or you just come back later...
+const result = await agent.resume("task-42"); // picks the loop back up, doesn't replay from scratch
+```
+
+`"semantic-fs"` (`createSemanticFsCheckpointStore()`) is the built-in backend, and it's built entirely from existing pieces, not a new daemon:
+- An `Agent` runs on the host, outside the sandbox — the only way it can reach Semantic FS at all is through a resident app's exports, the same as any other tool call. `apps/filesystem`'s `write_context_file`/`read_context_file`/`tag_context_file` (the last is a small, real addition — `read_context_file` mirroring `read_file` but scoped to `/context`, since `query_context` is fuzzy keyword/embedding search, not a fit for an exact-path checkpoint load) are what it calls. Any app exposing those three export names works; the store resolves them off `Computer.tools` by suffix match (bare `write_context_file` on a single-app Computer, `<appName>__write_context_file` once there's more than one app), and throws immediately at construction if none is found — not on the first `save()` deep inside a run.
+- A checkpoint is one JSON blob per `runId` at `/context/agent-runs/<runId>.json`: `{runId, agentName, status: "running"|"done"|"error", turnCount, messages, toolCalls, text?}`. `turnCount` is the index of the *next* turn to run, so `resume()` continues the loop rather than re-sending the original task.
+- `resume()` on a `status: "done"` checkpoint is a plain read — it returns the stored `text`/`toolCalls` without calling the LLM again.
+- `load()` can't distinguish "nothing was ever saved for this runId" from "a real error happened reading it" — resident-app export errors cross the RPC wire as a plain message string (see `Computer`'s `dispatch()`), not a typed error code. Both cases return `null` from `load()`, so `resume()` on a `runId` that failed to read for an unrelated reason (a transient RPC hiccup, say) reports "no checkpoint found" rather than the real cause. Worth knowing if a resume doesn't behave as expected.
+
+**What this does and doesn't fix:** this closes "a crash mid-loop loses everything" for a single `Agent`. It does not add retry/self-correction for a tool call that throws mid-turn (`Agent.run()`'s tool loop still has no try/catch around `tool.invoke()` — a separate, still-open gap) — a checkpoint just means the *previous* turns survive that crash, not that the crashing turn gets a second chance. It's also Agent-level only for now: `Crew.sequential`/`withManager`/`networked` don't checkpoint the crew's own composition state (which sub-agent ran, in what order) — only whichever individual `Agent`s you construct with a `checkpoint` store get durable turn-by-turn progress.
+
 ## Networked Crew: agents as peers on a real LAN
 
 A `Computer` is a full sandboxed OS with real networking, so agents built on separate computers can be genuine network peers, not just composed in-process. `bootNetworkedAgent({name, apps, llm, systemPrompt})` boots a `Computer` for the peer's own tool-providing apps, plus a synthesized companion app (`generateAgentServerApp`) that runs its own agent loop over those tools, exposed through one `run_task` export. The agent itself lives on that computer, not just its tools. `Crew.networked({manager, peers})` gives a manager agent one `Tool` per peer.
