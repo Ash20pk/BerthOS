@@ -131,10 +131,25 @@ interface Tool {
 interface LLMProvider {
   readonly name: string;
   chat(params: { system?: string; messages: AgentMessage[]; tools: Tool[] }): Promise<LLMTurn>;
+  chatStream?(
+    params: { system?: string; messages: AgentMessage[]; tools: Tool[] },
+    onText: (delta: string) => void,
+  ): Promise<LLMTurn>;
 }
 ```
 
 `createAnthropicProvider()` and `createOpenAIProvider()` ship as two real, independent implementations, proof the interface isn't secretly hardcoded to one vendor. Implement `LLMProvider` yourself for any other API. Nothing in `Computer`, `Agent`, or `Crew` references a specific provider.
+
+`chatStream` is optional — same request/response contract as `chat()`, but it calls `onText(delta)` with each chunk of assistant text as the model produces it (backed by `client.messages.stream()` for Anthropic, `stream: true` chat completions for OpenAI), rather than only handing back the full text once the turn is done. Pass `onText` to `run()`/`resume()`/`runAgent()` to get it:
+
+```ts
+const { agent } = await createAgent({ apps: "apps/filesystem" });
+const result = await agent.run("long task", {
+  onText: (delta) => process.stdout.write(delta),
+});
+```
+
+`onText` only takes effect when the resolved provider implements `chatStream` — both built-in providers do. Passing it to a provider that only implements `chat()` (a custom `LLMProvider`) is a silent no-op, not an error: `Agent` falls back to `chat()` and the run completes exactly as it would without `onText`, just without incremental events. Streaming is per-turn, not across the whole tool-use loop — each LLM call in `Agent`'s loop streams its own text independently; tool-call arguments themselves aren't streamed, only the assistant's text.
 
 You don't have to construct a provider object yourself, either. `createAgent()`/`runAgent()`'s `llm` option also accepts a plain config object, resolved through `resolveLLMProvider()`:
 
