@@ -373,7 +373,7 @@ packages/
   sdk-python/          Python resident app SDK, wire-protocol compatible with @berth/sdk
   agents/              computer, then agent, then tool: boots a Berth OS from resident apps, drives it with any LLM provider, composes multi-agent Crews
 apps/
-  browser-native/      first-party resident app: headless Chromium plus VNC
+  browser-native/      first-party resident app: headless Chromium plus VNC, also exposes search (DuckDuckGo, no API key)
   filesystem/          first-party resident app that reads and writes /workspace, publishes fs.file_created
   code-editor/         first-party resident app that reacts to fs.file_created through the context bus
   github-assistant/    first-party resident app, the original example manifest for this pattern, deployed and milestone-tested
