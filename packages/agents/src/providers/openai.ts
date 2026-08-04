@@ -7,6 +7,16 @@ export interface OpenAIProviderOptions {
   /** Point at a custom OpenAI-compatible endpoint (Ollama, vLLM, OpenRouter, Azure OpenAI, ...) instead of OpenAI's default API. */
   baseURL?: string;
   model?: string;
+  /**
+   * How many times the underlying `openai` client retries a single call on a
+   * retriable error (429/5xx/timeout/connection error) with its own
+   * exponential backoff, before chat()/chatStream() throw. The SDK already
+   * defaults this to 2 — exposed here because that default was previously
+   * invisible and unconfigurable from createOpenAIProvider(). For falling
+   * back to a *different* provider once this is exhausted, see
+   * createFallbackProvider().
+   */
+  maxRetries?: number;
 }
 
 const DEFAULT_MODEL = "gpt-4o";
@@ -41,7 +51,11 @@ function toOpenAIMessages(messages: AgentMessage[]): ChatCompletionMessageParam[
  * Anthropic's), not secretly single-vendor.
  */
 export function createOpenAIProvider(options: OpenAIProviderOptions = {}): LLMProvider {
-  const client = new OpenAI({ apiKey: options.apiKey ?? process.env.OPENAI_API_KEY, baseURL: options.baseURL });
+  const client = new OpenAI({
+    apiKey: options.apiKey ?? process.env.OPENAI_API_KEY,
+    baseURL: options.baseURL,
+    maxRetries: options.maxRetries,
+  });
   const model = options.model ?? DEFAULT_MODEL;
 
   return {

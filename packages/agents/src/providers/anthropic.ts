@@ -7,6 +7,16 @@ export interface AnthropicProviderOptions {
   baseURL?: string;
   model?: string;
   maxTokens?: number;
+  /**
+   * How many times the underlying @anthropic-ai/sdk client retries a single
+   * call on a retriable error (429/5xx/timeout/connection error) with its
+   * own exponential backoff, before chat()/chatStream() throw. The SDK
+   * already defaults this to 2 — exposed here because that default was
+   * previously invisible and unconfigurable from createAnthropicProvider().
+   * For falling back to a *different* provider once this is exhausted, see
+   * createFallbackProvider().
+   */
+  maxRetries?: number;
 }
 
 const DEFAULT_MODEL = "claude-sonnet-5";
@@ -41,7 +51,11 @@ function toAnthropicMessages(messages: AgentMessage[]): Anthropic.MessageParam[]
  * secretly hardcoded to one vendor — Agent/Crew never reference this module.
  */
 export function createAnthropicProvider(options: AnthropicProviderOptions = {}): LLMProvider {
-  const client = new Anthropic({ apiKey: options.apiKey ?? process.env.ANTHROPIC_API_KEY, baseURL: options.baseURL });
+  const client = new Anthropic({
+    apiKey: options.apiKey ?? process.env.ANTHROPIC_API_KEY,
+    baseURL: options.baseURL,
+    maxRetries: options.maxRetries,
+  });
   const model = options.model ?? DEFAULT_MODEL;
   const maxTokens = options.maxTokens ?? DEFAULT_MAX_TOKENS;
 
