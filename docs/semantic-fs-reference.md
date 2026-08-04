@@ -83,6 +83,10 @@ External consumers of `@berth/sdk` (via `berth init --registry=<url>`) don't inh
 
 **Calibration note**: `embeddingMatchThreshold` (0.2, in `index.go`) was set from real measured cosine similarities for this SDK's actual embedding input shape — short `task + relatedApps + path` strings, not full sentences. A genuinely related pair scored ~0.30; an unrelated pair in the same short/tag-like style scored ~0.04. 0.2 sits clear of both. This is a real, hand-tuned number for this text style, not an arbitrary constant — if the embedded text shape changes materially (e.g. if a future pass embeds full file content), re-calibrate rather than assuming this threshold still holds.
 
+## Consuming query_context from `@berth/agents`
+
+`query_context` returns metadata only (`path`/`task`/`relatedApps`/timestamps) — no file content — so calling it directly still needs a `read_context_file` per hit to get anything an LLM can reason over. `@berth/agents`' `createSemanticFsRetriever()` (see the [Agents Reference](./agents-reference.md)'s "Retrieval" section) wraps that two-step round trip as a single `search_context` tool, via `createAgent({retriever: "semantic-fs"})`.
+
 ## Verification status
 
 **Fully verified in this dev environment** — unlike Phase 3's Landlock gap (see [Capability Tokens Reference](./capability-tokens-reference.md)), FUSE-in-Docker-Desktop-for-Mac works end-to-end: confirmed via a standalone mount test (`/dev/fuse` present, `fusermount3` present, a real `bazil.org/fuse` mount serves reads) and via `packages/docker-orchestrator/test/semantic-fs-milestone.mjs`, which builds the real image, starts a real container with `--device /dev/fuse --cap-add SYS_ADMIN`, writes and tags fixtures through the actual FUSE mount, and asserts query correctness against the real daemon (not a mock) — including a purely-semantic match (zero keyword overlap with the query) that v0's keyword-only ranker would have silently dropped, confirming the embedding half of the hybrid ranking is actually running inside Alpine, not silently falling back.
