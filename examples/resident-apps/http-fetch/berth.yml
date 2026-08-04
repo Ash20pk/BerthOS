@@ -1,0 +1,24 @@
+name: http-fetch
+version: 0.1.0
+
+# The point of this example: network:host:<pattern> is a generic capability
+# any resident app can declare — it's not browser-native's special
+# capability. This app has no browser:*/Chromium anywhere in it and still
+# gets a real, kernel-adjacent egress broker started for it, the same way
+# browser-native does. See docs/egress-broker-reference.md.
+capabilities:
+  - network:host:example.com
+  # This app's own broker port — same convention apps/browser-native and
+  # apps/github-assistant already pair a host-scope capability with: the
+  # specific network:connect:<port> Landlock grant matching whatever port
+  # this app's own egress broker instance listens on.
+  - network:connect:8090
+
+exports:
+  - name: fetch_text
+    input: { url: string }
+    output: { text: string }
+
+on_install: []
+on_agent_ready:
+  - "register_with_context_bus"

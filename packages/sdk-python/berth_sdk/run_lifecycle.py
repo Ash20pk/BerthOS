@@ -1,7 +1,10 @@
 """Mirrors @berth/sdk's run-lifecycle.ts: runs each on_install command once
 (tracked via a marker file), then reports whether a browser:* capability is
-declared via the last stdout line ("1"/"0") — entrypoint.sh's Python branch
-parses this exactly like it already does for the Node lifecycle script.
+declared, and separately whether a browser:navigate:*/network:host:*
+capability is declared (entrypoint.sh's own trigger for starting the egress
+broker), via the last stdout line ("1,1" / "0,1" / etc.) — entrypoint.sh's
+Python branch parses this exactly like it already does for the Node
+lifecycle script.
 Invoked as `python3 -m berth_sdk.run_lifecycle`.
 """
 
@@ -32,7 +35,8 @@ def main() -> None:
         print(f"[berth:lifecycle] on_install already ran (marker at {marker_path}), skipping", file=sys.stderr)
 
     needs_browser = any(cap.startswith("browser:") for cap in manifest.capabilities)
-    print("1" if needs_browser else "0")
+    needs_egress_broker = any(cap.startswith("browser:navigate:") or cap.startswith("network:host:") for cap in manifest.capabilities)
+    print(f"{'1' if needs_browser else '0'},{'1' if needs_egress_broker else '0'}")
 
 
 if __name__ == "__main__":

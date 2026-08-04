@@ -9,6 +9,7 @@ import {
   assertAtMostOneBrowserApp,
   assertAtMostOneTerminalApp,
   assertAtMostOneMeshApp,
+  assertAtMostOneEgressBrokerApp,
 } from "../../util/os-config.js";
 import { isContainerRunning, removeStaleContainer } from "../../util/os-docker.js";
 
@@ -57,6 +58,7 @@ export default class OsUp extends Command {
     assertAtMostOneBrowserApp(apps);
     assertAtMostOneTerminalApp(apps);
     assertAtMostOneMeshApp(apps);
+    assertAtMostOneEgressBrokerApp(apps);
 
     const name = args.name ?? configName ?? apps[0]!.name;
 

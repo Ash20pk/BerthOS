@@ -1,13 +1,19 @@
 #!/usr/bin/env node
 // Runs inside the container before the main runtime starts (see entrypoint.sh).
-// Two jobs: run each on_install command exactly once (tracked via a marker
-// file so `berth dev` restarts don't re-run e.g. `pip install`), and report
+// Three jobs: run each on_install command exactly once (tracked via a marker
+// file so `berth dev` restarts don't re-run e.g. `pip install`), report
 // whether the manifest declares a browser:* capability so entrypoint.sh
-// knows whether to start Xvfb/x11vnc/websockify. Lives inside @berth/sdk
-// (not a loose script copied from docker-orchestrator) specifically so it
-// can import @berth/manifest-schema through normal package resolution —
-// pnpm's per-package node_modules only resolves declared dependencies, and
-// @berth/sdk already declares @berth/manifest-schema as one.
+// knows whether to start Xvfb/x11vnc/websockify, and separately report
+// whether it declares browser:navigate:*/network:host:* so entrypoint.sh
+// knows whether to start the egress broker — a deliberately different check
+// from "needs a display": network:host:* apps need the broker but never
+// Xvfb, and this is what makes the broker a capability any resident app can
+// opt into, not something wired specifically for browser-native's Chromium
+// launch flag. Lives inside @berth/sdk (not a loose script copied from
+// docker-orchestrator) specifically so it can import @berth/manifest-schema
+// through normal package resolution — pnpm's per-package node_modules only
+// resolves declared dependencies, and @berth/sdk already declares
+// @berth/manifest-schema as one.
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { execSync } from "node:child_process";
@@ -34,7 +40,11 @@ async function main(): Promise<void> {
   }
 
   const needsBrowser = manifest.capabilities.some((cap) => cap.startsWith("browser:"));
-  console.log(needsBrowser ? "1" : "0");
+  const needsEgressBroker = manifest.capabilities.some((cap) => cap.startsWith("browser:navigate:") || cap.startsWith("network:host:"));
+  // A single comma-separated line, not two lines — entrypoint.sh's
+  // `tail -n1` only ever captures the last stdout line, which needs to carry
+  // both flags together.
+  console.log(`${needsBrowser ? "1" : "0"},${needsEgressBroker ? "1" : "0"}`);
 }
 
 main().catch((err) => {
