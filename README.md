@@ -311,7 +311,7 @@ Looking to control what happens *after* a call is allowed, not just whether it's
 
 Granting a capability and exposing its session to a human watcher are two separate decisions either way, see `expose:` above.
 
-Full manifest schema lives in [docs/manifest-reference.md](./docs/manifest-reference.md). Full SDK surface (`defineApp`, `ContextBusClient`, `SemanticFsClient`, `requestCapability`) lives in [docs/sdk-reference.md](./docs/sdk-reference.md). Building in Python instead of TypeScript? See [docs/sdk-python-reference.md](./docs/sdk-python-reference.md).
+Full manifest schema lives in [docs/manifest-reference.md](./docs/manifest-reference.md). Full SDK surface (`defineApp`, `ContextBusClient`, `SemanticFsClient`, `requestCapability`) lives in [docs/sdk-reference.md](./docs/sdk-reference.md). Building in Python instead of TypeScript? See [docs/sdk-python-reference.md](./docs/sdk-python-reference.md) for resident apps, or [docs/agents-python-reference.md](./docs/agents-python-reference.md) for a Python `Agent`/`Crew.sequential()` core (not yet wired to a `Computer` — see that doc's scope notes).
 
 ### Talking to other apps
 
@@ -372,6 +372,7 @@ packages/
   cli/                 the `berth` CLI: init, dev, test, publish, deploy, os
   sdk-python/          Python resident app SDK, wire-protocol compatible with @berth/sdk
   agents/              computer, then agent, then tool: boots a Berth OS from resident apps, drives it with any LLM provider, composes multi-agent Crews
+  agents-python/       Python Agent/Crew core (tool-use loop + Crew.sequential), wire-compatible with @berth/agents' interfaces, not yet its Docker/Computer glue
 apps/
   browser-native/      first-party resident app: headless Chromium plus VNC
   filesystem/          first-party resident app that reads and writes /workspace, publishes fs.file_created
