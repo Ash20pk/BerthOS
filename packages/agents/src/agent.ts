@@ -103,7 +103,21 @@ export class Agent {
 
       for (const call of turn.toolCalls) {
         const tool = this.tools.find((t) => t.name === call.name);
-        const result: unknown = tool ? await tool.invoke(call.input) : { error: `no such tool "${call.name}"` };
+        let result: unknown;
+        if (!tool) {
+          result = { error: `no such tool "${call.name}"` };
+        } else {
+          try {
+            result = await tool.invoke(call.input);
+          } catch (err) {
+            // A failing tool call feeds an {error} result back to the model,
+            // same as the "no such tool" case above, instead of throwing out
+            // of the whole loop — the model gets a chance to retry with
+            // different input, try another tool, or surface the failure
+            // itself, rather than one bad call silently killing the run.
+            result = { error: err instanceof Error ? err.message : String(err) };
+          }
+        }
         executed.push({ name: call.name, input: call.input, result });
         messages.push({ role: "tool", toolResult: { id: call.id, name: call.name, output: result } });
       }

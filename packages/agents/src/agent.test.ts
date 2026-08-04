@@ -24,6 +24,17 @@ function echoTool(name: string, result: unknown = "tool-result"): Tool {
   return { name, description: "", inputSchema: {}, invoke: async () => result };
 }
 
+function throwingTool(name: string, message: string): Tool {
+  return {
+    name,
+    description: "",
+    inputSchema: {},
+    invoke: async () => {
+      throw new Error(message);
+    },
+  };
+}
+
 function memoryCheckpointStore(): CheckpointStore & { saved: CheckpointedRun[] } {
   const byRunId = new Map<string, CheckpointedRun>();
   const saved: CheckpointedRun[] = [];
@@ -121,6 +132,20 @@ test("resume() throws a clear error when no checkpoint store is configured", asy
   const { llm } = scriptedLLM([]);
   const agent = new Agent({ llm, tools: [] });
   await assert.rejects(() => agent.resume("run-d"), /no checkpoint store configured/);
+});
+
+test("a tool call that throws feeds an {error} result back to the model instead of ending the run", async () => {
+  const { llm, callCount } = scriptedLLM([
+    { toolCalls: [{ id: "1", name: "flaky", input: {} }], stop: false },
+    { text: "recovered", toolCalls: [], stop: true },
+  ]);
+  const agent = new Agent({ llm, tools: [throwingTool("flaky", "boom")] });
+
+  const result = await agent.run("do the thing");
+
+  assert.equal(callCount(), 2, "the model gets a second turn instead of the run throwing");
+  assert.equal(result.text, "recovered");
+  assert.deepEqual(result.toolCalls[0]!.result, { error: "boom" });
 });
 
 test("resume() throws a clear error when the runId has no saved checkpoint", async () => {
