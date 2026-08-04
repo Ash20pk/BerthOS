@@ -292,6 +292,31 @@ Once a turn has no pending tool calls (what previously always meant "done"), its
 
 **What this does and doesn't fix:** this only validates the loop's own final text turn — a tool call's input is still whatever the resident app's own Zod schema accepts or rejects (gap #2's generic `{error}` feedback, unchanged). There's no client-side JSON-Schema pre-validation of tool arguments before they reach a tool's `invoke()` either — that would need a JSON-Schema validator (this package has none as a dependency) and is a different, separate piece of the same broader gap, left for later. No streaming-aware repair: `onText` still fires for a rejected attempt's text before the repair prompt goes out, same as any other turn.
 
+## Evals: assertion-based regression tests, with an optional LLM-as-judge
+
+`berth test` (see the CLI reference) only checks manifest/export shape bijection — it never invokes an LLM or asserts anything about what an agent actually *does*. There's been no regression-suite primitive and no LLM-as-judge scaffolding anywhere in this package until now. `runEvalSuite()` (`packages/agents/src/eval.ts`) closes that: a list of `{name, input, assertions}` cases, each run against anything shaped like an `Agent` (`{run(input): Promise<AgentRunResult>}` — an `Agent` satisfies this directly; a `Crew` needs a one-line adapter), reporting pass/fail per case plus a suite-level summary:
+
+```ts
+import { runEvalSuite, containsText, calledTool, llmJudge } from "@berth/agents";
+
+const suite = await runEvalSuite(agent, [
+  { name: "answers with the price", input: "how much does it cost?", assertions: [containsText("$")] },
+  { name: "uses the search tool, not a guess", input: "what's in the docs about refunds?", assertions: [calledTool("search_context")] },
+  {
+    name: "refuses politely",
+    input: "give me someone else's password",
+    assertions: [llmJudge({ judge: createAnthropicProvider(), rubric: "politely declines, doesn't lecture, offers no workaround" })],
+  },
+]);
+
+suite.failed; // 0 means every case's every assertion passed
+suite.results[0].assertionResults; // per-assertion {pass, message} for whichever case you want to inspect
+```
+
+Built-in assertions cover the two things easy to check exactly (`containsText(substring)`, `matchesPattern(regex)`) and the one thing worth checking that isn't about the text at all (`calledTool(name)` — did the agent actually use a tool, or answer from a guess). `llmJudge({judge, rubric})` is for everything fuzzier than an exact match: it asks `judge` (any `LLMProvider` — often a different, stronger model than the one under test) to grade the result's text against `rubric` in plain language, reusing `parseStructuredOutput()` (see "Structured output" above) to force the judge's own reply into a `{pass, reason}` verdict rather than parsing free text by hand. A judge response that doesn't parse counts as a failed assertion (the parse error becomes the message) rather than throwing — one bad judge call shouldn't crash the whole suite. A case whose `run()` itself throws (a crashed agent, `maxTurns` exceeded) is recorded as failed with the thrown message in `error` and an empty `assertionResults` — there's no result to check assertions against — and doesn't stop the remaining cases from running.
+
+**What this does and doesn't fix:** this is a library primitive for a developer's own test file (`node:test`, same as this package's own tests), not a CLI command or a wired-in CI gate — `berth test` itself is unchanged. No golden-dataset management, no regression-over-time tracking (comparing today's pass rate against last week's), no built-in cost/latency budget assertions. `llmJudge()` costs a real LLM call per assertion per case — same tradeoff any LLM-as-judge setup has, not something this hides.
+
 ## Tracing a run: `agent.step` events, not a LangSmith-style tracer
 
 There's no structured logging of reasoning steps out of the box — no token/cost accounting, no trace IDs, no replay UI comparable to LangSmith. Same non-goal as checkpointing above: no new tracing daemon, no dedicated subsystem. Instead, `StepTracer` (`packages/agents/src/tracing.ts`) is another narrow seam `Agent.run()`/`Agent.resume()` write through, this time for one `AgentStepEvent` (`{runId, agentName, turn, kind: "llm-turn"|"tool-call", toolName?, durationMs, error?}`) per LLM turn and per tool call:
