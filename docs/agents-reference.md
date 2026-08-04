@@ -259,6 +259,20 @@ const result = await agent.resume("task-42"); // picks the loop back up, doesn't
 
 **What this does and doesn't fix:** this closes "a crash mid-loop loses everything" for a single `Agent`. A checkpoint means the *previous* turns survive a crash, not that a crash itself is recoverable mid-turn — a hard crash inside `tool.invoke()` (the process dying, not the call throwing) still loses that turn. It's also Agent-level only for now: `Crew.sequential`/`withManager`/`networked` don't checkpoint the crew's own composition state (which sub-agent ran, in what order) — only whichever individual `Agent`s you construct with a `checkpoint` store get durable turn-by-turn progress.
 
+## Retrieval: a `search_context` tool over Semantic FS, not a vector-DB integration
+
+Semantic FS already does real hybrid keyword+embedding search (`query_context`), but nothing in `packages/agents/src` referenced it as a retriever before this — and `query_context` alone only ever returns metadata (`path`/`task`/`relatedApps`/timestamps, see `@berth/sdk`'s `SemanticFsQueryResult`), never a hit's actual file content. Calling it directly forces the model into an N+1 round trip: one `query_context` call, then one `read_context_file` call per hit, before it has anything to actually reason over. `Retriever` (`packages/agents/src/retrieval.ts`) collapses that into one call:
+
+```ts
+const { agent, computer } = await createAgent({ apps: "apps/filesystem", retriever: "semantic-fs" });
+// the agent's tool list now includes a "search_context" tool: {query, topK?} -> {documents: [{path, content, task?, relatedApps?}]}
+await agent.run("what did we decide about the pricing page?");
+```
+
+`"semantic-fs"` (`createSemanticFsRetriever()`) resolves `query_context`/`read_context_file` off `Computer.tools` the same way checkpointing/tracing resolve their own export names (bare or `<appName>__`-namespaced), throwing immediately at construction if either is missing rather than on the first call. `retrieve(text, {topK?})` runs the query, then fetches content for up to `topK` hits (default 5) concurrently, silently dropping any hit whose `read_context_file` call fails — a path Semantic FS indexed at tag time that's since been deleted or moved shouldn't fail the whole retrieval. `asTool(name?)` wraps it as one `Tool` (`"search_context"` by default) so it sits in an `Agent`'s tool list alongside resident-app exports; `createAgent({retriever})` adds it automatically without removing the raw `query_context`/`read_context_file` exports themselves, so a model can still call either.
+
+**What this does and doesn't fix:** this makes Semantic FS retrieval ergonomic for an `Agent` to call as a single tool — it does not add a vector-DB integration (Pinecone/Weaviate/pgvector/etc.), chunking for long documents, or a way to ingest arbitrary external documents beyond what `write_context_file`/`tag_context_file` already let a resident app do. `Retriever` is a plain interface (`retrieve`/`asTool`), so a different backend (a real vector DB, a plain grep over a directory) can implement it without any of this.
+
 ## Structured output: a repair loop for an `Agent`'s final answer
 
 A Zod parse failure on a tool call's input (server-side, inside a resident app) already gets fed back to the model as a tool error and another turn — that's gap #2's tool-error handling, not a separate mechanism. What's genuinely missing is a LangChain `.with_structured_output()` equivalent for the agent's own *final* answer: once the model stops calling tools, nothing validated that its last message was actually the JSON shape the caller needed. `Agent.run()`/`Agent.resume()` gained a `responseSchema` option that closes that gap without a new subsystem — it's a small addition to the existing tool-use loop, not a parallel one:

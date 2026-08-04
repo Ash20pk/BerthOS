@@ -5,6 +5,7 @@ import { createSemanticFsCheckpointStore, type CheckpointedRun, type CheckpointS
 import { createAgentTracer, type StepTracer } from "./tracing.js";
 import { applyHumanApprovalGate, type HumanApprovalGateOptions } from "./approval.js";
 import { parseStructuredOutput, structuredOutputRepairPrompt, StructuredOutputError } from "./structured-output.js";
+import { createSemanticFsRetriever, type Retriever } from "./retrieval.js";
 import type { AgentMessage, LLMProvider, Tool } from "./types.js";
 
 export interface AgentOptions {
@@ -323,6 +324,17 @@ export interface CreateAgentOptions extends Pick<BootComputerOptions, "network" 
    * approval.ts.
    */
   humanApproval?: Omit<HumanApprovalGateOptions, "requesterName"> & { requesterName?: string };
+  /**
+   * "semantic-fs" builds a Retriever over this Computer's own
+   * query_context/read_context_file tools (see createSemanticFsRetriever)
+   * and adds it to the tool list as a single "search_context" tool — a real
+   * retrieval call (query + content fetch in one round trip) instead of the
+   * model having to chain the raw query_context/read_context_file exports
+   * itself. Needs an app like apps/filesystem exposing those two exports, or
+   * construction throws immediately. Pass a Retriever directly for a
+   * different backend (a real vector DB, a plain grep).
+   */
+  retriever?: "semantic-fs" | Retriever;
 }
 
 function normalizeApps(apps: string | string[] | undefined): string[] {
@@ -356,12 +368,14 @@ export async function createAgent(options: CreateAgentOptions): Promise<{ agent:
         }));
   const checkpoint = options.checkpoint === "semantic-fs" ? createSemanticFsCheckpointStore(computer) : options.checkpoint;
   const trace = options.trace === "full" ? createAgentTracer(computer) : options.trace;
-  const tools = options.humanApproval
+  const retriever = options.retriever === "semantic-fs" ? createSemanticFsRetriever(computer) : options.retriever;
+  const gatedTools = options.humanApproval
     ? applyHumanApprovalGate(computer.tools, {
         ...options.humanApproval,
         requesterName: options.humanApproval.requesterName ?? options.name ?? "agent",
       })
     : computer.tools;
+  const tools = retriever ? [...gatedTools, retriever.asTool()] : gatedTools;
 
   const agent = new Agent({
     name: options.name,
