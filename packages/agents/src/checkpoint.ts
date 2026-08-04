@@ -31,12 +31,15 @@ const CONTEXT_DIR = "agent-runs";
  * Tool names are bare (`write_context_file`) for a single-app Computer,
  * `<appName>__write_context_file` once a Computer has more than one app (see
  * tools.ts's toolNameFor) — match either shape rather than assuming which.
+ * Exported so tracing.ts's Semantic FS/Context Bus tracers can resolve their
+ * own export names off Computer.tools the exact same way, instead of
+ * duplicating this lookup.
  */
-function findExportTool(tools: Tool[], exportName: string): Tool {
+export function findExportTool(tools: Tool[], exportName: string, calledBy = "createSemanticFsCheckpointStore()"): Tool {
   const tool = tools.find((t) => t.name === exportName || t.name.endsWith(`__${exportName}`));
   if (!tool) {
     throw new Error(
-      `createSemanticFsCheckpointStore() needs a resident app exposing "${exportName}" in this Computer's app list ` +
+      `${calledBy} needs a resident app exposing "${exportName}" in this Computer's app list ` +
         `(apps/filesystem does) — got tools: ${tools.map((t) => t.name).join(", ") || "(none)"}`,
     );
   }

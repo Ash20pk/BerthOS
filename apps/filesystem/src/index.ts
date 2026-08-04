@@ -84,6 +84,14 @@ export default defineApp((app) => {
     handler: async ({ text }) => ({ results: (await semanticFs?.query(text)) ?? [] }),
   });
 
+  app.export({
+    name: "publish_context_event",
+    input: z.object({ topic: z.string(), payload: z.any() }),
+    handler: async ({ topic, payload }) => {
+      await contextBus?.publish(topic, payload);
+    },
+  });
+
   // Diagnostic export used by capability-enforcement.mjs's network
   // deny-by-default check: this app declares no network:connect capability,
   // so under deny-by-default it should never be able to reach out. Always

@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Agent } from "./agent.js";
 import type { CheckpointedRun, CheckpointStore } from "./checkpoint.js";
+import type { AgentStepEvent, StepTracer } from "./tracing.js";
 import type { LLMProvider, LLMTurn, Tool } from "./types.js";
 
 function scriptedLLM(turns: LLMTurn[]): { llm: LLMProvider; callCount: () => number } {
@@ -59,6 +60,16 @@ function throwingTool(name: string, message: string): Tool {
     inputSchema: {},
     invoke: async () => {
       throw new Error(message);
+    },
+  };
+}
+
+function memoryStepTracer(): StepTracer & { events: AgentStepEvent[] } {
+  const events: AgentStepEvent[] = [];
+  return {
+    events,
+    async emit(event) {
+      events.push(event);
     },
   };
 }
@@ -234,6 +245,72 @@ test("run() with onText falls back to chat() when the provider has no chatStream
   assert.equal(result.text, "done");
   assert.equal(callCount(), 1);
   assert.deepEqual(seen, [], "no chatStream on the provider means no incremental events, not an error");
+});
+
+test("run() without a runId never calls the tracer, even when one is configured", async () => {
+  const { llm } = scriptedLLM([{ text: "done", toolCalls: [], stop: true }]);
+  const tracer = memoryStepTracer();
+  const agent = new Agent({ llm, tools: [], trace: tracer });
+
+  await agent.run("do the thing");
+
+  assert.equal(tracer.events.length, 0);
+});
+
+test("run() with a tracer + runId emits an llm-turn step and a tool-call step per turn", async () => {
+  const { llm } = scriptedLLM([
+    { toolCalls: [{ id: "1", name: "search", input: { q: "x" } }], stop: false },
+    { text: "final answer", toolCalls: [], stop: true },
+  ]);
+  const tracer = memoryStepTracer();
+  const agent = new Agent({ llm, tools: [echoTool("search")], trace: tracer });
+
+  await agent.run("do the thing", { runId: "run-a" });
+
+  assert.deepEqual(
+    tracer.events.map((e) => [e.turn, e.kind, e.toolName]),
+    [
+      [0, "llm-turn", undefined],
+      [0, "tool-call", "search"],
+      [1, "llm-turn", undefined],
+    ],
+  );
+  assert.ok(tracer.events.every((e) => typeof e.durationMs === "number"));
+  assert.ok(tracer.events.every((e) => e.runId === "run-a" && e.agentName === "agent"));
+});
+
+test("a tool call that throws emits a tool-call step carrying the error message", async () => {
+  const { llm } = scriptedLLM([
+    { toolCalls: [{ id: "1", name: "flaky", input: {} }], stop: false },
+    { text: "recovered", toolCalls: [], stop: true },
+  ]);
+  const tracer = memoryStepTracer();
+  const agent = new Agent({ llm, tools: [throwingTool("flaky", "boom")], trace: tracer });
+
+  await agent.run("do the thing", { runId: "run-b" });
+
+  const toolStep = tracer.events.find((e) => e.kind === "tool-call");
+  assert.equal(toolStep?.error, "boom");
+});
+
+test("an LLM call that throws emits an llm-turn step carrying the error, then still rethrows", async () => {
+  const tracer = memoryStepTracer();
+  const agent = new Agent({
+    llm: {
+      name: "fake",
+      async chat() {
+        throw new Error("rate limited");
+      },
+    },
+    tools: [],
+    trace: tracer,
+  });
+
+  await assert.rejects(() => agent.run("do the thing", { runId: "run-c" }), /rate limited/);
+
+  assert.equal(tracer.events.length, 1);
+  assert.equal(tracer.events[0]!.kind, "llm-turn");
+  assert.equal(tracer.events[0]!.error, "rate limited");
 });
 
 test("resume() with onText streams the remaining turns after a checkpointed crash", async () => {

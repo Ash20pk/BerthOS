@@ -15,6 +15,14 @@ export {
 export { Crew, type CrewRun } from "./crew.js";
 export { createSemanticFsCheckpointStore, type CheckpointStore, type CheckpointedRun } from "./checkpoint.js";
 export {
+  createAgentTracer,
+  createContextBusStepTracer,
+  createSemanticFsStepTracer,
+  readAgentTrace,
+  type StepTracer,
+  type AgentStepEvent,
+} from "./tracing.js";
+export {
   generateAgentServerApp,
   bootNetworkedAgent,
   type AgentServerLLMConfig,

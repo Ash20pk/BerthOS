@@ -25,6 +25,8 @@ exports:
   - name: query_context
     input: { text: string }
     output: { results: array }
+  - name: publish_context_event
+    input: { topic: string, payload: object }
   # Diagnostic export for capability-enforcement.mjs's network deny-by-default
   # check — this app declares no network:connect capability, so it should
   # never be able to reach out.
