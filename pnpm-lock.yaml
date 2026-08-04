@@ -257,6 +257,9 @@ importers:
       '@berth/docker-orchestrator':
         specifier: workspace:*
         version: link:../docker-orchestrator
+      '@berth/grants-server':
+        specifier: workspace:*
+        version: link:../grants-server
       '@berth/manifest-schema':
         specifier: workspace:*
         version: link:../manifest-schema

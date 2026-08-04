@@ -23,6 +23,7 @@
     "@berth/docker-orchestrator": "workspace:*",
     "@berth/sdk": "workspace:*",
     "@berth/adapter-core": "workspace:*",
+    "@berth/grants-server": "workspace:*",
     "@anthropic-ai/sdk": "^0.115.0",
     "openai": "^7.2.0",
     "dockerode": "^5.0.1",

@@ -35,6 +35,8 @@ The principle that human admins approve grants and agents never see raw secrets 
 
 Verified for real, not just unit-tested: `packages/docker-orchestrator/test/grants-server-milestone.mjs` runs a full pending → `berth grants approve`-equivalent HTTP round trip against a real running `berth-grants` server, boots a real container with `BERTH_GRANTS_SERVER_URL` set, and asserts the approved `network:connect:<port>` capability (one `apps/filesystem/berth.yml` does not statically declare) lands in the freshly-written `capability-policy.json`'s `networkPorts`. Wired into CI via `.github/workflows/grants-server-milestone.yml`.
 
+`@berth/agents`'s `applyHumanApprovalGate()` (`packages/agents/src/approval.ts`) is a second, structurally different consumer of the same `berth-grants` server — a live, blocking gate on an `Agent`'s tool calls, not a boot-time capability merge. It never touches `generate-capability-policy.ts`/Landlock, since there's no container to restart mid-`Agent.run()` to pick up a decision the way `requestCapability()`'s async path does — see [`docs/agents-reference.md`](./agents-reference.md#human-in-the-loop-gating-a-live-tool-call-on-a-human-decision).
+
 ## What's still deliberately deferred (by explicit decision, not oversight)
 
 - **Domain-scoped network filtering at the kernel level.** Landlock's own port-based scoping is real; domain/SNI-based filtering isn't possible at that layer, as above. A host-level egress broker now covers this for `browser:navigate:*` specifically — see `docs/egress-broker-reference.md`. Path/verb-level API scoping (`github:read:repos` vs `github:write:issues`) is now covered too, via a real TLS-terminating MITM broker — see `docs/github-api-scoping-reference.md`.
