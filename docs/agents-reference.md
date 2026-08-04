@@ -162,6 +162,26 @@ const { agent } = await createAgent({
 
 `baseURL` is what makes this useful beyond a shorthand. Both `createAnthropicProvider()` and `createOpenAIProvider()` accept it directly too, and it's what lets you point at a self-hosted or OpenAI-compatible endpoint (Ollama, vLLM, OpenRouter, a Bedrock or Vertex proxy) instead of the vendor's own API. Omit `llm` entirely and `detectLLMProvider()` picks whichever of `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` is actually set.
 
+### Retries and a fallback model chain
+
+A single flaky call (a 429, a 5xx, a timeout) is already retried a couple of times before it ever reaches `Agent` — `createAnthropicProvider()`/`createOpenAIProvider()` are thin adapters over `@anthropic-ai/sdk`/`openai`, and both SDK clients retry retriable errors with their own exponential backoff by default (`maxRetries: 2`). That default was previously invisible and unconfigurable from this package; both providers now accept `maxRetries` directly:
+
+```ts
+const llm = createAnthropicProvider({ maxRetries: 5 });
+```
+
+What was actually missing is the layer above that: a whole provider being down (an outage, an exhausted quota), not one bad request. `createFallbackProvider(providers, {onFallback?})` wraps an ordered list of `LLMProvider`s into one — `chat()`/`chatStream()` try `providers[0]`, and on any thrown error (i.e. once that provider's own retries are exhausted) fall through to `providers[1]`, and so on, until one succeeds or the last one's error propagates unchanged:
+
+```ts
+const llm = createFallbackProvider(
+  [createAnthropicProvider(), createOpenAIProvider()],
+  { onFallback: (err, failed) => console.error(`${failed.name} failed, falling back:`, err) },
+);
+const { agent } = await createAgent({ apps: "apps/filesystem", llm });
+```
+
+Works with any `LLMProvider`, built-in or custom — nothing in `createFallbackProvider()` references Anthropic or OpenAI specifically, and nothing in `Agent`/`createAgent` needs to know a fallback chain is even in use; `llm` accepts the wrapped provider exactly like any other. `chatStream` is present on the wrapped provider only when every provider in the chain implements it — same "absent means no incremental events" contract `Agent.run()` already treats `chatStream` under. **One real, documented gap**: falling back mid-stream isn't clean — `onText` may have already fired with the failed provider's partial text before the switch, and the next provider's stream starts over from nothing, so a caller could see `"Hel"` then `"Hello there"` rather than one continuous stream.
+
 Because `Tool` is the one interface both resident-app exports and other agents implement (through `Agent.asTool()`), a manager agent's tool list can freely mix "call a resident app export" and "delegate to another agent" through the same dispatch path.
 
 ## Governance gate: gating every other app's tools

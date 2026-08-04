@@ -34,5 +34,6 @@ export {
 } from "./network.js";
 export { createAnthropicProvider, type AnthropicProviderOptions } from "./providers/anthropic.js";
 export { createOpenAIProvider, type OpenAIProviderOptions } from "./providers/openai.js";
+export { createFallbackProvider, type FallbackProviderOptions } from "./providers/fallback.js";
 export { detectLLMProvider, resolveLLMProvider, type LLMProviderConfig } from "./providers/auto.js";
 export type { Tool, LLMProvider, LLMTurn, AgentMessage, AgentRole } from "./types.js";
