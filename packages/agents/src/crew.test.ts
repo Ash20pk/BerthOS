@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { Agent } from "./agent.js";
 import { Crew } from "./crew.js";
 import type { LLMProvider, LLMTurn } from "./types.js";
+import type { NetworkedAgent } from "./network.js";
 
 function scriptedLLM(turns: LLMTurn[]): LLMProvider {
   let i = 0;
@@ -19,6 +20,55 @@ function scriptedLLM(turns: LLMTurn[]): LLMProvider {
 
 function textAgent(name: string, text: string): Agent {
   return new Agent({ name, llm: scriptedLLM([{ text, toolCalls: [], stop: true }]), tools: [] });
+}
+
+/** Echoes the last user-turn text back, prefixed with its own name — lets a test see exactly what task a delegating agent passed down. */
+function echoAgent(name: string): Agent {
+  return new Agent({
+    name,
+    llm: {
+      name: "fake",
+      async chat(params) {
+        const text = params.messages.at(-1)?.text ?? "";
+        return { text: `${name} received: ${text}`, toolCalls: [], stop: true };
+      },
+    },
+    tools: [],
+  });
+}
+
+/** A manager-shaped Agent: first turn delegates to `toolName` with `{task}`, second turn answers from that tool call's result. */
+function managerAgent(toolName: string, task: string, finalText: (toolOutput: unknown) => string): Agent {
+  let call = 0;
+  return new Agent({
+    name: "manager",
+    llm: {
+      name: "fake",
+      async chat(params) {
+        call++;
+        if (call === 1) {
+          return { toolCalls: [{ id: "1", name: toolName, input: { task } }], stop: false };
+        }
+        return { text: finalText(params.messages.at(-1)?.toolResult?.output), toolCalls: [], stop: true };
+      },
+    },
+    tools: [],
+  });
+}
+
+/** A fake NetworkedAgent peer — Crew.networked() only ever reads `.tool`, so the rest of the shape is unused filler. */
+function fakePeer(name: string, invoke: (input: unknown) => Promise<unknown>): NetworkedAgent {
+  return {
+    computer: undefined as unknown as NetworkedAgent["computer"],
+    transport: "local",
+    async stop() {},
+    tool: {
+      name,
+      description: `delegate to ${name}`,
+      inputSchema: { type: "object", properties: { task: { type: "string" } }, required: ["task"] },
+      invoke,
+    },
+  };
 }
 
 test("Crew.parallel runs every agent against the same input and merges with the default merge", async () => {
@@ -113,4 +163,94 @@ test("Crew.route throws, naming the router's answer, when no route matches and n
   const crew = Crew.route({ router, routes: { billing } });
 
   await assert.rejects(() => crew.run("???"), /something unexpected/);
+});
+
+test("Crew.sequential pipes each agent's output text as the next agent's input, in order", async () => {
+  const upper = new Agent({
+    name: "upper",
+    llm: {
+      name: "fake",
+      async chat(params) {
+        return { text: (params.messages.at(-1)?.text ?? "").toUpperCase(), toolCalls: [], stop: true };
+      },
+    },
+    tools: [],
+  });
+  const exclaim = new Agent({
+    name: "exclaim",
+    llm: {
+      name: "fake",
+      async chat(params) {
+        return { text: `${params.messages.at(-1)?.text ?? ""}!`, toolCalls: [], stop: true };
+      },
+    },
+    tools: [],
+  });
+
+  const crew = Crew.sequential([upper, exclaim]);
+  const result = await crew.run("hello");
+
+  assert.equal(result, "HELLO!", "exclaim must see upper's output, not the original input");
+});
+
+test("Crew.sequential with no agents returns the input unchanged", async () => {
+  const crew = Crew.sequential([]);
+  const result = await crew.run("unchanged");
+  assert.equal(result, "unchanged");
+});
+
+test("Crew.withManager gives the manager one Tool per worker and returns the manager's final answer", async () => {
+  const worker = echoAgent("writer");
+  const manager = managerAgent("writer", "write a poem", (output) => `manager says: ${output}`);
+
+  const crew = Crew.withManager({ manager, workers: [worker] });
+  const result = await crew.run("please get a poem written");
+
+  assert.equal(result, "manager says: writer received: write a poem", "the task from the tool call must reach the worker's own run()");
+});
+
+test("Crew.withManager delegates to the worker matching the tool call's name, not just the first worker", async () => {
+  const writer = echoAgent("writer");
+  const reviewer = echoAgent("reviewer");
+  const manager = managerAgent("reviewer", "check this draft", (output) => String(output));
+
+  const crew = Crew.withManager({ manager, workers: [writer, reviewer] });
+  const result = await crew.run("please review this");
+
+  assert.equal(result, "reviewer received: check this draft");
+});
+
+test("Crew.withManager does not mutate the original manager Agent in place", async () => {
+  const worker = echoAgent("writer");
+  const manager = managerAgent("writer", "write it", (output) => (output as { error?: string }).error ?? String(output));
+
+  Crew.withManager({ manager, workers: [worker] });
+  const result = await manager.run("solo, no crew");
+
+  assert.match(
+    result.text ?? "",
+    /no such tool "writer"/,
+    "the original manager must still lack the worker tool — withManager()'s withTools() must return a new Agent, not mutate this one",
+  );
+});
+
+test("Crew.networked delegates to a peer's tool exactly like an in-process worker", async () => {
+  const peer = fakePeer("remote-writer", async (input) => `remote got: ${(input as { task: string }).task}`);
+  const manager = managerAgent("remote-writer", "draft the memo", (output) => `manager says: ${output}`);
+
+  const crew = Crew.networked({ manager, peers: [peer] });
+  const result = await crew.run("please draft a memo");
+
+  assert.equal(result, "manager says: remote got: draft the memo");
+});
+
+test("Crew.networked dispatches to the peer matching the tool call's name among several", async () => {
+  const a = fakePeer("peer-a", async () => "from a");
+  const b = fakePeer("peer-b", async () => "from b");
+  const manager = managerAgent("peer-b", "task for b", (output) => String(output));
+
+  const crew = Crew.networked({ manager, peers: [a, b] });
+  const result = await crew.run("dispatch");
+
+  assert.equal(result, "from b");
 });
