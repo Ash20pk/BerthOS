@@ -188,6 +188,32 @@ Because `Tool` is the one interface both resident-app exports and other agents i
 
 An app declaring `governs: true` in its `berth.yml` becomes the Computer's governance authority: `Computer` wraps every *other* app's `Tool.invoke` to call that app's `evaluate_action` export first, and only proceeds if it returns `{ allowed: true }`. This is `Computer`-level, not kernel-level — Landlock has no per-syscall hook to build a true kernel gate on, so this is the closest real choke point that sees every tool call an agent makes across every app. Full contract, opt-out (`governance: { exempt: true }`), and fail-open behavior in the [governance gate reference](./governance-reference.md).
 
+Governance is fully automated — `evaluate_action` is a policy check some app's code answers, not a human. For an actual human decision in the loop, see the next section.
+
+## Human-in-the-loop: gating a live tool call on a human decision
+
+Neither `Agent.run()` nor the governance gate above has an interrupt point — nothing like LangGraph's `interrupt()`/`Command(resume=...)`. `applyHumanApprovalGate(tools, options)` (`packages/agents/src/approval.ts`) closes that by generalizing [`@berth/grants-server`](./capability-tokens-reference.md#human-admin-approval-berthgrants-server)'s existing approve/deny pattern from "container gets this filesystem capability" (decided *async*, taking effect only on the app's next boot) to "this agent gets to take its next action" (decided *live*, blocking the call that's asking):
+
+```ts
+const { agent } = await createAgent({
+  apps: "apps/filesystem",
+  humanApproval: {
+    grantsServerUrl: "http://127.0.0.1:4874", // a running `berth-grants` instance
+    only: ["write_file"], // omit to gate every tool; requesterName defaults to this Agent's name
+  },
+});
+
+await agent.run("clean up old files"); // blocks on write_file until `berth grants approve/deny` decides it
+```
+
+A gated tool call does `POST /grants {appName: requesterName, capability: "agent-action:<toolName>", reason: JSON.stringify(input)}`, then polls `GET /grants/:id` (`pollIntervalMs`, default 2s) until a human decides via `berth grants approve|deny` (or the REST API directly) or `timeoutMs` (default 10 minutes) elapses. Denied, or timed out, both throw `HumanApprovalDeniedError` — caught generically by `Agent.run()`'s tool loop and fed back to the model as `{error}`, exactly like any other tool failure (see gap #2 above); no `Agent` changes were needed for this to work.
+
+Two things this deliberately does **not** do, both by design rather than oversight:
+- **Doesn't touch `generate-capability-policy.ts`/Landlock at all.** That machinery is boot-time-only — Landlock rulesets are fixed at `agent-init`'s `restrict_self()` and can never be widened on an already-running process, so the *existing* async consumer (`requestCapability()`) can only take effect on the app's *next container restart*. There's no container to restart mid-`Agent.run()`, so this gate polls and blocks live instead, reusing only the request/approve/deny/webhook machinery, not the boot-time merge.
+- **Fail-closed, the opposite of the governance gate's fail-open.** A human-approval gate that silently let calls through when `grants-server` was unreachable, slow, or simply never got a human's attention wouldn't be a human-in-the-loop gate at all — a timeout is a denial here, not a pass-through.
+
+`only` (an array of tool names) is what makes this usable in practice — gating literally every tool call would mean a human has to click through even harmless reads. Omit it to gate everything; scope it down to just the tool calls that actually warrant a human looking first (a delete, a payment, an external message send).
+
 ## `Agent` and `Crew`: single- and multi-agent composition
 
 `Agent.run(input)` is the provider-agnostic tool-use loop, identical no matter which `LLMProvider` or `Tool` implementations are plugged in. `Agent.asTool(description)` wraps an agent as a `Tool` (`{task: string}` in, `run(task).text` out), the seam `Crew.withManager({manager, workers})` uses to let a manager's own LLM decide when to delegate. `Crew.sequential(agents)` just pipes each agent's output text into the next.
