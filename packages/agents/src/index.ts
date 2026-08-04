@@ -15,6 +15,7 @@ export {
 } from "./agent.js";
 export { Crew, type CrewRun } from "./crew.js";
 export { createSemanticFsCheckpointStore, type CheckpointStore, type CheckpointedRun } from "./checkpoint.js";
+export { createSemanticFsRetriever, type Retriever, type RetrievedDocument } from "./retrieval.js";
 export {
   createAgentTracer,
   createContextBusStepTracer,
