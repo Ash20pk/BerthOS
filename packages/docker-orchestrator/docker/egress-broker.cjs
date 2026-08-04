@@ -19,6 +19,25 @@ const fs = require("node:fs");
 const PORT = Number(process.env.BERTH_EGRESS_BROKER_PORT || 8090);
 const POLICY_PATH = process.env.BERTH_CAPABILITY_POLICY || `${process.cwd()}/.berth/capability-policy.json`;
 
+// Optional: chain an *allowed* CONNECT through a further upstream proxy
+// (e.g. a residential/rotating proxy provider) instead of connecting to the
+// target directly — lets browser-native present a real residential IP to
+// sites that block/challenge datacenter ranges, without weakening
+// browser:navigate:<pattern> enforcement: the host-allow check above still
+// runs first, so a denied host never reaches (or costs bandwidth on) the
+// upstream proxy either. Format: a proxy URL, credentials optional —
+// "http://user:pass@residential-proxy.example.com:8000". Deliberately not
+// logged verbatim anywhere below (credentials would leak into container
+// logs) — only host:port ever gets logged. Any provider that speaks plain
+// HTTP CONNECT + optional Proxy-Authorization: Basic works here; that's the
+// standard interface Bright Data/Oxylabs/Smartproxy/etc. all expose.
+const UPSTREAM_PROXY_URL = process.env.BERTH_EGRESS_UPSTREAM_PROXY ? new URL(process.env.BERTH_EGRESS_UPSTREAM_PROXY) : null;
+// The "Basic <base64>" value only — callers add whichever header-name/CRLF
+// shape their own protocol (raw CONNECT vs. Node's http.request headers) needs.
+const UPSTREAM_PROXY_AUTH_VALUE = UPSTREAM_PROXY_URL?.username
+  ? `Basic ${Buffer.from(`${decodeURIComponent(UPSTREAM_PROXY_URL.username)}:${decodeURIComponent(UPSTREAM_PROXY_URL.password)}`).toString("base64")}`
+  : null;
+
 function parseCapability(capability) {
   const parts = capability.split(":");
   if (parts.length < 3) return null;
@@ -49,13 +68,19 @@ function loadNavigatePatterns() {
 
 const NAVIGATE_PATTERNS = loadNavigatePatterns();
 console.error(`[egress-broker] allowed browser:navigate patterns: ${NAVIGATE_PATTERNS.join(", ") || "(none)"}`);
+if (UPSTREAM_PROXY_URL) {
+  console.error(`[egress-broker] chaining allowed CONNECTs through upstream proxy ${UPSTREAM_PROXY_URL.hostname}:${UPSTREAM_PROXY_URL.port || 80}`);
+}
 
 function isHostAllowed(host) {
   return NAVIGATE_PATTERNS.some((pattern) => globToRegExp(pattern).test(host));
 }
 
 function logDecision(action, host, port) {
-  console.error(`[egress-broker] {"event":"navigate_${action}","host":${JSON.stringify(host)},"port":${port}}`);
+  const viaUpstream = action === "allowed" && Boolean(UPSTREAM_PROXY_URL);
+  console.error(
+    `[egress-broker] {"event":"navigate_${action}","host":${JSON.stringify(host)},"port":${port},"viaUpstreamProxy":${viaUpstream}}`,
+  );
 }
 
 // Plain-HTTP proxying (absolute-URI request line) — same host check as
@@ -86,9 +111,23 @@ const server = http.createServer((req, res) => {
   // 'connect' handler below for the full writeup); the explicit `timeout`
   // turns a stalled upstream into a fast, diagnosable error instead of an
   // indefinite hang.
+  //
+  // When an upstream proxy is configured, forward this same absolute-URI
+  // request line to it (a plain-HTTP forward-proxy request already names
+  // its target via the URI, not the connection) instead of connecting to
+  // the target directly — the upstream proxy is what makes the outbound
+  // connection, and thus what the target site sees as the source IP.
+  const upstreamTarget = UPSTREAM_PROXY_URL
+    ? { hostname: UPSTREAM_PROXY_URL.hostname, port: UPSTREAM_PROXY_URL.port || 80, path: req.url }
+    : target;
   const upstream = http.request(
-    target,
-    { method: req.method, headers: req.headers, family: 4, timeout: 10000 },
+    upstreamTarget,
+    {
+      method: req.method,
+      headers: UPSTREAM_PROXY_AUTH_VALUE ? { ...req.headers, "proxy-authorization": UPSTREAM_PROXY_AUTH_VALUE } : req.headers,
+      family: 4,
+      timeout: 10000,
+    },
     (upstreamRes) => {
       res.writeHead(upstreamRes.statusCode, upstreamRes.headers);
       upstreamRes.pipe(res);
@@ -112,6 +151,11 @@ server.on("connect", (req, clientSocket, head) => {
     return;
   }
   logDecision("allowed", host, port);
+
+  if (UPSTREAM_PROXY_URL) {
+    connectViaUpstreamProxy(host, port, clientSocket, head);
+    return;
+  }
 
   // family: 4 forces IPv4 resolution instead of letting Node's musl/Alpine
   // resolver race A/AAAA lookups — a well-documented class of bug
@@ -139,6 +183,71 @@ server.on("connect", (req, clientSocket, head) => {
   });
   clientSocket.on("error", () => upstream.destroy());
 });
+
+/**
+ * Tunnels an already-allowed CONNECT through UPSTREAM_PROXY_URL instead of
+ * connecting to `host:port` directly: connect to the upstream proxy, issue
+ * our own CONNECT for the real target (proxy-chaining — standard, not
+ * Berth-specific), then splice the client socket to the upstream socket
+ * exactly as the direct path does once *that* tunnel is confirmed. The
+ * host-allow check has already run by the time this is called, so a denied
+ * host never reaches (or spends the upstream proxy's bandwidth/cost) here.
+ */
+function connectViaUpstreamProxy(host, port, clientSocket, head) {
+  const proxyHost = UPSTREAM_PROXY_URL.hostname;
+  const proxyPort = Number(UPSTREAM_PROXY_URL.port) || 80;
+
+  const upstream = net.connect({ host: proxyHost, port: proxyPort, family: 4 });
+  const connectTimeout = setTimeout(() => {
+    upstream.destroy(new Error(`connect to upstream proxy ${proxyHost}:${proxyPort} timed out`));
+  }, 10000);
+
+  function fail(message) {
+    clearTimeout(connectTimeout);
+    console.error(`[egress-broker] ${message}`);
+    if (!clientSocket.destroyed) clientSocket.end("HTTP/1.1 502 Bad Gateway\r\n\r\n");
+    upstream.destroy();
+  }
+
+  upstream.once("connect", () => {
+    const authLine = UPSTREAM_PROXY_AUTH_VALUE ? `Proxy-Authorization: ${UPSTREAM_PROXY_AUTH_VALUE}\r\n` : "";
+    upstream.write(`CONNECT ${host}:${port} HTTP/1.1\r\nHost: ${host}:${port}\r\n${authLine}\r\n`);
+  });
+
+  // Buffers only the upstream proxy's own CONNECT response headers (a few
+  // hundred bytes at most) — once the blank-line terminator is seen, this
+  // listener detaches and the socket goes back to raw byte-piping for the
+  // rest of the tunnel's lifetime, same as the direct path.
+  let responseBuffer = Buffer.alloc(0);
+  function onUpstreamData(chunk) {
+    responseBuffer = Buffer.concat([responseBuffer, chunk]);
+    const headerEnd = responseBuffer.indexOf("\r\n\r\n");
+    if (headerEnd === -1) return;
+    upstream.off("data", onUpstreamData);
+    clearTimeout(connectTimeout);
+
+    const statusLine = responseBuffer.subarray(0, headerEnd).toString("utf-8").split("\r\n")[0] ?? "";
+    const statusCode = Number(statusLine.match(/^HTTP\/1\.\d (\d+)/)?.[1]);
+    if (statusCode !== 200) {
+      fail(`upstream proxy refused CONNECT ${host}:${port}: ${statusLine}`);
+      return;
+    }
+
+    clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+    // Any bytes the upstream proxy sent immediately after its own header
+    // terminator are already tunnel payload (rare, but the framing allows
+    // it) — forward them before splicing the two sockets together.
+    const leftover = responseBuffer.subarray(headerEnd + 4);
+    if (leftover.length > 0) clientSocket.write(leftover);
+    upstream.write(head);
+    upstream.pipe(clientSocket);
+    clientSocket.pipe(upstream);
+  }
+  upstream.on("data", onUpstreamData);
+
+  upstream.on("error", (err) => fail(`upstream proxy connect error for ${proxyHost}:${proxyPort}: ${err.message}`));
+  clientSocket.on("error", () => upstream.destroy());
+}
 
 server.listen(PORT, "127.0.0.1", () => {
   console.error(`[egress-broker] listening on 127.0.0.1:${PORT}`);

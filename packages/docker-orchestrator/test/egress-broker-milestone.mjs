@@ -38,6 +38,7 @@ const docker = new Docker();
 
 async function main() {
   await runPartA();
+  await runPartA2();
   await runPartB();
 }
 
@@ -85,6 +86,109 @@ async function runPartA() {
     broker.kill();
     await rm(dataDir, { recursive: true, force: true });
   }
+}
+
+// Part A2: BERTH_EGRESS_UPSTREAM_PROXY chaining, against a real (if fake)
+// second proxy — no Docker needed, same shape as Part A. Proves two things
+// that matter about this feature specifically: an allowed CONNECT actually
+// gets tunneled through the configured upstream (not silently ignored), with
+// the right Proxy-Authorization credentials; and a denied host never even
+// reaches the upstream proxy, so capability enforcement still runs first.
+async function runPartA2() {
+  console.log("\n=== Part A2: BERTH_EGRESS_UPSTREAM_PROXY chaining, run directly (no Docker) ===");
+  const dataDir = await mkdtemp(join(tmpdir(), "berth-egress-broker-milestone-upstream-"));
+  const policyPath = join(dataDir, "capability-policy.json");
+  await writeFile(
+    policyPath,
+    JSON.stringify({
+      appName: "scoped-test-app",
+      declaredCapabilities: ["browser:navigate:example.com"],
+      writePaths: [],
+      readPaths: [],
+      networkPorts: [],
+      networkUnrestricted: false,
+    }),
+  );
+
+  const fakeUpstream = await startFakeUpstreamProxy();
+  const brokerPort = 58091;
+  const broker = spawn(process.execPath, [BROKER_SCRIPT], {
+    env: {
+      ...process.env,
+      BERTH_EGRESS_BROKER_PORT: String(brokerPort),
+      BERTH_CAPABILITY_POLICY: policyPath,
+      BERTH_EGRESS_UPSTREAM_PROXY: `http://proxyuser:proxypass@127.0.0.1:${fakeUpstream.port}`,
+    },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  let stderr = "";
+  broker.stderr.on("data", (chunk) => (stderr += chunk.toString("utf-8")));
+
+  try {
+    await waitFor(() => stderr.includes("listening on"), 5000, "broker to start listening");
+    assert(stderr.includes("chaining allowed CONNECTs through upstream proxy"), "broker didn't log that upstream chaining is active");
+
+    console.log("\n--- CONNECT to an in-scope host (example.com), should tunnel through the fake upstream proxy ---");
+    const allowed = await connectThroughProxy(brokerPort, "example.com", 443);
+    console.log(`status: ${allowed.statusCode}`);
+    assert(allowed.statusCode === 200, `expected 200 for an in-scope host chained through the upstream proxy, got ${allowed.statusCode}`);
+
+    const receivedConnect = fakeUpstream.connects.find((c) => c.target === "example.com:443");
+    assert(receivedConnect, `expected the fake upstream proxy to have received a CONNECT for example.com:443, got: ${JSON.stringify(fakeUpstream.connects)}`);
+    const expectedAuth = `Basic ${Buffer.from("proxyuser:proxypass").toString("base64")}`;
+    assert(
+      receivedConnect.proxyAuthorization === expectedAuth,
+      `expected the fake upstream proxy to see Proxy-Authorization: ${expectedAuth}, got: ${receivedConnect.proxyAuthorization}`,
+    );
+
+    console.log("\n--- CONNECT to an out-of-scope host — must be denied by the broker BEFORE reaching the upstream proxy ---");
+    const denied = await connectThroughProxy(brokerPort, "evil-not-declared.test", 443);
+    console.log(`status: ${denied.statusCode}`);
+    assert(denied.statusCode === 403, `expected 403 for an out-of-scope host, got ${denied.statusCode}`);
+    assert(
+      !fakeUpstream.connects.some((c) => c.target === "evil-not-declared.test:443"),
+      "the denied host reached the upstream proxy — capability enforcement must run before proxy chaining, not after",
+    );
+
+    console.log("\nPASS — an allowed CONNECT was really tunneled through the configured upstream proxy with the right credentials, and a denied host never reached it.");
+  } finally {
+    broker.kill();
+    await fakeUpstream.stop();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+}
+
+// A minimal CONNECT-only proxy standing in for a real upstream (residential)
+// proxy provider — real TCP, real HTTP/1.1 CONNECT framing, just not an
+// actual third-party service. Records each CONNECT's target and
+// Proxy-Authorization header for the test to assert against, then completes
+// the tunnel with a 200 and immediately closes it — this test only needs to
+// prove the broker reaches this proxy and hands it the right request, not
+// that bytes flow end-to-end afterward (Part B already proves the direct
+// no-upstream-proxy path carries real traffic).
+async function startFakeUpstreamProxy() {
+  const connects = [];
+  const server = net.createServer((socket) => {
+    let buffer = "";
+    socket.on("data", (chunk) => {
+      buffer += chunk.toString("utf-8");
+      const headerEnd = buffer.indexOf("\r\n\r\n");
+      if (headerEnd === -1) return;
+      const header = buffer.slice(0, headerEnd);
+      const [requestLine, ...headerLines] = header.split("\r\n");
+      const target = requestLine?.split(" ")[1];
+      const proxyAuthLine = headerLines.find((line) => /^proxy-authorization:/i.test(line));
+      connects.push({ target, proxyAuthorization: proxyAuthLine?.split(":").slice(1).join(":").trim() });
+      socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+      socket.end();
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return {
+    port: server.address().port,
+    connects,
+    stop: () => new Promise((resolve) => server.close(resolve)),
+  };
 }
 
 async function runPartB() {
