@@ -259,6 +259,25 @@ const result = await agent.resume("task-42"); // picks the loop back up, doesn't
 
 **What this does and doesn't fix:** this closes "a crash mid-loop loses everything" for a single `Agent`. A checkpoint means the *previous* turns survive a crash, not that a crash itself is recoverable mid-turn — a hard crash inside `tool.invoke()` (the process dying, not the call throwing) still loses that turn. It's also Agent-level only for now: `Crew.sequential`/`withManager`/`networked` don't checkpoint the crew's own composition state (which sub-agent ran, in what order) — only whichever individual `Agent`s you construct with a `checkpoint` store get durable turn-by-turn progress.
 
+## Structured output: a repair loop for an `Agent`'s final answer
+
+A Zod parse failure on a tool call's input (server-side, inside a resident app) already gets fed back to the model as a tool error and another turn — that's gap #2's tool-error handling, not a separate mechanism. What's genuinely missing is a LangChain `.with_structured_output()` equivalent for the agent's own *final* answer: once the model stops calling tools, nothing validated that its last message was actually the JSON shape the caller needed. `Agent.run()`/`Agent.resume()` gained a `responseSchema` option that closes that gap without a new subsystem — it's a small addition to the existing tool-use loop, not a parallel one:
+
+```ts
+import { z } from "zod";
+
+const schema = z.object({ name: z.string(), age: z.number() });
+
+const result = await agent.run("extract the person's name and age from: ...", { responseSchema: schema });
+result.data; // typed { name: string; age: number }, guaranteed to match schema — or the call already threw
+```
+
+Once a turn has no pending tool calls (what previously always meant "done"), its text is parsed as JSON and validated against `responseSchema` (`parseStructuredOutput()`, `packages/agents/src/structured-output.ts`). Two failure modes get collapsed into one error string fed back as a fresh user turn — "your previous response could not be parsed as valid JSON matching the required schema: `<error>` — respond again with ONLY corrected JSON" — and the loop continues, giving the model another attempt: not valid JSON at all, or valid JSON that doesn't match the schema (reported per-field, via Zod's own `issues`). This repeats up to `maxRepairAttempts` (default 2); exceeding it throws `StructuredOutputError` (carrying the model's last, still-invalid `rawText`) rather than silently returning invalid data. A schema-conforming first attempt costs nothing extra — no repair turn, no extra LLM call.
+
+`responseSchema` is a per-call option, not a constructor one (unlike `checkpoint`/`trace`) — different calls against the same `Agent` can ask for different shapes, or none at all. `runAgent({responseSchema, maxRepairAttempts})` threads the same options through for the one-shot entry point.
+
+**What this does and doesn't fix:** this only validates the loop's own final text turn — a tool call's input is still whatever the resident app's own Zod schema accepts or rejects (gap #2's generic `{error}` feedback, unchanged). There's no client-side JSON-Schema pre-validation of tool arguments before they reach a tool's `invoke()` either — that would need a JSON-Schema validator (this package has none as a dependency) and is a different, separate piece of the same broader gap, left for later. No streaming-aware repair: `onText` still fires for a rejected attempt's text before the repair prompt goes out, same as any other turn.
+
 ## Tracing a run: `agent.step` events, not a LangSmith-style tracer
 
 There's no structured logging of reasoning steps out of the box — no token/cost accounting, no trace IDs, no replay UI comparable to LangSmith. Same non-goal as checkpointing above: no new tracing daemon, no dedicated subsystem. Instead, `StepTracer` (`packages/agents/src/tracing.ts`) is another narrow seam `Agent.run()`/`Agent.resume()` write through, this time for one `AgentStepEvent` (`{runId, agentName, turn, kind: "llm-turn"|"tool-call", toolName?, durationMs, error?}`) per LLM turn and per tool call:
