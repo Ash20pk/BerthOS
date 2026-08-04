@@ -2,6 +2,7 @@ import { Computer, type BootComputerOptions, type ConnectComputerOptions } from 
 import { resolveLLMProvider, type LLMProviderConfig } from "./providers/auto.js";
 import { createSemanticFsCheckpointStore, type CheckpointedRun, type CheckpointStore } from "./checkpoint.js";
 import { createAgentTracer, type StepTracer } from "./tracing.js";
+import { applyHumanApprovalGate, type HumanApprovalGateOptions } from "./approval.js";
 import type { AgentMessage, LLMProvider, Tool } from "./types.js";
 
 export interface AgentOptions {
@@ -263,6 +264,14 @@ export interface CreateAgentOptions extends Pick<BootComputerOptions, "network" 
    * different backend entirely.
    */
   trace?: "full" | StepTracer;
+  /**
+   * Wraps `computer.tools` through applyHumanApprovalGate() before
+   * constructing the Agent — every gated tool call blocks on a human
+   * decision via a running grants-server instance instead of executing
+   * immediately. `requesterName` defaults to this Agent's own `name`. See
+   * approval.ts.
+   */
+  humanApproval?: Omit<HumanApprovalGateOptions, "requesterName"> & { requesterName?: string };
 }
 
 function normalizeApps(apps: string | string[] | undefined): string[] {
@@ -296,12 +305,18 @@ export async function createAgent(options: CreateAgentOptions): Promise<{ agent:
         }));
   const checkpoint = options.checkpoint === "semantic-fs" ? createSemanticFsCheckpointStore(computer) : options.checkpoint;
   const trace = options.trace === "full" ? createAgentTracer(computer) : options.trace;
+  const tools = options.humanApproval
+    ? applyHumanApprovalGate(computer.tools, {
+        ...options.humanApproval,
+        requesterName: options.humanApproval.requesterName ?? options.name ?? "agent",
+      })
+    : computer.tools;
 
   const agent = new Agent({
     name: options.name,
     systemPrompt: options.systemPrompt,
     llm: resolveLLMProvider(options.llm),
-    tools: computer.tools,
+    tools,
     maxTurns: options.maxTurns,
     checkpoint,
     trace,

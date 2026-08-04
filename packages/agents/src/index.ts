@@ -3,6 +3,7 @@ export { HttpBridgeComputer, type DeployComputerOptions } from "./fleet-computer
 export { resolveComputerApps, type ComputerAppSpec } from "./resolve-apps.js";
 export { computerToolsFor, toolNameFor } from "./tools.js";
 export { applyGovernanceGate, GovernanceDeniedError } from "./governance.js";
+export { applyHumanApprovalGate, HumanApprovalDeniedError, type HumanApprovalGateOptions } from "./approval.js";
 export {
   Agent,
   createAgent,
