@@ -174,6 +174,25 @@ An app declaring `governs: true` in its `berth.yml` becomes the Computer's gover
 
 A tool call that throws (bad args, a handler exception, a governance denial) doesn't end the run. `Agent.run()`'s tool loop catches it and feeds `{ error: <message> }` back to the model as that call's tool result, exactly like the existing "no such tool" case — the model sees the failure and can retry with different input, try a different tool, or give up and explain why, the same way it reacts to any other tool result. Nothing to opt into; this is the only behavior.
 
+### Composable `Crew` functions: cycles, fan-out, and branching without a graph DSL
+
+`sequential`/`withManager`/`networked` are three fixed shapes — a straight pipe, or a manager delegating to fixed workers/peers. Anything beyond that (a fan-out-then-merge, a retry loop, an if/else) used to mean dropping out of `Crew` and hand-coding it. Three more `Crew` functions cover those without introducing a LangGraph-style node/edge graph — each is still just plain wiring over `Agent.run()`, not a new execution primitive:
+
+- **`Crew.parallel(agents, { merge? })`** — runs every agent against the same input concurrently, then combines their outputs. Default `merge` concatenates each agent's output under a `## <name>` heading; pass `merge` to pick one, vote, or combine some other way.
+- **`Crew.loopUntil({ agent, until, maxIterations? })`** — runs `agent` repeatedly, feeding its own output back in as the next input, checking `until(result, iteration)` *after* each run (so it always runs at least once). Stops the moment `until` returns true, or after `maxIterations` (default 10) as the backstop against a condition that never fires.
+- **`Crew.route({ router, routes, fallback? })`** — `router` is asked to classify the input as exactly one of `routes`'s keys; only that one branch's agent then runs, against the *original* input, not the router's classification prompt. Falls back to `fallback` (or throws, naming what the router actually said) when its answer matches no route.
+
+```ts
+const crew = Crew.route({
+  router: classifierAgent,
+  routes: { billing: billingAgent, support: supportAgent },
+  fallback: generalAgent,
+});
+const result = await crew.run("where's my refund?"); // routed to billingAgent
+```
+
+Same scope boundary as checkpointing (below): none of these three checkpoint crew-level composition state either — only individual `Agent`s constructed with a `checkpoint` store do.
+
 ## Checkpointing and resuming a run: state without a graph
 
 `Agent.run()`'s tool-use loop keeps its `messages`/executed-tool-calls state as a plain in-process array — it's gone the moment the call returns or the process dies mid-loop. There's no LangGraph-style checkpointer here, and deliberately no graph to attach one to; instead, checkpointing is exposed as a `CheckpointStore` seam (`packages/agents/src/checkpoint.ts`) that `Agent.run()`/`Agent.resume()` write through directly:
