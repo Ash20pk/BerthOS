@@ -12,10 +12,9 @@ export BERTH_BOOT_ID="$(cat /proc/sys/kernel/random/uuid)"
 echo "[berth:entrypoint] boot id: ${BERTH_BOOT_ID}" >&2
 
 if [ -z "${BERTH_APPS:-}" ]; then
-  # --- Single-app mode: byte-for-byte today's script, unchanged. ---
-  # Guarantees zero regression risk for every existing dev/test/deploy flow
-  # and milestone test — BERTH_APPS is only ever set by container.ts when
-  # more than one app shares this container (see startContainer()).
+  # --- Single-app mode. ---
+  # BERTH_APPS is only ever set by container.ts when more than one app
+  # shares this container (see startContainer()).
   MANIFEST_PATH="${BERTH_MANIFEST_PATH:-$PWD/berth.yml}"
 
   if [ ! -f "$MANIFEST_PATH" ]; then
@@ -32,15 +31,21 @@ if [ -z "${BERTH_APPS:-}" ]; then
     export PYTHONPATH="/workspace/packages/sdk-python${PYTHONPATH:+:$PYTHONPATH}"
   fi
 
-  # Runs on_install hooks (once) and reports whether a browser:* capability is
-  # declared. The lifecycle script's last stdout line is "1" or "0" — everything
+  # Runs on_install hooks (once) and reports two independent flags: whether a
+  # browser:* capability is declared (needs Xvfb/a display) and whether a
+  # browser:navigate:*/network:host:* capability is declared (needs the
+  # egress broker) — deliberately not the same flag, since a plain
+  # network:host:* app (no Chromium, no display) still needs the broker.
+  # The lifecycle script's last stdout line is "<0|1>,<0|1>" — everything
   # before that is its own on_install command output (already streamed to
   # stderr/stdout by execSync's inherited stdio).
   if [ "${BERTH_APP_RUNTIME:-node}" = "python" ]; then
-    NEEDS_BROWSER="$(python3 -m berth_sdk.run_lifecycle | tail -n1)"
+    LIFECYCLE_FLAGS="$(python3 -m berth_sdk.run_lifecycle | tail -n1)"
   else
-    NEEDS_BROWSER="$(node "$PWD/node_modules/@berth/sdk/dist/run-lifecycle.js" | tail -n1)"
+    LIFECYCLE_FLAGS="$(node "$PWD/node_modules/@berth/sdk/dist/run-lifecycle.js" | tail -n1)"
   fi
+  NEEDS_BROWSER="${LIFECYCLE_FLAGS%,*}"
+  NEEDS_EGRESS_BROKER="${LIFECYCLE_FLAGS#*,}"
 
   if [ "$NEEDS_BROWSER" = "1" ] && [ "${BERTH_TEST_MODE:-0}" != "1" ]; then
     echo "[berth:entrypoint] browser:* capability declared — starting Xvfb + x11vnc + noVNC" >&2
@@ -91,9 +96,15 @@ if [ -z "${BERTH_APPS:-}" ]; then
     node "$PWD/node_modules/@berth/sdk/dist/generate-capability-policy.js"
   fi
 
-  if [ "$NEEDS_BROWSER" = "1" ]; then
-    echo "[berth:entrypoint] browser:* capability declared — starting egress broker on 127.0.0.1:${BERTH_EGRESS_BROKER_PORT:-8090}" >&2
+  if [ "$NEEDS_EGRESS_BROKER" = "1" ]; then
+    EGRESS_BROKER_PORT="${BERTH_EGRESS_BROKER_PORT:-8090}"
+    echo "[berth:entrypoint] browser:navigate:*/network:host:* capability declared — starting egress broker on 127.0.0.1:${EGRESS_BROKER_PORT}" >&2
     BERTH_CAPABILITY_POLICY="${BERTH_CAPABILITY_POLICY:-$PWD/.berth/capability-policy.json}" node /usr/local/bin/berth-egress-broker.js &
+    # The standardized way any resident app's own code (not just Chromium's
+    # --proxy-server flag) discovers the broker — @berth/sdk's
+    # configureEgressProxy() reads exactly this. Same name whether this app
+    # got here via browser:navigate:* or network:host:*.
+    export BERTH_EGRESS_PROXY_URL="http://127.0.0.1:${EGRESS_BROKER_PORT}"
   fi
 
   # Single-app mode only (see docs/github-api-scoping-reference.md for why a
@@ -159,13 +170,27 @@ fi
 APPS_TSV="$(node -e 'for (const a of JSON.parse(process.env.BERTH_APPS)) console.log(a.name + "\t" + a.workingDir);')"
 echo "[berth:entrypoint] multi-app mode: $(cut -f1 <<<"$APPS_TSV" | tr '\n' ' ')" >&2
 
-# A simple grep for "browser:" in each app's berth.yml, not full YAML/capability
-# parsing — good enough for this internal "should Xvfb start at all" decision
-# (the CLI's assertAtMostOneBrowserApp already guarantees at most one real
-# hit here; this only needs to detect whether that one exists, and which
-# app's own .berth/capability-policy.json the egress broker should read).
+# A simple grep for capability substrings in each app's berth.yml, not full
+# YAML/capability parsing — good enough for these internal "should X start at
+# all" decisions (the CLI's assertAtMostOne*App checks already guarantee at
+# most one real hit for each, before the container even starts).
+#
+# Xvfb/VNC and the egress broker are deliberately two separate checks, not
+# one: a browser:navigate:*/network:host:* app needs the broker but never a
+# display, so a plain network:host:* app (no Chromium at all) gets the
+# broker started for it just the same as browser-native does — this is what
+# makes the broker a capability any resident app can opt into, not a
+# browser-specific side effect.
 NEEDS_BROWSER=0
 BROWSER_APP_DIR=""
+# Same "at most one, whole-container-shared resource" constraint Xvfb/mesh
+# already have (assertAtMostOneEgressBrokerApp enforces it pre-boot) — real
+# per-app broker instances (own port, own isolated pattern list) would be
+# the fuller fix, same as multi-app Landlock rulesets already are per-app,
+# but is real additional scope this pass doesn't attempt. See
+# docs/egress-broker-reference.md.
+NEEDS_EGRESS_BROKER=0
+EGRESS_APP_DIR=""
 # network:peer:* support (see docs/mesh-reference.md) — wg0 is one interface
 # per container, same reasoning as BROWSER_APP_DIR above, so the CLI's
 # assertAtMostOneMeshApp guarantees at most one hit here.
@@ -176,6 +201,10 @@ while IFS=$'\t' read -r _ APP_DIR; do
   if grep -q "browser:" "$APP_DIR/berth.yml" 2>/dev/null; then
     NEEDS_BROWSER=1
     BROWSER_APP_DIR="$APP_DIR"
+  fi
+  if grep -qE "browser:navigate:|network:host:" "$APP_DIR/berth.yml" 2>/dev/null; then
+    NEEDS_EGRESS_BROKER=1
+    EGRESS_APP_DIR="$APP_DIR"
   fi
   if grep -q "network:peer:" "$APP_DIR/berth.yml" 2>/dev/null; then
     NEEDS_MESH=1
@@ -189,6 +218,15 @@ if [ "$NEEDS_BROWSER" = "1" ] && [ "${BERTH_TEST_MODE:-0}" != "1" ]; then
   sleep 1
   x11vnc -display :99 -forever -shared -nopw -quiet &
   websockify --web=/usr/share/novnc 6080 localhost:5900 &
+fi
+
+# Exported before any app process forks below (the port itself is a fixed
+# default known upfront — only the broker process's actual startup happens
+# later, once EGRESS_APP_DIR's capability policy exists) so every app in this
+# container, whichever one declared the capability, inherits the same
+# standardized variable @berth/sdk's configureEgressProxy() reads.
+if [ "$NEEDS_EGRESS_BROKER" = "1" ]; then
+  export BERTH_EGRESS_PROXY_URL="http://127.0.0.1:${BERTH_EGRESS_BROKER_PORT:-8090}"
 fi
 
 mkdir -p /tmp/berth-rpc
@@ -260,14 +298,14 @@ while IFS=$'\t' read -r APP_NAME APP_DIR; do
   INDEX=$((INDEX + 1))
 done <<<"$APPS_TSV"
 
-if [ "$NEEDS_BROWSER" = "1" ]; then
-  BROWSER_POLICY_PATH="$BROWSER_APP_DIR/.berth/capability-policy.json"
+if [ "$NEEDS_EGRESS_BROKER" = "1" ]; then
+  EGRESS_POLICY_PATH="$EGRESS_APP_DIR/.berth/capability-policy.json"
   for _ in $(seq 1 50); do
-    [ -f "$BROWSER_POLICY_PATH" ] && break
+    [ -f "$EGRESS_POLICY_PATH" ] && break
     sleep 0.1
   done
-  echo "[berth:entrypoint] browser:* capability declared — starting egress broker on 127.0.0.1:${BERTH_EGRESS_BROKER_PORT:-8090}" >&2
-  BERTH_CAPABILITY_POLICY="$BROWSER_POLICY_PATH" node /usr/local/bin/berth-egress-broker.js &
+  echo "[berth:entrypoint] browser:navigate:*/network:host:* capability declared — starting egress broker on 127.0.0.1:${BERTH_EGRESS_BROKER_PORT:-8090}" >&2
+  BERTH_CAPABILITY_POLICY="$EGRESS_POLICY_PATH" node /usr/local/bin/berth-egress-broker.js &
 fi
 
 if [ "$NEEDS_MESH" = "1" ]; then

@@ -1,12 +1,20 @@
 #!/usr/bin/env node
-// Host-level egress enforcement for browser:navigate:<pattern> capabilities
-// — the one non-filesystem capability type that has a real consumer today
-// (apps/browser-native). A CONNECT tunnel's target host:port is visible in
-// cleartext by protocol design (that's the whole point of CONNECT), so this
-// needs no TLS interception/CA machinery to enforce host-level scoping —
-// see docs/capability-tokens-reference.md. Path/verb-level API scoping
-// (github:read:repos vs github:write:issues) would need real decryption and
-// is deliberately not attempted here.
+// Host-level egress enforcement for browser:navigate:<pattern> AND
+// network:host:<pattern> capabilities — the same mechanism, two capability
+// names for the same real thing ("this app may reach hosts matching this
+// pattern"). browser:navigate:* is apps/browser-native's own name for it
+// (kept for backward compat — Chromium's --proxy-server flag already points
+// here); network:host:* is the generic form ANY resident app can declare,
+// not just one that also drives a browser, so this one broker is a
+// capability every app can opt into identically rather than something
+// wired specifically for Chromium's launch flag. A CONNECT tunnel's target
+// host:port is visible in cleartext by protocol design (that's the whole
+// point of CONNECT), so this needs no TLS interception/CA machinery to
+// enforce host-level scoping — see docs/capability-tokens-reference.md.
+// Path/verb-level API scoping (github:read:repos vs github:write:issues)
+// would need real decryption and is a deliberately different, harder
+// mechanism — see docs/github-api-scoping-reference.md — not something
+// this broker (or network:host:*) attempts.
 //
 // Runs from a fixed /usr/local/bin location, outside any app's own
 // node_modules resolution — same reason rpc-relay.js has zero external
@@ -21,11 +29,14 @@ const POLICY_PATH = process.env.BERTH_CAPABILITY_POLICY || `${process.cwd()}/.be
 
 // Optional: chain an *allowed* CONNECT through a further upstream proxy
 // (e.g. a residential/rotating proxy provider) instead of connecting to the
-// target directly — lets browser-native present a real residential IP to
+// target directly — lets any app using this broker (browser-native via
+// Chromium's launch flag, or a plain fetch()-based app via
+// configureEgressProxy(), see @berth/sdk) present a real residential IP to
 // sites that block/challenge datacenter ranges, without weakening
-// browser:navigate:<pattern> enforcement: the host-allow check above still
-// runs first, so a denied host never reaches (or costs bandwidth on) the
-// upstream proxy either. Format: a proxy URL, credentials optional —
+// browser:navigate:<pattern>/network:host:<pattern> enforcement: the
+// host-allow check above still runs first, so a denied host never reaches
+// (or costs bandwidth on) the upstream proxy either. Format: a proxy URL,
+// credentials optional —
 // "http://user:pass@residential-proxy.example.com:8000". Deliberately not
 // logged verbatim anywhere below (credentials would leak into container
 // logs) — only host:port ever gets logged. Any provider that speaks plain
@@ -51,8 +62,11 @@ function globToRegExp(glob) {
 }
 
 // Read once at startup: the policy file is fixed at container boot (same
-// file agent-init reads), never regenerated mid-run.
-function loadNavigatePatterns() {
+// file agent-init reads), never regenerated mid-run. Recognizes both
+// capability names (see the file header) — a resident app declares
+// whichever reads better for what it's doing; the broker treats them
+// identically.
+function loadAllowedHostPatterns() {
   let policy;
   try {
     policy = JSON.parse(fs.readFileSync(POLICY_PATH, "utf-8"));
@@ -62,18 +76,18 @@ function loadNavigatePatterns() {
   }
   return (policy.declaredCapabilities || [])
     .map(parseCapability)
-    .filter((c) => c && c.namespace === "browser" && c.action === "navigate")
+    .filter((c) => c && ((c.namespace === "browser" && c.action === "navigate") || (c.namespace === "network" && c.action === "host")))
     .map((c) => c.scope);
 }
 
-const NAVIGATE_PATTERNS = loadNavigatePatterns();
-console.error(`[egress-broker] allowed browser:navigate patterns: ${NAVIGATE_PATTERNS.join(", ") || "(none)"}`);
+const ALLOWED_HOST_PATTERNS = loadAllowedHostPatterns();
+console.error(`[egress-broker] allowed host patterns (browser:navigate:*/network:host:*): ${ALLOWED_HOST_PATTERNS.join(", ") || "(none)"}`);
 if (UPSTREAM_PROXY_URL) {
   console.error(`[egress-broker] chaining allowed CONNECTs through upstream proxy ${UPSTREAM_PROXY_URL.hostname}:${UPSTREAM_PROXY_URL.port || 80}`);
 }
 
 function isHostAllowed(host) {
-  return NAVIGATE_PATTERNS.some((pattern) => globToRegExp(pattern).test(host));
+  return ALLOWED_HOST_PATTERNS.some((pattern) => globToRegExp(pattern).test(host));
 }
 
 function logDecision(action, host, port) {
@@ -100,7 +114,7 @@ const server = http.createServer((req, res) => {
     logDecision("denied", target.hostname, target.port || 80);
     res
       .writeHead(403, { "content-type": "text/plain" })
-      .end(`egress denied: "${target.hostname}" is not covered by any declared browser:navigate:<pattern> capability`);
+      .end(`egress denied: "${target.hostname}" is not covered by any declared browser:navigate:<pattern>/network:host:<pattern> capability`);
     return;
   }
   logDecision("allowed", target.hostname, target.port || 80);

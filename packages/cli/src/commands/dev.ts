@@ -15,7 +15,13 @@ import type { BerthManifest } from "@berth/manifest-schema";
 import { loadManifestOrExit } from "../util/manifest.js";
 import { buildDevImage, devImageTag } from "../util/build.js";
 import { resolveDevBindMount } from "../util/workspace.js";
-import { resolveApps, assertAtMostOneBrowserApp, assertAtMostOneTerminalApp, assertAtMostOneMeshApp } from "../util/multi-app.js";
+import {
+  resolveApps,
+  assertAtMostOneBrowserApp,
+  assertAtMostOneTerminalApp,
+  assertAtMostOneMeshApp,
+  assertAtMostOneEgressBrokerApp,
+} from "../util/multi-app.js";
 
 export default class Dev extends Command {
   static override description = "Boot the resident app in a local Agent OS instance, with hot reload";
@@ -39,6 +45,7 @@ export default class Dev extends Command {
     assertAtMostOneBrowserApp(apps);
     assertAtMostOneTerminalApp(apps);
     assertAtMostOneMeshApp(apps);
+    assertAtMostOneEgressBrokerApp(apps);
     if (apps.length > 1) this.log(`Running with companion apps: ${apps.slice(1).map((a) => a.name).join(", ")}`);
 
     this.log(`Building dev image for "${manifest.name}"...`);
