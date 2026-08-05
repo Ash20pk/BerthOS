@@ -335,6 +335,9 @@ importers:
       '@berth/adapter-k8s':
         specifier: workspace:*
         version: link:../adapters/adapter-k8s
+      '@berth/agents':
+        specifier: workspace:*
+        version: link:../agents
       '@berth/docker-orchestrator':
         specifier: workspace:*
         version: link:../docker-orchestrator
