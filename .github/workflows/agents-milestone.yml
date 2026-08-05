@@ -4,10 +4,10 @@ name: Agents Milestone
 # live sandbox and produces a callable tool list from resident-app exports —
 # see packages/agents/test/computer-boot-milestone.mjs,
 # computer-multi-app-milestone.mjs, computer-http-rpc-milestone.mjs,
-# governance-gate-milestone.mjs, mcp-client-milestone.mjs, and
-# code-interpreter-milestone.mjs. The provider-swap/crew milestone tests need
-# real LLM API credentials and are intentionally not run here — see
-# docs/agents-reference.md.
+# governance-gate-milestone.mjs, mcp-client-milestone.mjs,
+# code-interpreter-milestone.mjs, and declarative-config-milestone.mjs. The
+# provider-swap/crew milestone tests need real LLM API credentials and are
+# intentionally not run here — see docs/agents-reference.md.
 on:
   push:
     branches: [main]
@@ -56,3 +56,7 @@ jobs:
       - name: Run code-interpreter-milestone.mjs
         working-directory: packages/agents
         run: node test/code-interpreter-milestone.mjs
+
+      - name: Run declarative-config-milestone.mjs
+        working-directory: packages/agents
+        run: node test/declarative-config-milestone.mjs

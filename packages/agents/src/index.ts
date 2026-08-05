@@ -85,6 +85,14 @@ export {
   type AgentServerHandle,
 } from "./server.js";
 export {
+  loadAgentConfig,
+  loadCrewConfig,
+  createAgentFromYaml,
+  createCrewFromYaml,
+  type AgentConfig,
+  type CrewConfig,
+} from "./declarative.js";
+export {
   generateAgentServerApp,
   bootNetworkedAgent,
   type AgentServerLLMConfig,

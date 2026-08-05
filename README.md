@@ -342,6 +342,8 @@ Want more than one app in a single Berth OS, each still independently enforced b
 | `berth dev` | Build a dev image, run it, hot-reload on source changes |
 | `berth test` | Build the production image, validate exports against `berth.yml`, invoke each with a schema-valid stub, run your own `npm test` |
 | `berth eval <file> [--history]` | Run a `@berth/agents` eval suite against a real Agent/Crew and check assertions about *behavior* — distinct from `berth test`'s manifest/export shape check; `--history` lists a suite's prior recorded runs |
+| `berth agent run <file.yml> <task>` | Run a task against an Agent declared in a YAML config file — no code needed for the common case |
+| `berth crew run <file.yml> <task>` | Run a task against a `sequential`/`parallel`/`withManager` Crew declared in a YAML config file |
 | `berth deploy --fleet=<e2b\|daytona\|k8s>` | Deploy to a remote sandbox provider |
 | `berth logs <app>` | Stream logs from an already-running dev or fleet container |
 | `berth rpc <app> --export=<name> --input=<json>` | Call a resident app's export directly from the host |
