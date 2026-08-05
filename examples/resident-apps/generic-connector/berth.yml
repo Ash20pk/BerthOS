@@ -1,0 +1,27 @@
+name: generic-connector-example
+version: 0.1.0
+
+# The point of this example: defineConnectorApp() (packages/sdk/src/connector.ts)
+# turns a declarative REST API description into a working resident app —
+# wiring in the next integration (Slack, Jira, a weather API, whatever) is
+# "write a ConnectorConfig," not "write a new app's TypeScript by hand" the
+# way apps/github-assistant's two hand-written exports are. This example
+# targets JSONPlaceholder (jsonplaceholder.typicode.com), a real public
+# no-auth REST API, so it's genuinely runnable without secrets — see
+# src/index.ts.
+capabilities:
+  - network:host:jsonplaceholder.typicode.com
+  # This app's own egress-broker instance's port — same convention every
+  # network:host:*/browser:navigate:* app pairs with a matching
+  # network:connect:<port> Landlock grant. See docs/egress-broker-reference.md.
+  - network:connect:8090
+
+exports:
+  - name: get_post
+    input: { id: number }
+  - name: create_post
+    input: { title: string, body: string, userId: number }
+
+on_install: []
+on_agent_ready:
+  - "register_with_context_bus"

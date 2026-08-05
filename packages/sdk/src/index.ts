@@ -5,3 +5,11 @@ export { type SemanticFsClient, type SemanticFsQueryResult } from "./semantic-fs
 export { createLocalSemanticFs } from "./semantic-fs/local.js";
 export { requestCapability, verifyCapabilityToken, type CapabilityGrant } from "./capabilities.js";
 export { configureEgressProxy } from "./egress-proxy.js";
+export {
+  defineConnectorApp,
+  type ConnectorConfig,
+  type ConnectorOperation,
+  type ConnectorParam,
+  type ConnectorAuth,
+  type ConnectorResult,
+} from "./connector.js";

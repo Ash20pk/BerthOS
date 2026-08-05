@@ -82,6 +82,41 @@ const grant = await requestCapability("my-app", "filesystem:write:/workspace");
 
 **Real as of Phase 3, for filesystem writes and (opt-in, when declared) reads and network ports.** `requestCapability()` checks the requested capability against `berth.yml`'s declared `capabilities:` (the same list `agent-init` turned into an enforced Landlock policy at boot) and reports `{ granted, token, issuedAt, expiresAt, pending? }` honestly — `granted: false` (and the token fields `null`) for anything not declared. It does not itself decide or broker access; the kernel already decided that at process start. `token` is a real HMAC-SHA256 signature with a 5-minute expiry (`verifyCapabilityToken()` checks it), not just a marker. If a `--grants-server` was configured (`BERTH_GRANTS_SERVER_URL`), a denied request also gets submitted there for human approval and `pending: true` is set — see [capability-tokens-reference.md](./capability-tokens-reference.md) for the full human-approval flow (and why approval only takes effect on the app's next restart, never live) and exactly what's enforced vs. reported-only right now (domain-scoped network filtering isn't kernel-enforced, only port-based).
 
+## `defineConnectorApp(config)`: a resident app from a declarative REST API description
+
+`defineApp` still needs a hand-written `handler` per export — fine for an app with genuine custom logic, but every existing integration app (`apps/github-assistant`'s `create_issue`/`get_repo_summary`) is really just "call this REST endpoint with these params" repeated a few times, in bespoke TypeScript, once per integration. `defineConnectorApp` turns that same shape into config instead of code — wiring in the *next* integration (Slack, Jira, a weather API) becomes "write a `ConnectorConfig`," not "write a new app's TypeScript by hand":
+
+```ts
+import { defineConnectorApp } from "@berth/sdk";
+
+export default defineConnectorApp({
+  baseUrl: "https://api.example.com",
+  auth: { type: "bearer", envVar: "EXAMPLE_API_TOKEN" },
+  operations: [
+    {
+      export: "get_widget",
+      method: "GET",
+      path: "/widgets/{id}",
+      params: { id: { in: "path", type: "string" } },
+    },
+    {
+      export: "create_widget",
+      method: "POST",
+      path: "/widgets",
+      params: { name: { in: "body", type: "string" }, color: { in: "body", type: "string", required: false } },
+    },
+  ],
+});
+```
+
+Each `operations[]` entry becomes one export, exactly as if you'd called `app.export()` yourself — same `berth.yml` `exports:` bijection requirement applies. `params[key].in` decides where an input field lands on the actual HTTP request: `"path"` fills a `{name}` placeholder in `path`, `"query"` becomes a query-string parameter, `"body"` becomes a field in a JSON request body (sent for any method except `GET`/`DELETE`). The generated Zod input schema marks a param optional only when `required: false` is set — everything else is required.
+
+**Auth**, read from an env var at request time (never baked into the config): `{type: "bearer", envVar}` sends `Authorization: Bearer <value>`; `{type: "header", envVar, headerName}` sends the value under whatever header name you give it; `{type: "none"}` (the default) sends no credential at all. When `type` isn't `"none"` and the env var is unset, an operation returns `{stub: true, note: "..."}` instead of making a real request — the same "no live credentials → stub, don't crash" posture `apps/github-assistant` already hand-wrote per export, generalized here so it applies to every operation for free, including whatever `berth test`'s automatic stub-invocation of every declared export calls with dummy input.
+
+**Egress**: `defineConnectorApp` calls `@berth/sdk`'s `configureEgressProxy()` for you — a connector author never has to remember to wire that in themselves. Declare `network:host:<pattern>` in `berth.yml` (see [egress-broker-reference.md](./egress-broker-reference.md)) and every operation's traffic is already routed and host-scoped correctly.
+
+**What this does and doesn't cover**: path/verb-level API scoping (e.g. "this token can only call `GET` endpoints, not `POST`") is deliberately out of scope — `apps/github-assistant`'s own `github-api-broker.cjs` does real TLS interception for exactly that harder problem (see [github-api-scoping-reference.md](./github-api-scoping-reference.md)), and `defineConnectorApp` doesn't attempt it. A connector's response is passed through as `{status, data}` (whatever the API returned, JSON-parsed if possible) — there's no per-operation output schema, since a config author would otherwise have to hand-describe every endpoint's response shape just to get validation `defineApp`'s own `output` already gives you for free when you *do* write a schema. See `examples/resident-apps/generic-connector` for a complete, runnable example against a real public API (JSONPlaceholder).
+
 ## The RPC layer
 
 You don't call this directly — `@berth/sdk`'s runtime starts a line-delimited JSON RPC server over stdio once your app boots, dispatching `{ id, export, input }` requests to your registered `app.export()` handlers. This is what an agent's own tool-calling layer talks to at runtime.
