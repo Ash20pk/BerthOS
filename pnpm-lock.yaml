@@ -154,6 +154,19 @@ importers:
         specifier: workspace:*
         version: link:../../../packages/agents
 
+  examples/resident-apps/generic-connector:
+    dependencies:
+      '@berth/sdk':
+        specifier: workspace:*
+        version: link:../../../packages/sdk
+    devDependencies:
+      '@types/node':
+        specifier: ^26.1.2
+        version: 26.1.2
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
   examples/resident-apps/hello-world:
     dependencies:
       '@berth/sdk':
