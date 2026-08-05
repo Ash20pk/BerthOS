@@ -1,0 +1,40 @@
+name: HTTP RPC Bridge Milestone
+
+# Real, running verification that startContainer()'s `httpRpc` option
+# produces a live, host-reachable, bearer-token-authenticated HTTP RPC
+# bridge — see packages/docker-orchestrator/test/http-rpc-bridge-milestone.mjs.
+# This is the mechanism a process with no Docker API access (a Python
+# client, see packages/agents-python's Computer.connect()) uses to call a
+# resident app's exports. Separate from Agents Milestone's
+# computer-http-rpc-milestone.mjs, which exercises the same feature through
+# @berth/agents' Computer.boot({httpRpc}) using a production-target image —
+# this workflow's test uses a dev-target image specifically so it verifies
+# the bridge mechanism itself, not entangled with Landlock enforcement.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.21.0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Run http-rpc-bridge-milestone.mjs
+        working-directory: packages/docker-orchestrator
+        run: node test/http-rpc-bridge-milestone.mjs

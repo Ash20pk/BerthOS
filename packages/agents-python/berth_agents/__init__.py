@@ -1,5 +1,6 @@
 from .agent import Agent
 from .checkpoint import CheckpointedRun, CheckpointStore, FileCheckpointStore
+from .computer import Computer, ComputerConnectionError, ComputerHandle
 from .crew import CheckpointedCrewRun, Crew, CrewStateRun, checkpoint_key_for
 from .providers import (
     LLMProviderConfig,
@@ -30,6 +31,9 @@ __all__ = [
     "CheckpointStore",
     "CheckpointedCrewRun",
     "CheckpointedRun",
+    "Computer",
+    "ComputerConnectionError",
+    "ComputerHandle",
     "Crew",
     "CrewRun",
     "CrewStateRun",
