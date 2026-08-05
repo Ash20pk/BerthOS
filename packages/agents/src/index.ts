@@ -32,6 +32,9 @@ export {
 } from "./structured-output.js";
 export {
   runEvalSuite,
+  recordEvalRun,
+  readEvalRun,
+  listEvalRuns,
   containsText,
   matchesPattern,
   calledTool,
@@ -42,6 +45,7 @@ export {
   type EvalCase,
   type EvalCaseResult,
   type EvalSuiteResult,
+  type EvalRunRecord,
   type LlmJudgeOptions,
 } from "./eval.js";
 export {

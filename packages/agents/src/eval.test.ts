@@ -2,15 +2,70 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   runEvalSuite,
+  recordEvalRun,
+  readEvalRun,
+  listEvalRuns,
   containsText,
   matchesPattern,
   calledTool,
   llmJudge,
   type EvalRunnable,
   type EvalCase,
+  type EvalSuiteResult,
 } from "./eval.js";
 import type { AgentRunResult } from "./agent.js";
-import type { LLMProvider } from "./types.js";
+import type { ComputerHandle } from "./computer.js";
+import type { LLMProvider, Tool } from "./types.js";
+
+function fakeTool(name: string, invoke: Tool["invoke"]): Tool {
+  return { name, description: "", inputSchema: {}, invoke };
+}
+
+function fakeComputer(tools: Tool[]): ComputerHandle {
+  return {
+    tools,
+    call: async (toolName, input) => {
+      const tool = tools.find((t) => t.name === toolName);
+      if (!tool) throw new Error(`no such tool "${toolName}"`);
+      return tool.invoke(input);
+    },
+    stop: async () => {},
+  };
+}
+
+/** A minimal in-memory Semantic FS write/read/tag/query quartet — same shape tracing.test.ts's fakeSemanticFs() uses, for recordEvalRun()/readEvalRun()/listEvalRuns(). */
+function fakeSemanticFs(): Tool[] {
+  const files = new Map<string, string>();
+  const tags = new Map<string, { task?: string; relatedApps?: string[]; updatedAt: number }>();
+  let clock = 0;
+  return [
+    fakeTool("write_context_file", async (input) => {
+      const { path, content } = input as { path: string; content: string };
+      files.set(path, content);
+    }),
+    fakeTool("read_context_file", async (input) => {
+      const { path } = input as { path: string };
+      if (!files.has(path)) throw new Error("ENOENT");
+      return { content: files.get(path) };
+    }),
+    fakeTool("tag_context_file", async (input) => {
+      const { path, task, relatedApps } = input as { path: string; task?: string; relatedApps?: string[] };
+      clock++;
+      tags.set(path, { task, relatedApps, updatedAt: clock });
+    }),
+    fakeTool("query_context", async (input) => {
+      const { text } = input as { text: string };
+      const results = [...tags.entries()]
+        .filter(([, meta]) => meta.task === text || meta.relatedApps?.includes(text))
+        .map(([path, meta]) => ({ path, task: meta.task, relatedApps: meta.relatedApps, updatedAt: meta.updatedAt }));
+      return { results };
+    }),
+  ];
+}
+
+function sampleSuite(overrides: Partial<EvalSuiteResult> = {}): EvalSuiteResult {
+  return { total: 1, passed: 1, failed: 0, results: [{ name: "case-1", passed: true, input: "x", text: "y", assertionResults: [] }], ...overrides };
+}
 
 function scriptedRunnable(byInput: Record<string, AgentRunResult | Error>): EvalRunnable {
   return {
@@ -155,4 +210,72 @@ test("llmJudge() includes the rubric and the agent's response text in the prompt
 
   assert.match(capturedPrompt, /must mention pricing/);
   assert.match(capturedPrompt, /\$10\/mo/);
+});
+
+test("recordEvalRun() then readEvalRun() round-trips a suite result under a given runId", async () => {
+  const computer = fakeComputer(fakeSemanticFs());
+  const suite = sampleSuite();
+
+  const record = await recordEvalRun(computer, "my-suite", suite, { runId: "run-1" });
+
+  assert.equal(record.suiteName, "my-suite");
+  assert.equal(record.runId, "run-1");
+  assert.equal(record.total, suite.total);
+
+  const loaded = await readEvalRun(computer, "my-suite", "run-1");
+  assert.deepEqual(loaded, record);
+});
+
+test("readEvalRun() returns null when nothing was ever recorded for that suiteName/runId", async () => {
+  const computer = fakeComputer(fakeSemanticFs());
+  assert.equal(await readEvalRun(computer, "never-recorded", "run-1"), null);
+});
+
+test("recordEvalRun() defaults runId to something unique when not given", async () => {
+  const computer = fakeComputer(fakeSemanticFs());
+  const first = await recordEvalRun(computer, "my-suite", sampleSuite());
+  const second = await recordEvalRun(computer, "my-suite", sampleSuite());
+  assert.notEqual(first.runId, second.runId);
+});
+
+test("listEvalRuns() finds every recorded run across suites, newest first, without needing a suiteName up front", async () => {
+  const computer = fakeComputer(fakeSemanticFs());
+  await recordEvalRun(computer, "suite-a", sampleSuite(), { runId: "a-1" });
+  await recordEvalRun(computer, "suite-b", sampleSuite(), { runId: "b-1" });
+
+  const runs = await listEvalRuns(computer);
+
+  assert.deepEqual(
+    runs.map((r) => `${r.suiteName}/${r.runId}`),
+    ["suite-b/b-1", "suite-a/a-1"],
+  );
+});
+
+test("listEvalRuns() narrows to one suite when suiteName is given", async () => {
+  const computer = fakeComputer(fakeSemanticFs());
+  await recordEvalRun(computer, "suite-a", sampleSuite(), { runId: "a-1" });
+  await recordEvalRun(computer, "suite-a", sampleSuite(), { runId: "a-2" });
+  await recordEvalRun(computer, "suite-b", sampleSuite(), { runId: "b-1" });
+
+  const runs = await listEvalRuns(computer, { suiteName: "suite-a" });
+
+  assert.deepEqual(
+    runs.map((r) => r.runId),
+    ["a-2", "a-1"],
+  );
+});
+
+test("listEvalRuns() respects limit", async () => {
+  const computer = fakeComputer(fakeSemanticFs());
+  await recordEvalRun(computer, "suite-a", sampleSuite(), { runId: "a-1" });
+  await recordEvalRun(computer, "suite-a", sampleSuite(), { runId: "a-2" });
+  await recordEvalRun(computer, "suite-a", sampleSuite(), { runId: "a-3" });
+
+  const runs = await listEvalRuns(computer, { limit: 2 });
+  assert.equal(runs.length, 2);
+});
+
+test("listEvalRuns() returns [] when nothing has ever been recorded", async () => {
+  const computer = fakeComputer(fakeSemanticFs());
+  assert.deepEqual(await listEvalRuns(computer), []);
 });

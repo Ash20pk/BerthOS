@@ -34,6 +34,7 @@
     "@berth/adapter-daytona": "workspace:*",
     "@berth/adapter-e2b": "workspace:*",
     "@berth/adapter-k8s": "workspace:*",
+    "@berth/agents": "workspace:*",
     "@berth/docker-orchestrator": "workspace:*",
     "@berth/manifest-schema": "workspace:*",
     "@berth/sdk": "workspace:*",

@@ -374,7 +374,35 @@ suite.results[0].assertionResults; // per-assertion {pass, message} for whicheve
 
 Built-in assertions cover the two things easy to check exactly (`containsText(substring)`, `matchesPattern(regex)`) and the one thing worth checking that isn't about the text at all (`calledTool(name)` — did the agent actually use a tool, or answer from a guess). `llmJudge({judge, rubric})` is for everything fuzzier than an exact match: it asks `judge` (any `LLMProvider` — often a different, stronger model than the one under test) to grade the result's text against `rubric` in plain language, reusing `parseStructuredOutput()` (see "Structured output" above) to force the judge's own reply into a `{pass, reason}` verdict rather than parsing free text by hand. A judge response that doesn't parse counts as a failed assertion (the parse error becomes the message) rather than throwing — one bad judge call shouldn't crash the whole suite. A case whose `run()` itself throws (a crashed agent, `maxTurns` exceeded) is recorded as failed with the thrown message in `error` and an empty `assertionResults` — there's no result to check assertions against — and doesn't stop the remaining cases from running.
 
-**What this does and doesn't fix:** this is a library primitive for a developer's own test file (`node:test`, same as this package's own tests), not a CLI command or a wired-in CI gate — `berth test` itself is unchanged. No golden-dataset management, no regression-over-time tracking (comparing today's pass rate against last week's), no built-in cost/latency budget assertions. `llmJudge()` costs a real LLM call per assertion per case — same tradeoff any LLM-as-judge setup has, not something this hides.
+### `berth eval`: running a suite from the CLI, with run history
+
+`runEvalSuite()` alone was a library-only primitive — no CLI command, no wired-in CI gate, no way to compare today's pass rate against last week's. `berth eval <file>` closes the CLI half: the file is any module with a default export, an async factory `() => {runnable, cases, computer?, suiteName?, teardown?}` — a factory because building a real `EvalRunnable` almost always means booting a `Computer` or constructing an `Agent` first, both async, and the command has no idea which apps/provider/model a given suite needs:
+
+```ts
+// eval/my-suite.ts
+import { createAgent, containsText } from "@berth/agents";
+
+export default async function () {
+  const { agent, computer } = await createAgent({ apps: "apps/filesystem" });
+  return {
+    runnable: agent,
+    cases: [{ name: "writes a file", input: "create hello.txt", assertions: [containsText("hello.txt")] }],
+    computer, // present this to get the run recorded + browsable via --history
+    teardown: () => computer.stop(),
+  };
+}
+```
+
+```sh
+berth eval eval/my-suite.ts          # runs the suite, prints pass/fail per case
+berth eval eval/my-suite.ts --json   # the same EvalSuiteResult as structured JSON
+berth eval eval/my-suite.ts --history        # lists this suite's prior recorded runs, newest first
+berth eval eval/my-suite.ts --history --limit 5
+```
+
+Returning `computer` is what turns on history — the command calls `recordEvalRun(computer, suiteName, suite)` after each run, and `--history` calls the matching `listEvalRuns(computer, {suiteName})`. Both are the same generic Semantic FS tag+query pattern `listAgentTraces()` (see "Tracing a run" above) already established: `recordEvalRun()`/`readEvalRun()`/`listEvalRuns()` (`packages/agents/src/eval.ts`) resolve `write_context_file`/`read_context_file`/`tag_context_file`/`query_context` off `Computer.tools` the same way every other Semantic FS-backed primitive in this package does — works with any app exposing that contract, not `apps/filesystem` specifically. A suite that returns no `computer` still runs fine; it just has nothing to show for `--history`.
+
+**What this does and doesn't fix:** `berth eval` isn't wired into any CI workflow automatically — a developer or a CI job's own script calls it, same as `berth test`. No golden-dataset management, no built-in cost/latency budget assertions. `llmJudge()` costs a real LLM call per assertion per case — same tradeoff any LLM-as-judge setup has, not something this hides. Recorded history is metadata-and-full-result per run (whatever `EvalSuiteResult` already contains) — there's no trend/chart primitive on top of `listEvalRuns()`'s plain array, only the raw data to build one from.
 
 ## Tracing a run: `agent.step` events, not a LangSmith-style tracer
 
