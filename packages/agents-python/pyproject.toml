@@ -1,10 +1,12 @@
 [project]
 name = "berth-agents"
 version = "0.1.0"
-description = "computer -> agent -> tool, in Python: the provider-agnostic Agent tool-use loop and Crew.sequential composition, mirroring @berth/agents' core (no port of its Docker/Computer/checkpoint/tracing glue — see docs/agents-python-reference.md for scope)."
+description = "computer -> agent -> tool, in Python: the provider-agnostic Agent tool-use loop, all six Crew composition shapes but networked, checkpointing, streaming, and structured-output repair, mirroring @berth/agents (no port of its Docker/Computer/tracing/retrieval/human-approval glue — see docs/agents-python-reference.md for scope)."
 requires-python = ">=3.11"
 dependencies = [
     "anthropic>=0.110.0",
+    "openai>=1.50.0",
+    "pydantic>=2.0",
 ]
 
 [project.optional-dependencies]

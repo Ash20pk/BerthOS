@@ -33,11 +33,18 @@ class AgentMessage:
 
 
 @dataclass
+class Usage:
+    input_tokens: int
+    output_tokens: int
+
+
+@dataclass
 class LLMTurn:
     tool_calls: list[ToolCall]
     text: str | None = None
     # True once the model has nothing further to do — no pending tool calls.
     stop: bool = False
+    usage: Usage | None = None
 
 
 @dataclass
@@ -67,7 +74,12 @@ class Tool(Protocol):
 
 class LLMProvider(Protocol):
     """The "bring your own LLM" seam. Any provider implementing this can
-    drive an Agent — Agent/Crew never reference a specific vendor."""
+    drive an Agent — Agent/Crew never reference a specific vendor.
+
+    `chat_stream` is deliberately not declared here — it's an optional
+    capability (mirroring chatStream? on LLMProvider in types.ts), checked at
+    call time via getattr(llm, "chat_stream", None) rather than required by
+    this Protocol, so a provider without it still satisfies structural typing."""
 
     name: str
 
