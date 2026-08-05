@@ -1,0 +1,15 @@
+name: code-interpreter
+version: 0.1.0
+description: "Runs a Python, JavaScript, or shell snippet as a real subprocess inside this agent's own sandbox and returns stdout/stderr/exit code — sandboxed code-exec as a resident app, not a separately-bolted-on Docker/E2B executor. Inherits the same kernel-enforced capability policy as every other app here: no outbound network unless you declare it."
+
+capabilities:
+  - filesystem:write:/workspace
+
+exports:
+  - name: run_code
+    input: { language: string, code: string, timeout_ms: number }
+    output: { stdout: string, stderr: string, exit_code: number, timed_out: boolean }
+
+on_install: []
+on_agent_ready:
+  - "register_with_context_bus"

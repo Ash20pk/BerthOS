@@ -93,6 +93,8 @@ Each of these is a real job people give an agent. What actually makes it shippab
 
 **An agent scoped to exactly one third-party API action, nothing wider.** `apps/github-assistant` can read repos and open issues, and only that. `github:read:repos` and `github:write:issues` are enforced verb-and-path level by a real TLS-terminating broker, not just "has an API key with these OAuth scopes." It's a deployed, milestone-tested example of least-privilege access for any agent that needs to touch a real external API. See the [GitHub API scoping reference](./docs/github-api-scoping-reference.md).
 
+**An agent that writes and runs its own code, without a bolted-on sandbox.** `apps/code-interpreter`'s `run_code` executes a Python, JavaScript, or shell snippet as a real subprocess and hands back stdout/stderr/exit code — the same primitive AutoGen ships a separate Docker executor for and OpenAI/CrewAI reach for E2B to get. Here it's just another resident app: the code it runs is already inside this agent's own kernel-enforced sandbox, so declaring no `network:connect:<port>` capability means that code has zero outbound network access, full stop, the same deny-by-default guarantee every other app gets — not a second isolation boundary you have to configure separately.
+
 Convinced, or just curious? Let's get something running.
 
 ## Quickstart
@@ -390,6 +392,7 @@ apps/
   terminal/            first-party resident app: a shared shell (tmux + ttyd), driven by the agent and watchable live over the web
   activity-feed/       first-party resident app that fans in fs.file_created and notes.* into one queryable feed
   notes/               first-party resident app for stateful notes (add, list, complete), persisted to /workspace
+  code-interpreter/    first-party resident app: run_code executes Python/JavaScript/shell as a real subprocess, kernel-sandboxed like every other app — no network unless you declare it
 examples/
   resident-apps/       resident app examples you run with `berth dev` (hello-world/ is the minimal, zero-capability one; http-fetch/ shows network:host:* + configureEgressProxy() on a plain, non-browser app)
   agents/              agent examples that depend on @berth/agents as a real (workspace:*) package dependency (simple-agent/ is computer, agent, tool; agent-server/ serves the agent over HTTP instead of driving something itself)

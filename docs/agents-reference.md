@@ -372,6 +372,19 @@ Call `createMcpClientTools({ transport })` directly for a standalone connection 
 
 **What this doesn't do:** no capability-token scoping on MCP-sourced tools — an MCP server's tools are exactly as trusted as any other `Tool` you add to an Agent's list, with no Landlock/governance-gate involvement (those only ever apply to a `Computer`'s own resident-app exports). No auth beyond what you pass in `headers`/`env` yourself — no OAuth flow, though the underlying SDK supports one for a caller that wants to wire it in directly against a raw `Transport`.
 
+## Sandboxed code execution: `apps/code-interpreter`
+
+AutoGen ships a separate Docker code executor; OpenAI's Agents SDK and CrewAI both reach for E2B when an agent needs to run code it wrote. Berth already boots every agent's tools inside a real, kernel-sandboxed container — `apps/code-interpreter` is that same sandbox exposing "run this code" as one more resident-app export, `run_code`, instead of a second isolation boundary you'd have to stand up and configure separately:
+
+```ts
+const { agent } = await createAgent({ apps: "apps/code-interpreter", llm: createAnthropicProvider() });
+const result = await agent.run("write a Python one-liner that prints the first 10 Fibonacci numbers and run it");
+```
+
+`run_code({ language: "python" | "javascript" | "shell", code, timeout_ms? })` shells out to `python3 -c`/`node -e`/`bash -c` as a real subprocess (not a screen-scraped tmux session the way `apps/terminal`'s `run_command` is — see that app's own `berth.yml` for why it's built that way instead) and returns `{ stdout, stderr, exit_code, timed_out }`. `timeout_ms` defaults to 10s, caps at 60s; a killed-on-timeout process is reported as `timed_out: true` rather than folded into an ordinary non-zero exit. Output past 200,000 characters per stream is truncated rather than buffered without bound — the same defensive posture E2B/AutoGen's own executors take, not a Berth-specific limit.
+
+The actual differentiator is what it *doesn't* need: `apps/code-interpreter`'s `berth.yml` declares only `filesystem:write:<workspace>` — no network capability at all — so code an LLM wrote and this tool ran has **zero outbound network access**, enforced by the kernel (Landlock), the same deny-by-default guarantee every other resident app gets. A bolted-on executor typically starts from "has whatever network access its container image happens to allow" and requires the wrapping platform to lock it down separately; here there's nothing extra to configure; the absence of a declared `network:connect:<port>` capability already means no egress. See `packages/agents/test/code-interpreter-milestone.mjs` for a real, running assertion of this (an outbound connection attempt from inside `run_code` genuinely refused, not a documentation claim) — CI-verified only, same Landlock-on-Mac-Docker-Desktop caveat as every other production-target milestone test in this repo (see [Verification](#verification)).
+
 ## Structured output: a repair loop for an `Agent`'s final answer
 
 A Zod parse failure on a tool call's input (server-side, inside a resident app, or thrown directly by an in-process Tool) already gets fed back to the model as a tool error and another turn — that's gap #2's tool-error handling, not a separate mechanism. `formatToolInputError()` (`packages/agents/src/structured-output.ts`) improves what that feedback actually looks like: a `ZodError`'s default `.message` is `JSON.stringify(issues)`, a raw array the model has to parse itself; this detects that exact shape (by inspecting the message *string*, not `instanceof ZodError` — a resident-app export's validation error crosses the RPC wire already unwrapped to a plain `Error(message)`, so `instanceof` would never match the common case) and reformats it into the same compact `path: message; path: message` form `parseStructuredOutput()` below already produces. Any other error message passes through unchanged — this is reformatting, not new validation, and works for any tool in any app, not one specific export.
@@ -579,10 +592,13 @@ node examples/networked-crew.mjs    # Crew.networked(), two independent networke
 cd packages/agents
 node test/computer-boot-milestone.mjs          # real: single-app Computer, live tool list, write_file/read_file round trip
 node test/computer-multi-app-milestone.mjs     # real: filesystem + code-editor, namespaced tools, both independently callable
+node test/computer-http-rpc-milestone.mjs      # real: Computer.boot({httpRpc}), a real out-of-container HTTP+bearer-token round trip
 node test/governance-gate-milestone.mjs        # real: a governs:true app's evaluate_action gates every other app's Tool.invoke, blocking calls that don't return {allowed: true}
+node test/mcp-client-milestone.mjs             # real: a scripted Agent consumes a real `berth mcp` MCP server's tools end to end
+node test/code-interpreter-milestone.mjs       # real: run_code executes Python/JavaScript/shell, and an undeclared outbound connection is genuinely refused
 node test/provider-swap-milestone.mjs          # real: same Computer's tools, driven once by each built-in provider (needs ANTHROPIC_API_KEY + OPENAI_API_KEY)
 node test/crew-manager-milestone.mjs           # real: manager agent delegates across two in-process worker agents (needs ANTHROPIC_API_KEY)
 node test/crew-networked-milestone.mjs         # real: two independent networked agent-computers complete delegated tasks (needs ANTHROPIC_API_KEY)
 ```
 
-The first three need only a local Docker daemon and run in CI (`.github/workflows/agents-milestone.yml`). The other three need real LLM API credentials and stay manual, local-only runs, consistent with how this repo treats anything needing external credentials.
+The first six need only a local Docker daemon and run in CI (`.github/workflows/agents-milestone.yml`) — though `computer-http-rpc-milestone.mjs` and `code-interpreter-milestone.mjs` both build a production-target image requiring real Landlock enforcement, so they're CI-verified only, not locally runnable on Docker Desktop for Mac/Windows (see that section's own header comment). The last three need real LLM API credentials and stay manual, local-only runs, consistent with how this repo treats anything needing external credentials.
