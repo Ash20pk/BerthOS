@@ -295,6 +295,9 @@ importers:
       '@berth/sdk':
         specifier: workspace:*
         version: link:../sdk
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.30.0
+        version: 1.30.0(zod@4.4.3)
       dockerode:
         specifier: ^5.0.1
         version: 5.0.1

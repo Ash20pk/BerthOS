@@ -11,6 +11,7 @@ import {
   formatToolInputError,
 } from "./structured-output.js";
 import { createSemanticFsRetriever, type Retriever } from "./retrieval.js";
+import { createMcpClientTools, type McpClientHandle, type McpClientToolsOptions } from "./mcp-client.js";
 import type { AgentMessage, LLMProvider, Tool } from "./types.js";
 
 export interface AgentOptions {
@@ -344,6 +345,15 @@ export interface CreateAgentOptions extends Pick<BootComputerOptions, "network" 
    * different backend (a real vector DB, a plain grep).
    */
   retriever?: "semantic-fs" | Retriever;
+  /**
+   * Connects to one or more external MCP servers and adds their tools
+   * alongside this Computer's own — the whole MCP tool ecosystem becomes
+   * usable without writing a bespoke connector per integration. Each
+   * connection stays open for the Agent's lifetime; `createAgent()`'s
+   * returned `mcpServers` handles need `close()`ing when done (`runAgent()`
+   * does this for you automatically, in `finally`, alongside `computer.stop()`).
+   */
+  mcpServers?: McpClientToolsOptions[];
 }
 
 function normalizeApps(apps: string | string[] | undefined): string[] {
@@ -359,9 +369,13 @@ function normalizeApps(apps: string | string[] | undefined): string[] {
  * via `connect`, or boots a fresh one from `apps`) and wraps its tool list
  * into an Agent. `llm` defaults to whichever provider has an API key set.
  * `computer` is exposed directly too — call tools yourself, snapshot, or
- * `stop()` it when done.
+ * `stop()` it when done. `mcpServers` is exposed as a separate array of live
+ * connections (not folded into `computer`, which owns none of them) — close
+ * each yourself, or use `runAgent()`, which does it for you.
  */
-export async function createAgent(options: CreateAgentOptions): Promise<{ agent: Agent; computer: Computer }> {
+export async function createAgent(
+  options: CreateAgentOptions,
+): Promise<{ agent: Agent; computer: Computer; mcpServers: McpClientHandle[] }> {
   const computer =
     options.computer ??
     (options.connect
@@ -378,13 +392,15 @@ export async function createAgent(options: CreateAgentOptions): Promise<{ agent:
   const checkpoint = options.checkpoint === "semantic-fs" ? createSemanticFsCheckpointStore(computer) : options.checkpoint;
   const trace = options.trace === "full" ? createAgentTracer(computer) : options.trace;
   const retriever = options.retriever === "semantic-fs" ? createSemanticFsRetriever(computer) : options.retriever;
+  const mcpServers = options.mcpServers ? await Promise.all(options.mcpServers.map((server) => createMcpClientTools(server))) : [];
   const gatedTools = options.humanApproval
     ? applyHumanApprovalGate(computer.tools, {
         ...options.humanApproval,
         requesterName: options.humanApproval.requesterName ?? options.name ?? "agent",
       })
     : computer.tools;
-  const tools = retriever ? [...gatedTools, retriever.asTool()] : gatedTools;
+  const mcpTools = mcpServers.flatMap((server) => server.tools);
+  const tools = retriever ? [...gatedTools, ...mcpTools, retriever.asTool()] : [...gatedTools, ...mcpTools];
 
   const agent = new Agent({
     name: options.name,
@@ -395,7 +411,7 @@ export async function createAgent(options: CreateAgentOptions): Promise<{ agent:
     checkpoint,
     trace,
   });
-  return { agent, computer };
+  return { agent, computer, mcpServers };
 }
 
 export interface RunAgentOptions<T = never> extends Omit<CreateAgentOptions, "computer">, StructuredOutputRunOptions<T> {
@@ -435,10 +451,11 @@ export interface RunAgentOptions<T = never> extends Omit<CreateAgentOptions, "co
  */
 export async function runAgent<T = never>(options: RunAgentOptions<T>): Promise<AgentRunResult & { data?: T }> {
   const { task, runId, onText, responseSchema, maxRepairAttempts, ...createOptions } = options;
-  const { agent, computer } = await createAgent(createOptions);
+  const { agent, computer, mcpServers } = await createAgent(createOptions);
   try {
     return await agent.run(task, { runId, onText, responseSchema, maxRepairAttempts });
   } finally {
     await computer.stop();
+    await Promise.all(mcpServers.map((server) => server.close()));
   }
 }

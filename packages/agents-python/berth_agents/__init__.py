@@ -2,6 +2,7 @@ from .agent import Agent
 from .checkpoint import CheckpointedRun, CheckpointStore, FileCheckpointStore
 from .computer import Computer, ComputerConnectionError, ComputerHandle
 from .crew import CheckpointedCrewRun, Crew, CrewStateRun, checkpoint_key_for
+from .mcp_client import McpClientHandle, create_mcp_client_tools
 from .providers import (
     LLMProviderConfig,
     create_anthropic_provider,
@@ -42,6 +43,7 @@ __all__ = [
     "LLMProvider",
     "LLMProviderConfig",
     "LLMTurn",
+    "McpClientHandle",
     "StructuredOutputError",
     "Tool",
     "ToolCall",
@@ -50,6 +52,7 @@ __all__ = [
     "checkpoint_key_for",
     "create_anthropic_provider",
     "create_fallback_provider",
+    "create_mcp_client_tools",
     "create_openai_provider",
     "detect_llm_provider",
     "format_tool_input_error",
