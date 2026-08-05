@@ -4,6 +4,8 @@ name: Build, Lint, Test
 # unit tests. No Docker, no containers — turbo run test only runs
 # *.test.ts-derived unit tests, never the Docker-based milestone scripts
 # under packages/docker-orchestrator/test/ (those have their own workflows).
+# Also runs packages/agents-python's pytest suite — same "fast, no Docker"
+# posture, just a second language turbo doesn't orchestrate.
 on:
   push:
     branches: [main]
@@ -30,6 +32,16 @@ jobs:
       - run: pnpm build
       - run: pnpm lint
       - run: pnpm test
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Test packages/agents-python
+        working-directory: packages/agents-python
+        run: |
+          pip install -e ".[dev]"
+          pytest
 
       # Gated at high+ (not "any finding"): moderate/low advisories often
       # have no available fix yet, or apply to a call path this project
