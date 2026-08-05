@@ -459,3 +459,107 @@ test("resume() with a responseSchema still validates the final answer after pick
 
   assert.deepEqual(result.data, { name: "ash", age: 5 });
 });
+
+test("a tripped input guardrail throws before the LLM is ever called", async () => {
+  const { llm, callCount } = scriptedLLM([{ text: "should never be reached", toolCalls: [], stop: true }]);
+  const agent = new Agent({
+    llm,
+    tools: [],
+    inputGuardrails: [() => ({ tripwireTriggered: true, message: "banned phrase" })],
+  });
+
+  await assert.rejects(() => agent.run("do something bad"), /input guardrail tripped: banned phrase/);
+  assert.equal(callCount(), 0);
+});
+
+test("an untripped input guardrail lets the run proceed as normal", async () => {
+  const { llm } = scriptedLLM([{ text: "all good", toolCalls: [], stop: true }]);
+  const agent = new Agent({ llm, tools: [], inputGuardrails: [() => ({ tripwireTriggered: false })] });
+
+  const result = await agent.run("a fine request");
+
+  assert.equal(result.text, "all good");
+});
+
+test("a tripped output guardrail throws instead of returning the flagged final answer", async () => {
+  const { llm } = scriptedLLM([{ text: "leaked secret", toolCalls: [], stop: true }]);
+  const agent = new Agent({
+    llm,
+    tools: [],
+    outputGuardrails: [(text) => ({ tripwireTriggered: text.includes("secret"), message: "looked like a secret" })],
+  });
+
+  await assert.rejects(() => agent.run("tell me a secret"), /output guardrail tripped: looked like a secret/);
+});
+
+test("a tripped output guardrail checkpoints the run as error rather than done", async () => {
+  const { llm } = scriptedLLM([{ text: "leaked secret", toolCalls: [], stop: true }]);
+  const checkpoint = memoryCheckpointStore();
+  const agent = new Agent({
+    llm,
+    tools: [],
+    checkpoint,
+    outputGuardrails: [() => ({ tripwireTriggered: true, message: "nope" })],
+  });
+
+  await assert.rejects(() => agent.run("do it", { runId: "run-guard" }));
+
+  const last = checkpoint.saved.at(-1)!;
+  assert.equal(last.status, "error");
+});
+
+test("multiple guardrails run in order and stop at the first tripped one", async () => {
+  const { llm } = scriptedLLM([{ text: "fine", toolCalls: [], stop: true }]);
+  const calls: string[] = [];
+  const agent = new Agent({
+    llm,
+    tools: [],
+    inputGuardrails: [
+      (text) => {
+        calls.push("first");
+        return { tripwireTriggered: true, message: "first guardrail tripped" };
+      },
+      (text) => {
+        calls.push("second");
+        return { tripwireTriggered: false };
+      },
+    ],
+  });
+
+  await assert.rejects(() => agent.run("input"), /first guardrail tripped/);
+  assert.deepEqual(calls, ["first"]);
+});
+
+test("withTools() carries guardrails over to the extended agent", async () => {
+  const { llm, callCount } = scriptedLLM([{ text: "unreachable", toolCalls: [], stop: true }]);
+  const original = new Agent({
+    llm,
+    tools: [],
+    inputGuardrails: [() => ({ tripwireTriggered: true, message: "blocked" })],
+  });
+  const extended = original.withTools([echoTool("extra")]);
+
+  await assert.rejects(() => extended.run("anything"), /blocked/);
+  assert.equal(callCount(), 0);
+});
+
+test("output guardrails still apply to a resumed run's final answer", async () => {
+  const checkpoint = memoryCheckpointStore();
+  await checkpoint.save({
+    runId: "run-resumed-guard",
+    agentName: "agent",
+    status: "running",
+    turnCount: 0,
+    messages: [{ role: "user", text: "hi" }],
+    toolCalls: [],
+  });
+  const { llm } = scriptedLLM([{ text: "leaked secret", toolCalls: [], stop: true }]);
+  const agent = new Agent({
+    llm,
+    tools: [],
+    checkpoint,
+    outputGuardrails: [(text) => ({ tripwireTriggered: text.includes("secret") })],
+  });
+
+  await assert.rejects(() => agent.resume("run-resumed-guard"), /output guardrail tripped/);
+});

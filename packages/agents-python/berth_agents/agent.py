@@ -13,6 +13,7 @@ from typing import Any, Callable
 from pydantic import BaseModel
 
 from .checkpoint import CheckpointedRun, CheckpointStore
+from .guardrails import Guardrail, run_guardrails
 from .structured_output import (
     StructuredOutputError,
     format_tool_input_error,
@@ -37,6 +38,8 @@ class Agent:
         max_turns: int = DEFAULT_MAX_TURNS,
         checkpoint: CheckpointStore | None = None,
         trace: StepTracer | None = None,
+        input_guardrails: list[Guardrail] | None = None,
+        output_guardrails: list[Guardrail] | None = None,
     ) -> None:
         self.name = name
         self.tools = tools
@@ -45,6 +48,8 @@ class Agent:
         self.max_turns = max_turns
         self._checkpoint_store = checkpoint
         self._tracer = trace
+        self._input_guardrails = input_guardrails or []
+        self._output_guardrails = output_guardrails or []
 
     async def run(
         self,
@@ -55,6 +60,8 @@ class Agent:
         response_schema: type[BaseModel] | None = None,
         max_repair_attempts: int = DEFAULT_MAX_REPAIR_ATTEMPTS,
     ) -> AgentRunResult:
+        if self._input_guardrails:
+            await run_guardrails(self._input_guardrails, input, "input")
         return await self._loop(
             [AgentMessage(role="user", text=input)],
             [],
@@ -143,6 +150,15 @@ class Agent:
                 )
             )
 
+        async def guard_output(text: str, turn_count: int) -> None:
+            if not self._output_guardrails:
+                return
+            try:
+                await run_guardrails(self._output_guardrails, text, "output")
+            except Exception:
+                await checkpoint(turn_count, "error", text)
+                raise
+
         # chat_stream is an optional capability (see LLMProvider's docstring
         # in types.py) — absent means no incremental events, not an error.
         chat_stream = getattr(self.llm, "chat_stream", None)
@@ -165,6 +181,7 @@ class Agent:
                 if response_schema:
                     success, data, error = parse_structured_output(text, response_schema)
                     if success:
+                        await guard_output(text, turn_count)
                         await checkpoint(turn_count, "done", text)
                         return AgentRunResult(text=text, tool_calls=executed)
 
@@ -182,6 +199,7 @@ class Agent:
                     await checkpoint(turn_count + 1, "running")
                     continue
 
+                await guard_output(text, turn_count)
                 await checkpoint(turn_count, "done", text)
                 return AgentRunResult(text=text, tool_calls=executed)
 
@@ -222,9 +240,9 @@ class Agent:
 
     def with_tools(self, extra_tools: list[Tool]) -> "Agent":
         """Returns a new Agent with the same identity/llm/system_prompt/
-        checkpoint/trace but an extended tool list — used by Crew's manager
-        pattern to give a manager agent one Tool per worker without
-        mutating either agent."""
+        checkpoint/trace/guardrails but an extended tool list — used by
+        Crew's manager pattern to give a manager agent one Tool per worker
+        without mutating either agent."""
         return Agent(
             llm=self.llm,
             tools=[*self.tools, *extra_tools],
@@ -233,6 +251,8 @@ class Agent:
             max_turns=self.max_turns,
             checkpoint=self._checkpoint_store,
             trace=self._tracer,
+            input_guardrails=self._input_guardrails,
+            output_guardrails=self._output_guardrails,
         )
 
     def as_tool(self, description: str) -> Tool:
