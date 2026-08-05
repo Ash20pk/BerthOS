@@ -13,6 +13,13 @@ from .guardrails import (
 )
 from .mcp_client import McpClientHandle, create_mcp_client_tools
 from .otel_tracer import OtelStepTracer, create_otel_step_tracer
+from .session import (
+    InMemorySession,
+    SemanticFsSession,
+    Session,
+    create_in_memory_session,
+    create_semantic_fs_session,
+)
 from .providers import (
     LLMProviderConfig,
     create_anthropic_provider,
@@ -59,11 +66,14 @@ __all__ = [
     "Guardrail",
     "GuardrailResult",
     "GuardrailTripwireError",
+    "InMemorySession",
     "LLMProvider",
     "LLMProviderConfig",
     "LLMTurn",
     "McpClientHandle",
     "OtelStepTracer",
+    "SemanticFsSession",
+    "Session",
     "StepTracer",
     "StructuredOutputError",
     "Tool",
@@ -76,6 +86,7 @@ __all__ = [
     "create_bedrock_provider",
     "create_fallback_provider",
     "create_google_provider",
+    "create_in_memory_session",
     "create_keyword_guardrail",
     "create_llm_guardrail",
     "create_mcp_client_tools",
@@ -83,6 +94,7 @@ __all__ = [
     "create_openai_provider",
     "create_otel_step_tracer",
     "create_regex_guardrail",
+    "create_semantic_fs_session",
     "detect_llm_provider",
     "format_tool_input_error",
     "parse_structured_output",

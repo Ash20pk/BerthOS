@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from .checkpoint import CheckpointedRun, CheckpointStore
 from .guardrails import Guardrail, run_guardrails
+from .session import Session
 from .structured_output import (
     StructuredOutputError,
     format_tool_input_error,
@@ -59,17 +60,21 @@ class Agent:
         on_text: Callable[[str], None] | None = None,
         response_schema: type[BaseModel] | None = None,
         max_repair_attempts: int = DEFAULT_MAX_REPAIR_ATTEMPTS,
+        session: Session | None = None,
     ) -> AgentRunResult:
         if self._input_guardrails:
             await run_guardrails(self._input_guardrails, input, "input")
+        prior_items = await session.get_items() if session else []
         return await self._loop(
-            [AgentMessage(role="user", text=input)],
+            [*prior_items, AgentMessage(role="user", text=input)],
             [],
             0,
             run_id,
             on_text,
             response_schema,
             max_repair_attempts,
+            session,
+            len(prior_items),
         )
 
     async def resume(
@@ -114,6 +119,8 @@ class Agent:
         on_text: Callable[[str], None] | None,
         response_schema: type[BaseModel] | None,
         max_repair_attempts: int,
+        session: Session | None = None,
+        session_baseline: int = 0,
     ) -> AgentRunResult:
         messages = list(initial_messages)
         executed = list(initial_executed)
@@ -159,6 +166,15 @@ class Agent:
                 await checkpoint(turn_count, "error", text)
                 raise
 
+        async def persist_session() -> None:
+            # Only fires on a successful, un-guarded final answer — a run a
+            # tripped output guardrail killed shouldn't add its (flagged)
+            # turn to a session's history either, same reasoning
+            # checkpoint()'s "error" status already gets for that case.
+            if not session:
+                return
+            await session.add_items(messages[session_baseline:])
+
         # chat_stream is an optional capability (see LLMProvider's docstring
         # in types.py) — absent means no incremental events, not an error.
         chat_stream = getattr(self.llm, "chat_stream", None)
@@ -182,6 +198,8 @@ class Agent:
                     success, data, error = parse_structured_output(text, response_schema)
                     if success:
                         await guard_output(text, turn_count)
+                        messages.append(AgentMessage(role="assistant", text=text))
+                        await persist_session()
                         await checkpoint(turn_count, "done", text)
                         return AgentRunResult(text=text, tool_calls=executed)
 
@@ -200,6 +218,8 @@ class Agent:
                     continue
 
                 await guard_output(text, turn_count)
+                messages.append(AgentMessage(role="assistant", text=text))
+                await persist_session()
                 await checkpoint(turn_count, "done", text)
                 return AgentRunResult(text=text, tool_calls=executed)
 
