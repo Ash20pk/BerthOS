@@ -48,6 +48,7 @@
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
+    "@a2a-js/sdk": "^1.0.1",
     "@anthropic-ai/sdk": "^0.115.0",
     "@berth/adapter-core": "workspace:*",
     "@berth/docker-orchestrator": "workspace:*",

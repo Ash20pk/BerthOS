@@ -293,6 +293,9 @@ importers:
 
   packages/agents:
     dependencies:
+      '@a2a-js/sdk':
+        specifier: ^1.0.1
+        version: 1.0.1(@bufbuild/protobuf@2.13.0)(@grpc/grpc-js@1.14.4)(express@5.2.1)
       '@anthropic-ai/sdk':
         specifier: ^0.115.0
         version: 0.115.0(zod@4.4.3)
@@ -642,6 +645,21 @@ importers:
         version: 7.0.2
 
 packages:
+
+  '@a2a-js/sdk@1.0.1':
+    resolution: {integrity: sha512-CJQdh3Wzwo8qIx5UUkSJ7+7BEI16PB+MXMHHNSmx8JQsQed2HlQgvx1ENOiKUfYA3PlcEvxIwv14dBblhDuPmw==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      '@bufbuild/protobuf': ^2.10.2
+      '@grpc/grpc-js': ^1.11.0
+      express: ^4.21.2 || ^5.1.0
+    peerDependenciesMeta:
+      '@bufbuild/protobuf':
+        optional: true
+      '@grpc/grpc-js':
+        optional: true
+      express:
+        optional: true
 
   '@ai-sdk/gateway@4.0.41':
     resolution: {integrity: sha512-DPkDmmA336kqmIp62on550/6Q6JHvldsnvN1SmkwU8QGrVt1PzFxqyKUn0C5EGGmSBpvF1ohZNtvWNl8gEVugA==}
@@ -3320,6 +3338,10 @@ packages:
   util-deprecate@1.0.2:
     resolution: {integrity: sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw==}
 
+  uuid@11.1.1:
+    resolution: {integrity: sha512-vIYxrBCC/N/K+Js3qSN88go7kIfNPssr/hHCesKCQNAjmgvYS2oqr69kIufEG+O4+PfezOH4EbIeHCfFov8ZgQ==}
+    hasBin: true
+
   validate-npm-package-license@3.0.4:
     resolution: {integrity: sha512-DpKm2Ui/xN7/HQKCtpZxoRWBhZ9Z0kqtygG8XCgNQ8ZlDnxuQmWhj566j8fN4Cu3/JmbhsDo7fcAJq4s9h27Ew==}
 
@@ -3414,6 +3436,15 @@ packages:
     resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
 
 snapshots:
+
+  '@a2a-js/sdk@1.0.1(@bufbuild/protobuf@2.13.0)(@grpc/grpc-js@1.14.4)(express@5.2.1)':
+    dependencies:
+      jose: 6.2.6
+      uuid: 11.1.1
+    optionalDependencies:
+      '@bufbuild/protobuf': 2.13.0
+      '@grpc/grpc-js': 1.14.4
+      express: 5.2.1
 
   '@ai-sdk/gateway@4.0.41(zod@4.4.3)':
     dependencies:
@@ -6376,6 +6407,8 @@ snapshots:
       tslib: 2.8.1
 
   util-deprecate@1.0.2: {}
+
+  uuid@11.1.1: {}
 
   validate-npm-package-license@3.0.4:
     dependencies:
