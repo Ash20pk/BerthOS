@@ -113,7 +113,15 @@ await writeFile(join(OUT_DIR, "package.json"), JSON.stringify(externalPkg, null,
 
 // `npm pack` (not a hand-rolled tar) so the artifact is a real, standard,
 // installable package tarball — same format any `npm install <tgz>` expects.
-await execFileAsync("npm", ["pack", "--silent", "--pack-destination", OUT_DIR], { cwd: OUT_DIR });
+// Strips inherited npm_config_* env (dry_run in particular): this script
+// runs as @berth/sdk's own prepublishOnly during `pnpm -r publish`, and
+// without this, `npm pack` silently no-ops under an ambient
+// npm_config_dry_run=true from the outer publish, leaving OUT_DIR without a
+// tarball for the next step to find.
+const packEnv = Object.fromEntries(
+  Object.entries(process.env).filter(([key]) => !key.startsWith("npm_config_") && !key.startsWith("npm_lifecycle_")),
+);
+await execFileAsync("npm", ["pack", "--silent", "--pack-destination", OUT_DIR], { cwd: OUT_DIR, env: packEnv });
 
 // npm names the tarball from the scoped package name (@berth/sdk -> berth-sdk-<version>.tgz);
 // give it a fixed name so consumers don't need to know the version to find it.

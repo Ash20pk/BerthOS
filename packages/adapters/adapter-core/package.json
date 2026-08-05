@@ -11,12 +11,36 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Ash20pk/BerthOS.git",
+    "directory": "packages/adapters/adapter-core"
+  },
+  "homepage": "https://github.com/Ash20pk/BerthOS#readme",
+  "bugs": {
+    "url": "https://github.com/Ash20pk/BerthOS/issues"
+  },
+  "author": "Berth Contributors",
+  "keywords": [
+    "deploy-adapter",
+    "ai-agents"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
     "test": "node --test dist/**/*.test.js",
-    "lint": "tsc -p tsconfig.json --noEmit"
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
     "@berth/manifest-schema": "workspace:*"

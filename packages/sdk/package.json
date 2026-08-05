@@ -5,6 +5,9 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "berth-runtime": "./dist/runtime.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -15,20 +18,41 @@
       "default": "./dist/runtime.js"
     }
   },
-  "bin": {
-    "berth-runtime": "./dist/runtime.js"
-  },
   "files": [
     "dist",
     "proto",
     "models"
   ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Ash20pk/BerthOS.git",
+    "directory": "packages/sdk"
+  },
+  "homepage": "https://github.com/Ash20pk/BerthOS#readme",
+  "bugs": {
+    "url": "https://github.com/Ash20pk/BerthOS/issues"
+  },
+  "author": "Berth Contributors",
+  "keywords": [
+    "ai-agents",
+    "resident-app",
+    "sdk",
+    "sandbox"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/build-external.mjs",
     "dev": "tsc -p tsconfig.json --watch",
     "test": "node --test dist/**/*.test.js",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "postinstall": "node scripts/prefetch-embedding-model.mjs"
+    "postinstall": "node scripts/prefetch-embedding-model.mjs",
+    "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
     "@berth/manifest-schema": "workspace:*",

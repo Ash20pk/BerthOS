@@ -11,27 +11,54 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Ash20pk/BerthOS.git",
+    "directory": "packages/adapters/adapter-k8s"
+  },
+  "homepage": "https://github.com/Ash20pk/BerthOS#readme",
+  "bugs": {
+    "url": "https://github.com/Ash20pk/BerthOS/issues"
+  },
+  "author": "Berth Contributors",
+  "keywords": [
+    "kubernetes",
+    "deploy-adapter",
+    "ai-agents"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
     "test": "node --experimental-test-module-mocks --test dist/**/*.test.js",
-    "lint": "tsc -p tsconfig.json --noEmit"
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
     "@berth/adapter-core": "workspace:*",
     "@berth/manifest-schema": "workspace:*"
-  },
-  "peerDependencies": {
-    "@kubernetes/client-node": "^1.0.0"
-  },
-  "peerDependenciesMeta": {
-    "@kubernetes/client-node": { "optional": true }
   },
   "devDependencies": {
     "typescript": "^7.0.2",
     "@types/node": "^26.1.2",
     "@berth/docker-orchestrator": "workspace:*",
     "dockerode": "^5.0.1"
+  },
+  "peerDependencies": {
+    "@kubernetes/client-node": "^1.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@kubernetes/client-node": {
+      "optional": true
+    }
   }
 }

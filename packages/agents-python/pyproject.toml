@@ -1,7 +1,22 @@
 [project]
 name = "berth-agents"
 version = "0.1.0"
-description = "computer -> agent -> tool, in Python: the provider-agnostic Agent tool-use loop, all six Crew composition shapes but networked, checkpointing, streaming, and structured-output repair, mirroring @berth/agents (no port of its Docker/Computer/tracing/retrieval/human-approval glue — see docs/agents-python-reference.md for scope)."
+description = "computer -> agent -> tool, in Python: the provider-agnostic Agent tool-use loop, all six Crew composition shapes but networked, checkpointing, streaming, structured-output repair, and OpenTelemetry tracing, mirroring @berth/agents (no port of its Docker/Computer-creation/retrieval/human-approval glue — see docs/agents-python-reference.md for scope)."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Berth Contributors" }]
+keywords = ["ai-agents", "agent-framework", "llm", "mcp", "opentelemetry", "sandbox", "multi-agent"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
 requires-python = ">=3.11"
 dependencies = [
     "anthropic>=0.110.0",
@@ -16,6 +31,13 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.24", "opentelemetry-sdk>=1.20.0"]
+publish = ["build>=1.2", "twine>=5.0"]
+
+[project.urls]
+Homepage = "https://github.com/Ash20pk/BerthOS"
+Repository = "https://github.com/Ash20pk/BerthOS"
+Documentation = "https://github.com/Ash20pk/BerthOS/blob/main/docs/agents-python-reference.md"
+Issues = "https://github.com/Ash20pk/BerthOS/issues"
 
 [build-system]
 requires = ["setuptools>=68"]

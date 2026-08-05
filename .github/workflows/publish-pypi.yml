@@ -1,0 +1,52 @@
+name: Publish berth-agents to PyPI
+
+# Manual-only, dry-run by default: this workflow is never triggered by a
+# push or tag, only a human clicking "Run workflow" in the Actions tab and
+# explicitly choosing dry_run=false. See gaps.md gap #18 for why this exists.
+#
+# One-time setup this workflow depends on but can't do itself: PyPI trusted
+# publishing (https://docs.pypi.org/trusted-publishers/) needs a "pending
+# publisher" registered on PyPI for project "berth-agents" pointing at this
+# repo (Ash20pk/BerthOS), workflow file (publish-pypi.yml), and environment
+# ("pypi") *before* the first real run — PyPI supports registering one for a
+# project that doesn't exist yet. No API token/secret to manage this way.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (build sdist/wheel, twine check, upload nothing)"
+        type: boolean
+        default: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: pypi
+    permissions:
+      id-token: write # required by pypa/gh-action-pypi-publish's OIDC trusted-publishing flow
+    defaults:
+      run:
+        working-directory: packages/agents-python
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - run: pip install ".[publish]"
+
+      # Same gate build-lint-test.yml runs on every PR.
+      - run: pip install ".[dev]"
+      - run: pytest
+
+      - run: rm -rf dist
+      - run: python -m build
+      - run: twine check dist/*
+
+      - name: Publish to PyPI
+        if: ${{ !inputs.dry_run }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: packages/agents-python/dist

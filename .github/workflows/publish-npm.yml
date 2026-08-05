@@ -1,0 +1,54 @@
+name: Publish npm packages
+
+# Manual-only, dry-run by default: this workflow is never triggered by a
+# push or tag, only a human clicking "Run workflow" in the Actions tab and
+# explicitly choosing dry_run=false. `pnpm -r publish` walks every workspace
+# package in dependency order, skipping anything marked "private": true
+# (every app/example/test-fixture package in this repo already is) — see
+# gaps.md gap #18 and docs/agents-reference.md for why this exists.
+#
+# One-time setup this workflow depends on but can't do itself: an
+# npm-organization automation token with publish rights to the @berth scope,
+# stored as the NPM_TOKEN repository secret.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (build + pack, print what would publish, upload nothing)"
+        type: boolean
+        default: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.21.0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: "https://registry.npmjs.org"
+
+      - run: pnpm install --frozen-lockfile
+
+      # Same gate build-lint-test.yml runs on every PR — a publish workflow
+      # is the last place a regression should slip through unnoticed.
+      - run: pnpm build
+      - run: pnpm lint
+      - run: pnpm test
+
+      - name: Dry run (no upload)
+        if: ${{ inputs.dry_run }}
+        run: pnpm publish:npm:dry-run
+
+      - name: Publish to npm
+        if: ${{ !inputs.dry_run }}
+        run: pnpm publish:npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -358,6 +358,10 @@ pnpm exec berth test --json       # CI-friendly output
 berth deploy --fleet=e2b          # or --fleet=daytona, --fleet=k8s, or an alias from ~/.berthrc
 ```
 
+### Releasing
+
+Not published yet (see the note at the top), but the pipeline is real and dry-run-verified: `pnpm publish:npm:dry-run` (root `package.json`) builds every workspace package and packs each non-private one (everything under `packages/`, skipping `apps/`/`examples/`/test fixtures, which are all `"private": true`) exactly as `npm publish` would, without uploading. `.github/workflows/publish-npm.yml` and `.github/workflows/publish-pypi.yml` run that same pipeline (plus the `berth-agents` PyPI package's own build) from CI — both `workflow_dispatch`-only, dry-run by default, and only publish for real when a human explicitly flips `dry_run` to `false` on a manual run.
+
 ## Repository layout
 
 ```
