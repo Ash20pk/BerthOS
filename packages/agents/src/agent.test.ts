@@ -4,6 +4,7 @@ import { z } from "zod";
 import { Agent } from "./agent.js";
 import type { CheckpointedRun, CheckpointStore } from "./checkpoint.js";
 import type { AgentStepEvent, StepTracer } from "./tracing.js";
+import { createInMemorySession } from "./session.js";
 import { StructuredOutputError } from "./structured-output.js";
 import type { LLMProvider, LLMTurn, Tool } from "./types.js";
 
@@ -562,4 +563,81 @@ test("output guardrails still apply to a resumed run's final answer", async () =
   });
 
   await assert.rejects(() => agent.resume("run-resumed-guard"), /output guardrail tripped/);
+});
+
+test("run() with a session prepends its prior items before the new input", async () => {
+  const session = createInMemorySession([
+    { role: "user", text: "what's the capital of France?" },
+    { role: "assistant", text: "Paris" },
+  ]);
+  let seenMessages: unknown;
+  const llm: LLMProvider = {
+    name: "fake",
+    async chat({ messages }) {
+      seenMessages = [...messages]; // a copy — loop() keeps mutating the same array after this call returns
+      return { text: "38 million", toolCalls: [], stop: true };
+    },
+  };
+  const agent = new Agent({ llm, tools: [] });
+
+  await agent.run("and its population?", { session });
+
+  assert.deepEqual(seenMessages, [
+    { role: "user", text: "what's the capital of France?" },
+    { role: "assistant", text: "Paris" },
+    { role: "user", text: "and its population?" },
+  ]);
+});
+
+test("run() with a session appends the new turn's messages after a successful run", async () => {
+  const session = createInMemorySession();
+  const { llm } = scriptedLLM([{ text: "hello there", toolCalls: [], stop: true }]);
+  const agent = new Agent({ llm, tools: [] });
+
+  await agent.run("hi", { session });
+
+  assert.deepEqual(await session.getItems(), [
+    { role: "user", text: "hi" },
+    { role: "assistant", text: "hello there" },
+  ]);
+});
+
+test("run() with a session persists tool-call turns too, not just the final answer", async () => {
+  const session = createInMemorySession();
+  const { llm } = scriptedLLM([
+    { toolCalls: [{ id: "1", name: "search", input: {} }], stop: false },
+    { text: "done", toolCalls: [], stop: true },
+  ]);
+  const agent = new Agent({ llm, tools: [echoTool("search")] });
+
+  await agent.run("look something up", { session });
+
+  const items = await session.getItems();
+  assert.equal(items.length, 4); // user input, assistant tool-call turn, tool result, final assistant answer
+  assert.equal(items[0]?.role, "user");
+  assert.equal(items.at(-1)?.text, "done");
+});
+
+test("a run a tripped output guardrail kills does not persist anything to the session", async () => {
+  const session = createInMemorySession();
+  const { llm } = scriptedLLM([{ text: "leaked secret", toolCalls: [], stop: true }]);
+  const agent = new Agent({
+    llm,
+    tools: [],
+    outputGuardrails: [() => ({ tripwireTriggered: true, message: "nope" })],
+  });
+
+  await assert.rejects(() => agent.run("do it", { session }));
+
+  assert.deepEqual(await session.getItems(), []);
+});
+
+test("run() without a session behaves exactly as before — no session, no prior-history lookup", async () => {
+  const { llm, callCount } = scriptedLLM([{ text: "hello", toolCalls: [], stop: true }]);
+  const agent = new Agent({ llm, tools: [] });
+
+  const result = await agent.run("hi");
+
+  assert.equal(result.text, "hello");
+  assert.equal(callCount(), 1);
 });

@@ -341,6 +341,26 @@ await crew.run("write the release notes"); // re-reads the checkpoint, skips dra
 
 The saved shape is `CrewCheckpoint<S>` — `{runId, kind, status: "running"|"done"|"error", completedSteps, state}`, where `state` is whatever the composition threads (a `string` for `sequential`/`loopUntil`, the typed `S` for `pipeline`). A `status: "done"` checkpoint short-circuits `run()` entirely — no agent/step re-executes, the saved `state` is returned directly, same as `Agent.resume()` on an already-finished run. `withManager`/`networked`/`route`/`parallel` are unaffected: give the manager/router `Agent` its own `checkpoint` instead (see above) for those, since delegation already goes through one Agent's own turn loop.
 
+## Sessions: shared conversation history across separate `run()` calls
+
+Checkpointing above is durable *run* resume — the same logical task, picked back up after a crash. A `Session` is a different thing: shared conversation history across *separate* `run()` calls, the seam OpenAI SDK Sessions, ADK's `SessionService`/`MemoryService`, and CrewAI's short-term memory all cover — a chat UI's turns, say, where each user message is its own `run()` call but the agent still needs everything said before it. "It's in Semantic FS" was an architecture claim before this, not an API `@berth/agents` exposed:
+
+```ts
+import { createAgent, createSemanticFsSession } from "@berth/agents";
+
+const { agent, computer } = await createAgent({ apps: "apps/filesystem" });
+const session = createSemanticFsSession(computer, "user-42-chat");
+
+await agent.run("what's the capital of France?", { session }); // "Paris"
+await agent.run("and its population?", { session });           // sees the prior turn, answers about Paris
+```
+
+A `Session` is `{getItems(), addItems(items), clear()}` (`packages/agents/src/session.ts`). `run()` (not `resume()` — a resumed run's own message history already lives in its checkpoint) calls `session.getItems()` before the first LLM call and prepends whatever comes back to the new input; after a successful, un-guarded final answer, it calls `session.addItems()` with everything new this run produced (the input, any tool calls, the final answer) so the *next* `run()` call against the same session sees it. A run a tripped output guardrail kills doesn't persist anything — same reasoning checkpointing's `"error"` status already has for that case.
+
+Two backends ship: `createInMemorySession(initial?)` (the default — ephemeral, gone when the process exits, fine for a dev loop or a single-process chat server) and `createSemanticFsSession(computer, sessionId)` (durable, reached through the exact same `write_context_file`/`read_context_file`/`tag_context_file` exports checkpointing/tracing already use — one JSON array per `sessionId` at `/context/agent-sessions/<sessionId>.json`, throwing immediately at construction if the Computer is missing those exports). Bring your own for anything else (Redis, a real database) — the interface is deliberately three methods, nothing more.
+
+**What this doesn't do:** no summarization or automatic trimming — a long-running session's history grows without bound, and a caller that wants a token budget has to manage it themselves (read `getItems()`, decide what to keep, `clear()` and re-seed if needed). No entity/long-term/user-profile memory distinct from raw conversation turns — this is CrewAI's *short-term* memory equivalent, not its long-term or entity memory. No automatic session-id derivation — a caller picks and passes the id (a user id, a conversation id from their own app), same as any of this repo's other id-scoped primitives (`runId`, `sessionId` for MCP, and so on).
+
 ## Retrieval: a `search_context` tool over Semantic FS, not a vector-DB integration
 
 Semantic FS already does real hybrid keyword+embedding search (`query_context`), but nothing in `packages/agents/src` referenced it as a retriever before this — and `query_context` alone only ever returns metadata (`path`/`task`/`relatedApps`/timestamps, see `@berth/sdk`'s `SemanticFsQueryResult`), never a hit's actual file content. Calling it directly forces the model into an N+1 round trip: one `query_context` call, then one `read_context_file` call per hit, before it has anything to actually reason over. `Retriever` (`packages/agents/src/retrieval.ts`) collapses that into one call:

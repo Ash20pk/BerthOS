@@ -14,6 +14,7 @@ import {
 import { createSemanticFsRetriever, type Retriever } from "./retrieval.js";
 import { createMcpClientTools, type McpClientHandle, type McpClientToolsOptions } from "./mcp-client.js";
 import { runGuardrails, type Guardrail } from "./guardrails.js";
+import type { Session } from "./session.js";
 import type { AgentMessage, LLMProvider, Tool } from "./types.js";
 
 export interface AgentOptions {
@@ -111,12 +112,23 @@ export class Agent {
 
   async run<T = never>(
     input: string,
-    opts: { runId?: string; onText?: (delta: string) => void } & StructuredOutputRunOptions<T> = {},
+    opts: { runId?: string; onText?: (delta: string) => void; session?: Session } & StructuredOutputRunOptions<T> = {},
   ): Promise<AgentRunResult & { data?: T }> {
     if (this.inputGuardrails.length > 0) {
       await runGuardrails(this.inputGuardrails, input, "input");
     }
-    return this.loop([{ role: "user", text: input }], [], 0, opts.runId, opts.onText, opts.responseSchema, opts.maxRepairAttempts);
+    const priorItems = opts.session ? await opts.session.getItems() : [];
+    return this.loop(
+      [...priorItems, { role: "user", text: input }],
+      [],
+      0,
+      opts.runId,
+      opts.onText,
+      opts.responseSchema,
+      opts.maxRepairAttempts,
+      opts.session,
+      priorItems.length,
+    );
   }
 
   /**
@@ -154,6 +166,8 @@ export class Agent {
     onText: ((delta: string) => void) | undefined,
     responseSchema?: z.ZodType<T>,
     maxRepairAttempts = DEFAULT_MAX_REPAIR_ATTEMPTS,
+    session?: Session,
+    sessionBaseline = 0,
   ): Promise<AgentRunResult & { data?: T }> {
     const messages = [...initialMessages];
     const executed = [...initialExecuted];
@@ -167,6 +181,15 @@ export class Agent {
     const trace = async (event: Omit<Parameters<StepTracer["emit"]>[0], "runId" | "agentName">) => {
       if (!this.tracer || !runId) return;
       await this.tracer.emit({ ...event, runId, agentName: this.name });
+    };
+
+    // Only fires on a successful, un-guarded final answer — a run a tripped
+    // output guardrail killed shouldn't add its (flagged) turn to a
+    // session's history either, same reasoning checkpoint()'s "error" status
+    // already gets for that case.
+    const persistSession = async () => {
+      if (!session) return;
+      await session.addItems(messages.slice(sessionBaseline));
     };
 
     const guardOutput = async (text: string, turnCount: number) => {
@@ -205,6 +228,8 @@ export class Agent {
           const parsed = parseStructuredOutput(text, responseSchema);
           if (parsed.success) {
             await guardOutput(text, turnCount);
+            messages.push({ role: "assistant", text });
+            await persistSession();
             await checkpoint(turnCount, "done", text);
             return { text, toolCalls: executed, data: parsed.data };
           }
@@ -225,6 +250,8 @@ export class Agent {
         }
 
         await guardOutput(text, turnCount);
+        messages.push({ role: "assistant", text });
+        await persistSession();
         await checkpoint(turnCount, "done", text);
         return { text, toolCalls: executed };
       }

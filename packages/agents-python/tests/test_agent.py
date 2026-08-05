@@ -3,12 +3,14 @@ from pydantic import BaseModel
 
 from berth_agents import (
     Agent,
+    AgentMessage,
     AgentStepEvent,
     FileCheckpointStore,
     GuardrailResult,
     LLMTurn,
     StructuredOutputError,
     ToolCall,
+    create_in_memory_session,
 )
 
 
@@ -491,3 +493,92 @@ async def test_output_guardrails_still_apply_to_a_resumed_runs_final_answer(tmp_
 
     with pytest.raises(Exception, match="output guardrail tripped"):
         await agent.resume("run-resumed-guard")
+
+
+@pytest.mark.asyncio
+async def test_run_with_a_session_prepends_its_prior_items_before_the_new_input():
+    session = create_in_memory_session(
+        [
+            AgentMessage(role="user", text="what's the capital of France?"),
+            AgentMessage(role="assistant", text="Paris"),
+        ]
+    )
+    seen_messages = None
+
+    class RecordingLLM:
+        name = "fake"
+
+        async def chat(self, *, system, messages, tools):
+            nonlocal seen_messages
+            seen_messages = list(messages)
+            return LLMTurn(text="38 million", tool_calls=[], stop=True)
+
+    agent = Agent(llm=RecordingLLM(), tools=[])
+
+    await agent.run("and its population?", session=session)
+
+    assert seen_messages == [
+        AgentMessage(role="user", text="what's the capital of France?"),
+        AgentMessage(role="assistant", text="Paris"),
+        AgentMessage(role="user", text="and its population?"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_run_with_a_session_appends_the_new_turns_messages_after_a_successful_run():
+    session = create_in_memory_session()
+    llm = ScriptedLLM([LLMTurn(text="hello there", tool_calls=[], stop=True)])
+    agent = Agent(llm=llm, tools=[])
+
+    await agent.run("hi", session=session)
+
+    assert await session.get_items() == [
+        AgentMessage(role="user", text="hi"),
+        AgentMessage(role="assistant", text="hello there"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_run_with_a_session_persists_tool_call_turns_too():
+    session = create_in_memory_session()
+    llm = ScriptedLLM(
+        [
+            LLMTurn(tool_calls=[ToolCall(id="1", name="search", input={})], stop=False),
+            LLMTurn(text="done", tool_calls=[], stop=True),
+        ]
+    )
+    agent = Agent(llm=llm, tools=[EchoTool("search")])
+
+    await agent.run("look something up", session=session)
+
+    items = await session.get_items()
+    assert len(items) == 4  # user input, assistant tool-call turn, tool result, final assistant answer
+    assert items[0].role == "user"
+    assert items[-1].text == "done"
+
+
+@pytest.mark.asyncio
+async def test_a_run_a_tripped_output_guardrail_kills_does_not_persist_anything_to_the_session():
+    session = create_in_memory_session()
+    llm = ScriptedLLM([LLMTurn(text="leaked secret", tool_calls=[], stop=True)])
+    agent = Agent(
+        llm=llm,
+        tools=[],
+        output_guardrails=[lambda text: GuardrailResult(tripwire_triggered=True, message="nope")],
+    )
+
+    with pytest.raises(Exception):
+        await agent.run("do it", session=session)
+
+    assert await session.get_items() == []
+
+
+@pytest.mark.asyncio
+async def test_run_without_a_session_behaves_exactly_as_before():
+    llm = ScriptedLLM([LLMTurn(text="hello", tool_calls=[], stop=True)])
+    agent = Agent(llm=llm, tools=[])
+
+    result = await agent.run("hi")
+
+    assert result.text == "hello"
+    assert llm.call_count == 1
