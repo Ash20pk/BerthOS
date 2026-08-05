@@ -10,7 +10,7 @@ export {
   type McpStdioTransportOptions,
   type McpHttpTransportOptions,
 } from "./mcp-client.js";
-export { applyGovernanceGate, GovernanceDeniedError } from "./governance.js";
+export { applyGovernanceGate, GovernanceDeniedError, GovernanceUnavailableError, type GovernanceGateOptions } from "./governance.js";
 export { applyHumanApprovalGate, HumanApprovalDeniedError, type HumanApprovalGateOptions } from "./approval.js";
 export {
   Agent,

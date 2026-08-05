@@ -38,3 +38,28 @@ export function mcpToolsFor(manifest: BerthManifest): Array<{ name: string; desc
     inputShape: inputShapeFor(exportSpec),
   }));
 }
+
+/**
+ * Parses `berth mcp --only`'s comma-separated export-name list against a
+ * manifest's actual declared exports — real capability scoping for gap #26
+ * ("MCP bridge calls bypass capability tokens entirely... anyone who can
+ * spawn `berth mcp` against a running container can call any of its
+ * exports, with no check against what the app declared it needs"). `--only`
+ * doesn't add cryptographic auth (there's still no token verifying *who*
+ * is calling), but it does let an operator narrow *what* a spawned bridge
+ * can reach to a declared subset instead of blanket "everything this app
+ * can do" — least privilege, opt-in, the same shape of improvement
+ * `applyHumanApprovalGate`'s own `only` option already has for Agent tool
+ * calls. `unknown` names (a typo, or an export the app doesn't declare) are
+ * returned rather than silently dropped, so the caller can fail loudly
+ * instead of bridging fewer tools than the operator actually intended.
+ */
+export function parseOnlyExports(only: string, declaredExportNames: string[]): { names: string[]; unknown: string[] } {
+  const names = only
+    .split(",")
+    .map((name) => name.trim())
+    .filter((name) => name.length > 0);
+  const declared = new Set(declaredExportNames);
+  const unknown = names.filter((name) => !declared.has(name));
+  return { names, unknown };
+}

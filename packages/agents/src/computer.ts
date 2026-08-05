@@ -11,7 +11,7 @@ import {
 import { resolveComputerApps, type ComputerAppSpec } from "./resolve-apps.js";
 import { buildComputerImage } from "./build.js";
 import { computerToolsFor } from "./tools.js";
-import { applyGovernanceGate } from "./governance.js";
+import { applyGovernanceGate, type GovernanceGateOptions } from "./governance.js";
 import type { Tool } from "./types.js";
 
 export interface BootComputerOptions {
@@ -21,6 +21,8 @@ export interface BootComputerOptions {
   network?: string;
   /** Extra container environment variables — e.g. an LLM API key for a synthesized agent-server companion app. */
   env?: Record<string, string>;
+  /** Passed through to applyGovernanceGate() when this Computer has a `governs: true` app loaded — see GovernanceGateOptions and gaps.md gap #26. Defaults to "fail-open", unchanged from before this option existed. */
+  governance?: GovernanceGateOptions;
   /**
    * Also starts @berth/sdk's HTTP RPC bridge inside the container (see
    * container.ts's `httpRpc` option) and exposes it on the returned handle's
@@ -49,6 +51,8 @@ export interface ConnectComputerOptions {
    * app the OS has loaded.
    */
   apps?: string[];
+  /** Same as BootComputerOptions.governance — see GovernanceGateOptions and gaps.md gap #26. */
+  governance?: GovernanceGateOptions;
   docker?: Docker;
 }
 
@@ -210,7 +214,7 @@ export class Computer implements ComputerHandle {
     const call = (appName: string, exportName: string, input: unknown) =>
       withReadyRetry(() => dispatch(appName, exportName, input));
 
-    const tools = applyGovernanceGate(apps, apps, computerToolsFor(apps, call), call);
+    const tools = applyGovernanceGate(apps, apps, computerToolsFor(apps, call), call, options.governance);
 
     let httpRpc: ComputerHandle["httpRpc"];
     if (httpRpcRequested) {
@@ -301,7 +305,7 @@ export class Computer implements ComputerHandle {
 
     const call = (appName: string, exportName: string, input: unknown) => withReadyRetry(() => dispatch(appName, exportName, input));
 
-    const tools = applyGovernanceGate(allApps, apps, computerToolsFor(apps, call), call);
+    const tools = applyGovernanceGate(allApps, apps, computerToolsFor(apps, call), call, options.governance);
 
     // Passed through as a plain read of what `berth os up --http-rpc`
     // recorded, not re-verified live here — connect() already has a working

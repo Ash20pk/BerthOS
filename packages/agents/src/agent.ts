@@ -339,7 +339,7 @@ export class Agent {
   }
 }
 
-export interface CreateAgentOptions extends Pick<BootComputerOptions, "network" | "env" | "docker"> {
+export interface CreateAgentOptions extends Pick<BootComputerOptions, "network" | "env" | "docker" | "governance"> {
   /** A resident-app directory, or several — a bare string is shorthand for a one-app Computer. First-party (`apps/filesystem`) and custom (`./my-app`) directories mix freely; nothing distinguishes them. Ignored if `computer` or `connect` is given. */
   apps?: string | string[];
   /**
@@ -463,6 +463,7 @@ export async function createAgent(
           network: options.network,
           env: options.env,
           docker: options.docker,
+          governance: options.governance,
         }));
   const checkpoint = options.checkpoint === "semantic-fs" ? createSemanticFsCheckpointStore(computer) : options.checkpoint;
   const trace =

@@ -19,16 +19,45 @@ export class GovernanceDeniedError extends Error {
   }
 }
 
+/**
+ * Thrown instead of GovernanceDeniedError when `mode: "fail-closed"` is
+ * configured and the governor itself couldn't be reached in time — a
+ * distinct error from "the governor said no," since the governor never
+ * actually rendered a verdict here. See applyGovernanceGate()'s `mode`.
+ */
+export class GovernanceUnavailableError extends Error {
+  constructor(
+    readonly appName: string,
+    readonly exportName: string,
+    readonly cause: string,
+  ) {
+    super(`governance unavailable for ${appName}.${exportName} (fail-closed): ${cause}`);
+    this.name = "GovernanceUnavailableError";
+  }
+}
+
 interface EvaluateActionResult {
   allowed: boolean;
   reason?: string;
 }
 
-/**
- * Fail-open, not fail-closed: a v1 default, not a security guarantee. A
- * governance app that's slow, crashed, or misbehaving shouldn't wedge every
- * other app's tool calls — see docs/governance-reference.md.
- */
+export interface GovernanceGateOptions {
+  /**
+   * "fail-open" (default): a governor that's slow, crashed, or unreachable
+   * doesn't wedge every other app's tool calls — a v1 default, not a
+   * security guarantee, and the reason gap #26 named this file as a real
+   * credibility gap in Berth's own security pitch. "fail-closed": the same
+   * unreachable-governor case throws GovernanceUnavailableError instead of
+   * letting the call through — the tradeoff moves from "an outage takes
+   * down every gated app's tool calls" to "an outage never silently grants
+   * access nothing actually approved." Pick fail-closed for anything where
+   * an unreachable policy check should read as "denied," not "allowed";
+   * fail-open for anything where availability matters more than that
+   * specific guarantee. See docs/governance-reference.md.
+   */
+  mode?: "fail-open" | "fail-closed";
+}
+
 const GOVERNANCE_CALL_TIMEOUT_MS = 10_000;
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -82,7 +111,9 @@ export function applyGovernanceGate(
   scopedApps: ComputerAppSpec[],
   tools: Tool[],
   call: (appName: string, exportName: string, input: unknown) => Promise<unknown>,
+  options: GovernanceGateOptions = {},
 ): Tool[] {
+  const mode = options.mode ?? "fail-open";
   const governors = allApps.filter((app) => app.manifest.governs);
   if (governors.length === 0) return tools;
   if (governors.length > 1) {
@@ -118,9 +149,11 @@ export function applyGovernanceGate(
             GOVERNANCE_CALL_TIMEOUT_MS,
           )) as EvaluateActionResult;
         } catch (err) {
-          console.warn(
-            `[governance] evaluate_action call failed (${(err as Error).message}) — failing open for ${owner.appName}.${owner.exportName}`,
-          );
+          const cause = (err as Error).message;
+          if (mode === "fail-closed") {
+            throw new GovernanceUnavailableError(owner.appName, owner.exportName, cause);
+          }
+          console.warn(`[governance] evaluate_action call failed (${cause}) — failing open for ${owner.appName}.${owner.exportName}`);
           return tool.invoke(input);
         }
         if (!verdict.allowed) {

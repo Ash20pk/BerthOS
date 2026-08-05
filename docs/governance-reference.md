@@ -49,9 +49,17 @@ governance:
   exempt: true
 ```
 
-## Failure mode: fails open, by default
+## Failure mode: fails open by default, fail-closed available
 
-If the `evaluate_action` call itself errors or exceeds a 10-second timeout, `Computer` logs a warning and lets the underlying call through rather than wedging the agent indefinitely. This is a v1 default, not a security guarantee — a governance app that's down doesn't block the agent, it just stops being consulted. If your use case needs fail-closed behavior, build that into your own connector app (e.g. have `evaluate_action` itself return `allowed: false` on its own internal errors, rather than letting the call throw) — `Computer` doesn't currently expose a fail-closed configuration option.
+If the `evaluate_action` call itself errors or exceeds a 10-second timeout, `Computer` logs a warning and lets the underlying call through rather than wedging the agent indefinitely — the default, unchanged from before this option existed. This is a v1 default, not a security guarantee — a governance app that's down doesn't block the agent, it just stops being consulted.
+
+A real fail-closed option exists too, for anywhere an unreachable governor should read as "denied," not "allowed": pass `governance: { mode: "fail-closed" }` to `Computer.boot()`/`Computer.connect()` (or `createAgent()`, which forwards it) or `HttpBridgeComputer.deploy()`. An unreachable/timed-out `evaluate_action` call then throws `GovernanceUnavailableError` (carrying `.appName`, `.exportName`, `.cause`) instead of letting the call through — distinct from `GovernanceDeniedError`, since the governor never actually rendered a verdict here, it just couldn't be reached:
+
+```ts
+const computer = await Computer.boot({ apps: [...], governance: { mode: "fail-closed" } });
+```
+
+An explicitly-denied call (`allowed: false`) still throws the normal `GovernanceDeniedError` either way — `mode` only changes what happens when the governor itself can't be consulted at all. Pick fail-closed for anything where "the policy check didn't happen" must never quietly become "the policy check passed"; fail-open (the default) for anything where availability matters more than that specific guarantee.
 
 ## Building your own governance app
 
