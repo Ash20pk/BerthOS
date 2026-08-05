@@ -501,7 +501,18 @@ const recent = await listAgentTraces(computer, { limit: 10 }); // [{runId, updat
 for (const { runId } of recent) console.log(runId, await readAgentTrace(computer, runId));
 ```
 
-**What this does and doesn't fix:** usage accounting is per-turn only — nothing sums a whole run's or a whole `Crew`'s total cost, and there's still no dollar-cost conversion (providers report tokens, not price). Cross-`Crew` correlation is turn/tool-call-level for the manager/router and every directly-invoked step Agent, not for delegated `withManager`/`networked` workers (see above). `listAgentTraces()` lists cheaply (metadata only, no content fetch) but still requires `createSemanticFsStepTracer()`/`createAgentTracer()` to have been the tracer in use — a Context-Bus-only trace was never durable to begin with, so there's nothing to list.
+### Exporting to an OpenTelemetry backend
+
+`"full"`/Context-Bus/Semantic-FS tracing is Berth-native — nothing outside a `Computer` can read it without calling `readAgentTrace()`/`listAgentTraces()` yourself. `trace: "otel"` (`createOtelStepTracer()`, `packages/agents/src/otel-tracer.ts`) is the other direction: it emits real spans through `@opentelemetry/api`'s global tracer, so any OTel SDK + exporter already wired into the host process (Langfuse, Phoenix, Honeycomb, Datadog, a plain OTel Collector, ...) receives every `llm-turn`/`tool-call` step as a span, following the [OTel GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) for attribute names (`gen_ai.operation.name`, `gen_ai.agent.name`, `gen_ai.tool.name`, `gen_ai.usage.input_tokens`/`output_tokens`), plus `berth.run_id`/`berth.turn` for correlating spans from the same run:
+
+```ts
+const { agent } = await createAgent({ apps: "apps/filesystem", trace: "otel" });
+await agent.run("long task", { runId: "task-42" }); // spans flow to whatever OTel SDK the host process registered
+```
+
+`@opentelemetry/api` alone has no exporter and does nothing without a real SDK (`@opentelemetry/sdk-trace-base`/`@opentelemetry/sdk-trace-node` or similar) registered as the global tracer provider — wiring that up, and pointing it at a backend, is on the host application, same as instrumenting any other OTel-based service. `emit()` fires after a step already finished, not around a live span, so `createOtelStepTracer()` backdates each span's start time using the event's own `durationMs` and ends it immediately — there's no live in-flight span to attach child spans to, and no single parent span links every span from one run together (that's what `berth.run_id` is for instead). `createOtelStepTracer({ tracerName? })` takes an optional instrumentation-scope name, defaulting to `"@berth/agents"`.
+
+**What this does and doesn't fix:** usage accounting is per-turn only — nothing sums a whole run's or a whole `Crew`'s total cost, and there's still no dollar-cost conversion (providers report tokens, not price). Cross-`Crew` correlation is turn/tool-call-level for the manager/router and every directly-invoked step Agent, not for delegated `withManager`/`networked` workers (see above). `listAgentTraces()` lists cheaply (metadata only, no content fetch) but still requires `createSemanticFsStepTracer()`/`createAgentTracer()` to have been the tracer in use — a Context-Bus-only trace was never durable to begin with, so there's nothing to list. `trace: "otel"` and `trace: "full"` are mutually exclusive per `Agent` — running both means constructing two `Agent`s or a custom `StepTracer` that fans out to both backends yourself.
 
 ## Networked Crew: agents as peers on a real LAN
 

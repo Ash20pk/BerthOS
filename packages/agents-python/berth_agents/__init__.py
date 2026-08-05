@@ -3,6 +3,7 @@ from .checkpoint import CheckpointedRun, CheckpointStore, FileCheckpointStore
 from .computer import Computer, ComputerConnectionError, ComputerHandle
 from .crew import CheckpointedCrewRun, Crew, CrewStateRun, checkpoint_key_for
 from .mcp_client import McpClientHandle, create_mcp_client_tools
+from .otel_tracer import OtelStepTracer, create_otel_step_tracer
 from .providers import (
     LLMProviderConfig,
     create_anthropic_provider,
@@ -16,6 +17,7 @@ from .providers import (
     resolve_llm_provider,
 )
 from .structured_output import StructuredOutputError, format_tool_input_error, parse_structured_output
+from .tracing import AgentStepEvent, StepTracer
 from .types import (
     AgentMessage,
     AgentRunResult,
@@ -33,6 +35,7 @@ __all__ = [
     "Agent",
     "AgentMessage",
     "AgentRunResult",
+    "AgentStepEvent",
     "CheckpointStore",
     "CheckpointedCrewRun",
     "CheckpointedRun",
@@ -48,6 +51,8 @@ __all__ = [
     "LLMProviderConfig",
     "LLMTurn",
     "McpClientHandle",
+    "OtelStepTracer",
+    "StepTracer",
     "StructuredOutputError",
     "Tool",
     "ToolCall",
@@ -62,6 +67,7 @@ __all__ = [
     "create_mcp_client_tools",
     "create_ollama_provider",
     "create_openai_provider",
+    "create_otel_step_tracer",
     "detect_llm_provider",
     "format_tool_input_error",
     "parse_structured_output",

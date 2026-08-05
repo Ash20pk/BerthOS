@@ -65,6 +65,7 @@ export {
   type StepTracer,
   type AgentStepEvent,
 } from "./tracing.js";
+export { createOtelStepTracer, type OtelStepTracerOptions } from "./otel-tracer.js";
 export {
   generateAgentServerApp,
   bootNetworkedAgent,
