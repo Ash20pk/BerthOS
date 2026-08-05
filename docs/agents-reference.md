@@ -308,7 +308,9 @@ await agent.run("what did we decide about the pricing page?");
 
 ## Structured output: a repair loop for an `Agent`'s final answer
 
-A Zod parse failure on a tool call's input (server-side, inside a resident app) already gets fed back to the model as a tool error and another turn — that's gap #2's tool-error handling, not a separate mechanism. What's genuinely missing is a LangChain `.with_structured_output()` equivalent for the agent's own *final* answer: once the model stops calling tools, nothing validated that its last message was actually the JSON shape the caller needed. `Agent.run()`/`Agent.resume()` gained a `responseSchema` option that closes that gap without a new subsystem — it's a small addition to the existing tool-use loop, not a parallel one:
+A Zod parse failure on a tool call's input (server-side, inside a resident app, or thrown directly by an in-process Tool) already gets fed back to the model as a tool error and another turn — that's gap #2's tool-error handling, not a separate mechanism. `formatToolInputError()` (`packages/agents/src/structured-output.ts`) improves what that feedback actually looks like: a `ZodError`'s default `.message` is `JSON.stringify(issues)`, a raw array the model has to parse itself; this detects that exact shape (by inspecting the message *string*, not `instanceof ZodError` — a resident-app export's validation error crosses the RPC wire already unwrapped to a plain `Error(message)`, so `instanceof` would never match the common case) and reformats it into the same compact `path: message; path: message` form `parseStructuredOutput()` below already produces. Any other error message passes through unchanged — this is reformatting, not new validation, and works for any tool in any app, not one specific export.
+
+What's still genuinely missing is a LangChain `.with_structured_output()` equivalent for the agent's own *final* answer: once the model stops calling tools, nothing validated that its last message was actually the JSON shape the caller needed. `Agent.run()`/`Agent.resume()` gained a `responseSchema` option that closes that gap without a new subsystem — it's a small addition to the existing tool-use loop, not a parallel one:
 
 ```ts
 import { z } from "zod";
@@ -323,7 +325,18 @@ Once a turn has no pending tool calls (what previously always meant "done"), its
 
 `responseSchema` is a per-call option, not a constructor one (unlike `checkpoint`/`trace`) — different calls against the same `Agent` can ask for different shapes, or none at all. `runAgent({responseSchema, maxRepairAttempts})` threads the same options through for the one-shot entry point.
 
-**What this does and doesn't fix:** this only validates the loop's own final text turn — a tool call's input is still whatever the resident app's own Zod schema accepts or rejects (gap #2's generic `{error}` feedback, unchanged). There's no client-side JSON-Schema pre-validation of tool arguments before they reach a tool's `invoke()` either — that would need a JSON-Schema validator (this package has none as a dependency) and is a different, separate piece of the same broader gap, left for later. No streaming-aware repair: `onText` still fires for a rejected attempt's text before the repair prompt goes out, same as any other turn.
+### Crew-level: `sequential` and `route`
+
+An `Agent`'s own `responseSchema` only validates that one Agent's answer — it says nothing about a multi-step `Crew` composition's *composed* final output. `Crew.sequential`/`Crew.route` accept the same `responseSchema`/`maxRepairAttempts` options, reusing `Agent.run()`'s exact repair mechanics (`parseStructuredOutput()`/`structuredOutputRepairPrompt()`/`StructuredOutputError`) rather than a second implementation:
+
+```ts
+const crew = Crew.sequential([draftAgent, summarizeAgent], { responseSchema: z.object({ summary: z.string() }) });
+const result = await crew.run("summarize this document"); // summarizeAgent's output, repaired until it validates
+```
+
+`sequential` re-runs its *last* agent (the one that actually produced the composed text) with a corrective prompt on failure; `route` re-runs whichever branch the router actually chose. Both are unambiguous about which Agent should attempt the fix. `parallel`/`withManager`/`networked`/`loopUntil`/`pipeline` deliberately don't get this: `parallel` has no single agent responsible for the merged output, `withManager`/`networked`'s manager can already be given its own `responseSchema` directly since delegation is just tool calls inside its own loop, `loopUntil` already has its own `until` predicate to gate on, and `pipeline` returns a typed object, not a string that `responseSchema` (which validates JSON text) applies to. With `checkpoint` also configured, `sequential`'s final checkpoint isn't saved as `"done"` until repair (if any) actually succeeds — a crash mid-repair resumes by re-attempting repair, not by treating the unrepaired text as finished.
+
+**What this does and doesn't fix:** tool-call *input* validation is still gap #2's generic `{error}` feedback, now reformatted (see above) but not pre-validated — there's still no client-side JSON-Schema pre-validation of tool arguments before they reach a tool's `invoke()`; that would need a JSON-Schema validator (this package has none as a dependency) and remains separate, deferred work. No streaming-aware repair: `onText` still fires for a rejected attempt's text before the repair prompt goes out, same as any other turn.
 
 ## Evals: assertion-based regression tests, with an optional LLM-as-judge
 

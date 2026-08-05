@@ -38,8 +38,42 @@ export function parseStructuredOutput<T>(text: string, schema: z.ZodType<T>): St
     return { success: true, data: result.data };
   }
 
-  const issues = result.error.issues.map((issue) => `${issue.path.map(String).join(".") || "(root)"}: ${issue.message}`).join("; ");
-  return { success: false, error: issues };
+  return { success: false, error: formatZodIssues(result.error.issues) };
+}
+
+function formatZodIssues(issues: { path: PropertyKey[]; message: string }[]): string {
+  return issues.map((issue) => `${issue.path.map(String).join(".") || "(root)"}: ${issue.message}`).join("; ");
+}
+
+/**
+ * Zod's default ZodError.message is JSON.stringify(issues) — that's what a
+ * tool's thrown ZodError carries whether it's an in-process Tool (a real
+ * ZodError instance) or a resident-app export's input validation crossing
+ * the RPC wire (already unwrapped to a plain Error(message) string by the
+ * time it reaches Agent.run()'s catch block, per Computer's dispatch() — so
+ * `instanceof ZodError` would never match the far more common resident-app
+ * case). Detecting the shape of the *message string itself*, not the error
+ * type, is what makes this work identically for either path, and for any
+ * tool in any app, not one specific export — reformats it into the same
+ * compact `path: message; path: message` shape parseStructuredOutput()
+ * already produces, instead of leaving the model to parse a raw JSON array.
+ * Any other error message (not a Zod issues array) passes through unchanged.
+ */
+export function formatToolInputError(message: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(message);
+  } catch {
+    return message;
+  }
+
+  if (!Array.isArray(parsed) || parsed.length === 0) return message;
+  const looksLikeZodIssues = parsed.every(
+    (issue) => issue && typeof issue === "object" && Array.isArray((issue as { path?: unknown }).path) && typeof (issue as { message?: unknown }).message === "string",
+  );
+  if (!looksLikeZodIssues) return message;
+
+  return formatZodIssues(parsed as { path: PropertyKey[]; message: string }[]);
 }
 
 /** The corrective nudge fed back to the model as a fresh user turn on a failed attempt. */

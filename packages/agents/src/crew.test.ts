@@ -1,9 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { z } from "zod";
 import { Agent } from "./agent.js";
 import { Crew, checkpointKeyFor, type CrewCheckpoint } from "./crew.js";
 import type { CheckpointStore } from "./checkpoint.js";
 import type { AgentStepEvent, StepTracer } from "./tracing.js";
+import { StructuredOutputError } from "./structured-output.js";
 import type { LLMProvider, LLMTurn } from "./types.js";
 import type { NetworkedAgent } from "./network.js";
 
@@ -526,4 +528,69 @@ test("Crew.pipeline passes runId as each step function's second argument", async
   await crew.run({ x: 1 });
 
   assert.deepEqual(seen, ["corr-6"]);
+});
+
+test("Crew.sequential repairs the last agent's output against responseSchema, then returns the valid result", async () => {
+  const schema = z.object({ name: z.string() });
+  const first = textAgent("first", "first-out");
+  const repairable = new Agent({
+    name: "last",
+    llm: scriptedLLM([
+      { text: "not json", toolCalls: [], stop: true },
+      { text: '{"name": "ash"}', toolCalls: [], stop: true },
+    ]),
+    tools: [],
+  });
+
+  const crew = Crew.sequential([first, repairable], { responseSchema: schema });
+  const result = await crew.run("start");
+
+  assert.equal(result, '{"name": "ash"}');
+});
+
+test("Crew.sequential's responseSchema repair leaves a passing first attempt untouched (no extra LLM call)", async () => {
+  const schema = z.object({ name: z.string() });
+  // Only one turn scripted — scriptedLLM() itself throws "script exhausted"
+  // if repair incorrectly fires a second chat() call, so a clean pass here
+  // already proves no extra call happened.
+  const agent = new Agent({ name: "solo", llm: scriptedLLM([{ text: '{"name": "ash"}', toolCalls: [], stop: true }]), tools: [] });
+
+  const result = await Crew.sequential([agent], { responseSchema: schema }).run("start");
+
+  assert.equal(result, '{"name": "ash"}');
+});
+
+test("Crew.sequential throws StructuredOutputError once repair attempts are exhausted", async () => {
+  const schema = z.object({ name: z.string() });
+  const agent = new Agent({
+    name: "solo",
+    llm: scriptedLLM([
+      { text: "nope", toolCalls: [], stop: true },
+      { text: "still nope", toolCalls: [], stop: true },
+      { text: "still nope again", toolCalls: [], stop: true },
+    ]),
+    tools: [],
+  });
+
+  const crew = Crew.sequential([agent], { responseSchema: schema, maxRepairAttempts: 2 });
+
+  await assert.rejects(() => crew.run("start"), StructuredOutputError);
+});
+
+test("Crew.route repairs the chosen branch's output against responseSchema", async () => {
+  const schema = z.object({ ok: z.boolean() });
+  const router = textAgent("router", "billing");
+  const billing = new Agent({
+    name: "billing-agent",
+    llm: scriptedLLM([
+      { text: "bad", toolCalls: [], stop: true },
+      { text: '{"ok": true}', toolCalls: [], stop: true },
+    ]),
+    tools: [],
+  });
+
+  const crew = Crew.route({ router, routes: { billing }, responseSchema: schema });
+  const result = await crew.run("where's my refund?");
+
+  assert.equal(result, '{"ok": true}');
 });

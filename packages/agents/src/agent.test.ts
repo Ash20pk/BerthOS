@@ -189,6 +189,30 @@ test("a tool call that throws feeds an {error} result back to the model instead 
   assert.deepEqual(result.toolCalls[0]!.result, { error: "boom" });
 });
 
+test("a tool call that throws a real ZodError feeds back the reformatted per-field error, not the raw JSON array", async () => {
+  const toolInputSchema = z.object({ path: z.string(), content: z.string() });
+  const zodValidatedTool: Tool = {
+    name: "write_file",
+    description: "",
+    inputSchema: {},
+    invoke: async (input) => {
+      const parsed = toolInputSchema.parse(input); // throws a real ZodError on bad input
+      return { wrote: parsed.path };
+    },
+  };
+  const { llm } = scriptedLLM([
+    { toolCalls: [{ id: "1", name: "write_file", input: { path: 123 } }], stop: false },
+    { text: "recovered", toolCalls: [], stop: true },
+  ]);
+  const agent = new Agent({ llm, tools: [zodValidatedTool] });
+
+  const result = await agent.run("write something");
+
+  const { error } = result.toolCalls[0]!.result as { error: string };
+  assert.match(error, /^path:/, "reformatted into the compact path: message shape, not the raw ZodError JSON");
+  assert.ok(!error.trimStart().startsWith("["), "must not still be the raw JSON issues array");
+});
+
 test("resume() throws a clear error when the runId has no saved checkpoint", async () => {
   const { llm } = scriptedLLM([]);
   const agent = new Agent({ llm, tools: [], checkpoint: memoryCheckpointStore() });
