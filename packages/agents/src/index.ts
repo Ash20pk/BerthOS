@@ -16,7 +16,14 @@ export {
 } from "./agent.js";
 export { Crew, type CrewRun, type CrewStateRun, type CrewCheckpoint } from "./crew.js";
 export { createSemanticFsCheckpointStore, type CheckpointStore, type CheckpointedRun } from "./checkpoint.js";
-export { createSemanticFsRetriever, type Retriever, type RetrievedDocument } from "./retrieval.js";
+export {
+  createSemanticFsRetriever,
+  chunkText,
+  ingest,
+  type Retriever,
+  type RetrievedDocument,
+  type IngestOptions,
+} from "./retrieval.js";
 export {
   parseStructuredOutput,
   structuredOutputRepairPrompt,
