@@ -1,6 +1,6 @@
 # MCP Bridge Reference
 
-`berth mcp --app=<name>` exposes one resident app's declared `berth.yml` exports as [MCP](https://modelcontextprotocol.io) tools, so an MCP client (Claude Desktop, Claude Code, etc.) can call them directly — no new transport, just a protocol translator over the same mechanisms `berth rpc`/`berth logs` already use to reach an app's runtime from the host.
+`berth mcp --app=<name>` exposes one resident app's declared `berth.yml` exports as [MCP](https://modelcontextprotocol.io) tools, so an MCP client (Claude Desktop, Claude Code, etc.) can call them directly — no new transport, just a protocol translator over the same mechanisms `berth rpc`/`berth logs` already use to reach an app's runtime from the host. This doc covers Berth as an MCP *server*. For the other direction — a Berth `Agent` consuming an *external* MCP server's tools — see `createMcpClientTools()` in [`docs/agents-reference.md`](./agents-reference.md#consuming-an-external-mcp-server-createmcpclienttools) (TypeScript) or `create_mcp_client_tools()` in `docs/agents-python-reference.md` (Python); that's a separate feature in `@berth/agents`/`berth_agents`, not part of this bridge.
 
 ## How it's wired
 

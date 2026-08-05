@@ -333,6 +333,32 @@ const paths = await ingest(computer, "onboarding-guide", longDocumentText);
 
 **What this does and doesn't fix:** this makes Semantic FS retrieval ergonomic for an `Agent` to call as a single tool, and getting a document in no longer means hand-rolling chunking — it does not add a vector-DB integration (Pinecone/Weaviate/pgvector/etc.); `Retriever` stays a plain interface (`retrieve`/`asTool`) specifically so a different backend can implement it without any of this, but no second implementation exists yet.
 
+## Consuming an external MCP server: `createMcpClientTools()`
+
+`berth mcp` (see [`docs/mcp-bridge-reference.md`](./mcp-bridge-reference.md)) makes a Berth resident app's exports available to any MCP client — Claude Desktop, Claude Code, whatever. `createMcpClientTools()` (`packages/agents/src/mcp-client.ts`) is the other direction: it lets a Berth `Agent` *be* that client, consuming any external MCP server's tools as ordinary `Tool`s. This is the highest-leverage answer to "only a handful of first-party tool integrations" — the entire MCP tool ecosystem becomes usable without writing a bespoke connector per integration, the same way `defineConnectorApp()` (see [`docs/sdk-reference.md`](./sdk-reference.md)) generalized REST integrations for resident apps.
+
+```ts
+import { createAgent } from "@berth/agents";
+
+const { agent, computer, mcpServers } = await createAgent({
+  apps: "apps/filesystem",
+  mcpServers: [
+    { transport: { command: "npx", args: ["-y", "@modelcontextprotocol/server-github"] } }, // local, stdio
+    { transport: { url: "https://example.com/mcp", headers: { authorization: "Bearer ..." } } }, // remote, Streamable HTTP
+  ],
+});
+// agent's tool list now includes this Computer's own exports plus every tool both MCP servers advertise
+await agent.run("...");
+await computer.stop();
+await Promise.all(mcpServers.map((s) => s.close())); // runAgent() does this automatically
+```
+
+Call `createMcpClientTools({ transport })` directly for a standalone connection outside `createAgent()` (e.g. to hand its `.tools` to a manually-constructed `Agent`, or a `Crew` step). No schema translation happens in this direction: MCP's `tools/list` already returns JSON Schema, exactly what `Tool.inputSchema` expects — unlike `berth mcp`'s own server-side code, which has to translate `berth.yml`'s flat IOSpec into a Zod shape first. A tool result's `structuredContent` is preferred when a server provides one; otherwise an all-text `content` array collapses into a plain string (the common case), otherwise the raw content blocks pass through unchanged so a non-text result (an image, say) isn't silently dropped. A server-reported `isError` result is thrown as a real error from `invoke()`, not returned — it flows through `Agent.run()`'s existing tool-error handling (gap #2) exactly like any other failing tool.
+
+**Transports:** stdio (spawns a local server as a child process — `{command, args?, env?}`) and Streamable HTTP (`{url, headers?}`, for remote servers) are both real; a pre-built `Transport` object (the SDK's own `InMemoryTransport`, or a custom implementation) is also accepted directly, which is what this file's own test suite uses to verify the real MCP protocol without spawning a subprocess. Each connection stays open for as long as the handle is held — `close()` it when done (`runAgent()` does this in its own `finally`, alongside `computer.stop()`).
+
+**What this doesn't do:** no capability-token scoping on MCP-sourced tools — an MCP server's tools are exactly as trusted as any other `Tool` you add to an Agent's list, with no Landlock/governance-gate involvement (those only ever apply to a `Computer`'s own resident-app exports). No auth beyond what you pass in `headers`/`env` yourself — no OAuth flow, though the underlying SDK supports one for a caller that wants to wire it in directly against a raw `Transport`.
+
 ## Structured output: a repair loop for an `Agent`'s final answer
 
 A Zod parse failure on a tool call's input (server-side, inside a resident app, or thrown directly by an in-process Tool) already gets fed back to the model as a tool error and another turn — that's gap #2's tool-error handling, not a separate mechanism. `formatToolInputError()` (`packages/agents/src/structured-output.ts`) improves what that feedback actually looks like: a `ZodError`'s default `.message` is `JSON.stringify(issues)`, a raw array the model has to parse itself; this detects that exact shape (by inspecting the message *string*, not `instanceof ZodError` — a resident-app export's validation error crosses the RPC wire already unwrapped to a plain `Error(message)`, so `instanceof` would never match the common case) and reformats it into the same compact `path: message; path: message` form `parseStructuredOutput()` below already produces. Any other error message passes through unchanged — this is reformatting, not new validation, and works for any tool in any app, not one specific export.

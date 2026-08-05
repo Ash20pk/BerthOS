@@ -26,6 +26,7 @@
     "@berth/grants-server": "workspace:*",
     "@anthropic-ai/sdk": "^0.115.0",
     "openai": "^7.2.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "dockerode": "^5.0.1",
     "zod": "^4.4.3",
     "zod-to-json-schema": "^3.24.1"
