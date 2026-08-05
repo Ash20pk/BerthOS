@@ -66,6 +66,7 @@
     "@opentelemetry/sdk-trace-base": "^2.10.0",
     "@types/dockerode": "^4.0.1",
     "@types/node": "^26.1.2",
+    "ai": "^7.0.52",
     "typescript": "^7.0.2"
   }
 }

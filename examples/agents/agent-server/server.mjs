@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-// Exposes an Agent over HTTP: POST /task { task } -> { text, toolCalls }.
-// The agent is the thing being served here. A client (curl, a frontend,
-// another service) sends it a task and gets the result back, rather than
-// the agent driving something itself.
+// Exposes an Agent over HTTP via @berth/agents' serveAgent() — the
+// framework primitive this example's own server.mjs used to hand-roll
+// (GET /health, POST /task) before serveAgent()/createAgentRequestHandler()
+// existed (see gaps.md gap #22). serveAgent() also adds POST /chat, a
+// Vercel AI SDK `useChat`-compatible streaming endpoint, for free.
 //
 // The Computer boots (or connects) once at server startup, not per request.
 // An HTTP server that rebuilt a container on every POST would make the
@@ -13,8 +14,7 @@
 //
 // Requires ANTHROPIC_API_KEY or OPENAI_API_KEY (createAgent() auto-detects
 // whichever is set), and skips (doesn't fail) if neither is present.
-import { createServer } from "node:http";
-import { createAgent } from "@berth/agents";
+import { createAgent, serveAgent } from "@berth/agents";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -24,17 +24,6 @@ const FILESYSTEM_APP_DIR = join(REPO_ROOT, "apps", "filesystem");
 
 const PORT = Number(process.env.PORT ?? 8787);
 const CONNECT = process.env.BERTH_OS_CONNECT;
-
-function sendJson(res, status, body) {
-  res.writeHead(status, { "content-type": "application/json" });
-  res.end(JSON.stringify(body));
-}
-
-async function readJsonBody(req) {
-  let raw = "";
-  for await (const chunk of req) raw += chunk;
-  return raw ? JSON.parse(raw) : {};
-}
 
 async function main() {
   if (!process.env.ANTHROPIC_API_KEY && !process.env.OPENAI_API_KEY) {
@@ -48,48 +37,21 @@ async function main() {
     systemPrompt: "You are a helpful assistant with access to a real sandboxed filesystem.",
   });
 
-  const server = createServer(async (req, res) => {
-    if (req.method === "GET" && req.url === "/health") {
-      sendJson(res, 200, { ok: true, tools: agent.tools.map((t) => t.name) });
-      return;
-    }
-
-    if (req.method === "POST" && req.url === "/task") {
-      let task;
-      try {
-        ({ task } = await readJsonBody(req));
-      } catch {
-        sendJson(res, 400, { error: 'invalid JSON body, expected { "task": string }' });
-        return;
-      }
-      if (typeof task !== "string" || !task) {
-        sendJson(res, 400, { error: '"task" must be a non-empty string' });
-        return;
-      }
-
-      try {
-        const result = await agent.run(task);
-        sendJson(res, 200, result);
-      } catch (err) {
-        sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
-      }
-      return;
-    }
-
-    sendJson(res, 404, { error: "not found: POST /task { task: string }, GET /health" });
-  });
-
-  server.listen(PORT, () => {
-    console.log(`Agent server listening on http://localhost:${PORT}`);
-    console.log(`  curl http://localhost:${PORT}/health`);
-    console.log(
-      `  curl -X POST http://localhost:${PORT}/task -H 'content-type: application/json' -d '{"task":"write a file called hello.txt with the text hi, then read it back"}'`,
-    );
+  const { close } = serveAgent(agent, {
+    port: PORT,
+    onListening: (port) => {
+      console.log(`Agent server listening on http://localhost:${port}`);
+      console.log(`  curl http://localhost:${port}/health`);
+      console.log(
+        `  curl -X POST http://localhost:${port}/task -H 'content-type: application/json' -d '{"task":"write a file called hello.txt with the text hi, then read it back"}'`,
+      );
+      console.log(`  POST http://localhost:${port}/chat  { messages: UIMessage[] } — a Vercel AI SDK useChat-compatible endpoint`);
+    },
   });
 
   const shutdown = async () => {
     console.log("\nShutting down...");
-    server.close();
+    await close();
     await computer.stop(); // no-op if BERTH_OS_CONNECT was used, see docs/berth-os-reference.md
     process.exit(0);
   };

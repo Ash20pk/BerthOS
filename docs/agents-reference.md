@@ -599,6 +599,33 @@ This is a different transport from the Docker-network path above, not an extensi
 
 **Real caveats, not glossed over:** K8s's `NodePort` reachability depends on the cluster's node IPs actually being reachable from wherever the manager runs — true for `kind`/local/on-prem, not guaranteed on a managed cloud cluster that firewalls node IPs (same caveat class `previewUrl()`'s K8s case already documents). The bridge's own auth is a single shared bearer token per boot, not per-export ACLs — the same trust level a `docker exec` caller already has locally, now reachable over a real network instead of only via host access, so the token is the whole security boundary. No `kind`-cluster end-to-end milestone test exists yet for the K8s path specifically (mocked-adapter unit tests only, same posture E2B/Daytona's adapters already have) — a real live-account test for E2B/Daytona isn't attempted for the same reason neither adapter has one anywhere else in this repo.
 
+## Serving an Agent over HTTP: `createAgentRequestHandler()`/`serveAgent()`
+
+Everything above assumes an `Agent` driving something — a resident app, another agent. This is the other direction: the `Agent` itself as the thing being served to a frontend, the gap `examples/agents/agent-server`'s hand-rolled `server.mjs` was standing in for (ADK's `adk web`/`adk api_server`, AutoGen Studio, and CrewAI Studio all ship one; this repo didn't have a framework-level version of it before):
+
+```ts
+import { createAgent, serveAgent } from "@berth/agents";
+
+const { agent, computer } = await createAgent({ apps: "apps/filesystem" });
+const { close } = serveAgent(agent, { port: 8787 });
+// GET  http://localhost:8787/health
+// POST http://localhost:8787/task { task: string, runId?, sessionId? } -> { text, toolCalls }
+// POST http://localhost:8787/chat { messages: UIMessage[] }             -> a useChat-compatible stream
+
+// ...later...
+await close();
+await computer.stop();
+```
+
+`serveAgent()` owns a real `http.Server`'s `listen()`/`close()` — the "one call to a working X" entry point, mirroring `runAgent()`'s own positioning but for "serve this agent" instead of "run this one task and tear down." `createAgentRequestHandler(agent, options?)` is the composable building block underneath it — a plain `(req, res) => Promise<void>` Node request listener you can mount inside your own `http.createServer()`, or a framework's raw-handler escape hatch, instead of letting this package own the whole server.
+
+Three routes, both functions:
+- **`GET /health`** — `{ok: true, tools: string[]}`.
+- **`POST /task`** — `{task, runId?, sessionId?} -> {text, toolCalls}`, the exact shape the hand-rolled example already used. `sessionId` threads through the new `Session` abstraction (see "Sessions" above) — pass the same `sessionId` on a later request and the agent sees the earlier turn. Backed by `createInMemorySession()` per distinct id by default (gone on a restart); pass your own `sessionFor: (sessionId) => Session` (e.g. one `createSemanticFsSession(computer, id)` per id) for durable, cross-restart history.
+- **`POST /chat`** — a [Vercel AI SDK](https://ai-sdk.dev) `useChat`-compatible endpoint: point `useChat`'s `api` option at it and it works with zero glue code on the frontend. Verified for real against the actual installed `ai` package (not just written to match documentation) — `server.test.ts` feeds this endpoint's raw HTTP response through `ai`'s own `parseJsonEventStream()`/`readUIMessageStream()` and asserts on the reconstructed message. Doesn't need a `sessionId`: `useChat` already sends the client's full message history (`{messages: UIMessage[]}`) on every request, so this endpoint builds a one-off session from that array each time instead of needing one persisted server-side. Streams incrementally when the resolved `LLMProvider` has `chatStream` (both built-in providers do); falls back to one full-text chunk, not silence, when it doesn't.
+
+**What this doesn't do:** only `type: "text"` message parts are understood — an incoming image/file part, or a prior turn's own tool-call/tool-result parts, are dropped when reconstructing history for `/chat`, not rejected. No `tool-input-*`/`tool-output-*` stream chunks are emitted — a tool call happening mid-run is invisible to the client beyond a pause in text, not surfaced as its own UI event (the AI SDK protocol supports this; wiring it up needs correlating `StepTracer`-shaped events, out of scope for this pass). A `system`-role `UIMessage` is dropped, not folded into the `Agent`'s own `systemPrompt` — that's set once at construction, not per-request. Python has no equivalent yet: `Agent.run()` itself is fully portable, but a Node-`http`-shaped primitive doesn't map onto Python's own web-framework conventions (ASGI/WSGI) the way `guardrails.py`/`session.py` mapped directly onto `agent.py` — named here rather than silently ported as something it isn't.
+
 ## Other scope boundaries (v1)
 
 - **Local Docker only, for `createAgent()`/`Computer.boot()` specifically.** These still always target local Docker, same as `berth dev` — no `DeployAdapter` implementation exposes anything like `invokeAppExport`'s docker-exec/attach, so a plain `Computer` still can't be backed by a remote fleet instance directly. `bootNetworkedAgent({fleet})` (above) reaches a remote fleet instance too, but via a different mechanism (an HTTP RPC bridge, not `invokeAppExport`) — this is not a general remote-`Computer` capability.

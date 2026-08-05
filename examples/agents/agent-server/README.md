@@ -1,6 +1,6 @@
 # `agent-server` example
 
-The other direction from [`../simple-agent`](../simple-agent). Instead of an agent driving something (a file, a shell), the **agent itself is the thing being served**. `server.mjs` boots a `Computer` and `Agent` once at startup and exposes it over plain HTTP: `POST /task { task: string }` runs it and returns `{ text, toolCalls }`, `GET /health` reports the tools it has loaded.
+The other direction from [`../simple-agent`](../simple-agent). Instead of an agent driving something (a file, a shell), the **agent itself is the thing being served**. `server.mjs` boots a `Computer` and `Agent` once at startup and hands it to `@berth/agents`' `serveAgent()` — a real framework primitive (`packages/agents/src/server.ts`), not hand-rolled `http` boilerplate: `GET /health` reports the tools it has loaded, `POST /task { task: string }` runs it and returns `{ text, toolCalls }`, and `POST /chat { messages: UIMessage[] }` streams a Vercel AI SDK `useChat`-compatible response — point `useChat`'s `api` option straight at `http://localhost:8787/chat` and it works with zero glue code.
 
 Depends on `@berth/agents` as an ordinary `workspace:*` package dependency, same as every other example under `examples/agents/`. Nothing here reaches into this monorepo's source or build output by relative path.
 
@@ -31,9 +31,13 @@ curl http://localhost:8787/health
 curl -X POST http://localhost:8787/task \
   -H 'content-type: application/json' \
   -d '{"task":"write a file called hello.txt with the text hi, then read it back"}'
+
+curl -X POST http://localhost:8787/chat \
+  -H 'content-type: application/json' \
+  -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"write a file called hello.txt with the text hi, then read it back"}]}]}'
 ```
 
-`PORT` overrides the default `8787`.
+`PORT` overrides the default `8787`. `/task` accepts an optional `sessionId` to share history across separate requests (see [`docs/agents-reference.md`](../../../docs/agents-reference.md)'s Sessions section) — `/chat` doesn't need one, since `useChat` already sends the full message history on every request.
 
 ## Pairing with `berth os up`
 
