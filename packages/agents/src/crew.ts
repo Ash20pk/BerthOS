@@ -1,5 +1,6 @@
 import { Agent } from "./agent.js";
 import type { NetworkedAgent } from "./network.js";
+import type { CheckpointStore } from "./checkpoint.js";
 
 export interface CrewRun {
   run(input: string): Promise<string>;
@@ -10,19 +11,69 @@ export interface CrewStateRun<S> {
 }
 
 /**
+ * The composition-level counterpart to Agent's own CheckpointedRun — reuses
+ * the exact same CheckpointStore seam (generic over the checkpoint shape),
+ * so "resume a crashed Crew" needs no new storage concept, only this shape.
+ * `state` is whatever the composition threads between steps (a `string` for
+ * sequential/loopUntil, the typed `S` for pipeline).
+ */
+export interface CrewCheckpoint<S = unknown> {
+  runId: string;
+  kind: string;
+  status: "running" | "done" | "error";
+  /** Index of the next step to run — where a resumed run picks back up. */
+  completedSteps: number;
+  state: S;
+}
+
+interface CrewCheckpointOptions<S> {
+  checkpoint?: CheckpointStore<CrewCheckpoint<S>>;
+  runId?: string;
+}
+
+async function loadCrewCheckpoint<S>(options: CrewCheckpointOptions<S>): Promise<CrewCheckpoint<S> | null> {
+  if (!options.checkpoint || !options.runId) return null;
+  return options.checkpoint.load(options.runId);
+}
+
+async function saveCrewCheckpoint<S>(
+  options: CrewCheckpointOptions<S>,
+  fields: Omit<CrewCheckpoint<S>, "runId">,
+): Promise<void> {
+  if (!options.checkpoint || !options.runId) return;
+  await options.checkpoint.save({ runId: options.runId, ...fields });
+}
+
+/**
  * Multi-agent composition — both patterns here are just wiring over Agent,
  * not a new execution primitive: Agent's tool-use loop is identical whether
  * its tools are resident-app exports or other agents.
  */
 export const Crew = {
-  /** Pipes each agent's output text as the next agent's input; returns the last agent's output. */
-  sequential(agents: Agent[]): CrewRun {
+  /**
+   * Pipes each agent's output text as the next agent's input; returns the
+   * last agent's output. `checkpoint`/`runId` (same CheckpointStore seam
+   * Agent.run() itself uses) save which step just completed after every
+   * agent — a crash between two agents resumes from the next one instead of
+   * replaying the whole chain, closing the "Crew-level composition state
+   * isn't checkpointed" gap for this shape specifically.
+   */
+  sequential(agents: Agent[], options: CrewCheckpointOptions<string> = {}): CrewRun {
     return {
       async run(input: string): Promise<string> {
-        let current = input;
-        for (const agent of agents) {
-          const result = await agent.run(current);
+        const prior = await loadCrewCheckpoint(options);
+        if (prior?.status === "done") return prior.state;
+        const startIndex = prior?.completedSteps ?? 0;
+        let current = prior ? prior.state : input;
+        for (let i = startIndex; i < agents.length; i++) {
+          const result = await agents[i]!.run(current);
           current = result.text;
+          await saveCrewCheckpoint(options, {
+            kind: "sequential",
+            status: i === agents.length - 1 ? "done" : "running",
+            completedSteps: i + 1,
+            state: current,
+          });
         }
         return current;
       },
@@ -96,19 +147,31 @@ export const Crew = {
    * returns true, or after `maxIterations` (default 10) if it never does —
    * the backstop against a condition that never triggers.
    */
-  loopUntil(options: {
-    agent: Agent;
-    until: (result: string, iteration: number) => boolean;
-    maxIterations?: number;
-  }): CrewRun {
+  loopUntil(
+    options: {
+      agent: Agent;
+      until: (result: string, iteration: number) => boolean;
+      maxIterations?: number;
+    } & CrewCheckpointOptions<string>,
+  ): CrewRun {
     const maxIterations = options.maxIterations ?? 10;
     return {
       async run(input: string): Promise<string> {
-        let current = input;
-        for (let iteration = 0; iteration < maxIterations; iteration++) {
+        const prior = await loadCrewCheckpoint(options);
+        if (prior?.status === "done") return prior.state;
+        const startIteration = prior?.completedSteps ?? 0;
+        let current = prior ? prior.state : input;
+        for (let iteration = startIteration; iteration < maxIterations; iteration++) {
           const result = await options.agent.run(current);
           current = result.text;
-          if (options.until(current, iteration)) {
+          const finished = options.until(current, iteration);
+          await saveCrewCheckpoint(options, {
+            kind: "loopUntil",
+            status: finished ? "done" : "running",
+            completedSteps: iteration + 1,
+            state: current,
+          });
+          if (finished) {
             return current;
           }
         }
@@ -157,13 +220,23 @@ export const Crew = {
    */
   pipeline<S extends object>(
     steps: Array<(state: S) => Promise<Partial<S>> | Partial<S>>,
+    options: CrewCheckpointOptions<S> = {},
   ): CrewStateRun<S> {
     return {
       async run(initialState: S): Promise<S> {
-        let state = initialState;
-        for (const step of steps) {
-          const update = await step(state);
+        const prior = await loadCrewCheckpoint(options);
+        if (prior?.status === "done") return prior.state;
+        const startIndex = prior?.completedSteps ?? 0;
+        let state = prior ? prior.state : initialState;
+        for (let i = startIndex; i < steps.length; i++) {
+          const update = await steps[i]!(state);
           state = { ...state, ...update };
+          await saveCrewCheckpoint(options, {
+            kind: "pipeline",
+            status: i === steps.length - 1 ? "done" : "running",
+            completedSteps: i + 1,
+            state,
+          });
         }
         return state;
       },

@@ -18,11 +18,14 @@ export interface CheckpointedRun {
  * The persistence seam Agent.run()/resume() write through — deliberately as
  * narrow as save/load-by-id, so a backend other than Semantic FS (a plain
  * file, a real database) can implement it without pulling in a Computer at
- * all.
+ * all. Generic over the checkpoint shape (default CheckpointedRun, what
+ * Agent itself uses) so the same seam and the same Semantic FS-backed
+ * implementation below also serve Crew-level composition checkpoints
+ * (crew.ts's CrewCheckpoint) — one storage concept, not two.
  */
-export interface CheckpointStore {
-  save(checkpoint: CheckpointedRun): Promise<void>;
-  load(runId: string): Promise<CheckpointedRun | null>;
+export interface CheckpointStore<T extends { runId: string } = CheckpointedRun> {
+  save(checkpoint: T): Promise<void>;
+  load(runId: string): Promise<T | null>;
 }
 
 const CONTEXT_DIR = "agent-runs";
@@ -63,7 +66,9 @@ export function findExportTool(tools: Tool[], exportName: string, calledBy = "cr
  * resume (worst case, you restart the run instead of resuming it), but worth
  * knowing if you're debugging why a resume() didn't pick up where you expected.
  */
-export function createSemanticFsCheckpointStore(computer: ComputerHandle): CheckpointStore {
+export function createSemanticFsCheckpointStore<T extends { runId: string } = CheckpointedRun>(
+  computer: ComputerHandle,
+): CheckpointStore<T> {
   const writeTool = findExportTool(computer.tools, "write_context_file");
   const readTool = findExportTool(computer.tools, "read_context_file");
   const tagTool = findExportTool(computer.tools, "tag_context_file");
@@ -73,13 +78,15 @@ export function createSemanticFsCheckpointStore(computer: ComputerHandle): Check
   return {
     async save(checkpoint) {
       const path = pathFor(checkpoint.runId);
+      const record = checkpoint as unknown as Record<string, unknown>;
+      const task = (record.agentName as string) ?? (record.kind as string) ?? checkpoint.runId;
       await writeTool.invoke({ path, content: JSON.stringify(checkpoint) });
-      await tagTool.invoke({ path, task: checkpoint.agentName, relatedApps: [] });
+      await tagTool.invoke({ path, task, relatedApps: [] });
     },
     async load(runId) {
       try {
         const result = (await readTool.invoke({ path: pathFor(runId) })) as { content: string };
-        return JSON.parse(result.content) as CheckpointedRun;
+        return JSON.parse(result.content) as T;
       } catch {
         return null;
       }

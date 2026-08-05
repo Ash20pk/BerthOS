@@ -237,7 +237,7 @@ const crew = Crew.route({
 const result = await crew.run("where's my refund?"); // routed to billingAgent
 ```
 
-Same scope boundary as checkpointing (below): none of these three checkpoint crew-level composition state either — only individual `Agent`s constructed with a `checkpoint` store do.
+`sequential`/`loopUntil` (and `pipeline`, next) accept the same `checkpoint`/`runId` options `Agent.run()` does — see "Checkpointing a `Crew` composition" below. `withManager`/`networked`/`route`/`parallel` don't: `withManager`/`networked`/`route` delegate through a single manager/router `Agent`'s own tool-use loop (already checkpointable by giving *that* `Agent` its own `checkpoint` store), and `parallel` has no meaningful "which step completed" to resume from since every agent runs at once.
 
 #### `Crew.pipeline`: a typed state object threaded across steps
 
@@ -255,7 +255,7 @@ const result = await crew.run({ document: "..." });
 // result.document, result.summary, and result.wordCount are all populated
 ```
 
-Not checkpointed — same boundary every other `Crew` shape has.
+Accepts the same `checkpoint`/`runId` options as `sequential`/`loopUntil` — see the next section.
 
 ## Checkpointing and resuming a run: state without a graph
 
@@ -275,7 +275,22 @@ const result = await agent.resume("task-42"); // picks the loop back up, doesn't
 - `resume()` on a `status: "done"` checkpoint is a plain read — it returns the stored `text`/`toolCalls` without calling the LLM again.
 - `load()` can't distinguish "nothing was ever saved for this runId" from "a real error happened reading it" — resident-app export errors cross the RPC wire as a plain message string (see `Computer`'s `dispatch()`), not a typed error code. Both cases return `null` from `load()`, so `resume()` on a `runId` that failed to read for an unrelated reason (a transient RPC hiccup, say) reports "no checkpoint found" rather than the real cause. Worth knowing if a resume doesn't behave as expected.
 
-**What this does and doesn't fix:** this closes "a crash mid-loop loses everything" for a single `Agent`. A checkpoint means the *previous* turns survive a crash, not that a crash itself is recoverable mid-turn — a hard crash inside `tool.invoke()` (the process dying, not the call throwing) still loses that turn. It's also Agent-level only for now: `Crew.sequential`/`withManager`/`networked` don't checkpoint the crew's own composition state (which sub-agent ran, in what order) — only whichever individual `Agent`s you construct with a `checkpoint` store get durable turn-by-turn progress.
+**What this does and doesn't fix:** this closes "a crash mid-loop loses everything" for a single `Agent`. A checkpoint means the *previous* turns survive a crash, not that a crash itself is recoverable mid-turn — a hard crash inside `tool.invoke()` (the process dying, not the call throwing) still loses that turn.
+
+### Checkpointing a `Crew` composition
+
+An individual `Agent`'s own checkpoint only covers that Agent's turns — it says nothing about which *step* of a multi-step `Crew` composition already ran. `Crew.sequential`, `Crew.loopUntil`, and `Crew.pipeline` take the exact same `CheckpointStore` seam (now generic over the checkpoint shape, not tied to `Agent`'s own `CheckpointedRun`) so a crash between two steps resumes from the next one instead of replaying the whole composition:
+
+```ts
+const store = createSemanticFsCheckpointStore(computer); // CheckpointStore<CrewCheckpoint<string>>
+const crew = Crew.sequential([draftAgent, reviewAgent, publishAgent], { checkpoint: store, runId: "pipeline-7" });
+await crew.run("write the release notes"); // saves after every agent
+
+// ...crash after draftAgent finishes, before reviewAgent starts...
+await crew.run("write the release notes"); // re-reads the checkpoint, skips draftAgent, resumes at reviewAgent
+```
+
+The saved shape is `CrewCheckpoint<S>` — `{runId, kind, status: "running"|"done"|"error", completedSteps, state}`, where `state` is whatever the composition threads (a `string` for `sequential`/`loopUntil`, the typed `S` for `pipeline`). A `status: "done"` checkpoint short-circuits `run()` entirely — no agent/step re-executes, the saved `state` is returned directly, same as `Agent.resume()` on an already-finished run. `withManager`/`networked`/`route`/`parallel` are unaffected: give the manager/router `Agent` its own `checkpoint` instead (see above) for those, since delegation already goes through one Agent's own turn loop.
 
 ## Retrieval: a `search_context` tool over Semantic FS, not a vector-DB integration
 

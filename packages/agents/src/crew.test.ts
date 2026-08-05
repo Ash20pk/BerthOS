@@ -1,9 +1,38 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Agent } from "./agent.js";
-import { Crew } from "./crew.js";
+import { Crew, type CrewCheckpoint } from "./crew.js";
+import type { CheckpointStore } from "./checkpoint.js";
 import type { LLMProvider, LLMTurn } from "./types.js";
 import type { NetworkedAgent } from "./network.js";
+
+/** A plain in-memory CheckpointStore — Crew doesn't care about the backend, so tests don't need a fakeComputer/Semantic FS round-trip. */
+function inMemoryCheckpointStore<T extends { runId: string }>(): CheckpointStore<T> {
+  const store = new Map<string, T>();
+  return {
+    async save(checkpoint) {
+      store.set(checkpoint.runId, checkpoint);
+    },
+    async load(runId) {
+      return store.get(runId) ?? null;
+    },
+  };
+}
+
+/** An Agent that counts how many times its LLM was actually called — lets a resume test assert a completed step didn't re-run. */
+function countingAgent(name: string, text: string, calls: { count: number }): Agent {
+  return new Agent({
+    name,
+    llm: {
+      name: "fake",
+      async chat() {
+        calls.count++;
+        return { text, toolCalls: [], stop: true };
+      },
+    },
+    tools: [],
+  });
+}
 
 function scriptedLLM(turns: LLMTurn[]): LLMProvider {
   let i = 0;
@@ -297,4 +326,100 @@ test("Crew.pipeline with zero steps returns the initial state unchanged", async 
   const crew = Crew.pipeline<{ x: number }>([]);
   const result = await crew.run({ x: 1 });
   assert.deepEqual(result, { x: 1 });
+});
+
+test("Crew.sequential resumes from a checkpoint instead of re-running completed steps", async () => {
+  const store = inMemoryCheckpointStore<CrewCheckpoint<string>>();
+  const firstCalls = { count: 0 };
+  const secondCalls = { count: 0 };
+  const agents = [countingAgent("a", "a-out", firstCalls), countingAgent("b", "b-out", secondCalls)];
+  await store.save({ runId: "seq-1", kind: "sequential", status: "running", completedSteps: 1, state: "a-out" });
+
+  const crew = Crew.sequential(agents, { checkpoint: store, runId: "seq-1" });
+  const result = await crew.run("original input");
+
+  assert.equal(result, "b-out");
+  assert.equal(firstCalls.count, 0, "step already marked completed must not re-run");
+  assert.equal(secondCalls.count, 1);
+});
+
+test("Crew.sequential returns the saved result immediately when the checkpoint is already done, without running any agent", async () => {
+  const store = inMemoryCheckpointStore<CrewCheckpoint<string>>();
+  const calls = { count: 0 };
+  await store.save({ runId: "seq-done", kind: "sequential", status: "done", completedSteps: 1, state: "final" });
+
+  const crew = Crew.sequential([countingAgent("a", "a-out", calls)], { checkpoint: store, runId: "seq-done" });
+  const result = await crew.run("ignored");
+
+  assert.equal(result, "final");
+  assert.equal(calls.count, 0);
+});
+
+test('Crew.sequential saves a checkpoint after each step, ending in status "done"', async () => {
+  const store = inMemoryCheckpointStore<CrewCheckpoint<string>>();
+  const agents = [textAgent("a", "a-out"), textAgent("b", "b-out")];
+  const crew = Crew.sequential(agents, { checkpoint: store, runId: "seq-2" });
+
+  await crew.run("start");
+
+  const loaded = await store.load("seq-2");
+  assert.equal(loaded?.status, "done");
+  assert.equal(loaded?.completedSteps, 2);
+  assert.equal(loaded?.state, "b-out");
+});
+
+test("Crew.pipeline resumes from a checkpoint, skipping already-completed steps", async () => {
+  type State = { a?: string; b?: string };
+  const store = inMemoryCheckpointStore<CrewCheckpoint<State>>();
+  let secondStepCalls = 0;
+  await store.save({ runId: "pipe-1", kind: "pipeline", status: "running", completedSteps: 1, state: { a: "first" } });
+
+  const crew = Crew.pipeline<State>(
+    [
+      () => {
+        throw new Error("must not run — this step was already marked completed");
+      },
+      (state) => {
+        secondStepCalls++;
+        return { b: `${state.a}-second` };
+      },
+    ],
+    { checkpoint: store, runId: "pipe-1" },
+  );
+
+  const result = await crew.run({});
+
+  assert.deepEqual(result, { a: "first", b: "first-second" });
+  assert.equal(secondStepCalls, 1);
+});
+
+test("Crew.loopUntil resumes from the saved iteration count, not from zero", async () => {
+  const store = inMemoryCheckpointStore<CrewCheckpoint<string>>();
+  let calls = 0;
+  await store.save({ runId: "loop-1", kind: "loopUntil", status: "running", completedSteps: 2, state: "iter-2" });
+
+  const agent = new Agent({
+    name: "looper",
+    llm: {
+      name: "fake",
+      async chat() {
+        calls++;
+        return { text: `iter-${calls + 2}`, toolCalls: [], stop: true };
+      },
+    },
+    tools: [],
+  });
+
+  const crew = Crew.loopUntil({
+    agent,
+    until: (_result, iteration) => iteration >= 2,
+    maxIterations: 5,
+    checkpoint: store,
+    runId: "loop-1",
+  });
+
+  const result = await crew.run("start");
+
+  assert.equal(calls, 1, "must resume at iteration 2, not restart from 0");
+  assert.equal(result, "iter-3");
 });
