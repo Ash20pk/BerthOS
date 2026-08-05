@@ -11,7 +11,9 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
@@ -19,21 +21,22 @@
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@berth/manifest-schema": "workspace:*",
-    "@berth/docker-orchestrator": "workspace:*",
-    "@berth/sdk": "workspace:*",
-    "@berth/adapter-core": "workspace:*",
-    "@berth/grants-server": "workspace:*",
     "@anthropic-ai/sdk": "^0.115.0",
-    "openai": "^7.2.0",
+    "@berth/adapter-core": "workspace:*",
+    "@berth/docker-orchestrator": "workspace:*",
+    "@berth/grants-server": "workspace:*",
+    "@berth/manifest-schema": "workspace:*",
+    "@berth/sdk": "workspace:*",
+    "@google/genai": "^2.15.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "dockerode": "^5.0.1",
+    "openai": "^7.2.0",
     "zod": "^4.4.3",
     "zod-to-json-schema": "^3.24.1"
   },
   "devDependencies": {
-    "typescript": "^7.0.2",
+    "@types/dockerode": "^4.0.1",
     "@types/node": "^26.1.2",
-    "@types/dockerode": "^4.0.1"
+    "typescript": "^7.0.2"
   }
 }

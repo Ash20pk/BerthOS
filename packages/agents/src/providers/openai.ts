@@ -46,7 +46,7 @@ function toOpenAIMessages(messages: AgentMessage[]): ChatCompletionMessageParam[
 
 /**
  * Thin adapter over the `openai` package's Chat Completions tool-calling
- * loop. The second of two built-in LLMProvider implementations — proves the
+ * loop. The second of the built-in LLMProvider implementations — proves the
  * Tool/LLMProvider seam is real (Agent/Crew never reference this module or
  * Anthropic's), not secretly single-vendor.
  */
@@ -56,10 +56,24 @@ export function createOpenAIProvider(options: OpenAIProviderOptions = {}): LLMPr
     baseURL: options.baseURL,
     maxRetries: options.maxRetries,
   });
-  const model = options.model ?? DEFAULT_MODEL;
+  return createOpenAICompatibleProvider(client, options.model ?? DEFAULT_MODEL, "openai");
+}
 
+/**
+ * The actual chat()/chatStream() implementation, shared by every provider
+ * built on an `openai`-shaped client — `createOpenAIProvider()` above, and
+ * `createAzureOpenAIProvider()`/`createBedrockProvider()`/
+ * `createOllamaProvider()` (`azure-openai.ts`/`bedrock.ts`/`ollama.ts`),
+ * which differ only in how the client itself is constructed (auth scheme,
+ * base URL, deployment routing), never in the message-mapping or
+ * tool-calling logic below. Not re-exported from `index.ts` — an
+ * implementation detail those sibling files import directly, the same
+ * "internal helper, not public API" posture `crew.ts`'s `checkpointKeyFor()`
+ * already has.
+ */
+export function createOpenAICompatibleProvider(client: OpenAI, model: string, name: string): LLMProvider {
   return {
-    name: "openai",
+    name,
     async chat({ system, messages, tools }: { system?: string; messages: AgentMessage[]; tools: Tool[] }): Promise<LLMTurn> {
       const chatMessages: ChatCompletionMessageParam[] = system
         ? [{ role: "system", content: system }, ...toOpenAIMessages(messages)]

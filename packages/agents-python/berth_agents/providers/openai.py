@@ -55,11 +55,17 @@ def _to_openai_tools(tools: list[Tool]) -> list[dict[str, Any]]:
 
 
 class _OpenAIProvider:
-    name = "openai"
+    """The actual chat()/chat_stream() implementation, shared by every
+    provider built on an `openai`-shaped async client — create_openai_provider()
+    below, and create_azure_openai_provider()/create_bedrock_provider()/
+    create_ollama_provider() (azure_openai.py/bedrock.py/ollama.py), which
+    differ only in how the client itself is constructed, never in the
+    message-mapping or tool-calling logic here."""
 
-    def __init__(self, client: AsyncOpenAI, model: str) -> None:
+    def __init__(self, client: AsyncOpenAI, model: str, name: str = "openai") -> None:
         self._client = client
         self._model = model
+        self.name = name
 
     async def chat(self, *, system: str | None, messages: list[AgentMessage], tools: list[Tool]) -> LLMTurn:
         chat_messages = _to_openai_messages(messages)
