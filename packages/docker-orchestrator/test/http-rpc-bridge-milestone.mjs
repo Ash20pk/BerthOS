@@ -12,6 +12,7 @@
 // can't enforce Landlock) that blocks every production-target milestone
 // test on this class of dev machine — see docs/capability-tokens-reference.md.
 import { randomBytes } from "node:crypto";
+import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { loadManifest } from "@berth/manifest-schema";
@@ -46,19 +47,25 @@ async function main() {
     docker,
   });
 
+  const containerLog = await startLogCapture(container, docker);
   try {
     console.log("ports:", ports);
     assert(ports.httpRpc, `expected a host-mapped httpRpc port, got: ${JSON.stringify(ports)}`);
     const url = `http://127.0.0.1:${ports.httpRpc}`;
 
-    console.log("\n--- Test: /healthz becomes reachable within 30s, no auth required ---");
+    // 60s, not 30 — a fresh, cold CI runner (no warm Docker layer cache, a
+    // shared/noisier CPU) has real, higher boot latency than a dev machine
+    // that's already run this image before. Print the container's own log
+    // on failure either way, so a real future failure is diagnosable from
+    // the CI log instead of just "ECONNREFUSED" with no context.
+    console.log("\n--- Test: /healthz becomes reachable within 60s, no auth required ---");
     await waitFor(async () => {
       try {
         return (await fetch(`${url}/healthz`)).ok;
       } catch {
         return false;
       }
-    }, 30000, "GET /healthz to return 200");
+    }, 60000, "GET /healthz to return 200");
 
     console.log("\n--- Test: a real write_file/read_file round trip over POST /rpc ---");
     const writeRes = await rpcCall(url, authToken, "write_file", { path: "http-rpc-bridge-milestone.txt", content: "verified over http" });
@@ -85,9 +92,27 @@ async function main() {
     console.log(
       "\nPASS — startContainer()'s httpRpc option produces a real, host-reachable, bearer-token-authenticated RPC bridge.",
     );
+  } catch (err) {
+    console.error("\n--- Container log (for diagnosing the failure above) ---");
+    console.error(containerLog.text());
+    throw err;
   } finally {
+    await containerLog.stop();
     await stopContainer(container).catch(() => {});
   }
+}
+
+async function startLogCapture(container, docker) {
+  const raw = await container.logs({ follow: true, stdout: true, stderr: true, tail: 0 });
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  docker.modem.demuxStream(raw, stdout, stderr);
+
+  let buffer = "";
+  stdout.on("data", (chunk) => (buffer += chunk.toString("utf-8")));
+  stderr.on("data", (chunk) => (buffer += chunk.toString("utf-8")));
+
+  return { text: () => buffer, stop: async () => raw.destroy() };
 }
 
 async function rpcCall(url, authToken, exportName, input) {

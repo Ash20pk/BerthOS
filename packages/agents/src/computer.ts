@@ -224,7 +224,14 @@ export class Computer implements ComputerHandle {
           throw new Error("httpRpc was requested but the container never published a host port for it");
         }
         const url = `http://127.0.0.1:${ports.httpRpc}`;
-        await withReadyRetry(() => checkHttpRpcHealth(url, httpRpcAuthToken!));
+        // A longer ceiling than withReadyRetry's own default (30s, tuned
+        // for retrying an individual dispatch call, not a cold boot): a
+        // fresh container's context-bus/semantic-fs daemons, capability
+        // policy generation, and agent-init's Landlock setup all run before
+        // the app process is even listening, and a shared/cold CI runner is
+        // measurably slower at this than a dev machine that's already
+        // booted this image before.
+        await withReadyRetry(() => checkHttpRpcHealth(url, httpRpcAuthToken!), 60_000);
         httpRpc = { url, authToken: httpRpcAuthToken!, appName: httpRpcAppName };
       } catch (err) {
         stdioClient?.close();
