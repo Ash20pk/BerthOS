@@ -239,6 +239,24 @@ const result = await crew.run("where's my refund?"); // routed to billingAgent
 
 Same scope boundary as checkpointing (below): none of these three checkpoint crew-level composition state either — only individual `Agent`s constructed with a `checkpoint` store do.
 
+#### `Crew.pipeline`: a typed state object threaded across steps
+
+`sequential`/`parallel`/`loopUntil`/`route` all pipe a plain `string` from one step to the next — there's no equivalent of a LangGraph `StateGraph`'s typed state accumulating across nodes. `Crew.pipeline<S>(steps)` covers that case without becoming a graph: each step is a plain function `(state: S) => Partial<S> | Promise<Partial<S>>` that reads the accumulated state (every prior step's fields, not just the last one's) and returns a partial update, shallow-merged in for the next step. Steps still run in the fixed order given — this is state threading, not conditional/cyclic execution (reach for `route`/`loopUntil` for those).
+
+```ts
+type State = { document: string; summary?: string; wordCount?: number };
+
+const crew = Crew.pipeline<State>([
+  async (state) => ({ summary: (await summarizerAgent.run(state.document)).text }),
+  (state) => ({ wordCount: state.summary?.split(" ").length ?? 0 }),
+]);
+
+const result = await crew.run({ document: "..." });
+// result.document, result.summary, and result.wordCount are all populated
+```
+
+Not checkpointed — same boundary every other `Crew` shape has.
+
 ## Checkpointing and resuming a run: state without a graph
 
 `Agent.run()`'s tool-use loop keeps its `messages`/executed-tool-calls state as a plain in-process array — it's gone the moment the call returns or the process dies mid-loop. There's no LangGraph-style checkpointer here, and deliberately no graph to attach one to; instead, checkpointing is exposed as a `CheckpointStore` seam (`packages/agents/src/checkpoint.ts`) that `Agent.run()`/`Agent.resume()` write through directly:
