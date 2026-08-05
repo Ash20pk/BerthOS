@@ -304,7 +304,20 @@ await agent.run("what did we decide about the pricing page?");
 
 `"semantic-fs"` (`createSemanticFsRetriever()`) resolves `query_context`/`read_context_file` off `Computer.tools` the same way checkpointing/tracing resolve their own export names (bare or `<appName>__`-namespaced), throwing immediately at construction if either is missing rather than on the first call. `retrieve(text, {topK?})` runs the query, then fetches content for up to `topK` hits (default 5) concurrently, silently dropping any hit whose `read_context_file` call fails — a path Semantic FS indexed at tag time that's since been deleted or moved shouldn't fail the whole retrieval. `asTool(name?)` wraps it as one `Tool` (`"search_context"` by default) so it sits in an `Agent`'s tool list alongside resident-app exports; `createAgent({retriever})` adds it automatically without removing the raw `query_context`/`read_context_file` exports themselves, so a model can still call either.
 
-**What this does and doesn't fix:** this makes Semantic FS retrieval ergonomic for an `Agent` to call as a single tool — it does not add a vector-DB integration (Pinecone/Weaviate/pgvector/etc.), chunking for long documents, or a way to ingest arbitrary external documents beyond what `write_context_file`/`tag_context_file` already let a resident app do. `Retriever` is a plain interface (`retrieve`/`asTool`), so a different backend (a real vector DB, a plain grep over a directory) can implement it without any of this.
+### Getting a document in: `chunkText()` and `ingest()`
+
+Before this, getting a document *into* Semantic FS meant calling `write_context_file`/`tag_context_file` yourself, whole, by hand — no chunking, no batteries-included path. `chunkText(text, {maxChars?, overlapChars?})` is a plain character-window splitter (no NLP dependency, same "real, and says so" honesty Semantic FS's own keyword-overlap ranking already has) that prefers breaking at a paragraph/sentence boundary over a hard mid-word cut, and gives adjacent chunks overlapping text so a fact split across a boundary isn't lost. `ingest(computer, source, text, options?)` writes each chunk through the exact same generic `write_context_file`/`tag_context_file` resolution `checkpoint.ts`'s `findExportTool` already uses — works with any app exposing that contract, not `apps/filesystem` specifically:
+
+```ts
+import { ingest } from "@berth/agents";
+
+const paths = await ingest(computer, "onboarding-guide", longDocumentText);
+// writes ingested/onboarding-guide.txt (or -0.txt, -1.txt, ... once split), tagged and ready for query_context/retrieve()
+```
+
+`options.chunk` overrides the default splitter entirely (a smaller `maxChars`, or a different strategy) — `ingest()` itself doesn't care how the text was split, only that it got an array of strings back.
+
+**What this does and doesn't fix:** this makes Semantic FS retrieval ergonomic for an `Agent` to call as a single tool, and getting a document in no longer means hand-rolling chunking — it does not add a vector-DB integration (Pinecone/Weaviate/pgvector/etc.); `Retriever` stays a plain interface (`retrieve`/`asTool`) specifically so a different backend can implement it without any of this, but no second implementation exists yet.
 
 ## Structured output: a repair loop for an `Agent`'s final answer
 

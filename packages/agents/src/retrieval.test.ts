@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { ComputerHandle } from "./computer.js";
 import type { Tool } from "./types.js";
-import { createSemanticFsRetriever } from "./retrieval.js";
+import { createSemanticFsRetriever, chunkText, ingest } from "./retrieval.js";
 
 function fakeTool(name: string, invoke: Tool["invoke"]): Tool {
   return { name, description: "", inputSchema: {}, invoke };
@@ -122,4 +122,104 @@ test("asTool() accepts a custom tool name", () => {
   ]);
   const retriever = createSemanticFsRetriever(computer);
   assert.equal(retriever.asTool("lookup_docs").name, "lookup_docs");
+});
+
+test("chunkText() returns [] for empty or whitespace-only text", () => {
+  assert.deepEqual(chunkText(""), []);
+  assert.deepEqual(chunkText("   \n  "), []);
+});
+
+test("chunkText() returns the whole (trimmed) text as one chunk when it already fits", () => {
+  assert.deepEqual(chunkText("  short text  ", { maxChars: 100 }), ["short text"]);
+});
+
+test("chunkText() splits long text into multiple chunks, none exceeding maxChars", () => {
+  const text = Array.from({ length: 50 }, (_, i) => `sentence number ${i}.`).join(" ");
+  const chunks = chunkText(text, { maxChars: 100, overlapChars: 10 });
+
+  assert.ok(chunks.length > 1);
+  assert.ok(chunks.every((c) => c.length <= 100));
+});
+
+test("chunkText() prefers breaking at a paragraph boundary over a hard mid-word cut", () => {
+  const text = `${"a".repeat(500)}\n\n${"b".repeat(500)}`;
+  const chunks = chunkText(text, { maxChars: 600, overlapChars: 0 });
+
+  assert.equal(chunks[0], "a".repeat(500));
+  assert.ok(chunks[1]?.startsWith("b"), "the second chunk must start clean at the paragraph break, not mid-run of a's");
+});
+
+test("chunkText() gives adjacent chunks overlapping text, so no boundary silently drops content", () => {
+  const text = Array.from({ length: 30 }, (_, i) => `word${i}`).join(" ");
+  const chunks = chunkText(text, { maxChars: 60, overlapChars: 20 });
+
+  assert.ok(chunks.length > 1);
+  for (let i = 0; i < chunks.length - 1; i++) {
+    const tailOfCurrent = chunks[i]!.slice(-10);
+    assert.ok(chunks[i + 1]!.includes(tailOfCurrent.trim().split(" ").pop() ?? ""), `chunk ${i} and ${i + 1} should share some overlapping text`);
+  }
+});
+
+test("ingest() writes one chunk per chunkText() split, tags each, and returns their paths in order", async () => {
+  const written: { path: string; content: string }[] = [];
+  const tagged: unknown[] = [];
+  const computer = fakeComputer([
+    fakeTool("write_context_file", async (input) => {
+      written.push(input as { path: string; content: string });
+    }),
+    fakeTool("tag_context_file", async (input) => {
+      tagged.push(input);
+    }),
+  ]);
+
+  const text = Array.from({ length: 50 }, (_, i) => `sentence number ${i}.`).join(" ");
+  const paths = await ingest(computer, "my source doc", text, { chunk: (t) => chunkText(t, { maxChars: 100 }) });
+
+  assert.ok(paths.length > 1);
+  assert.equal(written.length, paths.length);
+  assert.equal(tagged.length, paths.length);
+  assert.deepEqual(written.map((w) => w.path), paths);
+  assert.ok(paths.every((p) => p.startsWith("ingested/my-source-doc")));
+});
+
+test("ingest() writes a single chunk under one clean path (no -0 suffix) when the text needs no splitting", async () => {
+  const written: { path: string; content: string }[] = [];
+  const computer = fakeComputer([
+    fakeTool("write_context_file", async (input) => {
+      written.push(input as { path: string; content: string });
+    }),
+    fakeTool("tag_context_file", async () => {}),
+  ]);
+
+  const paths = await ingest(computer, "short-doc", "just a short document");
+
+  assert.deepEqual(paths, ["ingested/short-doc.txt"]);
+  assert.equal(written[0]?.content, "just a short document");
+});
+
+test("ingest() tags each chunk with the given task/relatedApps, defaulting task to source", async () => {
+  const tagged: { task?: string; relatedApps?: string[] }[] = [];
+  const computer = fakeComputer([
+    fakeTool("write_context_file", async () => {}),
+    fakeTool("tag_context_file", async (input) => {
+      tagged.push(input as { task?: string; relatedApps?: string[] });
+    }),
+  ]);
+
+  await ingest(computer, "my-doc", "short text");
+  await ingest(computer, "my-doc-2", "short text", { task: "custom-task", relatedApps: ["notes"] });
+
+  assert.equal(tagged[0]?.task, "my-doc");
+  assert.deepEqual(tagged[1], { path: "ingested/my-doc-2.txt", task: "custom-task", relatedApps: ["notes"] });
+});
+
+test("ingest() respects a custom pathPrefix", async () => {
+  const computer = fakeComputer([
+    fakeTool("write_context_file", async () => {}),
+    fakeTool("tag_context_file", async () => {}),
+  ]);
+
+  const paths = await ingest(computer, "irrelevant-source-name", "short text", { pathPrefix: "docs/custom" });
+
+  assert.deepEqual(paths, ["docs/custom.txt"]);
 });

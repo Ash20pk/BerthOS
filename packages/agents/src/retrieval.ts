@@ -86,3 +86,91 @@ export function createSemanticFsRetriever(computer: ComputerHandle): Retriever {
     },
   };
 }
+
+const DEFAULT_CHUNK_MAX_CHARS = 2000;
+const DEFAULT_CHUNK_OVERLAP_CHARS = 200;
+
+/**
+ * A plain character-window chunker — no NLP, no tokenizer dependency, same
+ * "real, and says so" honesty semantic-fs's own v0 keyword-overlap ranking
+ * already has elsewhere in this package. Prefers to break at the last
+ * paragraph/sentence boundary inside a window over a hard mid-word cut, when
+ * one exists past the window's halfway point; a paragraph longer than
+ * `maxChars` on its own still gets hard-split. Adjacent chunks share
+ * `overlapChars` of text so a fact split across a chunk boundary isn't lost
+ * to whichever chunk it landed outside of.
+ */
+export function chunkText(text: string, options: { maxChars?: number; overlapChars?: number } = {}): string[] {
+  const maxChars = options.maxChars ?? DEFAULT_CHUNK_MAX_CHARS;
+  const overlapChars = Math.min(options.overlapChars ?? DEFAULT_CHUNK_OVERLAP_CHARS, Math.floor(maxChars / 2));
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return [];
+  if (trimmed.length <= maxChars) return [trimmed];
+
+  const chunks: string[] = [];
+  let start = 0;
+  while (start < trimmed.length) {
+    const windowEnd = Math.min(start + maxChars, trimmed.length);
+    let end = windowEnd;
+    if (windowEnd < trimmed.length) {
+      const window = trimmed.slice(start, windowEnd);
+      const breakIndex = Math.max(window.lastIndexOf("\n\n"), window.lastIndexOf(". "));
+      if (breakIndex > maxChars * 0.5) {
+        end = start + breakIndex + 1;
+      }
+    }
+    const chunk = trimmed.slice(start, end).trim();
+    if (chunk) chunks.push(chunk);
+    if (end >= trimmed.length) break;
+    const nextStart = end - overlapChars;
+    start = nextStart > start ? nextStart : end; // always make forward progress, even if overlap would otherwise stall it
+  }
+  return chunks;
+}
+
+const INGEST_DIR = "ingested";
+
+function slugify(source: string): string {
+  return source.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "document";
+}
+
+export interface IngestOptions {
+  /** Where chunks are written under /context — defaults to a slug derived from `source`. */
+  pathPrefix?: string;
+  task?: string;
+  relatedApps?: string[];
+  /** Override the default chunkText() — e.g. a smaller maxChars, or an entirely different splitting strategy. */
+  chunk?: (text: string) => string[];
+}
+
+/**
+ * Gets a document *into* Semantic FS as retrievable chunks — the piece
+ * createSemanticFsRetriever() alone never covered: querying always assumed
+ * something had already called write_context_file/tag_context_file by hand,
+ * chunk by chunk, yourself. Resolves those same two exports off
+ * Computer.tools the exact way checkpoint.ts's findExportTool already does
+ * for checkpointing/tracing, so this works with any app exposing that
+ * contract — not apps/filesystem specifically. Returns the paths written, in
+ * order, so a caller can tag or cross-reference them further if needed.
+ */
+export async function ingest(
+  computer: ComputerHandle,
+  source: string,
+  text: string,
+  options: IngestOptions = {},
+): Promise<string[]> {
+  const writeTool = findExportTool(computer.tools, "write_context_file", "ingest()");
+  const tagTool = findExportTool(computer.tools, "tag_context_file", "ingest()");
+  const chunk = options.chunk ?? chunkText;
+  const chunks = chunk(text);
+  const prefix = options.pathPrefix ?? `${INGEST_DIR}/${slugify(source)}`;
+
+  const paths: string[] = [];
+  for (let i = 0; i < chunks.length; i++) {
+    const path = chunks.length > 1 ? `${prefix}-${i}.txt` : `${prefix}.txt`;
+    await writeTool.invoke({ path, content: chunks[i] });
+    await tagTool.invoke({ path, task: options.task ?? source, relatedApps: options.relatedApps ?? [] });
+    paths.push(path);
+  }
+  return paths;
+}
