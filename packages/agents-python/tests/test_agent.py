@@ -1,7 +1,15 @@
 import pytest
 from pydantic import BaseModel
 
-from berth_agents import Agent, AgentStepEvent, FileCheckpointStore, LLMTurn, StructuredOutputError, ToolCall
+from berth_agents import (
+    Agent,
+    AgentStepEvent,
+    FileCheckpointStore,
+    GuardrailResult,
+    LLMTurn,
+    StructuredOutputError,
+    ToolCall,
+)
 
 
 class ScriptedLLM:
@@ -362,3 +370,124 @@ async def test_with_tools_carries_the_tracer_over_to_the_new_agent():
     await extended.run("hi", run_id="run-1")
 
     assert len(tracer.events) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_tripped_input_guardrail_raises_before_the_llm_is_ever_called():
+    llm = ScriptedLLM([LLMTurn(text="should never be reached", tool_calls=[], stop=True)])
+    agent = Agent(
+        llm=llm,
+        tools=[],
+        input_guardrails=[lambda text: GuardrailResult(tripwire_triggered=True, message="banned phrase")],
+    )
+
+    with pytest.raises(Exception, match="input guardrail tripped: banned phrase"):
+        await agent.run("do something bad")
+    assert llm.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_an_untripped_input_guardrail_lets_the_run_proceed_as_normal():
+    llm = ScriptedLLM([LLMTurn(text="all good", tool_calls=[], stop=True)])
+    agent = Agent(llm=llm, tools=[], input_guardrails=[lambda text: GuardrailResult(tripwire_triggered=False)])
+
+    result = await agent.run("a fine request")
+
+    assert result.text == "all good"
+
+
+@pytest.mark.asyncio
+async def test_a_tripped_output_guardrail_raises_instead_of_returning_the_flagged_final_answer():
+    llm = ScriptedLLM([LLMTurn(text="leaked secret", tool_calls=[], stop=True)])
+    agent = Agent(
+        llm=llm,
+        tools=[],
+        output_guardrails=[
+            lambda text: GuardrailResult(tripwire_triggered="secret" in text, message="looked like a secret")
+        ],
+    )
+
+    with pytest.raises(Exception, match="output guardrail tripped: looked like a secret"):
+        await agent.run("tell me a secret")
+
+
+@pytest.mark.asyncio
+async def test_a_tripped_output_guardrail_checkpoints_the_run_as_error_rather_than_done(tmp_path):
+    store = FileCheckpointStore(tmp_path)
+    llm = ScriptedLLM([LLMTurn(text="leaked secret", tool_calls=[], stop=True)])
+    agent = Agent(
+        llm=llm,
+        tools=[],
+        checkpoint=store,
+        output_guardrails=[lambda text: GuardrailResult(tripwire_triggered=True, message="nope")],
+    )
+
+    with pytest.raises(Exception):
+        await agent.run("do it", run_id="run-guard")
+
+    checkpoint = await store.load("run-guard")
+    assert checkpoint.status == "error"
+
+
+@pytest.mark.asyncio
+async def test_multiple_guardrails_run_in_order_and_stop_at_the_first_tripped_one():
+    llm = ScriptedLLM([LLMTurn(text="fine", tool_calls=[], stop=True)])
+    calls = []
+
+    def first(text):
+        calls.append("first")
+        return GuardrailResult(tripwire_triggered=True, message="first guardrail tripped")
+
+    def second(text):
+        calls.append("second")
+        return GuardrailResult(tripwire_triggered=False)
+
+    agent = Agent(llm=llm, tools=[], input_guardrails=[first, second])
+
+    with pytest.raises(Exception, match="first guardrail tripped"):
+        await agent.run("input")
+    assert calls == ["first"]
+
+
+@pytest.mark.asyncio
+async def test_with_tools_carries_guardrails_over_to_the_extended_agent():
+    llm = ScriptedLLM([LLMTurn(text="unreachable", tool_calls=[], stop=True)])
+    original = Agent(
+        llm=llm,
+        tools=[],
+        input_guardrails=[lambda text: GuardrailResult(tripwire_triggered=True, message="blocked")],
+    )
+    extended = original.with_tools([EchoTool("extra")])
+
+    with pytest.raises(Exception, match="blocked"):
+        await extended.run("anything")
+    assert llm.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_output_guardrails_still_apply_to_a_resumed_runs_final_answer(tmp_path):
+    store = FileCheckpointStore(tmp_path)
+    llm = ScriptedLLM(
+        [
+            LLMTurn(tool_calls=[ToolCall(id="1", name="search", input={})], stop=False),
+            LLMTurn(text="leaked secret", tool_calls=[], stop=True),
+        ]
+    )
+    # Same two-agent trick test_a_crashed_run_resumes_from_its_last_checkpoint
+    # uses above: force a real "running" checkpoint via an artificially
+    # capped max_turns, then resume with a fresh Agent — this one configured
+    # with an output guardrail — to prove the guardrail applies to the
+    # *resumed* run's final answer, not just a fresh run() call's.
+    capped_agent = Agent(llm=llm, tools=[EchoTool("search")], max_turns=1, checkpoint=store)
+    with pytest.raises(RuntimeError, match="exceeded its max_turns"):
+        await capped_agent.run("do the thing", run_id="run-resumed-guard")
+
+    agent = Agent(
+        llm=llm,
+        tools=[EchoTool("search")],
+        checkpoint=store,
+        output_guardrails=[lambda text: GuardrailResult(tripwire_triggered="secret" in text)],
+    )
+
+    with pytest.raises(Exception, match="output guardrail tripped"):
+        await agent.resume("run-resumed-guard")

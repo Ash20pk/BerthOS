@@ -13,6 +13,7 @@ import {
 } from "./structured-output.js";
 import { createSemanticFsRetriever, type Retriever } from "./retrieval.js";
 import { createMcpClientTools, type McpClientHandle, type McpClientToolsOptions } from "./mcp-client.js";
+import { runGuardrails, type Guardrail } from "./guardrails.js";
 import type { AgentMessage, LLMProvider, Tool } from "./types.js";
 
 export interface AgentOptions {
@@ -36,6 +37,24 @@ export interface AgentOptions {
    * seam, run-level activation" shape as `checkpoint`.
    */
   trace?: StepTracer;
+  /**
+   * Run against the raw input string before the first LLM call, in order,
+   * stopping at the first tripped one — a tripped guardrail throws
+   * GuardrailTripwireError, and the loop never starts. Applies only to
+   * run(), not resume() (a resumed run's original input already passed this
+   * check, or the run wouldn't have gotten far enough to checkpoint). See
+   * guardrails.ts.
+   */
+  inputGuardrails?: Guardrail[];
+  /**
+   * Run against a final answer's text before run()/resume() returns it, in
+   * order, stopping at the first tripped one — a tripped guardrail throws
+   * GuardrailTripwireError and checkpoints the run as "error" (when
+   * checkpointing is configured) rather than returning the flagged text.
+   * Runs on every final-answer path, including a resumed run's. See
+   * guardrails.ts.
+   */
+  outputGuardrails?: Guardrail[];
 }
 
 export interface AgentRunResult {
@@ -75,6 +94,8 @@ export class Agent {
   private readonly maxTurns: number;
   private readonly checkpointStore: CheckpointStore | undefined;
   private readonly tracer: StepTracer | undefined;
+  private readonly inputGuardrails: Guardrail[];
+  private readonly outputGuardrails: Guardrail[];
 
   constructor(options: AgentOptions) {
     this.name = options.name ?? "agent";
@@ -84,12 +105,17 @@ export class Agent {
     this.maxTurns = options.maxTurns ?? DEFAULT_MAX_TURNS;
     this.checkpointStore = options.checkpoint;
     this.tracer = options.trace;
+    this.inputGuardrails = options.inputGuardrails ?? [];
+    this.outputGuardrails = options.outputGuardrails ?? [];
   }
 
   async run<T = never>(
     input: string,
     opts: { runId?: string; onText?: (delta: string) => void } & StructuredOutputRunOptions<T> = {},
   ): Promise<AgentRunResult & { data?: T }> {
+    if (this.inputGuardrails.length > 0) {
+      await runGuardrails(this.inputGuardrails, input, "input");
+    }
     return this.loop([{ role: "user", text: input }], [], 0, opts.runId, opts.onText, opts.responseSchema, opts.maxRepairAttempts);
   }
 
@@ -143,6 +169,16 @@ export class Agent {
       await this.tracer.emit({ ...event, runId, agentName: this.name });
     };
 
+    const guardOutput = async (text: string, turnCount: number) => {
+      if (this.outputGuardrails.length === 0) return;
+      try {
+        await runGuardrails(this.outputGuardrails, text, "output");
+      } catch (err) {
+        await checkpoint(turnCount, "error", text);
+        throw err;
+      }
+    };
+
     for (let turnCount = startTurn; turnCount < this.maxTurns; turnCount++) {
       const turnStart = Date.now();
       let turn;
@@ -168,6 +204,7 @@ export class Agent {
         if (responseSchema) {
           const parsed = parseStructuredOutput(text, responseSchema);
           if (parsed.success) {
+            await guardOutput(text, turnCount);
             await checkpoint(turnCount, "done", text);
             return { text, toolCalls: executed, data: parsed.data };
           }
@@ -187,6 +224,7 @@ export class Agent {
           continue;
         }
 
+        await guardOutput(text, turnCount);
         await checkpoint(turnCount, "done", text);
         return { text, toolCalls: executed };
       }
@@ -245,6 +283,8 @@ export class Agent {
       maxTurns: this.maxTurns,
       checkpoint: this.checkpointStore,
       trace: this.tracer,
+      inputGuardrails: this.inputGuardrails,
+      outputGuardrails: this.outputGuardrails,
     });
   }
 
@@ -358,6 +398,10 @@ export interface CreateAgentOptions extends Pick<BootComputerOptions, "network" 
    * does this for you automatically, in `finally`, alongside `computer.stop()`).
    */
   mcpServers?: McpClientToolsOptions[];
+  /** See AgentOptions.inputGuardrails. */
+  inputGuardrails?: Guardrail[];
+  /** See AgentOptions.outputGuardrails. */
+  outputGuardrails?: Guardrail[];
 }
 
 function normalizeApps(apps: string | string[] | undefined): string[] {
@@ -415,6 +459,8 @@ export async function createAgent(
     maxTurns: options.maxTurns,
     checkpoint,
     trace,
+    inputGuardrails: options.inputGuardrails,
+    outputGuardrails: options.outputGuardrails,
   });
   return { agent, computer, mcpServers };
 }

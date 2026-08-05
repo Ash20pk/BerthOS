@@ -67,6 +67,16 @@ export {
 } from "./tracing.js";
 export { createOtelStepTracer, type OtelStepTracerOptions } from "./otel-tracer.js";
 export {
+  runGuardrails,
+  createKeywordGuardrail,
+  createRegexGuardrail,
+  createLlmGuardrail,
+  GuardrailTripwireError,
+  type Guardrail,
+  type GuardrailResult,
+  type LlmGuardrailOptions,
+} from "./guardrails.js";
+export {
   generateAgentServerApp,
   bootNetworkedAgent,
   type AgentServerLLMConfig,

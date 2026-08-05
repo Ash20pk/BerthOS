@@ -2,6 +2,15 @@ from .agent import Agent
 from .checkpoint import CheckpointedRun, CheckpointStore, FileCheckpointStore
 from .computer import Computer, ComputerConnectionError, ComputerHandle
 from .crew import CheckpointedCrewRun, Crew, CrewStateRun, checkpoint_key_for
+from .guardrails import (
+    Guardrail,
+    GuardrailResult,
+    GuardrailTripwireError,
+    create_keyword_guardrail,
+    create_llm_guardrail,
+    create_regex_guardrail,
+    run_guardrails,
+)
 from .mcp_client import McpClientHandle, create_mcp_client_tools
 from .otel_tracer import OtelStepTracer, create_otel_step_tracer
 from .providers import (
@@ -47,6 +56,9 @@ __all__ = [
     "CrewStateRun",
     "ExecutedToolCall",
     "FileCheckpointStore",
+    "Guardrail",
+    "GuardrailResult",
+    "GuardrailTripwireError",
     "LLMProvider",
     "LLMProviderConfig",
     "LLMTurn",
@@ -64,12 +76,16 @@ __all__ = [
     "create_bedrock_provider",
     "create_fallback_provider",
     "create_google_provider",
+    "create_keyword_guardrail",
+    "create_llm_guardrail",
     "create_mcp_client_tools",
     "create_ollama_provider",
     "create_openai_provider",
     "create_otel_step_tracer",
+    "create_regex_guardrail",
     "detect_llm_provider",
     "format_tool_input_error",
     "parse_structured_output",
     "resolve_llm_provider",
+    "run_guardrails",
 ]

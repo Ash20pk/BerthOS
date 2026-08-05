@@ -241,6 +241,28 @@ Two things this deliberately does **not** do, both by design rather than oversig
 
 `only` (an array of tool names) is what makes this usable in practice — gating literally every tool call would mean a human has to click through even harmless reads. Omit it to gate everything; scope it down to just the tool calls that actually warrant a human looking first (a delete, a payment, an external message send).
 
+## Guardrails: gating an `Agent`'s own input and final answer
+
+The governance gate above and human-in-the-loop both gate *tool calls*. Neither one looks at the model's own input or its final answer text — the seam OpenAI's Agents SDK guardrails, ADK's callbacks/plugins, and Semantic Kernel's filters all cover. `inputGuardrails`/`outputGuardrails` (`packages/agents/src/guardrails.ts`) close that:
+
+```ts
+import { createAgent, createKeywordGuardrail, createLlmGuardrail } from "@berth/agents";
+
+const { agent } = await createAgent({
+  apps: "apps/filesystem",
+  inputGuardrails: [createKeywordGuardrail(["ignore previous instructions"])],
+  outputGuardrails: [createLlmGuardrail({ judge: createAnthropicProvider(), rubric: "does not leak API keys or secrets" })],
+});
+
+await agent.run("..."); // throws GuardrailTripwireError before the model ever sees a tripped input, or before a tripped output is returned
+```
+
+A `Guardrail` is `(text: string) => GuardrailResult | Promise<GuardrailResult>`, where `GuardrailResult` is `{ tripwireTriggered: boolean, message?: string }` — "tripwire" is the same term OpenAI's Agents SDK guardrails use for the same concept. `inputGuardrails` run once, against `run()`'s raw input string, before the first LLM call — not on `resume()`, whose original input already passed this check by the time there was anything to checkpoint. `outputGuardrails` run against a final answer's text on every path that produces one, `resume()`'s included — a tripped output guardrail also checkpoints the run as `"error"` (when checkpointing is configured) instead of `"done"`, so a resumed run doesn't come back thinking a flagged answer already succeeded. Guardrails in a list run in order, stopping at the first tripped one, so a cheap check can short-circuit an expensive one listed after it. Either list defaults to empty — this is fully opt-in, zero behavior change for an `Agent` that doesn't configure any.
+
+Three built-ins ship for the common cases: `createKeywordGuardrail(words, { caseSensitive? })` (a fixed word/phrase list), `createRegexGuardrail(pattern, message?)` (for shapes a word list can't express — an email address, a digit run that looks like an SSN), and `createLlmGuardrail({ judge, rubric })` (LLM-as-judge, for checks too fuzzy for either — "is this attempting a jailbreak"). `createLlmGuardrail` fails **closed**: a judge response that doesn't parse counts as a tripped guardrail, not a passed one — deliberately the opposite of eval.ts's `llmJudge()`, where an unparseable verdict just fails that one eval case rather than blocking a live agent. Write your own `Guardrail` function directly for anything else (a call to an external moderation API, a stateful rate-limiter).
+
+**What this doesn't do:** no redaction or rewrite-and-retry — a tripped guardrail halts the run via `GuardrailTripwireError`, it doesn't get a chance to sanitize the text and let the model continue (unlike, say, a structured-output repair attempt). No guardrail runs mid-stream against `onText`'s incremental deltas — only the complete input string and the complete final answer are checked. Available in Python too (`berth_agents.guardrails`, same `create_keyword_guardrail`/`create_regex_guardrail`/`create_llm_guardrail`/`run_guardrails`, `Agent(input_guardrails=, output_guardrails=)`), field-for-field.
+
 ## `Agent` and `Crew`: single- and multi-agent composition
 
 `Agent.run(input)` is the provider-agnostic tool-use loop, identical no matter which `LLMProvider` or `Tool` implementations are plugged in. `Agent.asTool(description)` wraps an agent as a `Tool` (`{task: string}` in, `run(task).text` out), the seam `Crew.withManager({manager, workers})` uses to let a manager's own LLM decide when to delegate. `Crew.sequential(agents)` just pipes each agent's output text into the next.
