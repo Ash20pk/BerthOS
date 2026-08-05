@@ -60,6 +60,14 @@ export interface CapabilityPolicy {
   networkPorts: number[];
   networkUnrestricted: boolean;
   meshPeers: string[];
+  // Ports this app is allowed to bind()/listen() on — separate from
+  // networkPorts (outbound AccessNet::ConnectTcp only) because Landlock
+  // denies AccessNet::BindTcp by default too the moment network access is
+  // restricted at all (see agent-init/src/main.rs's `AccessNet::from_all`),
+  // and no capability namespace/action exists for "this app needs to listen
+  // on a port" — it's not something a berth.yml author declares, it's an
+  // orchestration-level fact (see computeBindPorts()).
+  bindPorts: number[];
 }
 
 function stripTrailingGlob(scope: string): string {
@@ -156,13 +164,33 @@ export function compileCapabilityPolicy(appName: string, rawCapabilities: string
     networkPorts: [...networkPorts],
     networkUnrestricted,
     meshPeers: [...meshPeers],
+    bindPorts: [],
   };
+}
+
+/**
+ * `BERTH_HTTP_RPC_PORT`/`BERTH_HTTP_RPC_APP` are container-wide env (see
+ * container.ts's `httpRpc` option) — every app in a multi-app container's
+ * own generate-capability-policy.ts run sees the same two values, so this
+ * mirrors runtime.ts's own gating exactly (`!appName || appName ===
+ * manifest.name`) to grant the bind only to whichever single app is
+ * actually going to call startHttpRpcServer(), not every sibling. Split out
+ * from main() so it's unit-testable without real env/filesystem I/O, same
+ * reasoning compileCapabilityPolicy() already has.
+ */
+export function computeBindPorts(appName: string, env: Partial<Pick<NodeJS.ProcessEnv, "BERTH_HTTP_RPC_PORT" | "BERTH_HTTP_RPC_APP">>): number[] {
+  const port = env.BERTH_HTTP_RPC_PORT ? Number(env.BERTH_HTTP_RPC_PORT) : undefined;
+  if (!port) return [];
+  const boundAppName = env.BERTH_HTTP_RPC_APP;
+  if (boundAppName && boundAppName !== appName) return [];
+  return [port];
 }
 
 async function main(): Promise<void> {
   const manifest = await loadManifest(MANIFEST_PATH);
   const approved = await fetchApprovedCapabilities(manifest.name);
   const policy = compileCapabilityPolicy(manifest.name, [...manifest.capabilities, ...approved]);
+  policy.bindPorts = computeBindPorts(manifest.name, process.env);
 
   await mkdir(dirname(POLICY_PATH), { recursive: true });
   await writeFile(POLICY_PATH, JSON.stringify(policy, null, 2));
@@ -175,6 +203,7 @@ async function main(): Promise<void> {
     `[berth:capability-policy] wrote ${POLICY_PATH}: writePaths=${policy.writePaths.join(", ")}` +
       (policy.readPaths.length > 0 ? `; readPaths=${policy.readPaths.join(", ")}` : "") +
       `; ${networkSummary}` +
+      (policy.bindPorts.length > 0 ? `; bindPorts=${policy.bindPorts.join(", ")}` : "") +
       (policy.meshPeers.length > 0 ? `; meshPeers=${policy.meshPeers.join(", ")}` : ""),
   );
 }

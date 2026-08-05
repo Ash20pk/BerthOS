@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, randomBytes } from "node:crypto";
 import Docker from "dockerode";
 import {
   startContainer,
@@ -21,6 +21,19 @@ export interface BootComputerOptions {
   network?: string;
   /** Extra container environment variables — e.g. an LLM API key for a synthesized agent-server companion app. */
   env?: Record<string, string>;
+  /**
+   * Also starts @berth/sdk's HTTP RPC bridge inside the container (see
+   * container.ts's `httpRpc` option) and exposes it on the returned handle's
+   * `httpRpc` field — the one way a process with no Docker API access (a
+   * Python client, see packages/agents-python's `Computer.connect()`) can
+   * reach this Computer's tools. `app` names which of `apps` should bind the
+   * listener when there's more than one (defaults to the first); only that
+   * one app's exports are reachable via the bridge, same
+   * BERTH_HTTP_RPC_APP-gated limitation a remote fleet deploy has. Omitted
+   * (the default), this Computer works exactly as before — dispatch stays
+   * stdio/docker-exec only, nothing extra starts.
+   */
+  httpRpc?: boolean | { app?: string };
   docker?: Docker;
 }
 
@@ -106,6 +119,13 @@ export interface ComputerHandle {
   readonly tools: Tool[];
   call(toolName: string, input: unknown): Promise<unknown>;
   stop(): Promise<void>;
+  /**
+   * Set only when this handle was booted/connected with the HTTP RPC bridge
+   * enabled — see BootComputerOptions.httpRpc. `appName` is which app's
+   * exports are actually reachable through it (undefined for a single-app
+   * Computer). Undefined for every other Computer/HttpBridgeComputer.
+   */
+  readonly httpRpc?: { url: string; authToken: string; appName?: string };
 }
 
 /**
@@ -117,6 +137,7 @@ export interface ComputerHandle {
 export class Computer implements ComputerHandle {
   readonly tools: Tool[];
   readonly containerName: string;
+  readonly httpRpc: ComputerHandle["httpRpc"];
 
   private constructor(
     private readonly container: Docker.Container,
@@ -128,9 +149,11 @@ export class Computer implements ComputerHandle {
     private readonly image: string | undefined,
     /** False for a Computer obtained via connect() — see stop(). */
     private readonly ownsLifecycle: boolean,
+    httpRpc: ComputerHandle["httpRpc"],
   ) {
     this.tools = tools;
     this.containerName = containerName;
+    this.httpRpc = httpRpc;
   }
 
   static async boot(options: BootComputerOptions): Promise<Computer> {
@@ -144,7 +167,19 @@ export class Computer implements ComputerHandle {
     const image = await buildComputerImage(apps);
     const containerName = `berth-agent-${randomUUID()}`;
 
-    const { container } = await startContainer({
+    const httpRpcRequested = !!options.httpRpc;
+    const httpRpcAuthToken = httpRpcRequested ? randomBytes(32).toString("hex") : undefined;
+    // Only meaningful (and only sent to startContainer as BERTH_HTTP_RPC_APP)
+    // once there's more than one app to disambiguate — an explicit `app`
+    // still has to be one of `apps`, checked below rather than silently
+    // accepted and failing opaquely inside the container instead.
+    const httpRpcAppName =
+      typeof options.httpRpc === "object" ? options.httpRpc.app : apps.length > 1 ? apps[0]!.name : undefined;
+    if (httpRpcAppName && !apps.some((a) => a.name === httpRpcAppName)) {
+      throw new Error(`httpRpc.app "${httpRpcAppName}" isn't one of this Computer's apps: ${apps.map((a) => a.name).join(", ")}`);
+    }
+
+    const { container, ports } = await startContainer({
       image,
       name: containerName,
       manifest: primary.manifest,
@@ -154,6 +189,7 @@ export class Computer implements ComputerHandle {
           : undefined,
       network: options.network,
       env: options.env,
+      httpRpc: httpRpcRequested ? { authToken: httpRpcAuthToken!, appName: httpRpcAppName } : undefined,
       docker,
     });
 
@@ -176,7 +212,39 @@ export class Computer implements ComputerHandle {
 
     const tools = applyGovernanceGate(apps, apps, computerToolsFor(apps, call), call);
 
-    return new Computer(container, apps, stdioClient, tools, containerName, docker, image, true);
+    let httpRpc: ComputerHandle["httpRpc"];
+    if (httpRpcRequested) {
+      // A failure here (a full withReadyRetry timeout, or no host port at
+      // all) previously left the just-started container running with
+      // nothing referencing it — the same orphaned-container class of bug
+      // HttpBridgeComputer.deploy() already guards against for a remote
+      // instance. Stop it before rethrowing, mirroring that.
+      try {
+        if (!ports.httpRpc) {
+          throw new Error("httpRpc was requested but the container never published a host port for it");
+        }
+        const url = `http://127.0.0.1:${ports.httpRpc}`;
+        // A longer ceiling than withReadyRetry's own default (30s, tuned
+        // for retrying an individual dispatch call, not a cold boot): a
+        // fresh container's context-bus/semantic-fs daemons, capability
+        // policy generation, and agent-init's Landlock setup all run before
+        // the app process is even listening, and a shared/cold CI runner is
+        // measurably slower at this than a dev machine that's already
+        // booted this image before.
+        await withReadyRetry(() => checkHttpRpcHealth(url, httpRpcAuthToken!), 60_000);
+        httpRpc = { url, authToken: httpRpcAuthToken!, appName: httpRpcAppName };
+      } catch (err) {
+        stdioClient?.close();
+        await stopContainer(container).catch(() => {});
+        await docker
+          .getImage(image)
+          .remove()
+          .catch(() => {});
+        throw err;
+      }
+    }
+
+    return new Computer(container, apps, stdioClient, tools, containerName, docker, image, true, httpRpc);
   }
 
   /**
@@ -235,7 +303,14 @@ export class Computer implements ComputerHandle {
 
     const tools = applyGovernanceGate(allApps, apps, computerToolsFor(apps, call), call);
 
-    return new Computer(container, apps, undefined, tools, state.containerName, docker, undefined, false);
+    // Passed through as a plain read of what `berth os up --http-rpc`
+    // recorded, not re-verified live here — connect() already has a working
+    // dispatch path via invokeAppExport regardless, so this is only useful
+    // for a caller that wants to hand the URL/token to something else (e.g.
+    // a Python subprocess) rather than something this method depends on.
+    const httpRpc = state.httpRpc ? { url: state.httpRpc.url, authToken: state.httpRpc.token, appName: state.httpRpc.app } : undefined;
+
+    return new Computer(container, apps, undefined, tools, state.containerName, docker, undefined, false, httpRpc);
   }
 
   async call(toolName: string, input: unknown): Promise<unknown> {
@@ -270,4 +345,15 @@ export class Computer implements ComputerHandle {
         .catch(() => {});
     }
   }
+}
+
+/**
+ * Same check fleet-computer.ts's healthCheck() does against a remote
+ * instance's bridge, against a local container's host-mapped port instead —
+ * a published port can accept TCP connections before the resident app
+ * inside has actually started listening on its own end.
+ */
+async function checkHttpRpcHealth(url: string, authToken: string): Promise<void> {
+  const res = await fetch(`${url}/healthz`, { headers: { authorization: `Bearer ${authToken}` } });
+  if (!res.ok) throw new Error(`healthz check against ${url} returned ${res.status}`);
 }

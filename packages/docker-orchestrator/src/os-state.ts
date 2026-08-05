@@ -26,6 +26,17 @@ export interface OsStateFile {
   apps: OsAppRecord[];
   network?: string;
   startedAt: string;
+  /**
+   * Set only when started with `berth os up --http-rpc` — the host-reachable
+   * URL and bearer token for @berth/sdk's HTTP RPC bridge (see
+   * container.ts's `httpRpc` option), the one way a process with no Docker
+   * API access (e.g. a Python client — see packages/agents-python's
+   * `Computer.connect()`) can call this OS's exports. `app` names which
+   * loaded app is actually bound to the bridge (BERTH_HTTP_RPC_APP) — only
+   * that one app's exports are reachable this way; omitted for a single-app
+   * OS, where there's no sibling to disambiguate.
+   */
+  httpRpc?: { url: string; token: string; app?: string };
 }
 
 const DEFAULT_OS_DIR = join(homedir(), ".berth", "os");

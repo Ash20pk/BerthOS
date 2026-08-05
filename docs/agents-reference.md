@@ -87,6 +87,20 @@ const computer = await Computer.connect({ name: "my-agent" });
 
 **Scope:** local, `berth dev`-equivalent Docker only, same as the rest of `@berth/agents`. There's no `berth os` equivalent for E2B, Daytona, or K8s fleets today.
 
+### Reaching a Computer from outside Node/Docker: `--http-rpc`
+
+`Computer.connect()`'s docker-exec-plus-Unix-socket relay needs Docker API access — fine for another Node process on the same host, useless for a process that can't drive Docker at all (a Python script, a client on a different machine). `berth os up --http-rpc` starts the same HTTP RPC bridge `bootNetworkedAgent({fleet})` already uses for a remote deploy (`@berth/sdk`'s `startHttpRpcServer`, bearer-token-gated `POST /rpc` + `GET /healthz`), but for a local container: the port is published to the host, and the URL plus a freshly generated per-boot token are recorded in `~/.berth/os/<name>.json` alongside the rest of `berth os up`'s state.
+
+```bash
+berth os up my-agent --apps=apps/filesystem --http-rpc
+# "my-agent" is up.
+# HTTP RPC bridge: http://127.0.0.1:54321 (bearer token recorded in ~/.berth/os/my-agent.json — see docs/agents-python-reference.md for the Python client).
+```
+
+`Computer.boot({httpRpc: true})` exposes the same bridge for an ephemeral, single-process Computer instead of a named `berth os up` instance — useful for a test or a short-lived script that wants an HTTP-reachable URL without a second `berth os` step; the returned handle's `httpRpc` field (`{url, authToken, appName?}`) carries what a caller needs to hand off to something else.
+
+**The one real limitation, not glossed over: the bridge only ever serves one app's exports.** `startHttpRpcServer` runs *inside* one specific app's own `runtime.js` process (gated by `BERTH_HTTP_RPC_APP`, mirroring `bootNetworkedAgent({fleet})`'s `rpcAppName`) — it dispatches to that process's own `invokeExport`, with no way to reach a sibling app's exports in the same container. For more than one loaded app, `--http-rpc-app=<name>` (or `Computer.boot({httpRpc: {app: "..."}})`) picks which one; omitted, it defaults to the first. Every export name sent over `/rpc` is the app's own bare manifest name (`write_file`, not `filesystem__write_file`) — the `app__export` namespacing `computerToolsFor()` builds for TypeScript's in-process `Tool[]` list never crosses this wire, since there's only ever one app's exports reachable through it anyway. This is the mechanism `packages/agents-python`'s `Computer.connect()` (see [`docs/agents-python-reference.md`](./agents-python-reference.md)) is built on — a real, working second option to the Docker-Engine-API-client alternative, now that this exists.
+
 ## Shortcuts: `runAgent()` and `createAgent({ apps })`
 
 Building the `Computer` yourself pays off when you need to reuse it across agents, filter which apps an agent sees, or mix in a custom resident app. Most of the time you don't need any of that, so `@berth/agents` also gives you two shortcuts that build the Computer for you behind the scenes, from whatever you pass as `apps`.

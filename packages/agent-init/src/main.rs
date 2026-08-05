@@ -49,6 +49,16 @@ struct CapabilityPolicy {
     // exists purely so it's captured in the audit line below.
     #[serde(rename = "meshPeers", default)]
     mesh_peers: Vec<String>,
+    // Ports this app is allowed to bind()/listen() on — e.g. @berth/sdk's
+    // HTTP RPC bridge (see docs/agents-reference.md's "Reaching a Computer
+    // from outside Node/Docker" section). Separate from network_ports:
+    // AccessNet::from_all handles (denies-by-default) BindTcp too the
+    // moment network access is restricted at all, not just ConnectTcp, and
+    // no capability namespace/action declares "this app needs to listen" —
+    // it's an orchestration-level fact (see generate-capability-policy.ts's
+    // computeBindPorts()), not something berth.yml's author writes.
+    #[serde(rename = "bindPorts", default)]
+    bind_ports: Vec<u16>,
 }
 
 /// Set by entrypoint.sh before anything else in the container starts —
@@ -70,8 +80,8 @@ fn boot_id() -> String {
 fn log_audit_event(policy: &CapabilityPolicy, ruleset_status: &str) {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     eprintln!(
-        "[agent-init] {{\"event\":\"capability_policy_applied\",\"bootId\":{:?},\"app\":{:?},\"writePaths\":{:?},\"readPaths\":{:?},\"networkPorts\":{:?},\"networkUnrestricted\":{},\"meshPeers\":{:?},\"ruleset\":{:?},\"timestamp\":{}}}",
-        boot_id(), policy.app_name, policy.write_paths, policy.read_paths, policy.network_ports, policy.network_unrestricted, policy.mesh_peers, ruleset_status, now
+        "[agent-init] {{\"event\":\"capability_policy_applied\",\"bootId\":{:?},\"app\":{:?},\"writePaths\":{:?},\"readPaths\":{:?},\"networkPorts\":{:?},\"networkUnrestricted\":{},\"bindPorts\":{:?},\"meshPeers\":{:?},\"ruleset\":{:?},\"timestamp\":{}}}",
+        boot_id(), policy.app_name, policy.write_paths, policy.read_paths, policy.network_ports, policy.network_unrestricted, policy.bind_ports, policy.mesh_peers, ruleset_status, now
     );
 }
 
@@ -304,6 +314,18 @@ fn apply_policy(policy_path: &str) -> Result<(CapabilityPolicy, RulesetStatus), 
     if restrict_network {
         for &port in &policy.network_ports {
             ruleset = ruleset.add_rule(NetPort::new(port, net_access))?;
+        }
+        // Bind grants are independent of network_ports' ConnectTcp ones —
+        // an app that needs to listen on a port (e.g. the HTTP RPC bridge)
+        // doesn't necessarily need to *dial out* on it too. Without this,
+        // AccessNet::from_all above denies bind() by default the same as
+        // connect(), and every listen() call in the process fails with
+        // EPERM the moment Landlock is actually enforced (silently a no-op
+        // wherever it isn't, e.g. Docker Desktop's linuxkit VM kernel —
+        // which is exactly why this was missed until CI's real kernel
+        // caught it).
+        for &port in &policy.bind_ports {
+            ruleset = ruleset.add_rule(NetPort::new(port, AccessNet::BindTcp))?;
         }
     }
 

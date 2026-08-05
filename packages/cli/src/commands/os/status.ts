@@ -27,8 +27,9 @@ export default class OsStatus extends Command {
         continue;
       }
       const running = await isContainerRunning(docker, state.containerName);
+      const httpRpcSuffix = state.httpRpc ? `, http-rpc: ${state.httpRpc.url}` : "";
       this.log(
-        `${name}: ${running ? "running" : "stopped"} (container ${state.containerName}, apps: ${state.apps.map((a) => a.name).join(", ")})`,
+        `${name}: ${running ? "running" : "stopped"} (container ${state.containerName}, apps: ${state.apps.map((a) => a.name).join(", ")}${httpRpcSuffix})`,
       );
     }
   }

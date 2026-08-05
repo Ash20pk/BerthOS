@@ -29,6 +29,7 @@ Builds a production image for the given resident apps and starts a container tha
 
   This isn't a new manifest format. Each entry under `apps:` is still just a directory containing its own `berth.yml`, loaded with the same `loadManifest()` any other multi-app path uses.
 - `--network=<name>`: join a Docker network (overrides the config file's `network:`, if both are given).
+- `--http-rpc`: also expose `@berth/sdk`'s HTTP RPC bridge on a host port — the way a process with no Docker API access (a Python client, see [`docs/agents-python-reference.md`](./agents-python-reference.md)) reaches this instance's exports. `--http-rpc-app=<name>` picks which loaded app binds it when there's more than one (defaults to the first); the bridge only ever serves that one app's exports (see below). The resulting URL and a freshly generated bearer token are printed and recorded in the state file.
 - The instance name comes from, in order: the positional `<name>` argument, then the config file's `name:`, then the first app's own manifest `name`.
 
 Same v1 constraints as `berth dev --apps=` and `berth test --apps=`: at most one app across the set can declare `browser:*`, `terminal:*`, or `network:peer:*` (one Xvfb/VNC display, one ttyd port, one `wg0` interface per container).
@@ -79,6 +80,10 @@ This is the natural pairing for a long-lived server process. [`examples/agents/a
 
 **`computer.stop()` is a no-op for a connected Computer.** A Computer that `Computer.boot()` created owns the container and image it made, so `stop()` tears both down. A connected Computer didn't create anything, and it has no business tearing down a container that other runs, or other agent processes, might still be using. So `stop()` on it does nothing. That's what makes `runAgent({connect: "...", task: "..."})` safe to call over and over against the same `berth os up` instance: its `finally { computer.stop() }` always runs safely, it just doesn't do anything when `connect` was used. Use `berth os down <name>` when you actually want to tear the instance down.
 
+## Reaching an instance without Docker API access
+
+`Computer.connect()`'s `invokeAppExport()` relay needs `docker exec` access — fine for another TypeScript process on the same host, useless for anything else. `--http-rpc` starts an in-app HTTP listener instead (`@berth/sdk`'s `startHttpRpcServer`, the same bridge `bootNetworkedAgent({fleet})` uses for a remote deploy), published to a host port, bearer-token-gated. **It only ever serves one app's exports** — the listener runs inside that one app's own `runtime.js` process and dispatches to its own `invokeExport`, with no path to a sibling app's exports in the same container — so `--http-rpc-app` matters the moment you load more than one app. This is what `packages/agents-python`'s `Computer.connect()` is built on; see [`docs/agents-python-reference.md`](./agents-python-reference.md) for the Python side.
+
 ## State file
 
 `~/.berth/os/<name>.json` follows the same pattern as `@berth/cli`'s `~/.berth/fleets/<fleet>.json` (fleet-state.ts) and `~/.berth/snapshots/`: a small local record keyed by name, living under `~/.berth/`. It's global rather than project-local, since an agent script calling `Computer.connect()` might run from any directory, not just the one `berth os up` was invoked from.
@@ -94,6 +99,14 @@ This is the natural pairing for a long-lived server process. [`examples/agents/a
 ```
 
 `network` is an optional field (`OsStateFile["network"]?: string` in `os-state.ts`) — when `--network` wasn't given, it's `undefined` on the object passed to `JSON.stringify()`, which drops the key entirely rather than emitting `"network": null`. It only appears in the file at all when an instance actually joined a Docker network.
+
+`httpRpc` is the same kind of optional field, present only when started with `--http-rpc`:
+
+```json
+"httpRpc": { "url": "http://127.0.0.1:54321", "token": "a64-char-hex-string", "app": "filesystem" }
+```
+
+`app` itself is omitted for a single-app instance (there's no sibling to disambiguate, same convention `BERTH_HTTP_RPC_APP` uses). Nothing in this file is schema-validated on read — `JSON.parse(raw) as OsStateFile` is an unchecked cast — so an older state file without `httpRpc` just has it come back `undefined`, not an error.
 
 ## Scope
 
