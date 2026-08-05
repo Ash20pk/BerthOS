@@ -59,6 +59,7 @@
     "@opentelemetry/api": "^1.9.1",
     "dockerode": "^5.0.1",
     "openai": "^7.2.0",
+    "yaml": "^2.7.0",
     "zod": "^4.4.3",
     "zod-to-json-schema": "^3.24.1"
   },

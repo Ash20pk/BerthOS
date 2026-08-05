@@ -626,6 +626,64 @@ Three routes, both functions:
 
 **What this doesn't do:** only `type: "text"` message parts are understood — an incoming image/file part, or a prior turn's own tool-call/tool-result parts, are dropped when reconstructing history for `/chat`, not rejected. No `tool-input-*`/`tool-output-*` stream chunks are emitted — a tool call happening mid-run is invisible to the client beyond a pause in text, not surfaced as its own UI event (the AI SDK protocol supports this; wiring it up needs correlating `StepTracer`-shaped events, out of scope for this pass). A `system`-role `UIMessage` is dropped, not folded into the `Agent`'s own `systemPrompt` — that's set once at construction, not per-request. Python has no equivalent yet: `Agent.run()` itself is fully portable, but a Node-`http`-shaped primitive doesn't map onto Python's own web-framework conventions (ASGI/WSGI) the way `guardrails.py`/`session.py` mapped directly onto `agent.py` — named here rather than silently ported as something it isn't.
 
+## Declarative agent/crew config: YAML instead of code
+
+`berth.yml` describes resident apps, not agents or crews — CrewAI's own `agents.yaml`/`tasks.yaml` and ADK's declarative config were the real thing missing (gap #23). `createAgentFromYaml()`/`createCrewFromYaml()` (`packages/agents/src/declarative.ts`) map a YAML file directly onto `createAgent()`'s existing options — no new runtime concept, just a data format for the common case that doesn't need code:
+
+```yaml
+# research-assistant.yml
+name: research-assistant
+systemPrompt: "You are a helpful research assistant."
+apps:
+  - apps/filesystem
+  - apps/browser-native
+llm:
+  provider: anthropic
+  apiKey: ${ANTHROPIC_API_KEY}   # resolved from the environment, never a literal secret in the file
+maxTurns: 15
+checkpoint: semantic-fs
+trace: full
+```
+
+```ts
+import { createAgentFromYaml } from "@berth/agents";
+
+const { agent, computer } = await createAgentFromYaml("research-assistant.yml");
+await agent.run("summarize the open PRs and write the summary to a file");
+await computer.stop();
+```
+
+Or skip the code entirely: `berth agent run research-assistant.yml "summarize the open PRs"`.
+
+A crew composition works the same way, with named inline agent configs instead of one:
+
+```yaml
+# writing-crew.yml
+name: writing-crew
+kind: sequential   # sequential | parallel | withManager
+agents:
+  - name: drafter
+    apps: apps/filesystem
+    systemPrompt: "Draft the release notes."
+  - name: reviewer
+    apps: apps/filesystem
+    systemPrompt: "Review and tighten the draft."
+```
+
+```ts
+import { createCrewFromYaml } from "@berth/agents";
+
+const { crew, computers } = await createCrewFromYaml("writing-crew.yml"); // one real Computer per named agent
+await crew.run("write this sprint's release notes");
+await Promise.all(computers.map((c) => c.stop()));
+```
+
+Or, again, no code: `berth crew run writing-crew.yml "write this sprint's release notes"`. A `kind: withManager` config needs a top-level `manager:` block (same shape as one of `agents[]`, just singular) alongside `agents:` for the workers.
+
+`${ENV_VAR}` in any string field (typically `llm.apiKey`/`llm.baseURL`) resolves against `process.env` at load time — unset resolves to `undefined` (the field is simply absent, not a fabricated value), never throws. Agents in a crew config are built one at a time, not concurrently: if a later agent's `Computer` fails to boot, every earlier one gets stopped before the error propagates, so a partial failure doesn't leak containers.
+
+**What this deliberately doesn't cover:** `Crew.route`/`loopUntil`/`pipeline`/`networked` all take a real function as configuration (a router, an until-predicate, a typed pipeline step) — no scripting/expression language was added to fake that in YAML, so those three shapes stay code-only, same as `parallel`'s optional `merge` function (a YAML-declared `parallel` crew always uses the default `## <name>`-heading merge). No support for referencing another YAML file's agent from within a crew config (`agents:` entries are always inline) — composing configs across files is a real, tractable follow-up, not attempted here to keep path-resolution semantics simple for v1.
+
 ## Other scope boundaries (v1)
 
 - **Local Docker only, for `createAgent()`/`Computer.boot()` specifically.** These still always target local Docker, same as `berth dev` — no `DeployAdapter` implementation exposes anything like `invokeAppExport`'s docker-exec/attach, so a plain `Computer` still can't be backed by a remote fleet instance directly. `bootNetworkedAgent({fleet})` (above) reaches a remote fleet instance too, but via a different mechanism (an HTTP RPC bridge, not `invokeAppExport`) — this is not a general remote-`Computer` capability.
@@ -665,9 +723,10 @@ node test/computer-http-rpc-milestone.mjs      # real: Computer.boot({httpRpc}),
 node test/governance-gate-milestone.mjs        # real: a governs:true app's evaluate_action gates every other app's Tool.invoke, blocking calls that don't return {allowed: true}
 node test/mcp-client-milestone.mjs             # real: a scripted Agent consumes a real `berth mcp` MCP server's tools end to end
 node test/code-interpreter-milestone.mjs       # real: run_code executes Python/JavaScript/shell, and an undeclared outbound connection is genuinely refused
+node test/declarative-config-milestone.mjs     # real: createAgentFromYaml() parses a real YAML file and boots a real, correctly-wired Computer from it
 node test/provider-swap-milestone.mjs          # real: same Computer's tools, driven once by each built-in provider (needs ANTHROPIC_API_KEY + OPENAI_API_KEY)
 node test/crew-manager-milestone.mjs           # real: manager agent delegates across two in-process worker agents (needs ANTHROPIC_API_KEY)
 node test/crew-networked-milestone.mjs         # real: two independent networked agent-computers complete delegated tasks (needs ANTHROPIC_API_KEY)
 ```
 
-The first six need only a local Docker daemon and run in CI (`.github/workflows/agents-milestone.yml`) — though `computer-http-rpc-milestone.mjs` and `code-interpreter-milestone.mjs` both build a production-target image requiring real Landlock enforcement, so they're CI-verified only, not locally runnable on Docker Desktop for Mac/Windows (see that section's own header comment). The last three need real LLM API credentials and stay manual, local-only runs, consistent with how this repo treats anything needing external credentials.
+The first seven need only a local Docker daemon and run in CI (`.github/workflows/agents-milestone.yml`) — though `computer-http-rpc-milestone.mjs`, `code-interpreter-milestone.mjs`, and `declarative-config-milestone.mjs` all build a production-target image requiring real Landlock enforcement, so they're CI-verified only, not locally runnable on Docker Desktop for Mac/Windows (see each one's own header comment). The last three need real LLM API credentials and stay manual, local-only runs, consistent with how this repo treats anything needing external credentials.
