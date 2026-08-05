@@ -24,6 +24,8 @@ export interface LLMTurn {
   toolCalls: { id: string; name: string; input: unknown }[];
   /** True once the model has nothing further to do — no pending tool calls. */
   stop: boolean;
+  /** Token accounting for this one call, when the provider's API reports it. Absent, not zero, when a provider doesn't. */
+  usage?: { inputTokens: number; outputTokens: number };
 }
 
 /**

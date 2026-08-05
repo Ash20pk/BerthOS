@@ -81,6 +81,7 @@ export function createAnthropicProvider(options: AnthropicProviderOptions = {}):
         text: textBlocks.map((b) => b.text).join("\n") || undefined,
         toolCalls: toolUseBlocks.map((b) => ({ id: b.id, name: b.name, input: b.input })),
         stop: toolUseBlocks.length === 0,
+        usage: { inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens },
       };
     },
 
@@ -109,6 +110,7 @@ export function createAnthropicProvider(options: AnthropicProviderOptions = {}):
         text: textBlocks.map((b) => b.text).join("\n") || undefined,
         toolCalls: toolUseBlocks.map((b) => ({ id: b.id, name: b.name, input: b.input })),
         stop: toolUseBlocks.length === 0,
+        usage: { inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens },
       };
     },
   };

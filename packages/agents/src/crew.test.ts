@@ -1,10 +1,26 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Agent } from "./agent.js";
-import { Crew, type CrewCheckpoint } from "./crew.js";
+import { Crew, checkpointKeyFor, type CrewCheckpoint } from "./crew.js";
 import type { CheckpointStore } from "./checkpoint.js";
+import type { AgentStepEvent, StepTracer } from "./tracing.js";
 import type { LLMProvider, LLMTurn } from "./types.js";
 import type { NetworkedAgent } from "./network.js";
+
+function memoryStepTracer(): StepTracer & { events: AgentStepEvent[] } {
+  const events: AgentStepEvent[] = [];
+  return {
+    events,
+    async emit(event) {
+      events.push(event);
+    },
+  };
+}
+
+/** An Agent wired to a shared tracer — for asserting every step of a Crew composition traces under one correlated runId. */
+function tracedAgent(name: string, text: string, tracer: StepTracer): Agent {
+  return new Agent({ name, llm: { name: "fake", async chat() { return { text, toolCalls: [], stop: true }; } }, tools: [], trace: tracer });
+}
 
 /** A plain in-memory CheckpointStore — Crew doesn't care about the backend, so tests don't need a fakeComputer/Semantic FS round-trip. */
 function inMemoryCheckpointStore<T extends { runId: string }>(): CheckpointStore<T> {
@@ -333,7 +349,7 @@ test("Crew.sequential resumes from a checkpoint instead of re-running completed 
   const firstCalls = { count: 0 };
   const secondCalls = { count: 0 };
   const agents = [countingAgent("a", "a-out", firstCalls), countingAgent("b", "b-out", secondCalls)];
-  await store.save({ runId: "seq-1", kind: "sequential", status: "running", completedSteps: 1, state: "a-out" });
+  await store.save({ runId: checkpointKeyFor("seq-1"), kind: "sequential", status: "running", completedSteps: 1, state: "a-out" });
 
   const crew = Crew.sequential(agents, { checkpoint: store, runId: "seq-1" });
   const result = await crew.run("original input");
@@ -346,7 +362,7 @@ test("Crew.sequential resumes from a checkpoint instead of re-running completed 
 test("Crew.sequential returns the saved result immediately when the checkpoint is already done, without running any agent", async () => {
   const store = inMemoryCheckpointStore<CrewCheckpoint<string>>();
   const calls = { count: 0 };
-  await store.save({ runId: "seq-done", kind: "sequential", status: "done", completedSteps: 1, state: "final" });
+  await store.save({ runId: checkpointKeyFor("seq-done"), kind: "sequential", status: "done", completedSteps: 1, state: "final" });
 
   const crew = Crew.sequential([countingAgent("a", "a-out", calls)], { checkpoint: store, runId: "seq-done" });
   const result = await crew.run("ignored");
@@ -362,7 +378,7 @@ test('Crew.sequential saves a checkpoint after each step, ending in status "done
 
   await crew.run("start");
 
-  const loaded = await store.load("seq-2");
+  const loaded = await store.load(checkpointKeyFor("seq-2"));
   assert.equal(loaded?.status, "done");
   assert.equal(loaded?.completedSteps, 2);
   assert.equal(loaded?.state, "b-out");
@@ -372,7 +388,7 @@ test("Crew.pipeline resumes from a checkpoint, skipping already-completed steps"
   type State = { a?: string; b?: string };
   const store = inMemoryCheckpointStore<CrewCheckpoint<State>>();
   let secondStepCalls = 0;
-  await store.save({ runId: "pipe-1", kind: "pipeline", status: "running", completedSteps: 1, state: { a: "first" } });
+  await store.save({ runId: checkpointKeyFor("pipe-1"), kind: "pipeline", status: "running", completedSteps: 1, state: { a: "first" } });
 
   const crew = Crew.pipeline<State>(
     [
@@ -396,7 +412,7 @@ test("Crew.pipeline resumes from a checkpoint, skipping already-completed steps"
 test("Crew.loopUntil resumes from the saved iteration count, not from zero", async () => {
   const store = inMemoryCheckpointStore<CrewCheckpoint<string>>();
   let calls = 0;
-  await store.save({ runId: "loop-1", kind: "loopUntil", status: "running", completedSteps: 2, state: "iter-2" });
+  await store.save({ runId: checkpointKeyFor("loop-1"), kind: "loopUntil", status: "running", completedSteps: 2, state: "iter-2" });
 
   const agent = new Agent({
     name: "looper",
@@ -422,4 +438,92 @@ test("Crew.loopUntil resumes from the saved iteration count, not from zero", asy
 
   assert.equal(calls, 1, "must resume at iteration 2, not restart from 0");
   assert.equal(result, "iter-3");
+});
+
+test("Crew.sequential threads runId into every agent's run(), correlating all their trace events", async () => {
+  const tracer = memoryStepTracer();
+  const agents = [tracedAgent("a", "a-out", tracer), tracedAgent("b", "b-out", tracer)];
+
+  await Crew.sequential(agents, { runId: "corr-1" }).run("start");
+
+  assert.deepEqual(tracer.events.map((e) => e.agentName), ["a", "b"]);
+  assert.ok(tracer.events.every((e) => e.runId === "corr-1"));
+});
+
+test("Crew.parallel threads runId into every agent's run(), correlating all their trace events", async () => {
+  const tracer = memoryStepTracer();
+  const agents = [tracedAgent("a", "a-out", tracer), tracedAgent("b", "b-out", tracer)];
+
+  await Crew.parallel(agents, { runId: "corr-2" }).run("start");
+
+  assert.equal(tracer.events.length, 2);
+  assert.ok(tracer.events.every((e) => e.runId === "corr-2"));
+});
+
+test("Crew.loopUntil threads runId into every iteration's run()", async () => {
+  const tracer = memoryStepTracer();
+  const agent = tracedAgent("looper", "again", tracer);
+  let iterations = 0;
+
+  await Crew.loopUntil({
+    agent,
+    until: () => (iterations++, iterations >= 2),
+    runId: "corr-3",
+  }).run("start");
+
+  assert.equal(tracer.events.length, 2);
+  assert.ok(tracer.events.every((e) => e.runId === "corr-3"));
+});
+
+test("Crew.route threads runId into both the router's classification call and the chosen branch", async () => {
+  const tracer = memoryStepTracer();
+  const router = tracedAgent("router", "billing", tracer);
+  const billing = tracedAgent("billing-agent", "handled", tracer);
+
+  await Crew.route({ router, routes: { billing }, runId: "corr-4" }).run("where's my refund?");
+
+  assert.deepEqual(tracer.events.map((e) => e.agentName), ["router", "billing-agent"]);
+  assert.ok(tracer.events.every((e) => e.runId === "corr-4"));
+});
+
+test("Crew.withManager threads runId into the manager's own run(), not into a delegated worker's", async () => {
+  const managerTracer = memoryStepTracer();
+  const workerTracer = memoryStepTracer();
+  const worker = tracedAgent("writer", "draft", workerTracer);
+  const manager = new Agent({
+    name: "manager",
+    llm: {
+      name: "fake",
+      async chat(params) {
+        if (params.messages.some((m) => m.toolResult)) {
+          return { text: "done", toolCalls: [], stop: true };
+        }
+        return { toolCalls: [{ id: "1", name: "writer", input: { task: "write it" } }], stop: false };
+      },
+    },
+    tools: [],
+    trace: managerTracer,
+  });
+
+  await Crew.withManager({ manager, workers: [worker], runId: "corr-5" }).run("please write something");
+
+  assert.ok(managerTracer.events.every((e) => e.runId === "corr-5"), "manager's own turns correlate under runId");
+  assert.equal(workerTracer.events.length, 0, "a delegated worker's own run() gets no runId, so it never traces");
+});
+
+test("Crew.pipeline passes runId as each step function's second argument", async () => {
+  const seen: (string | undefined)[] = [];
+  const crew = Crew.pipeline<{ x: number }>(
+    [
+      (_state, runId) => {
+        seen.push(runId);
+        return {};
+      },
+    ],
+    { runId: "corr-6" },
+  );
+
+  await crew.run({ x: 1 });
+
+  assert.deepEqual(seen, ["corr-6"]);
 });
