@@ -1,6 +1,8 @@
-import { Agent } from "./agent.js";
+import type { z } from "zod";
+import { Agent, type StructuredOutputRunOptions } from "./agent.js";
 import type { NetworkedAgent } from "./network.js";
 import type { CheckpointStore } from "./checkpoint.js";
+import { parseStructuredOutput, structuredOutputRepairPrompt, StructuredOutputError } from "./structured-output.js";
 
 export interface CrewRun {
   run(input: string): Promise<string>;
@@ -70,6 +72,44 @@ async function saveCrewCheckpoint<S>(
 }
 
 /**
+ * The Crew-level counterpart to Agent's own responseSchema repair loop
+ * (agent.ts's loop()) — reuses the exact same parseStructuredOutput()/
+ * structuredOutputRepairPrompt()/StructuredOutputError this package already
+ * has for a single Agent's final answer, just re-running `repairAgent`
+ * (whichever Agent actually produced the composition's final text) instead
+ * of looping inside one Agent's own turn budget. Only wired into the Crew
+ * shapes where "which Agent produced the final text" is unambiguous —
+ * sequential's last agent, route's chosen branch — not parallel/withManager/
+ * networked, where it's either ambiguous (which of N agents?) or already
+ * covered by the manager's own responseSchema.
+ */
+async function repairStructuredOutput<T>(
+  repairAgent: Agent,
+  text: string,
+  schema: z.ZodType<T>,
+  maxRepairAttempts: number,
+  runId: string | undefined,
+  callerName: string,
+): Promise<string> {
+  let current = text;
+  let parsed = parseStructuredOutput(current, schema);
+  let attempts = 0;
+  while (!parsed.success && attempts < maxRepairAttempts) {
+    const repaired = await repairAgent.run(structuredOutputRepairPrompt(parsed.error), { runId });
+    current = repaired.text;
+    parsed = parseStructuredOutput(current, schema);
+    attempts++;
+  }
+  if (!parsed.success) {
+    throw new StructuredOutputError(
+      `${callerName} failed to produce output matching responseSchema after ${maxRepairAttempts} repair attempt(s): ${parsed.error}`,
+      current,
+    );
+  }
+  return current;
+}
+
+/**
  * Multi-agent composition — both patterns here are just wiring over Agent,
  * not a new execution primitive: Agent's tool-use loop is identical whether
  * its tools are resident-app exports or other agents.
@@ -83,7 +123,10 @@ export const Crew = {
    * replaying the whole chain, closing the "Crew-level composition state
    * isn't checkpointed" gap for this shape specifically.
    */
-  sequential(agents: Agent[], options: CrewCheckpointOptions<string> = {}): CrewRun {
+  sequential<T = never>(
+    agents: Agent[],
+    options: CrewCheckpointOptions<string> & Partial<StructuredOutputRunOptions<T>> = {},
+  ): CrewRun {
     return {
       async run(input: string): Promise<string> {
         const prior = await loadCrewCheckpoint(options);
@@ -93,13 +136,36 @@ export const Crew = {
         for (let i = startIndex; i < agents.length; i++) {
           const result = await agents[i]!.run(current, { runId: options.runId });
           current = result.text;
+          const isLastStep = i === agents.length - 1;
+          // The final step's checkpoint isn't saved as "done" until after
+          // the optional repair pass below — a resumed run that crashed
+          // mid-repair should re-attempt repair, not treat the unrepaired
+          // text as already finished.
           await saveCrewCheckpoint(options, {
             kind: "sequential",
-            status: i === agents.length - 1 ? "done" : "running",
+            status: isLastStep && !options.responseSchema ? "done" : "running",
             completedSteps: i + 1,
             state: current,
           });
         }
+
+        if (options.responseSchema && agents.length > 0) {
+          current = await repairStructuredOutput(
+            agents[agents.length - 1]!,
+            current,
+            options.responseSchema,
+            options.maxRepairAttempts ?? 2,
+            options.runId,
+            "Crew.sequential",
+          );
+          await saveCrewCheckpoint(options, {
+            kind: "sequential",
+            status: "done",
+            completedSteps: agents.length,
+            state: current,
+          });
+        }
+
         return current;
       },
     };
@@ -224,7 +290,14 @@ export const Crew = {
    * framework entirely. Falls back to `fallback` (or throws, naming what the
    * router actually said) when its answer doesn't match any route.
    */
-  route(options: { router: Agent; routes: Record<string, Agent>; fallback?: Agent; runId?: string }): CrewRun {
+  route<T = never>(
+    options: {
+      router: Agent;
+      routes: Record<string, Agent>;
+      fallback?: Agent;
+      runId?: string;
+    } & Partial<StructuredOutputRunOptions<T>>,
+  ): CrewRun {
     return {
       async run(input: string): Promise<string> {
         const labels = Object.keys(options.routes);
@@ -241,7 +314,18 @@ export const Crew = {
             `Crew.route: router "${options.router.name}" returned "${answer}", which matches none of [${labels.join(", ")}] and no fallback was given`,
           );
         }
-        return (await target.run(input, { runId: options.runId })).text;
+        let result = (await target.run(input, { runId: options.runId })).text;
+        if (options.responseSchema) {
+          result = await repairStructuredOutput(
+            target,
+            result,
+            options.responseSchema,
+            options.maxRepairAttempts ?? 2,
+            options.runId,
+            "Crew.route",
+          );
+        }
+        return result;
       },
     };
   },

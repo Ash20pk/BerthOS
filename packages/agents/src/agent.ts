@@ -4,7 +4,12 @@ import { resolveLLMProvider, type LLMProviderConfig } from "./providers/auto.js"
 import { createSemanticFsCheckpointStore, type CheckpointedRun, type CheckpointStore } from "./checkpoint.js";
 import { createAgentTracer, type StepTracer } from "./tracing.js";
 import { applyHumanApprovalGate, type HumanApprovalGateOptions } from "./approval.js";
-import { parseStructuredOutput, structuredOutputRepairPrompt, StructuredOutputError } from "./structured-output.js";
+import {
+  parseStructuredOutput,
+  structuredOutputRepairPrompt,
+  StructuredOutputError,
+  formatToolInputError,
+} from "./structured-output.js";
 import { createSemanticFsRetriever, type Retriever } from "./retrieval.js";
 import type { AgentMessage, LLMProvider, Tool } from "./types.js";
 
@@ -203,7 +208,11 @@ export class Agent {
             // of the whole loop — the model gets a chance to retry with
             // different input, try another tool, or surface the failure
             // itself, rather than one bad call silently killing the run.
-            error = err instanceof Error ? err.message : String(err);
+            // formatToolInputError() reformats a Zod input-validation
+            // failure's default JSON-array message into the same compact
+            // per-field shape responseSchema repair prompts already use —
+            // any other error message passes through unchanged.
+            error = formatToolInputError(err instanceof Error ? err.message : String(err));
             result = { error };
           }
         }

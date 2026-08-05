@@ -1,7 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { z } from "zod";
-import { parseStructuredOutput, structuredOutputRepairPrompt, StructuredOutputError } from "./structured-output.js";
+import {
+  parseStructuredOutput,
+  structuredOutputRepairPrompt,
+  StructuredOutputError,
+  formatToolInputError,
+} from "./structured-output.js";
 
 const schema = z.object({ name: z.string(), age: z.number() });
 
@@ -39,4 +44,33 @@ test("StructuredOutputError carries the model's last raw (invalid) text", () => 
   assert.equal(err.rawText, "not json");
   assert.equal(err.name, "StructuredOutputError");
   assert.ok(err instanceof Error);
+});
+
+test("formatToolInputError() reformats a real ZodError's default JSON-array message into the compact path: message shape", () => {
+  const toolInputSchema = z.object({ path: z.string(), content: z.string() });
+  let rawMessage = "";
+  try {
+    toolInputSchema.parse({ path: 123 });
+  } catch (err) {
+    rawMessage = err instanceof Error ? err.message : String(err);
+  }
+
+  const formatted = formatToolInputError(rawMessage);
+
+  assert.match(formatted, /^path:/, "reformatted into the same leading `path:` shape parseStructuredOutput() produces");
+  assert.match(formatted, /content:/, "both failing fields must survive, not just the first");
+  assert.ok(!formatted.trimStart().startsWith("["), "must no longer look like the raw JSON array");
+});
+
+test("formatToolInputError() passes a plain, non-Zod error message through unchanged", () => {
+  assert.equal(formatToolInputError("connection refused"), "connection refused");
+});
+
+test("formatToolInputError() passes non-JSON text through unchanged", () => {
+  assert.equal(formatToolInputError("no such tool \"bogus\""), 'no such tool "bogus"');
+});
+
+test("formatToolInputError() passes valid-JSON-but-not-Zod-issues-shaped text through unchanged", () => {
+  assert.equal(formatToolInputError('{"code": "ENOENT"}'), '{"code": "ENOENT"}');
+  assert.equal(formatToolInputError("[1, 2, 3]"), "[1, 2, 3]", "a JSON array that isn't issue-shaped must not be mistaken for one");
 });
