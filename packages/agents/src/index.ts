@@ -78,6 +78,13 @@ export {
 } from "./guardrails.js";
 export { createInMemorySession, createSemanticFsSession, type Session } from "./session.js";
 export {
+  createAgentRequestHandler,
+  serveAgent,
+  type AgentRequestHandlerOptions,
+  type ServeAgentOptions,
+  type AgentServerHandle,
+} from "./server.js";
+export {
   generateAgentServerApp,
   bootNetworkedAgent,
   type AgentServerLLMConfig,
