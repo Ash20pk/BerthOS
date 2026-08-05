@@ -42,6 +42,7 @@ export {
   createContextBusStepTracer,
   createSemanticFsStepTracer,
   readAgentTrace,
+  listAgentTraces,
   type StepTracer,
   type AgentStepEvent,
 } from "./tracing.js";

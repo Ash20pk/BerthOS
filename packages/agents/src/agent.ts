@@ -153,7 +153,7 @@ export class Agent {
         });
         throw err;
       }
-      await trace({ turn: turnCount, kind: "llm-turn", durationMs: Date.now() - turnStart });
+      await trace({ turn: turnCount, kind: "llm-turn", durationMs: Date.now() - turnStart, usage: turn.usage });
 
       if (turn.toolCalls.length === 0) {
         const text = turn.text ?? "";

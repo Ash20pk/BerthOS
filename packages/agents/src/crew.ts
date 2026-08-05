@@ -28,12 +28,37 @@ export interface CrewCheckpoint<S = unknown> {
 
 interface CrewCheckpointOptions<S> {
   checkpoint?: CheckpointStore<CrewCheckpoint<S>>;
+  /**
+   * Also passed straight through to every step's Agent.run(current, {runId})
+   * call — see the module-level comment on RUN_ID_TRACE below for why
+   * checkpointing and trace correlation share this one option instead of
+   * two, and how a collision between them is avoided.
+   */
   runId?: string;
+}
+
+/**
+ * Crew's own checkpoint is stored under a key namespaced away from the bare
+ * `runId` — `runId` itself is also handed to every step's Agent.run() call
+ * unchanged, purely for trace correlation (so every step's AgentStepEvents
+ * share one runId). If Crew's checkpoint used that same bare runId as its
+ * storage key, and a step's own Agent *also* happened to have its own
+ * `checkpoint` store pointed at the same backend, both checkpoints would
+ * collide on the same CheckpointStore path and corrupt each other. Namespacing
+ * Crew's own key avoids that without asking the caller to juggle two ids.
+ */
+// Exported (but deliberately not re-exported from index.ts — this is an
+// implementation detail of Crew's own storage key, not part of the public
+// checkpointing API) so tests can seed/inspect a checkpoint under the exact
+// key Crew itself reads and writes, without hardcoding the "crew__" prefix
+// in two places.
+export function checkpointKeyFor(runId: string): string {
+  return `crew__${runId}`;
 }
 
 async function loadCrewCheckpoint<S>(options: CrewCheckpointOptions<S>): Promise<CrewCheckpoint<S> | null> {
   if (!options.checkpoint || !options.runId) return null;
-  return options.checkpoint.load(options.runId);
+  return options.checkpoint.load(checkpointKeyFor(options.runId));
 }
 
 async function saveCrewCheckpoint<S>(
@@ -41,7 +66,7 @@ async function saveCrewCheckpoint<S>(
   fields: Omit<CrewCheckpoint<S>, "runId">,
 ): Promise<void> {
   if (!options.checkpoint || !options.runId) return;
-  await options.checkpoint.save({ runId: options.runId, ...fields });
+  await options.checkpoint.save({ runId: checkpointKeyFor(options.runId), ...fields });
 }
 
 /**
@@ -66,7 +91,7 @@ export const Crew = {
         const startIndex = prior?.completedSteps ?? 0;
         let current = prior ? prior.state : input;
         for (let i = startIndex; i < agents.length; i++) {
-          const result = await agents[i]!.run(current);
+          const result = await agents[i]!.run(current, { runId: options.runId });
           current = result.text;
           await saveCrewCheckpoint(options, {
             kind: "sequential",
@@ -85,7 +110,7 @@ export const Crew = {
    * own LLM decides when/whether to delegate — the "agent-as-tool" pattern,
    * reusing the exact same Tool dispatch path a resident-app export uses.
    */
-  withManager(options: { manager: Agent; workers: Agent[] }): CrewRun {
+  withManager(options: { manager: Agent; workers: Agent[]; runId?: string }): CrewRun {
     const workerTools = options.workers.map((worker) =>
       worker.asTool(`Delegate a task to the "${worker.name}" agent, then return what it reports back.`),
     );
@@ -93,7 +118,12 @@ export const Crew = {
 
     return {
       async run(input: string): Promise<string> {
-        const result = await manager.run(input);
+        // Correlates only the manager's own turns/tool-calls under runId — a
+        // delegated worker.asTool() call runs that worker via a plain
+        // this.run(task) with no runId of its own (asTool()'s Tool shape
+        // doesn't carry one through), so a worker's internal turns don't
+        // join this trace even when the worker Agent has its own tracer.
+        const result = await manager.run(input, { runId: options.runId });
         return result.text;
       },
     };
@@ -105,12 +135,15 @@ export const Crew = {
    * in-process Agent objects — each free to run its own LLM/model/tool set
    * inside its own sandbox, joined to a shared Docker network.
    */
-  networked(options: { manager: Agent; peers: NetworkedAgent[] }): CrewRun {
+  networked(options: { manager: Agent; peers: NetworkedAgent[]; runId?: string }): CrewRun {
     const manager = options.manager.withTools(options.peers.map((peer) => peer.tool));
 
     return {
       async run(input: string): Promise<string> {
-        const result = await manager.run(input);
+        // Same boundary as withManager(): only the manager's own turns
+        // correlate under runId — a peer's own sandbox/Computer has no way
+        // to receive it through the tool-call wire.
+        const result = await manager.run(input, { runId: options.runId });
         return result.text;
       },
     };
@@ -126,13 +159,16 @@ export const Crew = {
    */
   parallel(
     agents: Agent[],
-    options: { merge?: (results: { name: string; text: string }[]) => string } = {},
+    options: { merge?: (results: { name: string; text: string }[]) => string; runId?: string } = {},
   ): CrewRun {
     const merge = options.merge ?? defaultParallelMerge;
     return {
       async run(input: string): Promise<string> {
         const results = await Promise.all(
-          agents.map(async (agent) => ({ name: agent.name, text: (await agent.run(input)).text })),
+          agents.map(async (agent) => ({
+            name: agent.name,
+            text: (await agent.run(input, { runId: options.runId })).text,
+          })),
         );
         return merge(results);
       },
@@ -162,7 +198,7 @@ export const Crew = {
         const startIteration = prior?.completedSteps ?? 0;
         let current = prior ? prior.state : input;
         for (let iteration = startIteration; iteration < maxIterations; iteration++) {
-          const result = await options.agent.run(current);
+          const result = await options.agent.run(current, { runId: options.runId });
           current = result.text;
           const finished = options.until(current, iteration);
           await saveCrewCheckpoint(options, {
@@ -188,13 +224,14 @@ export const Crew = {
    * framework entirely. Falls back to `fallback` (or throws, naming what the
    * router actually said) when its answer doesn't match any route.
    */
-  route(options: { router: Agent; routes: Record<string, Agent>; fallback?: Agent }): CrewRun {
+  route(options: { router: Agent; routes: Record<string, Agent>; fallback?: Agent; runId?: string }): CrewRun {
     return {
       async run(input: string): Promise<string> {
         const labels = Object.keys(options.routes);
         const classification = await options.router.run(
           `Classify the input below into exactly one of these labels: ${labels.join(", ")}.\n` +
             `Respond with only the label, nothing else.\n\nInput:\n${input}`,
+          { runId: options.runId },
         );
         const answer = classification.text.trim();
         const label = labels.find((candidate) => candidate.toLowerCase() === answer.toLowerCase());
@@ -204,7 +241,7 @@ export const Crew = {
             `Crew.route: router "${options.router.name}" returned "${answer}", which matches none of [${labels.join(", ")}] and no fallback was given`,
           );
         }
-        return (await target.run(input)).text;
+        return (await target.run(input, { runId: options.runId })).text;
       },
     };
   },
@@ -217,9 +254,13 @@ export const Crew = {
    * needs with Agents/tools, and returns a partial update merged shallowly
    * into that state for the next step. Not a graph: steps still run in the
    * fixed order given, same "wiring over Agent" stance as the rest of Crew.
+   * Unlike the other shapes, `pipeline` can't thread `runId` into an Agent's
+   * `run()` call itself — it doesn't call any Agent directly, a step's own
+   * function body does — so it's passed as that function's second argument
+   * instead, for a step that wants its own Agent call to correlate under it.
    */
   pipeline<S extends object>(
-    steps: Array<(state: S) => Promise<Partial<S>> | Partial<S>>,
+    steps: Array<(state: S, runId?: string) => Promise<Partial<S>> | Partial<S>>,
     options: CrewCheckpointOptions<S> = {},
   ): CrewStateRun<S> {
     return {
@@ -229,7 +270,7 @@ export const Crew = {
         const startIndex = prior?.completedSteps ?? 0;
         let state = prior ? prior.state : initialState;
         for (let i = startIndex; i < steps.length; i++) {
-          const update = await steps[i]!(state);
+          const update = await steps[i]!(state, options.runId);
           state = { ...state, ...update };
           await saveCrewCheckpoint(options, {
             kind: "pipeline",

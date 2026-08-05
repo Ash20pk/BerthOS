@@ -352,7 +352,7 @@ Built-in assertions cover the two things easy to check exactly (`containsText(su
 
 ## Tracing a run: `agent.step` events, not a LangSmith-style tracer
 
-There's no structured logging of reasoning steps out of the box — no token/cost accounting, no trace IDs, no replay UI comparable to LangSmith. Same non-goal as checkpointing above: no new tracing daemon, no dedicated subsystem. Instead, `StepTracer` (`packages/agents/src/tracing.ts`) is another narrow seam `Agent.run()`/`Agent.resume()` write through, this time for one `AgentStepEvent` (`{runId, agentName, turn, kind: "llm-turn"|"tool-call", toolName?, durationMs, error?}`) per LLM turn and per tool call:
+There's no structured logging of reasoning steps out of the box — no dedicated tracing daemon, no replay UI comparable to LangSmith. Instead, `StepTracer` (`packages/agents/src/tracing.ts`) is a narrow seam `Agent.run()`/`Agent.resume()` write through, for one `AgentStepEvent` (`{runId, agentName, turn, kind: "llm-turn"|"tool-call", toolName?, durationMs, error?, usage?}`) per LLM turn and per tool call:
 
 ```ts
 const { agent, computer } = await createAgent({ apps: "apps/filesystem", trace: "full" });
@@ -369,7 +369,32 @@ Both `createContextBusStepTracer()`/`createSemanticFsStepTracer()` throw immedia
 
 Like checkpointing, tracing only activates with a `runId` — `trace` configured but no `runId` passed to `run()`/`resume()` means zero events, not an error. An LLM call that throws still emits an `llm-turn` step (duration + error) before the error propagates out of `run()` exactly as before — tracing observes failures, it doesn't swallow them.
 
-**What this does and doesn't fix:** no token/cost accounting — no `LLMProvider` in this package surfaces usage numbers today, so `AgentStepEvent` doesn't carry a `tokens` field; adding one only when a provider actually reports something is future work, not a placeholder here. No trace-ID correlation across a `Crew` — each `Agent` traces its own `runId` independently, same Agent-level-only scope checkpointing has for crew composition state. No query/browse-all-traces UI — `readAgentTrace()` needs a known `runId`; there's no "list every trace ever recorded" primitive (Semantic FS's `query_context` is fuzzy text search, not an exact tag filter).
+### Token accounting
+
+`llm-turn` steps carry `usage: {inputTokens, outputTokens}` whenever the `LLMProvider` reports it on `LLMTurn.usage` — both built-in providers do, for `chat()` and `chatStream()` alike (`createOpenAIProvider()`'s streaming path needs `stream_options: {include_usage: true}` for this, which it now always sets). A custom `LLMProvider` that doesn't populate `usage` just leaves the field absent, not zero — no fabricated numbers.
+
+### Correlating a `Crew` composition's traces
+
+An `Agent`'s own `runId` only ever covered that one Agent. `Crew.sequential`/`parallel`/`loopUntil`/`route`/`withManager`/`networked` now accept a `runId` too, threaded into each step's `Agent.run(current, {runId})` call so every step's `AgentStepEvent`s share it — one `readAgentTrace(computer, runId)` call replays the whole composition's turns and tool-calls in order, not just one Agent's:
+
+```ts
+const tracedCrew = Crew.sequential([draftAgent, reviewAgent], { runId: "release-7" });
+await tracedCrew.run("write the release notes");
+const trace = await readAgentTrace(computer, "release-7"); // draftAgent's steps, then reviewAgent's, in order
+```
+
+`Crew.pipeline` can't do this automatically — it never calls an Agent itself, a step's own function body does — so it passes `runId` as that function's second argument instead: `(state, runId) => ...`. `withManager`/`networked` correlate only the manager's own turns: a delegated `worker.asTool()` call runs the worker via a plain `run(task)` with no `runId` of its own, since `asTool()`'s fixed `{task} -> text` shape has nowhere to carry one through — a worker's internal turns don't join the trace even when that worker Agent has its own tracer configured.
+
+### Listing traces without a known `runId`
+
+`readAgentTrace()` always needed a `runId` up front. `listAgentTraces(computer, {limit?})` doesn't: every trace file `createSemanticFsStepTracer()` writes is tagged with a fixed marker in `relatedApps`, so one `query_context` call (the same generic Semantic FS search every other primitive here already reaches through — no new index) finds all of them, newest first:
+
+```ts
+const recent = await listAgentTraces(computer, { limit: 10 }); // [{runId, updatedAt}, ...], newest first
+for (const { runId } of recent) console.log(runId, await readAgentTrace(computer, runId));
+```
+
+**What this does and doesn't fix:** usage accounting is per-turn only — nothing sums a whole run's or a whole `Crew`'s total cost, and there's still no dollar-cost conversion (providers report tokens, not price). Cross-`Crew` correlation is turn/tool-call-level for the manager/router and every directly-invoked step Agent, not for delegated `withManager`/`networked` workers (see above). `listAgentTraces()` lists cheaply (metadata only, no content fetch) but still requires `createSemanticFsStepTracer()`/`createAgentTracer()` to have been the tracer in use — a Context-Bus-only trace was never durable to begin with, so there's nothing to list.
 
 ## Networked Crew: agents as peers on a real LAN
 

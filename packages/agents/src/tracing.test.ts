@@ -7,6 +7,7 @@ import {
   createContextBusStepTracer,
   createSemanticFsStepTracer,
   readAgentTrace,
+  listAgentTraces,
   type AgentStepEvent,
 } from "./tracing.js";
 
@@ -28,6 +29,41 @@ function fakeComputer(tools: Tool[]): ComputerHandle {
 
 function sampleEvent(overrides: Partial<AgentStepEvent> = {}): AgentStepEvent {
   return { runId: "run-1", agentName: "agent", turn: 0, kind: "llm-turn", durationMs: 12, ...overrides };
+}
+
+/**
+ * A minimal in-memory stand-in for Semantic FS's write/read/tag/query
+ * quartet — enough to exercise listAgentTraces()' actual query_context call
+ * (matching on relatedApps, the way the real keyword-overlap ranking would
+ * for an exact marker string) without needing the real daemon.
+ */
+function fakeSemanticFs(): Tool[] {
+  const files = new Map<string, string>();
+  const tags = new Map<string, { task?: string; relatedApps?: string[]; updatedAt: number }>();
+  let clock = 0;
+  return [
+    fakeTool("write_context_file", async (input) => {
+      const { path, content } = input as { path: string; content: string };
+      files.set(path, content);
+    }),
+    fakeTool("read_context_file", async (input) => {
+      const { path } = input as { path: string };
+      if (!files.has(path)) throw new Error("ENOENT");
+      return { content: files.get(path) };
+    }),
+    fakeTool("tag_context_file", async (input) => {
+      const { path, task, relatedApps } = input as { path: string; task?: string; relatedApps?: string[] };
+      clock++;
+      tags.set(path, { task, relatedApps, updatedAt: clock });
+    }),
+    fakeTool("query_context", async (input) => {
+      const { text } = input as { text: string };
+      const results = [...tags.entries()]
+        .filter(([, meta]) => meta.task === text || meta.relatedApps?.includes(text))
+        .map(([path, meta]) => ({ path, task: meta.task, relatedApps: meta.relatedApps, updatedAt: meta.updatedAt }));
+      return { results };
+    }),
+  ];
 }
 
 test("createContextBusStepTracer throws immediately when the Computer has no publish_context_event tool", () => {
@@ -132,4 +168,37 @@ test("createAgentTracer throws immediately if any of the four required tools is 
   ]);
 
   assert.throws(() => createAgentTracer(computer), /publish_context_event/);
+});
+
+test("listAgentTraces() returns [] when nothing has ever been traced", async () => {
+  const computer = fakeComputer(fakeSemanticFs());
+  assert.deepEqual(await listAgentTraces(computer), []);
+});
+
+test("listAgentTraces() finds every traced runId without needing any of them up front, newest first", async () => {
+  const computer = fakeComputer(fakeSemanticFs());
+  const tracer = createSemanticFsStepTracer(computer);
+
+  await tracer.emit(sampleEvent({ runId: "run-older" }));
+  await tracer.emit(sampleEvent({ runId: "run-newer" }));
+
+  const traces = await listAgentTraces(computer);
+
+  assert.deepEqual(
+    traces.map((t) => t.runId),
+    ["run-newer", "run-older"],
+  );
+});
+
+test("listAgentTraces() respects limit", async () => {
+  const computer = fakeComputer(fakeSemanticFs());
+  const tracer = createSemanticFsStepTracer(computer);
+
+  await tracer.emit(sampleEvent({ runId: "run-a" }));
+  await tracer.emit(sampleEvent({ runId: "run-b" }));
+  await tracer.emit(sampleEvent({ runId: "run-c" }));
+
+  const traces = await listAgentTraces(computer, { limit: 2 });
+
+  assert.equal(traces.length, 2);
 });

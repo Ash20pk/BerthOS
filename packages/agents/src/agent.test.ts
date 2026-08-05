@@ -281,6 +281,26 @@ test("run() with a tracer + runId emits an llm-turn step and a tool-call step pe
   assert.ok(tracer.events.every((e) => e.runId === "run-a" && e.agentName === "agent"));
 });
 
+test("run() forwards LLMTurn.usage onto the llm-turn step, when the provider reports it", async () => {
+  const { llm } = scriptedLLM([{ text: "done", toolCalls: [], stop: true, usage: { inputTokens: 12, outputTokens: 4 } }]);
+  const tracer = memoryStepTracer();
+  const agent = new Agent({ llm, tools: [], trace: tracer });
+
+  await agent.run("do the thing", { runId: "run-usage" });
+
+  assert.deepEqual(tracer.events[0]?.usage, { inputTokens: 12, outputTokens: 4 });
+});
+
+test("run() leaves usage unset on the llm-turn step when the provider doesn't report it", async () => {
+  const { llm } = scriptedLLM([{ text: "done", toolCalls: [], stop: true }]);
+  const tracer = memoryStepTracer();
+  const agent = new Agent({ llm, tools: [], trace: tracer });
+
+  await agent.run("do the thing", { runId: "run-no-usage" });
+
+  assert.equal(tracer.events[0]?.usage, undefined);
+});
+
 test("a tool call that throws emits a tool-call step carrying the error message", async () => {
   const { llm } = scriptedLLM([
     { toolCalls: [{ id: "1", name: "flaky", input: {} }], stop: false },

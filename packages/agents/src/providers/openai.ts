@@ -90,6 +90,9 @@ export function createOpenAIProvider(options: OpenAIProviderOptions = {}): LLMPr
         text: message?.content ?? undefined,
         toolCalls,
         stop: toolCalls.length === 0,
+        usage: response.usage
+          ? { inputTokens: response.usage.prompt_tokens, outputTokens: response.usage.completion_tokens }
+          : undefined,
       };
     },
 
@@ -109,6 +112,11 @@ export function createOpenAIProvider(options: OpenAIProviderOptions = {}): LLMPr
           function: { name: t.name, description: t.description, parameters: t.inputSchema as Record<string, unknown> },
         })),
         stream: true,
+        // Without this, a streamed response never carries a usage field at
+        // all (unlike the non-streamed chat() call, where it's always
+        // present) — the one extra flag OpenAI's API needs to include it on
+        // the final chunk.
+        stream_options: { include_usage: true },
       });
 
       let text = "";
@@ -116,6 +124,7 @@ export function createOpenAIProvider(options: OpenAIProviderOptions = {}): LLMPr
       // in the response (not by id, which only shows up on the first fragment) —
       // accumulate each field until the stream ends.
       const toolCallsByIndex = new Map<number, { id?: string; name?: string; arguments: string }>();
+      let usage: LLMTurn["usage"];
 
       for await (const chunk of stream) {
         const delta = chunk.choices[0]?.delta;
@@ -130,6 +139,9 @@ export function createOpenAIProvider(options: OpenAIProviderOptions = {}): LLMPr
           if (toolCallDelta.function?.arguments) acc.arguments += toolCallDelta.function.arguments;
           toolCallsByIndex.set(toolCallDelta.index, acc);
         }
+        if (chunk.usage) {
+          usage = { inputTokens: chunk.usage.prompt_tokens, outputTokens: chunk.usage.completion_tokens };
+        }
       }
 
       const toolCalls = [...toolCallsByIndex.values()].map((acc) => ({
@@ -142,6 +154,7 @@ export function createOpenAIProvider(options: OpenAIProviderOptions = {}): LLMPr
         text: text || undefined,
         toolCalls,
         stop: toolCalls.length === 0,
+        usage,
       };
     },
   };
