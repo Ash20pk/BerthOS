@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import type { BerthManifest } from "@berth/manifest-schema";
 import type { ComputerAppSpec } from "./resolve-apps.js";
 import type { Tool } from "./types.js";
-import { applyGovernanceGate, GovernanceDeniedError } from "./governance.js";
+import { applyGovernanceGate, GovernanceDeniedError, GovernanceUnavailableError } from "./governance.js";
 
 function appSpec(name: string, opts: { governs?: boolean; exempt?: boolean; exports?: string[] } = {}): ComputerAppSpec {
   const exportNames = opts.exports ?? [`${name}_export`];
@@ -111,6 +111,74 @@ test("never gates the governor's own tools, in or out of scope", async () => {
   await gated[0]!.invoke({});
 
   assert.equal(evaluateCalls, 1, "the direct invocation itself should run, but never be re-gated through itself");
+});
+
+test("fail-closed mode throws GovernanceUnavailableError instead of letting the call through on an unreachable governor", async () => {
+  const governor = appSpec("gatekeeper", { governs: true, exports: ["evaluate_action"] });
+  const filesystem = appSpec("filesystem", { exports: ["write_file"] });
+  const allApps = [governor, filesystem];
+  const scopedApps = [filesystem];
+
+  const call = async (appName: string, exportName: string, _input: unknown) => {
+    if (appName === "gatekeeper" && exportName === "evaluate_action") throw new Error("governor unreachable");
+    return "raw-result";
+  };
+
+  const tools = [toolFor("write_file", (input) => call("filesystem", "write_file", input))];
+  const gated = applyGovernanceGate(allApps, scopedApps, tools, call, { mode: "fail-closed" });
+
+  await assert.rejects(() => gated[0]!.invoke({}), GovernanceUnavailableError);
+});
+
+test("fail-closed mode still lets an approved call through — it only changes the unreachable-governor case", async () => {
+  const governor = appSpec("gatekeeper", { governs: true, exports: ["evaluate_action"] });
+  const filesystem = appSpec("filesystem", { exports: ["write_file"] });
+  const allApps = [governor, filesystem];
+  const scopedApps = [filesystem];
+
+  const call = async (appName: string, exportName: string, _input: unknown) => {
+    if (appName === "gatekeeper" && exportName === "evaluate_action") return { allowed: true };
+    return "raw-result";
+  };
+
+  const tools = [toolFor("write_file", (input) => call("filesystem", "write_file", input))];
+  const gated = applyGovernanceGate(allApps, scopedApps, tools, call, { mode: "fail-closed" });
+
+  assert.equal(await gated[0]!.invoke({}), "raw-result");
+});
+
+test("fail-closed mode still denies an explicitly-denied call the normal way, not as GovernanceUnavailableError", async () => {
+  const governor = appSpec("gatekeeper", { governs: true, exports: ["evaluate_action"] });
+  const filesystem = appSpec("filesystem", { exports: ["write_file"] });
+  const allApps = [governor, filesystem];
+  const scopedApps = [filesystem];
+
+  const call = async (appName: string, exportName: string, _input: unknown) => {
+    if (appName === "gatekeeper" && exportName === "evaluate_action") return { allowed: false, reason: "no" };
+    return "raw-result";
+  };
+
+  const tools = [toolFor("write_file", (input) => call("filesystem", "write_file", input))];
+  const gated = applyGovernanceGate(allApps, scopedApps, tools, call, { mode: "fail-closed" });
+
+  await assert.rejects(() => gated[0]!.invoke({}), GovernanceDeniedError);
+});
+
+test("mode defaults to fail-open when omitted, unchanged from before this option existed", async () => {
+  const governor = appSpec("gatekeeper", { governs: true, exports: ["evaluate_action"] });
+  const filesystem = appSpec("filesystem", { exports: ["write_file"] });
+  const allApps = [governor, filesystem];
+  const scopedApps = [filesystem];
+
+  const call = async (appName: string, exportName: string, _input: unknown) => {
+    if (appName === "gatekeeper" && exportName === "evaluate_action") throw new Error("governor unreachable");
+    return "raw-result";
+  };
+
+  const tools = [toolFor("write_file", (input) => call("filesystem", "write_file", input))];
+  const gated = applyGovernanceGate(allApps, scopedApps, tools, call);
+
+  assert.equal(await gated[0]!.invoke({}), "raw-result");
 });
 
 test("an app can opt out via governance.exempt even when in scope", async () => {

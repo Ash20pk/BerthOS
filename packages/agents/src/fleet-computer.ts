@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import type { DeployAdapter, DeployHandle, DeployTarget } from "@berth/adapter-core";
 import { withReadyRetry, READY_RETRY_CEILING_MS, type ComputerHandle } from "./computer.js";
 import { computerToolsFor } from "./tools.js";
-import { applyGovernanceGate } from "./governance.js";
+import { applyGovernanceGate, type GovernanceGateOptions } from "./governance.js";
 import type { ComputerAppSpec } from "./resolve-apps.js";
 import type { Tool } from "./types.js";
 
@@ -19,6 +19,8 @@ export interface DeployComputerOptions {
   env?: Record<string, string>;
   /** How long to keep retrying "is the instance running yet / does rpcUrl() have an answer / is the bridge healthy" before giving up. Defaults to computer.ts's own READY_RETRY_CEILING_MS; mainly useful for tests. */
   readyTimeoutMs?: number;
+  /** Same as BootComputerOptions.governance — see GovernanceGateOptions and gaps.md gap #26. */
+  governance?: GovernanceGateOptions;
 }
 
 /**
@@ -65,7 +67,7 @@ export class HttpBridgeComputer implements ComputerHandle {
     try {
       const rpcUrl = await bringUpRpcBridge(options.adapter, handle, options.port, authToken, options.readyTimeoutMs ?? READY_RETRY_CEILING_MS);
       const call = (_appName: string, exportName: string, input: unknown) => dispatch(rpcUrl, authToken, exportName, input);
-      const tools = applyGovernanceGate(options.apps, options.apps, computerToolsFor(options.apps, call), call);
+      const tools = applyGovernanceGate(options.apps, options.apps, computerToolsFor(options.apps, call), call, options.governance);
       return new HttpBridgeComputer(options.adapter, handle, tools);
     } catch (err) {
       await options.adapter.teardown(handle).catch(() => {});

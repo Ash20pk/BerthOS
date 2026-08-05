@@ -350,7 +350,7 @@ Want more than one app in a single Berth OS, each still independently enforced b
 | `berth deploy --fleet=<e2b\|daytona\|k8s>` | Deploy to a remote sandbox provider |
 | `berth logs <app>` | Stream logs from an already-running dev or fleet container |
 | `berth rpc <app> --export=<name> --input=<json>` | Call a resident app's export directly from the host |
-| `berth mcp --app=<name>` | Bridge a running app's exports to MCP tools, for Claude Desktop/Code or any MCP client |
+| `berth mcp --app=<name> [--only=<export1>,<export2>]` | Bridge a running app's exports to MCP tools, for Claude Desktop/Code or any MCP client — `--only` scopes which exports get bridged instead of exposing everything |
 | `berth publish --registry=<url>` | Build and publish the app to a running app registry |
 | `berth snapshot create\|list\|restore` | Checkpoint and restore a container plus its semantic-fs context data |
 | `berth grants list\|approve\|deny` | Review and resolve pending human-approval capability requests |
