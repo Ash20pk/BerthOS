@@ -626,6 +626,44 @@ Three routes, both functions:
 
 **What this doesn't do:** only `type: "text"` message parts are understood — an incoming image/file part, or a prior turn's own tool-call/tool-result parts, are dropped when reconstructing history for `/chat`, not rejected. No `tool-input-*`/`tool-output-*` stream chunks are emitted — a tool call happening mid-run is invisible to the client beyond a pause in text, not surfaced as its own UI event (the AI SDK protocol supports this; wiring it up needs correlating `StepTracer`-shaped events, out of scope for this pass). A `system`-role `UIMessage` is dropped, not folded into the `Agent`'s own `systemPrompt` — that's set once at construction, not per-request. Python has no equivalent yet: `Agent.run()` itself is fully portable, but a Node-`http`-shaped primitive doesn't map onto Python's own web-framework conventions (ASGI/WSGI) the way `guardrails.py`/`session.py` mapped directly onto `agent.py` — named here rather than silently ported as something it isn't.
 
+## A2A protocol interop: talking to agents outside Berth entirely
+
+`Crew.networked()` is Berth's own wire protocol over a Docker network — real, but not what ADK, Microsoft Agent Framework, or LangGraph speak when they interop with an *external* agent. [A2A (Agent2Agent)](https://a2a-protocol.org) is that open protocol: an Agent Card (a JSON manifest describing an agent's skills, published at a standard `.well-known/agent-card.json` path) plus JSON-RPC message-send/task-lifecycle semantics. `packages/agents/src/a2a.ts` builds on the official [`@a2a-js/sdk`](https://github.com/a2aproject/a2a-js) — the same reference implementation those frameworks' own A2A support is built against — rather than hand-rolling the wire format, and both directions are real:
+
+**Consuming an external A2A agent as a Tool** — any A2A-compliant agent, not just another Berth one:
+
+```ts
+import { createAgent, createA2aClientTool } from "@berth/agents";
+
+const remoteTool = await createA2aClientTool("https://some-a2a-agent.example.com/");
+const { agent: baseAgent, computer } = await createAgent({ apps: "apps/filesystem" });
+const agent = baseAgent.withTools([remoteTool]); // withTools() — same non-mutating extension Crew.withManager() itself uses
+
+await agent.run("ask the remote agent what today's weather is, then summarize it");
+await computer.stop();
+```
+
+`createA2aClientTool(agentCardUrl)` fetches the remote agent's card, resolves a transport, and wraps `sendMessage` as a `Tool` — `{task: string}` in, its text answer out, the exact same `asTool()`-shaped delegation pattern `createMcpClientTools()` already established for MCP servers. The tool's name comes from the remote card's own `name` (sanitized to a valid tool-name), its description from the card's `description` unless you override it.
+
+**Exposing a Berth Agent as an A2A server** — so ADK/LangGraph/Microsoft Agent Framework agents (or the reference SDK's own sample clients) can call into it:
+
+```ts
+import { createAgent, serveAgentAsA2a } from "@berth/agents";
+
+const { agent, computer } = await createAgent({ apps: "apps/filesystem" });
+const { close } = serveAgentAsA2a(agent, { port: 41241 }); // 41241 matches the a2a-js SDK's own sample convention
+// GET  http://localhost:41241/.well-known/agent-card.json
+// POST http://localhost:41241/                              (JSON-RPC, SendMessage)
+
+// ...later...
+await close();
+await computer.stop();
+```
+
+`serveAgentAsA2a()` owns a real `http.Server`'s `listen()`/`close()`, mirroring `serveAgent()`'s own positioning for the `useChat`-compatible surface (see above) — `createA2aRequestHandler(agent, options?)` is the composable building block underneath, for mounting inside your own server instead. Every request runs a real `agent.run()` call under the hood: `SendMessage` publishes a `Task` through the standard `SUBMITTED` → `WORKING` → (an artifact carrying the answer) → `COMPLETED` lifecycle, or `FAILED` if the run throws — verified against a real client+server round trip using the actual `@a2a-js/sdk` package (`a2a.test.ts`), not just written to match the spec text. That verification pass caught real, easy-to-miss details a memory-only implementation would have gotten wrong: the JSON-RPC method name for a single message is `SendMessage`, not the REST-flavored `message/send` an older spec version used, and a message `Part`'s wire-JSON shape is a flat `{text: string}` — the `{content: {$case, value}}` discriminated-union shape is this SDK's *internal* TypeScript representation after parsing, not what actually crosses the wire.
+
+**What this doesn't do:** only the synchronous `SendMessage` method is implemented — no `SendStreamingMessage`/`SubscribeToTask` (the Agent Card advertises `capabilities.streaming: false` accurately), no push notifications, no authentication/security schemes. `cancelTask` is a documented no-op: `agent.run()` has no intermediate yield point to check a cancellation flag against the way a hand-written, step-by-step `AgentExecutor` would, so there's no real interrupt point to wire one into. Task history is `InMemoryTaskStore`-backed — gone on a server restart, not durable the way checkpointing/sessions are. Python has no equivalent yet, same "a real ecosystem-facing surface, not just a straightforward field-for-field port" reasoning `server.ts`/`declarative.ts` already have documented in `docs/agents-python-reference.md`.
+
 ## Declarative agent/crew config: YAML instead of code
 
 `berth.yml` describes resident apps, not agents or crews — CrewAI's own `agents.yaml`/`tasks.yaml` and ADK's declarative config were the real thing missing (gap #23). `createAgentFromYaml()`/`createCrewFromYaml()` (`packages/agents/src/declarative.ts`) map a YAML file directly onto `createAgent()`'s existing options — no new runtime concept, just a data format for the common case that doesn't need code:

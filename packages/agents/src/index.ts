@@ -93,6 +93,14 @@ export {
   type CrewConfig,
 } from "./declarative.js";
 export {
+  createA2aRequestHandler,
+  serveAgentAsA2a,
+  createA2aClientTool,
+  type A2aServerOptions,
+  type A2aServerHandle,
+  type A2aClientToolOptions,
+} from "./a2a.js";
+export {
   generateAgentServerApp,
   bootNetworkedAgent,
   type AgentServerLLMConfig,
