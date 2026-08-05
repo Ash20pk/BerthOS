@@ -1,7 +1,7 @@
 import pytest
 from pydantic import BaseModel
 
-from berth_agents import Agent, FileCheckpointStore, LLMTurn, StructuredOutputError, ToolCall
+from berth_agents import Agent, AgentStepEvent, FileCheckpointStore, LLMTurn, StructuredOutputError, ToolCall
 
 
 class ScriptedLLM:
@@ -270,3 +270,95 @@ async def test_response_schema_raises_after_exhausting_repair_attempts():
 
     with pytest.raises(StructuredOutputError):
         await agent.run("classify", response_schema=Answer, max_repair_attempts=2)
+
+
+class RecordingTracer:
+    """A plain fake StepTracer — no OTel/SDK involved — used to assert on
+    exactly what Agent._loop() emits, same role as agent.test.ts's
+    recordingTracer()."""
+
+    def __init__(self) -> None:
+        self.events: list[AgentStepEvent] = []
+
+    async def emit(self, event: AgentStepEvent) -> None:
+        self.events.append(event)
+
+
+@pytest.mark.asyncio
+async def test_run_emits_an_llm_turn_event_and_a_tool_call_event_when_a_run_id_is_given():
+    tracer = RecordingTracer()
+    llm = ScriptedLLM(
+        [
+            LLMTurn(tool_calls=[ToolCall(id="1", name="search", input={})], stop=False),
+            LLMTurn(text="done", tool_calls=[], stop=True),
+        ]
+    )
+    agent = Agent(llm=llm, tools=[EchoTool("search")], name="my-agent", trace=tracer)
+
+    await agent.run("do the thing", run_id="run-1")
+
+    kinds = [e.kind for e in tracer.events]
+    assert kinds == ["llm-turn", "tool-call", "llm-turn"]
+    assert all(e.run_id == "run-1" and e.agent_name == "my-agent" for e in tracer.events)
+    assert all(e.duration_ms >= 0 for e in tracer.events)
+    assert tracer.events[1].tool_name == "search"
+    assert tracer.events[1].error is None
+
+
+@pytest.mark.asyncio
+async def test_run_emits_no_trace_events_without_a_run_id():
+    tracer = RecordingTracer()
+    llm = ScriptedLLM([LLMTurn(text="hi", tool_calls=[], stop=True)])
+    agent = Agent(llm=llm, tools=[], trace=tracer)
+
+    await agent.run("hi")
+
+    assert tracer.events == []
+
+
+@pytest.mark.asyncio
+async def test_a_throwing_tool_call_is_traced_with_its_error():
+    tracer = RecordingTracer()
+    llm = ScriptedLLM(
+        [
+            LLMTurn(tool_calls=[ToolCall(id="1", name="boom", input={})], stop=False),
+            LLMTurn(text="recovered", tool_calls=[], stop=True),
+        ]
+    )
+    agent = Agent(llm=llm, tools=[ThrowingTool("boom", "kaboom")], trace=tracer)
+
+    await agent.run("do the thing", run_id="run-1")
+
+    tool_events = [e for e in tracer.events if e.kind == "tool-call"]
+    assert tool_events[0].error == "kaboom"
+
+
+@pytest.mark.asyncio
+async def test_a_failing_llm_call_is_traced_with_its_error_and_reraised():
+    class FailingLLM:
+        name = "fake"
+
+        async def chat(self, *, system, messages, tools):
+            raise RuntimeError("model unavailable")
+
+    tracer = RecordingTracer()
+    agent = Agent(llm=FailingLLM(), tools=[], trace=tracer)
+
+    with pytest.raises(RuntimeError, match="model unavailable"):
+        await agent.run("do the thing", run_id="run-1")
+
+    assert len(tracer.events) == 1
+    assert tracer.events[0].kind == "llm-turn"
+    assert tracer.events[0].error == "model unavailable"
+
+
+@pytest.mark.asyncio
+async def test_with_tools_carries_the_tracer_over_to_the_new_agent():
+    tracer = RecordingTracer()
+    llm = ScriptedLLM([LLMTurn(text="ok", tool_calls=[], stop=True)])
+    original = Agent(llm=llm, tools=[], trace=tracer)
+    extended = original.with_tools([EchoTool("a")])
+
+    await extended.run("hi", run_id="run-1")
+
+    assert len(tracer.events) == 1

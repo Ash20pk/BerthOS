@@ -1,12 +1,13 @@
 """The provider-agnostic tool-use loop: identical regardless of which
 LLMProvider or which Tool implementations are plugged in. Mirrors the core
 loop in @berth/agents' agent.ts, including its checkpointing, token-level
-streaming, and structured-output repair loop. Tracing/retrieval/human-
-approval and Computer/Docker boot glue (createAgent/runAgent) still aren't
-ported — see docs/agents-python-reference.md."""
+streaming, structured-output repair loop, and per-turn/per-tool-call
+tracing. Retrieval/human-approval and Computer/Docker boot glue
+(createAgent/runAgent) still aren't ported — see docs/agents-python-reference.md."""
 
 from __future__ import annotations
 
+import time
 from typing import Any, Callable
 
 from pydantic import BaseModel
@@ -18,6 +19,7 @@ from .structured_output import (
     parse_structured_output,
     structured_output_repair_prompt,
 )
+from .tracing import AgentStepEvent, StepTracer
 from .types import AgentMessage, AgentRunResult, ExecutedToolCall, LLMProvider, Tool, ToolResult
 
 DEFAULT_MAX_TURNS = 25
@@ -34,6 +36,7 @@ class Agent:
         system_prompt: str | None = None,
         max_turns: int = DEFAULT_MAX_TURNS,
         checkpoint: CheckpointStore | None = None,
+        trace: StepTracer | None = None,
     ) -> None:
         self.name = name
         self.tools = tools
@@ -41,6 +44,7 @@ class Agent:
         self.system_prompt = system_prompt
         self.max_turns = max_turns
         self._checkpoint_store = checkpoint
+        self._tracer = trace
 
     async def run(
         self,
@@ -123,15 +127,37 @@ class Agent:
                 )
             )
 
+        async def emit_trace(turn_count: int, kind: str, duration_ms: float, *, tool_name=None, error=None, usage=None) -> None:
+            if not self._tracer or not run_id:
+                return
+            await self._tracer.emit(
+                AgentStepEvent(
+                    run_id=run_id,
+                    agent_name=self.name,
+                    turn=turn_count,
+                    kind=kind,
+                    duration_ms=duration_ms,
+                    tool_name=tool_name,
+                    error=error,
+                    usage=usage,
+                )
+            )
+
         # chat_stream is an optional capability (see LLMProvider's docstring
         # in types.py) — absent means no incremental events, not an error.
         chat_stream = getattr(self.llm, "chat_stream", None)
 
         for turn_count in range(start_turn, self.max_turns):
-            if on_text and chat_stream:
-                turn = await chat_stream(system=self.system_prompt, messages=messages, tools=self.tools, on_text=on_text)
-            else:
-                turn = await self.llm.chat(system=self.system_prompt, messages=messages, tools=self.tools)
+            turn_start = time.monotonic()
+            try:
+                if on_text and chat_stream:
+                    turn = await chat_stream(system=self.system_prompt, messages=messages, tools=self.tools, on_text=on_text)
+                else:
+                    turn = await self.llm.chat(system=self.system_prompt, messages=messages, tools=self.tools)
+            except Exception as err:
+                await emit_trace(turn_count, "llm-turn", (time.monotonic() - turn_start) * 1000, error=str(err))
+                raise
+            await emit_trace(turn_count, "llm-turn", (time.monotonic() - turn_start) * 1000, usage=turn.usage)
 
             if not turn.tool_calls:
                 text = turn.text or ""
@@ -162,10 +188,13 @@ class Agent:
             messages.append(AgentMessage(role="assistant", text=turn.text, tool_calls=turn.tool_calls))
 
             for call in turn.tool_calls:
+                call_start = time.monotonic()
                 tool = next((t for t in self.tools if t.name == call.name), None)
                 result: Any
+                error: str | None = None
                 if tool is None:
-                    result = {"error": f'no such tool "{call.name}"'}
+                    error = f'no such tool "{call.name}"'
+                    result = {"error": error}
                 else:
                     try:
                         result = await tool.invoke(call.input)
@@ -177,8 +206,10 @@ class Agent:
                         # surface the failure itself. format_tool_input_error()
                         # reformats a pydantic ValidationError the same way a
                         # response_schema repair prompt's issues are formatted.
-                        result = {"error": format_tool_input_error(err)}
+                        error = format_tool_input_error(err)
+                        result = {"error": error}
 
+                await emit_trace(turn_count, "tool-call", (time.monotonic() - call_start) * 1000, tool_name=call.name, error=error)
                 executed.append(ExecutedToolCall(name=call.name, input=call.input, result=result))
                 messages.append(
                     AgentMessage(role="tool", tool_result=ToolResult(id=call.id, name=call.name, output=result))
@@ -191,7 +222,7 @@ class Agent:
 
     def with_tools(self, extra_tools: list[Tool]) -> "Agent":
         """Returns a new Agent with the same identity/llm/system_prompt/
-        checkpoint but an extended tool list — used by Crew's manager
+        checkpoint/trace but an extended tool list — used by Crew's manager
         pattern to give a manager agent one Tool per worker without
         mutating either agent."""
         return Agent(
@@ -201,6 +232,7 @@ class Agent:
             system_prompt=self.system_prompt,
             max_turns=self.max_turns,
             checkpoint=self._checkpoint_store,
+            trace=self._tracer,
         )
 
     def as_tool(self, description: str) -> Tool:

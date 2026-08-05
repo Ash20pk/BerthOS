@@ -3,6 +3,7 @@ import { Computer, type BootComputerOptions, type ConnectComputerOptions } from 
 import { resolveLLMProvider, type LLMProviderConfig } from "./providers/auto.js";
 import { createSemanticFsCheckpointStore, type CheckpointedRun, type CheckpointStore } from "./checkpoint.js";
 import { createAgentTracer, type StepTracer } from "./tracing.js";
+import { createOtelStepTracer } from "./otel-tracer.js";
 import { applyHumanApprovalGate, type HumanApprovalGateOptions } from "./approval.js";
 import {
   parseStructuredOutput,
@@ -321,11 +322,14 @@ export interface CreateAgentOptions extends Pick<BootComputerOptions, "network" 
    * Semantic FS (agent-traces/<runId>.json, replay after the fact) — see
    * createAgentTracer(). Needs an app like apps/filesystem exposing
    * publish_context_event alongside the checkpoint exports, or construction
-   * throws immediately. Pass a StepTracer directly for just one channel
-   * (createContextBusStepTracer()/createSemanticFsStepTracer()) or a
-   * different backend entirely.
+   * throws immediately. "otel" builds createOtelStepTracer() instead — real
+   * OTel spans through whatever SDK/exporter you've already registered
+   * globally (Langfuse, Phoenix, Datadog, ...), no Computer/resident-app
+   * dependency at all. Pass a StepTracer directly for just one channel
+   * (createContextBusStepTracer()/createSemanticFsStepTracer()/
+   * createOtelStepTracer() itself) or a different backend entirely.
    */
-  trace?: "full" | StepTracer;
+  trace?: "full" | "otel" | StepTracer;
   /**
    * Wraps `computer.tools` through applyHumanApprovalGate() before
    * constructing the Agent — every gated tool call blocks on a human
@@ -390,7 +394,8 @@ export async function createAgent(
           docker: options.docker,
         }));
   const checkpoint = options.checkpoint === "semantic-fs" ? createSemanticFsCheckpointStore(computer) : options.checkpoint;
-  const trace = options.trace === "full" ? createAgentTracer(computer) : options.trace;
+  const trace =
+    options.trace === "full" ? createAgentTracer(computer) : options.trace === "otel" ? createOtelStepTracer() : options.trace;
   const retriever = options.retriever === "semantic-fs" ? createSemanticFsRetriever(computer) : options.retriever;
   const mcpServers = options.mcpServers ? await Promise.all(options.mcpServers.map((server) => createMcpClientTools(server))) : [];
   const gatedTools = options.humanApproval
