@@ -254,3 +254,47 @@ test("Crew.networked dispatches to the peer matching the tool call's name among 
 
   assert.equal(result, "from b");
 });
+
+test("Crew.pipeline accumulates each step's partial update into the shared state", async () => {
+  type State = { draft?: string; wordCount?: number };
+  const crew = Crew.pipeline<State>([
+    () => ({ draft: "hello world" }),
+    (state) => ({ wordCount: state.draft?.split(" ").length ?? 0 }),
+  ]);
+
+  const result = await crew.run({});
+
+  assert.deepEqual(result, { draft: "hello world", wordCount: 2 });
+});
+
+test("Crew.pipeline lets a later step read a field an earlier step wrote, not just the last return", async () => {
+  type State = { a?: string; b?: string; combined?: string };
+  const crew = Crew.pipeline<State>([
+    () => ({ a: "first" }),
+    () => ({ b: "second" }),
+    (state) => ({ combined: `${state.a}-${state.b}` }),
+  ]);
+
+  const result = await crew.run({});
+
+  assert.equal(result.combined, "first-second");
+});
+
+test("Crew.pipeline steps can call real Agents, threading their output into state", async () => {
+  type State = { input: string; summary?: string };
+  const summarizer = textAgent("summarizer", "a short summary");
+  const crew = Crew.pipeline<State>([
+    async (state) => ({ summary: (await summarizer.run(state.input)).text }),
+  ]);
+
+  const result = await crew.run({ input: "a long document" });
+
+  assert.equal(result.summary, "a short summary");
+  assert.equal(result.input, "a long document", "fields no step touched must survive unchanged");
+});
+
+test("Crew.pipeline with zero steps returns the initial state unchanged", async () => {
+  const crew = Crew.pipeline<{ x: number }>([]);
+  const result = await crew.run({ x: 1 });
+  assert.deepEqual(result, { x: 1 });
+});

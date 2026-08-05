@@ -5,6 +5,10 @@ export interface CrewRun {
   run(input: string): Promise<string>;
 }
 
+export interface CrewStateRun<S> {
+  run(initialState: S): Promise<S>;
+}
+
 /**
  * Multi-agent composition — both patterns here are just wiring over Agent,
  * not a new execution primitive: Agent's tool-use loop is identical whether
@@ -138,6 +142,30 @@ export const Crew = {
           );
         }
         return (await target.run(input)).text;
+      },
+    };
+  },
+
+  /**
+   * Threads a typed state object across steps instead of only a `string` —
+   * the gap every other Crew shape has, since sequential/parallel/loopUntil/
+   * route all pipe plain text. Each step reads the accumulated state (built
+   * from every prior step's return, not just the last one), does whatever it
+   * needs with Agents/tools, and returns a partial update merged shallowly
+   * into that state for the next step. Not a graph: steps still run in the
+   * fixed order given, same "wiring over Agent" stance as the rest of Crew.
+   */
+  pipeline<S extends object>(
+    steps: Array<(state: S) => Promise<Partial<S>> | Partial<S>>,
+  ): CrewStateRun<S> {
+    return {
+      async run(initialState: S): Promise<S> {
+        let state = initialState;
+        for (const step of steps) {
+          const update = await step(state);
+          state = { ...state, ...update };
+        }
+        return state;
       },
     };
   },
