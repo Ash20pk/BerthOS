@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { withTimeout, DEPLOY_CREATE_TIMEOUT_MS, DEPLOY_READ_TIMEOUT_MS } from "@berth/adapter-core";
 import type { DeployAdapter, DeployHandle, DeployStatus, DeployTarget } from "@berth/adapter-core";
+import type { BerthManifest } from "@berth/manifest-schema";
 
 /**
  * `@kubernetes/client-node` is an optional peer dependency, mirroring
@@ -45,7 +46,39 @@ function namespace(): string {
  * a real, named rough edge, not silently worked around with
  * `privileged: true`.
  */
-function podSpecFor(name: string, image: string, instanceId: string, env?: Record<string, string>): Record<string, unknown> {
+/**
+ * `undefined` (an app declaring no `resources:` at all) means the container
+ * spec gets no `resources` field, same as before this existed — Kubernetes
+ * treats that as "BestEffort" QoS, unbounded on this node like every other
+ * unscoped Pod. Declaring any of `cpu`/`memory_mb`/`gpu` sets `requests` ==
+ * `limits` for every quantity given (Guaranteed QoS) — the direct answer to
+ * "no protection against one noisy sandbox starving co-located ones" that
+ * motivated this: a Guaranteed pod can't be evicted for a node-pressure
+ * reason a BestEffort/Burstable one could be, and can't burst past what it
+ * asked for either. `nvidia.com/gpu` is the de facto standard device-plugin
+ * resource name (NVIDIA's own k8s-device-plugin) — the one named in gap #30;
+ * AMD/other vendors use a different name and aren't handled here. GPU
+ * requests/limits are REQUIRED to be equal for any Kubernetes extended
+ * resource, not just a stylistic choice like it is for cpu/memory.
+ */
+function resourcesFor(manifest: BerthManifest): { requests: Record<string, string>; limits: Record<string, string> } | undefined {
+  // `?? {}` guards a manifest built by hand (e.g. this package's own test
+  // fixtures cast a plain object to BerthManifest, bypassing the schema's
+  // real `.default({})`) rather than loaded through validateManifest()/
+  // BerthManifestSchema.parse(), which always populates this.
+  const { cpu, memory_mb: memoryMb, gpu } = manifest.resources ?? {};
+  if (cpu === undefined && memoryMb === undefined && gpu === undefined) return undefined;
+
+  const quantities: Record<string, string> = {};
+  if (cpu !== undefined) quantities.cpu = String(cpu);
+  if (memoryMb !== undefined) quantities.memory = `${memoryMb}Mi`;
+  if (gpu !== undefined) quantities["nvidia.com/gpu"] = String(gpu);
+  return { requests: quantities, limits: quantities };
+}
+
+function podSpecFor(manifest: BerthManifest, image: string, instanceId: string, env?: Record<string, string>): Record<string, unknown> {
+  const name = manifest.name;
+  const resources = resourcesFor(manifest);
   return {
     metadata: {
       generateName: `${name}-`,
@@ -60,6 +93,7 @@ function podSpecFor(name: string, image: string, instanceId: string, env?: Recor
           env: Object.entries(env ?? {}).map(([envName, value]) => ({ name: envName, value })),
           securityContext: { capabilities: { add: ["SYS_ADMIN"] } },
           volumeMounts: [{ name: "dev-fuse", mountPath: "/dev/fuse" }],
+          ...(resources ? { resources } : {}),
         },
       ],
       volumes: [{ name: "dev-fuse", hostPath: { path: "/dev/fuse", type: "CharDevice" } }],
@@ -176,7 +210,7 @@ export function createK8sAdapter(): DeployAdapter {
       // actually created server-side, and generateName means a retry would
       // create a second one rather than safely re-attempting the same one.
       const pod = await withTimeout<any>(
-        coreApi.createNamespacedPod({ namespace: namespace(), body: podSpecFor(target.manifest.name, remoteImageRef, instanceId, target.env) }),
+        coreApi.createNamespacedPod({ namespace: namespace(), body: podSpecFor(target.manifest, remoteImageRef, instanceId, target.env) }),
         DEPLOY_CREATE_TIMEOUT_MS,
         `k8s createNamespacedPod("${target.manifest.name}")`,
       );
