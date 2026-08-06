@@ -347,14 +347,16 @@ Want more than one app in a single Berth OS, each still independently enforced b
 | `berth eval <file> [--history]` | Run a `@berth/agents` eval suite against a real Agent/Crew and check assertions about *behavior* — distinct from `berth test`'s manifest/export shape check; `--history` lists a suite's prior recorded runs |
 | `berth agent run <file.yml> <task>` | Run a task against an Agent declared in a YAML config file — no code needed for the common case |
 | `berth crew run <file.yml> <task>` | Run a task against a `sequential`/`parallel`/`withManager` Crew declared in a YAML config file |
-| `berth deploy --fleet=<e2b\|daytona\|k8s>` | Deploy to a remote sandbox provider |
+| `berth deploy --fleet=<e2b\|daytona\|k8s> [--region=<value>]` | Deploy to a remote sandbox provider — `--region` meaning differs per adapter (Daytona snapshot region, k8s node selector, no-op on E2B) |
 | `berth logs <app>` | Stream logs from an already-running dev or fleet container |
 | `berth rpc <app> --export=<name> --input=<json>` | Call a resident app's export directly from the host |
 | `berth mcp --app=<name> [--only=<export1>,<export2>]` | Bridge a running app's exports to MCP tools, for Claude Desktop/Code or any MCP client — `--only` scopes which exports get bridged instead of exposing everything |
-| `berth publish --registry=<url>` | Build and publish the app to a running app registry |
-| `berth snapshot create\|list\|restore` | Checkpoint and restore a container plus its semantic-fs context data |
-| `berth grants list\|approve\|deny` | Review and resolve pending human-approval capability requests |
+| `berth publish --registry=<url> [--token=<value>]` | Build and publish the app to a running app registry — `--token` is required to publish a new version of a name someone already published |
+| `berth snapshot create\|list\|restore [--fleet=<name>]` | Checkpoint and restore a container plus its semantic-fs context data — `--fleet` pauses/resumes (E2B) or snapshots (Daytona) a remote instance instead |
+| `berth snapshot fork <app> --fleet=<name>` | Fork a running remote instance into a new, independent clone (Daytona only) |
+| `berth grants list\|approve\|deny [--token=<value>]` | Review and resolve pending human-approval capability requests — `approve`/`deny` need the grants-server operator token |
 | `berth fleet status <fleet>` | Check the state of a configured remote fleet (`e2b`, `daytona`, or a `~/.berthrc` alias) |
+| `berth fleet scale <fleet> --count=<n>` | Manually scale this app's instances on a fleet up or down to a target count — not automatic load-based autoscaling |
 | `berth os up\|down\|status` | Boot a long-lived Berth OS once, then reconnect to it instantly instead of rebuilding on every dev iteration |
 
 Run `berth <command> --help` to see the flags. A few of these deserve their own doc: [MCP bridge](./docs/mcp-bridge-reference.md), [app registry](./docs/app-registry-reference.md), [computer snapshots](./docs/computer-snapshots-reference.md), [capability tokens and grants](./docs/capability-tokens-reference.md), [K8s adapter](./docs/k8s-adapter-reference.md), [what is a Berth OS](./docs/berth-os.md), and [the `berth os` command reference for cold start](./docs/berth-os-reference.md).

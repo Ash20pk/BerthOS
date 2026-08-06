@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readFleetState, appendFleetInstances } from "./fleet-state.js";
+import { readFleetState, appendFleetInstances, removeFleetInstances } from "./fleet-state.js";
 
 test("readFleetState returns an empty record for a fleet with no history", async () => {
   const dir = await mkdtemp(join(tmpdir(), "berth-fleet-state-test-"));
@@ -26,6 +26,47 @@ test("appendFleetInstances persists across separate calls and accumulates", asyn
     assert.deepEqual(
       state.instances.map((i) => i.id),
       ["inst-1", "inst-2"],
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("removeFleetInstances drops only the given ids, leaving the rest untouched", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "berth-fleet-state-test-"));
+  try {
+    await appendFleetInstances(
+      "prod",
+      [
+        { id: "inst-1", appName: "app-a", startedAt: "2026-01-01T00:00:00.000Z" },
+        { id: "inst-2", appName: "app-a", startedAt: "2026-01-01T00:01:00.000Z" },
+        { id: "inst-3", appName: "app-a", startedAt: "2026-01-01T00:02:00.000Z" },
+      ],
+      dir,
+    );
+
+    await removeFleetInstances("prod", ["inst-2"], dir);
+
+    const state = await readFleetState("prod", dir);
+    assert.deepEqual(
+      state.instances.map((i) => i.id),
+      ["inst-1", "inst-3"],
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("removeFleetInstances is a no-op for an id that isn't recorded", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "berth-fleet-state-test-"));
+  try {
+    await appendFleetInstances("prod", [{ id: "inst-1", appName: "app-a", startedAt: "2026-01-01T00:00:00.000Z" }], dir);
+    await removeFleetInstances("prod", ["inst-does-not-exist"], dir);
+
+    const state = await readFleetState("prod", dir);
+    assert.deepEqual(
+      state.instances.map((i) => i.id),
+      ["inst-1"],
     );
   } finally {
     await rm(dir, { recursive: true, force: true });

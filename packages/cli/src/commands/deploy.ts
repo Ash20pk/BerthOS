@@ -45,6 +45,7 @@ export default class Deploy extends Command {
   static override flags = {
     fleet: Flags.string({ description: "e2b, daytona, or an alias from ~/.berthrc", required: true }),
     count: Flags.integer({ description: "how many instances to start — overrides the fleet alias's own count (default 1)" }),
+    region: Flags.string({ description: "provider region/zone — meaning differs per adapter (Daytona: snapshot regionId; k8s: a topology.kubernetes.io/region nodeSelector; e2b: no-op, the SDK has no region concept)" }),
     apps: Flags.string({ description: "comma-separated workspace-relative paths of companion resident apps to run alongside this one" }),
     "grants-server": Flags.string({
       description:
@@ -65,9 +66,10 @@ export default class Deploy extends Command {
     await buildProductionImage(appDir, manifest, companions);
     const imageRef = productionImageTag(manifest);
 
-    const { adapter, env, count: aliasCount } = await resolveFleet(flags.fleet);
+    const { adapter, env, count: aliasCount, region: aliasRegion } = await resolveFleet(flags.fleet);
     const count = flags.count ?? aliasCount;
     if (count < 1) this.error(`--count must be at least 1, got ${count}`);
+    const region = flags.region ?? aliasRegion;
 
     const appsEnv: Record<string, string> = {};
     if (apps.length > 1) {
@@ -76,7 +78,7 @@ export default class Deploy extends Command {
     if (flags["grants-server"]) {
       appsEnv.BERTH_GRANTS_SERVER_URL = flags["grants-server"];
     }
-    const target = { imageRef, manifest, env: { ...env, ...appsEnv } };
+    const target = { imageRef, manifest, env: { ...env, ...appsEnv }, region };
 
     this.log(`Uploading to ${adapter.name}...`);
     const { remoteImageRef } = await adapter.upload(target);

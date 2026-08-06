@@ -116,7 +116,16 @@ export function createDaytonaAdapter(): DeployAdapter {
       // Template.build: a create-ish call, not cheaply safe to re-attempt
       // blindly on an ambiguous timeout.
       const snapshot = await withTimeout<any>(
-        client.snapshot.create({ name: target.manifest.name, image: target.imageRef }),
+        client.snapshot.create({
+          name: target.manifest.name,
+          image: target.imageRef,
+          // Real, confirmed against the installed SDK's own CreateSnapshotParams:
+          // regionId pins where this snapshot (and thus every sandbox later
+          // started from it) is available. Omitted, Daytona uses the
+          // organization's own default region — unchanged from before this
+          // field existed.
+          ...(target.region ? { regionId: target.region } : {}),
+        }),
         DEPLOY_CREATE_TIMEOUT_MS,
         `daytona snapshot.create("${target.manifest.name}")`,
       );

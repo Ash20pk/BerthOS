@@ -167,6 +167,38 @@ test("start() sets requests == limits on the Pod spec when the manifest declares
   assert.deepEqual(podBody.spec.containers[0].resources, { requests: expected, limits: expected });
 });
 
+test("start() sets a topology.kubernetes.io/region nodeSelector when target.region is given", async (t) => {
+  let podBody: any;
+  const coreApi = {
+    createNamespacedPod: async (args: any) => {
+      podBody = args.body;
+      return { metadata: { name: "x-abc12" } };
+    },
+  };
+  t.mock.module("@kubernetes/client-node", mockK8sModule(coreApi));
+  const { createK8sAdapter } = await import("./index.js");
+  const adapter = createK8sAdapter();
+  await adapter.start("berth/x:1.0.0", { imageRef: "berth/x:1.0.0", manifest, region: "eu-central-1" });
+
+  assert.deepEqual(podBody.spec.nodeSelector, { "topology.kubernetes.io/region": "eu-central-1" });
+});
+
+test("start() sends no nodeSelector when target.region isn't set", async (t) => {
+  let podBody: any;
+  const coreApi = {
+    createNamespacedPod: async (args: any) => {
+      podBody = args.body;
+      return { metadata: { name: "x-abc12" } };
+    },
+  };
+  t.mock.module("@kubernetes/client-node", mockK8sModule(coreApi));
+  const { createK8sAdapter } = await import("./index.js");
+  const adapter = createK8sAdapter();
+  await adapter.start("berth/x:1.0.0", { imageRef: "berth/x:1.0.0", manifest });
+
+  assert.equal(podBody.spec.nodeSelector, undefined);
+});
+
 test("rpcUrl() returns null for a handle this adapter didn't create", async (t) => {
   t.mock.module("@kubernetes/client-node", mockK8sModule({}));
   const { createK8sAdapter } = await import("./index.js");

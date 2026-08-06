@@ -45,6 +45,22 @@ export interface DeployTarget {
   imageRef: string;
   manifest: BerthManifest;
   env?: Record<string, string>;
+  /**
+   * Provider-specific region/zone identifier — optional, and interpreted
+   * completely differently (or not at all) by each adapter, since none of
+   * the three share a region concept:
+   * - adapter-daytona: passed as `regionId` to `snapshot.create()` (a real
+   *   field on the installed SDK's `CreateSnapshotParams`) — the snapshot
+   *   an instance boots from is region-pinned, not the instance itself.
+   * - adapter-k8s: becomes a `nodeSelector` on `topology.kubernetes.io/region`
+   *   — a real, standard Kubernetes topology label, assuming the cluster's
+   *   nodes actually carry it (most managed clusters do; a bare-metal/kind
+   *   cluster may not, in which case an unschedulable Pod is the honest
+   *   failure mode, not a silent no-op).
+   * - adapter-e2b: a documented no-op — the installed e2b SDK (v1.13.2) has
+   *   no region concept anywhere in its API surface to pass this to.
+   */
+  region?: string;
 }
 
 export type DeployStatus = "starting" | "running" | "stopped" | "error";

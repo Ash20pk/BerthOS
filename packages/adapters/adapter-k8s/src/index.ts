@@ -76,7 +76,7 @@ function resourcesFor(manifest: BerthManifest): { requests: Record<string, strin
   return { requests: quantities, limits: quantities };
 }
 
-function podSpecFor(manifest: BerthManifest, image: string, instanceId: string, env?: Record<string, string>): Record<string, unknown> {
+function podSpecFor(manifest: BerthManifest, image: string, instanceId: string, env?: Record<string, string>, region?: string): Record<string, unknown> {
   const name = manifest.name;
   const resources = resourcesFor(manifest);
   return {
@@ -97,6 +97,13 @@ function podSpecFor(manifest: BerthManifest, image: string, instanceId: string, 
         },
       ],
       volumes: [{ name: "dev-fuse", hostPath: { path: "/dev/fuse", type: "CharDevice" } }],
+      // A real, standard Kubernetes topology label most managed clusters
+      // (EKS/GKE/AKS) set on every node — not a Berth invention. Omitted
+      // (the default), the scheduler picks any node as it always has. A
+      // cluster whose nodes don't carry this label (e.g. a bare kind
+      // cluster) leaves the Pod genuinely unschedulable when set — the
+      // honest failure mode, not silently ignored.
+      ...(region ? { nodeSelector: { "topology.kubernetes.io/region": region } } : {}),
     },
   };
 }
@@ -210,7 +217,7 @@ export function createK8sAdapter(): DeployAdapter {
       // actually created server-side, and generateName means a retry would
       // create a second one rather than safely re-attempting the same one.
       const pod = await withTimeout<any>(
-        coreApi.createNamespacedPod({ namespace: namespace(), body: podSpecFor(target.manifest, remoteImageRef, instanceId, target.env) }),
+        coreApi.createNamespacedPod({ namespace: namespace(), body: podSpecFor(target.manifest, remoteImageRef, instanceId, target.env, target.region) }),
         DEPLOY_CREATE_TIMEOUT_MS,
         `k8s createNamespacedPod("${target.manifest.name}")`,
       );

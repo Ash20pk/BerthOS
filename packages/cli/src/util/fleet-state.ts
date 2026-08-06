@@ -55,3 +55,19 @@ export async function appendFleetInstances(
   await mkdir(fleetsDir, { recursive: true });
   await writeFile(stateFilePath(fleetName, fleetsDir), JSON.stringify(state, null, 2));
 }
+
+/**
+ * Drops the given ids from a fleet's recorded instances — the missing half
+ * of appendFleetInstances(), needed once something (e.g. `berth fleet
+ * scale`) actually tears an instance down rather than only ever starting
+ * new ones. A no-op for an id that isn't recorded (already gone, or never
+ * was), rather than an error — the caller's own teardown() call is the
+ * thing that's supposed to fail loudly if the instance itself is unreachable.
+ */
+export async function removeFleetInstances(fleetName: string, ids: string[], fleetsDir = DEFAULT_FLEETS_DIR): Promise<void> {
+  const state = await readFleetState(fleetName, fleetsDir);
+  const idSet = new Set(ids);
+  state.instances = state.instances.filter((instance) => !idSet.has(instance.id));
+  await mkdir(fleetsDir, { recursive: true });
+  await writeFile(stateFilePath(fleetName, fleetsDir), JSON.stringify(state, null, 2));
+}
