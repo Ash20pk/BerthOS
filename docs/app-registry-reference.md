@@ -38,7 +38,7 @@ Run the server standalone with `pnpm --filter @berth/registry-server exec node d
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/apps` | Publish — multipart fields `manifest` (raw `berth.yml` text), `bundle` (the gzipped tarball), `author` (optional) |
+| `POST` | `/apps` | Publish — multipart fields `manifest` (raw `berth.yml` text), `bundle` (the gzipped tarball), `author` (optional). `Authorization: Bearer <ownerToken>` required for any name after its first publish. |
 | `GET` | `/apps` | List the latest version of every published app; `?q=` filters by name/description substring |
 | `GET` | `/apps/:name` | All published versions of one app, newest first |
 | `GET` | `/apps/:name/:version` | One version's metadata (`:version` may be `latest`) |
@@ -46,7 +46,9 @@ Run the server standalone with `pnpm --filter @berth/registry-server exec node d
 
 ## `berth publish --registry=<url>`
 
-Unchanged from Phase 1 up through building the production Docker image and writing `dist-bundle/publish-bundle.tar.gz` locally. What's new: that bundle is now **actually gzipped** (it was previously a plain tar mislabeled `.tar.gz` — harmless when nothing consumed it, but the registry serves it as `application/gzip` and `berth init --registry` gunzips it back down, so this got fixed as part of wiring publish up for real). With `--registry=<url>`, the CLI reads `berth.yml` and the bundle, and `POST`s both as multipart form data — no separate "create" step, no auth (there's no multi-tenant concept here; see Scope below).
+Unchanged from Phase 1 up through building the production Docker image and writing `dist-bundle/publish-bundle.tar.gz` locally. What's new: that bundle is now **actually gzipped** (it was previously a plain tar mislabeled `.tar.gz` — harmless when nothing consumed it, but the registry serves it as `application/gzip` and `berth init --registry` gunzips it back down, so this got fixed as part of wiring publish up for real). With `--registry=<url>`, the CLI reads `berth.yml` and the bundle, and `POST`s both as multipart form data — no separate "create" step.
+
+**Namespace ownership, npm/PyPI-style.** The first-ever publish of an app *name* needs no credential and mints that name's owner token, returned once in the response (`berth publish` prints it — save it, it's never shown again). Every later publish of that same name must present it as `Authorization: Bearer <token>` (`--token`, or `BERTH_REGISTRY_TOKEN`), or the registry returns `401`. This closes the gap where anyone reaching the registry could publish a colliding-name version over an existing app with no identity check at all — it does not add a user/org model or rate limiting (see Scope below); it's specifically "does the next publish of this name belong to whoever published it first."
 
 ## `berth init --registry=<url> --template=<name>`
 
@@ -64,7 +66,7 @@ This makes the vendoring step, not tarball construction, the part worth trusting
 
 ## Scope
 
-- **Single-node, no auth.** Anyone who can reach the HTTP port can publish. There's no user/org model, no API key, no rate limiting. Fine for a local registry or a trusted internal one; not what you'd run as a public multi-tenant service.
+- **Single-node.** No user/org model, no API key beyond the per-name owner token above, no rate limiting. Fine for a local registry or a trusted internal one; not what you'd run as a public multi-tenant service.
 - **No billing/usage metering.** Usage-based revenue for a published app's author, and any "first external revenue" milestone, aren't implemented — they need a real payments integration and real paying users, neither of which exists yet.
 - **`latest` means highest semver**, not most-recently-published — publishing `1.5.0` after `2.0.0` doesn't make `1.5.0` "latest".
 
