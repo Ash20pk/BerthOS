@@ -1,4 +1,5 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
+import { timingSafeEqual } from "node:crypto";
 import type { GrantsDb, GrantStatus } from "./db.js";
 
 export interface GrantsRouteOptions {
@@ -11,10 +12,31 @@ export interface GrantsRouteOptions {
    * is the "push" half of the async approval flow, not a required dependency.
    */
   webhookUrl?: string;
+  /**
+   * Required bearer token for POST /grants/:id/approve|deny. `POST /grants`
+   * (a sandboxed app requesting a capability) and `GET /grants` (listing)
+   * deliberately stay open — the vulnerability this closes is a requester
+   * deciding its *own* pending request, not a requester seeing the queue.
+   */
+  operatorToken: string;
 }
 
 function isGrantStatus(value: unknown): value is GrantStatus {
   return value === "pending" || value === "approved" || value === "denied";
+}
+
+function bearerToken(request: FastifyRequest): string | undefined {
+  const header = request.headers.authorization;
+  if (!header?.startsWith("Bearer ")) return undefined;
+  return header.slice("Bearer ".length);
+}
+
+/** Constant-time-ish comparison — this token gates a capability escalation decision, worth not leaking via timing. */
+function tokenMatches(provided: string | undefined, expected: string): boolean {
+  if (!provided) return false;
+  const providedBuf = Buffer.from(provided);
+  const expectedBuf = Buffer.from(expected);
+  return providedBuf.length === expectedBuf.length && timingSafeEqual(providedBuf, expectedBuf);
 }
 
 async function notifyWebhook(webhookUrl: string, payload: unknown): Promise<void> {
@@ -32,7 +54,7 @@ async function notifyWebhook(webhookUrl: string, payload: unknown): Promise<void
 }
 
 export async function registerGrantsRoutes(app: FastifyInstance, opts: GrantsRouteOptions): Promise<void> {
-  const { db, webhookUrl } = opts;
+  const { db, webhookUrl, operatorToken } = opts;
   const now = opts.now ?? (() => new Date().toISOString());
 
   app.post<{ Body: { appName?: string; capability?: string; reason?: string } }>("/grants", async (request, reply) => {
@@ -63,6 +85,9 @@ export async function registerGrantsRoutes(app: FastifyInstance, opts: GrantsRou
   });
 
   app.post<{ Params: { id: string }; Body: { decidedBy?: string } }>("/grants/:id/approve", async (request, reply) => {
+    if (!tokenMatches(bearerToken(request), operatorToken)) {
+      return reply.code(401).send({ error: "missing or invalid operator token" });
+    }
     const { decidedBy } = request.body ?? {};
     if (!decidedBy) return reply.code(400).send({ error: "decidedBy is required" });
 
@@ -78,6 +103,9 @@ export async function registerGrantsRoutes(app: FastifyInstance, opts: GrantsRou
   app.post<{ Params: { id: string }; Body: { decidedBy?: string; reason?: string } }>(
     "/grants/:id/deny",
     async (request, reply) => {
+      if (!tokenMatches(bearerToken(request), operatorToken)) {
+        return reply.code(401).send({ error: "missing or invalid operator token" });
+      }
       const { decidedBy, reason } = request.body ?? {};
       if (!decidedBy) return reply.code(400).send({ error: "decidedBy is required" });
 
