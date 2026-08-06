@@ -96,6 +96,26 @@ test("an app can opt out of governance", () => {
   assert.deepEqual(result.governance, { exempt: true });
 });
 
+test("resources defaults to empty (no limits declared)", () => {
+  const result = BerthManifestSchema.parse({ name: "app", version: "1.0.0" });
+  assert.deepEqual(result.resources, {});
+});
+
+test("resources accepts fractional cpu, integer memory_mb and gpu count", () => {
+  const result = BerthManifestSchema.parse({
+    name: "app",
+    version: "1.0.0",
+    resources: { cpu: 0.5, memory_mb: 512, gpu: 1 },
+  });
+  assert.deepEqual(result.resources, { cpu: 0.5, memory_mb: 512, gpu: 1 });
+});
+
+test("resources rejects a non-positive cpu/memory_mb/gpu", () => {
+  assert.equal(BerthManifestSchema.safeParse({ name: "app", version: "1.0.0", resources: { cpu: 0 } }).success, false);
+  assert.equal(BerthManifestSchema.safeParse({ name: "app", version: "1.0.0", resources: { memory_mb: -1 } }).success, false);
+  assert.equal(BerthManifestSchema.safeParse({ name: "app", version: "1.0.0", resources: { gpu: 1.5 } }).success, false);
+});
+
 test("matchesCapability handles glob scopes", () => {
   assert.equal(matchesCapability("browser:navigate:*.github.com", "browser:navigate:api.github.com"), true);
   assert.equal(matchesCapability("browser:navigate:*.github.com", "browser:navigate:example.com"), false);

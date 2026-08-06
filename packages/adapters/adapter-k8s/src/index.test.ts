@@ -135,6 +135,38 @@ test("teardown() doesn't blow up if Service cleanup fails — the Pod still gets
   assert.deepEqual(deletedPod, { name: "x-abc12", namespace: "default" });
 });
 
+test("start() sends no resources field on the Pod spec when the manifest declares none", async (t) => {
+  let podBody: any;
+  const coreApi = {
+    createNamespacedPod: async (args: any) => {
+      podBody = args.body;
+      return { metadata: { name: "x-abc12" } };
+    },
+  };
+  await startedHandle(t, coreApi);
+  assert.equal(podBody.spec.containers[0].resources, undefined);
+});
+
+test("start() sets requests == limits on the Pod spec when the manifest declares cpu/memory_mb/gpu", async (t) => {
+  let podBody: any;
+  const coreApi = {
+    createNamespacedPod: async (args: any) => {
+      podBody = args.body;
+      return { metadata: { name: "x-abc12" } };
+    },
+  };
+  const resourcedManifest = { name: "x", resources: { cpu: 0.5, memory_mb: 512, gpu: 1 } } as unknown as BerthManifest;
+  const { createK8sAdapter } = await (async () => {
+    t.mock.module("@kubernetes/client-node", mockK8sModule(coreApi));
+    return import("./index.js");
+  })();
+  const adapter = createK8sAdapter();
+  await adapter.start("berth/x:1.0.0", { imageRef: "berth/x:1.0.0", manifest: resourcedManifest });
+
+  const expected = { cpu: "0.5", memory: "512Mi", "nvidia.com/gpu": "1" };
+  assert.deepEqual(podBody.spec.containers[0].resources, { requests: expected, limits: expected });
+});
+
 test("rpcUrl() returns null for a handle this adapter didn't create", async (t) => {
   t.mock.module("@kubernetes/client-node", mockK8sModule({}));
   const { createK8sAdapter } = await import("./index.js");

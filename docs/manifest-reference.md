@@ -102,6 +102,21 @@ governance:
 
 Lets an app opt out of being gated by whichever app declares `governs: true` in the same `Computer`. Only relevant when a governance app is actually loaded — with none loaded, this field has no effect. See the [governance gate reference](./governance-reference.md) for how the gate applies and its fail-open failure mode.
 
+### `resources` (default: `{}`)
+
+```yaml
+resources:
+  cpu: 0.5        # fractional cores
+  memory_mb: 512  # MiB
+  gpu: 1          # GPU count (best-effort; not every target enforces it — see below)
+```
+
+All three keys are optional and independent — declare only what you need. Omitting `resources:` entirely keeps every local sandbox exactly as unbounded as it's always been; this only ever narrows behavior for an app that opts in.
+
+- **`docker-orchestrator`** (`berth dev`/`berth test`, local): `cpu` becomes `HostConfig.NanoCpus`, `memory_mb` becomes `HostConfig.Memory` (bytes), `gpu` becomes an `nvidia` `DeviceRequests` entry (the Docker Engine API's `--gpus` equivalent — needs the NVIDIA Container Toolkit on the host to actually do anything). A multi-app container (see `apps` in the [multi-app reference](./multi-app-reference.md)) takes the **max** of each field independently across every app sharing it, since the limit applies to the whole container, not one app's process within it.
+- **`adapter-k8s`** (`berth deploy --fleet=k8s`): becomes the Pod's container `resources.requests` **and** `resources.limits` (Guaranteed QoS) for whichever of `cpu`/`memory` (`${memory_mb}Mi`)/`nvidia.com/gpu` were declared — the direct answer to "no protection against one noisy sandbox starving co-located ones": a Guaranteed pod can't be evicted for node-pressure reasons a BestEffort/Burstable one could be, and can't burst past what it declared either. `nvidia.com/gpu` is the standard NVIDIA device-plugin resource name; a cluster without that device plugin (or an AMD/other-vendor GPU) has no equivalent here.
+- **`adapter-e2b`/`adapter-daytona`**: not wired — resource sizing on those platforms is controlled by the provider's own template/plan configuration, not a per-deploy request; out of scope for this field.
+
 ## Capability string grammar
 
 ```
