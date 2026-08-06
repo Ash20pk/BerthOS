@@ -69,6 +69,28 @@ class DaytonaDeployHandle implements DeployHandle {
     url.searchParams.set("DAYTONA_SANDBOX_AUTH_KEY", link.token);
     return url.toString();
   }
+
+  /**
+   * Real, confirmed against the installed @daytonaio/sdk@0.202.0's own type
+   * definitions: sandbox.fork({name?}, timeout?) returns a new, independent
+   * copy-on-write clone Sandbox instance — a live instance right now,
+   * distinct from createSnapshot() below (a reusable template for later).
+   * Deliberately calls the stable `fork`, not the deprecated
+   * `_experimental_fork` alias the same SDK version also exposes.
+   */
+  async fork(params?: { name?: string }): Promise<DaytonaDeployHandle> {
+    const forked = await withTimeout<any>(
+      this.sandbox.fork(params),
+      DEPLOY_CREATE_TIMEOUT_MS,
+      `daytona fork("${this.id}")`,
+    );
+    return new DaytonaDeployHandle(forked.id, forked);
+  }
+
+  /** Real, confirmed against the same SDK version: sandbox.createSnapshot(name, timeout?) captures the filesystem into a named, reusable template later start()/upload() calls can reference by name. */
+  async createSnapshot(name: string): Promise<void> {
+    await withTimeout<any>(this.sandbox.createSnapshot(name), DEPLOY_CREATE_TIMEOUT_MS, `daytona createSnapshot("${name}")`);
+  }
 }
 
 export function createDaytonaAdapter(): DeployAdapter {
@@ -158,6 +180,20 @@ export function createDaytonaAdapter(): DeployAdapter {
       } catch {
         return null;
       }
+    },
+
+    async fork(handle: DeployHandle, params?: { name?: string }) {
+      if (!(handle instanceof DaytonaDeployHandle)) {
+        throw new Error("daytona fork() needs a handle this adapter created");
+      }
+      return handle.fork(params);
+    },
+
+    async snapshot(handle: DeployHandle, name: string) {
+      if (!(handle instanceof DaytonaDeployHandle)) {
+        throw new Error("daytona snapshot() needs a handle this adapter created");
+      }
+      await handle.createSnapshot(name);
     },
   };
 }
