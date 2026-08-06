@@ -12,6 +12,10 @@ export default class GrantsApprove extends Command {
   static override flags = {
     server: Flags.string({ description: "berth-grants server URL", default: DEFAULT_SERVER }),
     by: Flags.string({ description: "who approved this (defaults to the current OS user)" }),
+    token: Flags.string({
+      description: "berth-grants operator token (also read from BERTH_GRANTS_TOKEN) — printed by `berth-grants` on first start, or saved to <data-dir>/operator.token",
+      env: "BERTH_GRANTS_TOKEN",
+    }),
   };
 
   async run(): Promise<void> {
@@ -20,7 +24,10 @@ export default class GrantsApprove extends Command {
 
     const res = await fetch(new URL(`/grants/${args.id}/approve`, flags.server), {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        ...(flags.token ? { authorization: `Bearer ${flags.token}` } : {}),
+      },
       body: JSON.stringify({ decidedBy }),
     });
     const body = await res.json();

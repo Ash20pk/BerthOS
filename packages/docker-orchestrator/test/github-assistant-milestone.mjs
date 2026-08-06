@@ -39,6 +39,7 @@ const GRANTS_PORT = 56902;
 const MOCK_GITHUB_PORT = 56900;
 const GRANTED_CAPABILITY = `network:connect:${MOCK_GITHUB_PORT}`;
 const BROKER_UPSTREAM_MOCK_PORT = 56904;
+const OPERATOR_TOKEN = "milestone-test-operator-token";
 
 const docker = new Docker();
 
@@ -63,6 +64,7 @@ async function runBypassScenario() {
     assert(created.status === "pending", `expected a fresh grant to be pending, got ${created.status}`);
     const approved = await grantsFetch(`/grants/${created.id}/approve`, {
       method: "POST",
+      headers: { authorization: `Bearer ${OPERATOR_TOKEN}` },
       body: JSON.stringify({ decidedBy: "milestone-test" }),
     });
     assert(approved.status === "approved", `expected approval to stick, got ${approved.status}`);
@@ -328,6 +330,7 @@ async function startGrantsServer(dataDir) {
       BERTH_GRANTS_PORT: String(GRANTS_PORT),
       BERTH_GRANTS_HOST: "0.0.0.0",
       BERTH_GRANTS_DATA_DIR: dataDir,
+      BERTH_GRANTS_OPERATOR_TOKEN: OPERATOR_TOKEN,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });

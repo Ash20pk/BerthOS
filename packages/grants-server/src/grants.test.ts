@@ -5,12 +5,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createGrantsServer } from "./index.js";
 
+const OPERATOR_TOKEN = "test-operator-token";
+const AUTH_HEADER = { authorization: `Bearer ${OPERATOR_TOKEN}` };
+
 async function withServer(
   fn: (app: Awaited<ReturnType<typeof createGrantsServer>>) => Promise<void>,
   opts: { webhookUrl?: string } = {},
 ): Promise<void> {
   const dataDir = await mkdtemp(join(tmpdir(), "berth-grants-test-"));
-  const app = await createGrantsServer({ dataDir, now: () => "2026-01-01T00:00:00.000Z", webhookUrl: opts.webhookUrl });
+  const app = await createGrantsServer({
+    dataDir,
+    now: () => "2026-01-01T00:00:00.000Z",
+    webhookUrl: opts.webhookUrl,
+    operatorToken: OPERATOR_TOKEN,
+  });
   try {
     await fn(app);
   } finally {
@@ -38,6 +46,7 @@ test("requests a grant, lists it as pending, then approves it", async () => {
     const approveRes = await app.inject({
       method: "POST",
       url: `/grants/${grant.id}/approve`,
+      headers: AUTH_HEADER,
       payload: { decidedBy: "ash" },
     });
     assert.equal(approveRes.statusCode, 200, approveRes.body);
@@ -62,6 +71,7 @@ test("denies a grant with a reason and rejects deciding it twice", async () => {
     const denyRes = await app.inject({
       method: "POST",
       url: `/grants/${grant.id}/deny`,
+      headers: AUTH_HEADER,
       payload: { decidedBy: "ash", reason: "too broad" },
     });
     assert.equal(denyRes.statusCode, 200);
@@ -72,6 +82,7 @@ test("denies a grant with a reason and rejects deciding it twice", async () => {
     const secondDecision = await app.inject({
       method: "POST",
       url: `/grants/${grant.id}/approve`,
+      headers: AUTH_HEADER,
       payload: { decidedBy: "someone-else" },
     });
     assert.equal(secondDecision.statusCode, 409);
@@ -86,9 +97,55 @@ test("404s for an unknown grant id and 400s for a missing body field", async () 
     const notFound = await app.inject({
       method: "POST",
       url: "/grants/00000000-0000-0000-0000-000000000000/approve",
+      headers: AUTH_HEADER,
       payload: { decidedBy: "ash" },
     });
     assert.equal(notFound.statusCode, 404);
+  });
+});
+
+test("rejects approving/denying a grant without the operator token — the actual gap #27 fix", async () => {
+  await withServer(async (app) => {
+    const createRes = await app.inject({
+      method: "POST",
+      url: "/grants",
+      payload: { appName: "my-app", capability: "network:connect:8080" },
+    });
+    const grant = JSON.parse(createRes.body);
+
+    const noToken = await app.inject({
+      method: "POST",
+      url: `/grants/${grant.id}/approve`,
+      payload: { decidedBy: "my-app" },
+    });
+    assert.equal(noToken.statusCode, 401, noToken.body);
+
+    const wrongToken = await app.inject({
+      method: "POST",
+      url: `/grants/${grant.id}/approve`,
+      headers: { authorization: "Bearer not-the-operator-token" },
+      payload: { decidedBy: "my-app" },
+    });
+    assert.equal(wrongToken.statusCode, 401, wrongToken.body);
+
+    const deniedWithoutToken = await app.inject({
+      method: "POST",
+      url: `/grants/${grant.id}/deny`,
+      payload: { decidedBy: "my-app" },
+    });
+    assert.equal(deniedWithoutToken.statusCode, 401, deniedWithoutToken.body);
+
+    // Still pending after both self-approval attempts were rejected.
+    const stillPending = await app.inject({ method: "GET", url: `/grants/${grant.id}` });
+    assert.equal(JSON.parse(stillPending.body).status, "pending");
+
+    const approved = await app.inject({
+      method: "POST",
+      url: `/grants/${grant.id}/approve`,
+      headers: AUTH_HEADER,
+      payload: { decidedBy: "ash" },
+    });
+    assert.equal(approved.statusCode, 200, approved.body);
   });
 });
 
