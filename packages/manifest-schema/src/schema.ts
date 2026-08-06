@@ -60,6 +60,24 @@ export const GovernanceSpec = z
   })
   .default({ exempt: false });
 
+/**
+ * All optional and unset by default (`{}`) — an app declaring none of these
+ * keeps today's behavior exactly (an unbounded local container, no resource
+ * fields sent to a cloud adapter). `cpu` is fractional cores (`0.5` = half a
+ * core), `memory_mb` is MiB, `gpu` is a GPU *count* request, not a specific
+ * model — best-effort everywhere it's wired (docker-orchestrator, adapter-k8s
+ * as of this schema addition; see gap #30 in gaps.md and each consumer's own
+ * docs for exactly which enforce it as a hard limit vs. pass it through
+ * unenforced).
+ */
+export const ResourcesSpec = z
+  .object({
+    cpu: z.number().positive().optional(),
+    memory_mb: z.number().int().positive().optional(),
+    gpu: z.number().int().positive().optional(),
+  })
+  .default({});
+
 export const BerthManifestSchema = z
   .object({
     name: z.string().regex(/^[a-z0-9-]+$/, "name must be lowercase alphanumeric with dashes"),
@@ -80,6 +98,7 @@ export const BerthManifestSchema = z
      */
     governs: z.boolean().default(false),
     governance: GovernanceSpec,
+    resources: ResourcesSpec,
   })
   .superRefine((manifest, ctx) => {
     if (manifest.governs && !manifest.exports.some((exportSpec) => exportSpec.name === "evaluate_action")) {
@@ -96,3 +115,4 @@ export type ExportSpecType = z.infer<typeof ExportSpec>;
 export type JsonPrimitiveTypeName = z.infer<typeof JsonPrimitiveType>;
 export type GovernanceSpecType = z.infer<typeof GovernanceSpec>;
 export type ExposeSpecType = z.infer<typeof ExposeSpec>;
+export type ResourcesSpecType = z.infer<typeof ResourcesSpec>;
