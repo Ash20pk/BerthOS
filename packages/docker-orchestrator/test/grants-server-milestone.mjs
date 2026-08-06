@@ -26,6 +26,7 @@ const FILESYSTEM_APP_DIR = join(REPO_ROOT, "apps", "filesystem");
 const GRANTS_SERVER_ENTRY = join(REPO_ROOT, "packages", "grants-server", "dist", "server.js");
 const GRANTS_PORT = 56514;
 const GRANTED_CAPABILITY = "network:connect:8443";
+const OPERATOR_TOKEN = "milestone-test-operator-token";
 
 const docker = new Docker();
 
@@ -48,9 +49,18 @@ async function main() {
     console.log("created:", created);
     assert(created.status === "pending", `expected a fresh grant to be pending, got ${created.status}`);
 
+    console.log(`\n--- Confirming a requester can't self-approve without the operator token (gap #27) ---`);
+    const selfApproveAttempt = await fetch(`http://127.0.0.1:${GRANTS_PORT}/grants/${created.id}/approve`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ decidedBy: "filesystem" }),
+    });
+    assert(selfApproveAttempt.status === 401, `expected a token-less approve to be rejected with 401, got ${selfApproveAttempt.status}`);
+
     console.log(`\n--- Approving grant ${created.id} via the same HTTP contract "berth grants approve" uses ---`);
     const approved = await grantsFetch(`/grants/${created.id}/approve`, {
       method: "POST",
+      headers: { authorization: `Bearer ${OPERATOR_TOKEN}` },
       body: JSON.stringify({ decidedBy: "milestone-test" }),
     });
     console.log("approved:", approved);
@@ -102,6 +112,7 @@ async function startGrantsServer(dataDir) {
       BERTH_GRANTS_PORT: String(GRANTS_PORT),
       BERTH_GRANTS_HOST: "0.0.0.0",
       BERTH_GRANTS_DATA_DIR: dataDir,
+      BERTH_GRANTS_OPERATOR_TOKEN: OPERATOR_TOKEN,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
