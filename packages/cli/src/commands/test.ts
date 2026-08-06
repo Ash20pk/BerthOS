@@ -108,7 +108,18 @@ export default class Test extends Command {
 
       const [result] = await docker.run(image, cmd, stdout, {
         Env: ["BERTH_TEST_MODE=1", ...grantsServerEnv],
-        HostConfig: { AutoRemove: true },
+        HostConfig: {
+          AutoRemove: true,
+          // Every sandbox mounts /context via FUSE unconditionally (see
+          // docker-orchestrator's container.ts, which this single-app
+          // `docker.run` path bypasses) — without these, an app declaring
+          // semantic-fs capabilities fails under `berth test` specifically
+          // with "fusermount3: fuse device /dev/fuse not found", even though
+          // the multi-app/milestone paths below already pass them.
+          Devices: [{ PathOnHost: "/dev/fuse", PathInContainer: "/dev/fuse", CgroupPermissions: "rwm" }],
+          CapAdd: ["SYS_ADMIN"],
+          SecurityOpt: ["apparmor:unconfined"],
+        },
       });
 
       return { exitCode: result.StatusCode ?? 0, output, parsed: parseLastJsonLine(output) };
