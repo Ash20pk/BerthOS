@@ -62,3 +62,17 @@ test("resolveFleet passes through env from the alias", async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("resolveFleet passes through region from the alias, and leaves it undefined when unset", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "berth-fleet-test-"));
+  const configPath = join(dir, ".berthrc");
+  try {
+    await writeFile(configPath, JSON.stringify({ prod: { adapter: "daytona", region: "eu-central-1" }, staging: { adapter: "e2b" } }));
+    const prod = await resolveFleet("prod", configPath);
+    assert.equal(prod.region, "eu-central-1");
+    const staging = await resolveFleet("staging", configPath);
+    assert.equal(staging.region, undefined);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

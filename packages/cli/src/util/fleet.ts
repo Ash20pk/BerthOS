@@ -11,6 +11,8 @@ interface FleetAlias {
   env?: Record<string, string>;
   /** How many instances `berth deploy --fleet=<alias>` starts by default. Overridable per-invocation via --count. Defaults to 1. */
   count?: number;
+  /** Default region/zone for this alias — see DeployTarget.region for what each adapter does with it. Overridable per-invocation via --region. */
+  region?: string;
 }
 
 type FleetConfig = Record<string, FleetAlias>;
@@ -37,7 +39,7 @@ function instantiate(adapterName: "e2b" | "daytona" | "k8s"): DeployAdapter {
 export async function resolveFleet(
   fleetName: string,
   configPath = DEFAULT_BERTHRC_PATH,
-): Promise<{ adapter: DeployAdapter; env?: Record<string, string>; count: number }> {
+): Promise<{ adapter: DeployAdapter; env?: Record<string, string>; count: number; region?: string }> {
   if (fleetName === "e2b" || fleetName === "daytona" || fleetName === "k8s") {
     return { adapter: instantiate(fleetName), count: 1 };
   }
@@ -49,5 +51,5 @@ export async function resolveFleet(
       `unknown fleet "${fleetName}" — expected "e2b", "daytona", "k8s", or an alias defined in ~/.berthrc (e.g. {"prod": {"adapter": "e2b"}})`,
     );
   }
-  return { adapter: instantiate(alias.adapter), env: alias.env, count: alias.count ?? 1 };
+  return { adapter: instantiate(alias.adapter), env: alias.env, count: alias.count ?? 1, region: alias.region };
 }
