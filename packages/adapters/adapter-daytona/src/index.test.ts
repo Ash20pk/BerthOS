@@ -26,6 +26,44 @@ test("upload() calls snapshot.create and returns its name as remoteImageRef", as
   });
 });
 
+test("upload() passes regionId through to snapshot.create() when target.region is set", async (t) => {
+  const created = { name: "snap-abc" };
+  const snapshotCreate = t.mock.fn(async (_params: unknown) => created);
+  t.mock.module("@daytonaio/sdk", {
+    namedExports: {
+      Daytona: class {
+        snapshot = { create: snapshotCreate };
+      },
+    },
+  });
+
+  const { createDaytonaAdapter } = await import("./index.js");
+  await createDaytonaAdapter().upload({ imageRef: "berth/x:1.0.0", manifest, region: "eu-central-1" });
+
+  assert.deepEqual(snapshotCreate.mock.calls[0]?.arguments[0], {
+    name: "x",
+    image: "berth/x:1.0.0",
+    regionId: "eu-central-1",
+  });
+});
+
+test("upload() omits regionId entirely when target.region isn't set", async (t) => {
+  const created = { name: "snap-abc" };
+  const snapshotCreate = t.mock.fn(async (_params: unknown) => created);
+  t.mock.module("@daytonaio/sdk", {
+    namedExports: {
+      Daytona: class {
+        snapshot = { create: snapshotCreate };
+      },
+    },
+  });
+
+  const { createDaytonaAdapter } = await import("./index.js");
+  await createDaytonaAdapter().upload({ imageRef: "berth/x:1.0.0", manifest });
+
+  assert.deepEqual(snapshotCreate.mock.calls[0]?.arguments[0], { name: "x", image: "berth/x:1.0.0" });
+});
+
 test("start() calls client.create({snapshot, envVars}) and wraps the returned sandbox", async (t) => {
   const sandbox = { id: "sbx-1", state: "started" };
   const create = t.mock.fn(async (_params: { snapshot: string; envVars?: Record<string, string> }) => sandbox);
