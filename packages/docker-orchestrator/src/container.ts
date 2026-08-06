@@ -35,6 +35,26 @@ function declaresMeshCapability(manifest: BerthManifest): boolean {
   return manifest.capabilities.some((cap) => cap.startsWith("network:peer:"));
 }
 
+/**
+ * A resource limit applies to the whole container, but a multi-app container
+ * shares one container across several manifests — takes the max of each
+ * field across every app sharing it, so no app's declared need for CPU/
+ * memory/GPU is silently capped below what it actually asked for just
+ * because a companion app in the same container declared less (or nothing).
+ * Undefined stays undefined (no field declared by anyone => no limit set),
+ * distinct from `0` (which the schema already rejects as non-positive).
+ */
+export function maxResources(manifests: BerthManifest[]): { cpu?: number; memoryMb?: number; gpu?: number } {
+  const result: { cpu?: number; memoryMb?: number; gpu?: number } = {};
+  for (const manifest of manifests) {
+    const r = manifest.resources;
+    if (r.cpu !== undefined) result.cpu = Math.max(result.cpu ?? 0, r.cpu);
+    if (r.memory_mb !== undefined) result.memoryMb = Math.max(result.memoryMb ?? 0, r.memory_mb);
+    if (r.gpu !== undefined) result.gpu = Math.max(result.gpu ?? 0, r.gpu);
+  }
+  return result;
+}
+
 export interface StartContainerOptions {
   image: string;
   name: string;
@@ -202,6 +222,14 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
     capAdd.push("NET_ADMIN");
   }
 
+  // Unset (the default) leaves every sandbox exactly as unbounded as it's
+  // always been — this only ever narrows behavior for an app that opts in
+  // via berth.yml's `resources:`, never for one that doesn't.
+  const resources = maxResources(options.apps?.map((a) => a.manifest) ?? [options.manifest]);
+  const deviceRequests: Docker.DeviceRequest[] | undefined = resources.gpu
+    ? [{ Driver: "nvidia", Count: resources.gpu, Capabilities: [["gpu"]] }]
+    : undefined;
+
   const container = await docker.createContainer({
     name: options.name,
     Image: options.image,
@@ -235,6 +263,9 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
       // behind any manifest capability the way browser:* ports are.
       Devices: devices,
       CapAdd: capAdd,
+      ...(resources.cpu !== undefined ? { NanoCpus: Math.round(resources.cpu * 1e9) } : {}),
+      ...(resources.memoryMb !== undefined ? { Memory: resources.memoryMb * 1024 * 1024 } : {}),
+      ...(deviceRequests ? { DeviceRequests: deviceRequests } : {}),
       // The default docker-default AppArmor profile denies the FUSE
       // mount(2) syscall outright even with CAP_SYS_ADMIN + /dev/fuse
       // (moby/moby#50013) — a no-op on hosts with no AppArmor LSM active
