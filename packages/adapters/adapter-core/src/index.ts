@@ -111,4 +111,38 @@ export interface DeployAdapter {
    * supported in principle, not available for this instance/port right now.
    */
   rpcUrl?(handle: DeployHandle, port: number): Promise<string | null>;
+  /**
+   * Pauses a running instance in place — a full memory+filesystem capture
+   * that resume(handle.id) can bring back later, without a fresh
+   * upload()/start() (which would boot clean, losing all in-sandbox state).
+   * Optional: only a provider with a native pause primitive implements this
+   * — of the adapters shipped today, that's E2B, not Daytona or k8s (a Pod
+   * has no equivalent without cluster-level CRIU tooling this project
+   * doesn't set up). See docs/manifest-reference.md's sibling docs and
+   * gaps.md gap #29 for exactly which adapter supports what.
+   */
+  pause?(handle: DeployHandle): Promise<void>;
+  /**
+   * Resumes a previously pause()d instance by id, returning a fresh handle
+   * to the same instance (same id, its paused state restored) rather than a
+   * new one. Optional for the same reason pause() is — implement both or
+   * neither.
+   */
+  resume?(id: string): Promise<DeployHandle>;
+  /**
+   * Forks a running instance into a new, independent copy-on-write clone —
+   * a live instance right now, distinct from snapshot() below (a reusable
+   * template for a *later* start()). Optional: of the adapters shipped
+   * today, only Daytona has this as a native primitive.
+   */
+  fork?(handle: DeployHandle, params?: { name?: string }): Promise<DeployHandle>;
+  /**
+   * Captures a running instance's filesystem into a named, reusable
+   * template/image this provider can start() new instances from later —
+   * this provider's own equivalent of docker-orchestrator's local
+   * createSnapshot(), for providers where "snapshot" means "a new template,"
+   * not "a paused copy of this exact instance" (that's pause()/resume()
+   * above). Optional: of the adapters shipped today, only Daytona has this.
+   */
+  snapshot?(handle: DeployHandle, name: string): Promise<void>;
 }
