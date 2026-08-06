@@ -46,11 +46,13 @@ test("publishes an app and serves it back via list/get/download", async () => {
       payload: multipartBody({ manifest: MANIFEST, author: "jordan" }, boundary),
     });
     assert.equal(publishRes.statusCode, 201, publishRes.body);
-    assert.deepEqual(JSON.parse(publishRes.body), {
-      name: "sample-app",
-      version: "1.0.0",
-      publishedAt: "2026-01-01T00:00:00.000Z",
-    });
+    const published = JSON.parse(publishRes.body);
+    assert.equal(published.name, "sample-app");
+    assert.equal(published.version, "1.0.0");
+    assert.equal(published.publishedAt, "2026-01-01T00:00:00.000Z");
+    // First-ever publish of a name mints and returns its owner token.
+    assert.equal(typeof published.ownerToken, "string");
+    assert.ok(published.ownerToken.length > 0);
 
     const listRes = await app.inject({ method: "GET", url: "/apps" });
     const listed = JSON.parse(listRes.body);
@@ -81,10 +83,66 @@ test("rejects republishing the same name+version", async () => {
 
     const first = await app.inject({ method: "POST", url: "/apps", headers, payload });
     assert.equal(first.statusCode, 201);
+    const ownerToken = JSON.parse(first.body).ownerToken;
 
-    const second = await app.inject({ method: "POST", url: "/apps", headers, payload });
+    // Same owner, same name+version -- still rejected, now on the version
+    // check rather than the (passing) ownership check.
+    const second = await app.inject({
+      method: "POST",
+      url: "/apps",
+      headers: { ...headers, authorization: `Bearer ${ownerToken}` },
+      payload,
+    });
     assert.equal(second.statusCode, 409);
     assert.match(JSON.parse(second.body).error, /already published/);
+  });
+});
+
+test("rejects publishing a new version of someone else's name without the owner token — the actual gap #28 fix", async () => {
+  await withServer(async (app) => {
+    const boundary = "----berthtest-ownership";
+    const headers = { "content-type": `multipart/form-data; boundary=${boundary}` };
+
+    const first = await app.inject({
+      method: "POST",
+      url: "/apps",
+      headers,
+      payload: multipartBody({ manifest: MANIFEST }, boundary),
+    });
+    assert.equal(first.statusCode, 201);
+    const ownerToken = JSON.parse(first.body).ownerToken;
+
+    const v2 = MANIFEST.replace("version: 1.0.0", "version: 2.0.0");
+
+    const noToken = await app.inject({
+      method: "POST",
+      url: "/apps",
+      headers,
+      payload: multipartBody({ manifest: v2 }, boundary),
+    });
+    assert.equal(noToken.statusCode, 401, noToken.body);
+
+    const wrongToken = await app.inject({
+      method: "POST",
+      url: "/apps",
+      headers: { ...headers, authorization: "Bearer not-the-owner-token" },
+      payload: multipartBody({ manifest: v2 }, boundary),
+    });
+    assert.equal(wrongToken.statusCode, 401, wrongToken.body);
+
+    // Rejected attempts never published v2.0.0.
+    const versions = await app.inject({ method: "GET", url: "/apps/sample-app" });
+    assert.equal(JSON.parse(versions.body).length, 1);
+
+    const withToken = await app.inject({
+      method: "POST",
+      url: "/apps",
+      headers: { ...headers, authorization: `Bearer ${ownerToken}` },
+      payload: multipartBody({ manifest: v2 }, boundary),
+    });
+    assert.equal(withToken.statusCode, 201, withToken.body);
+    // Not a brand-new name -- no second owner token minted.
+    assert.equal(JSON.parse(withToken.body).ownerToken, undefined);
   });
 });
 
@@ -96,8 +154,14 @@ test("resolves 'latest' to the highest semver, not the most recent insert", asyn
     const v2 = MANIFEST.replace("version: 1.0.0", "version: 2.0.0");
     const v1_5 = MANIFEST.replace("version: 1.0.0", "version: 1.5.0");
 
-    await app.inject({ method: "POST", url: "/apps", headers, payload: multipartBody({ manifest: v2 }, boundary) });
-    await app.inject({ method: "POST", url: "/apps", headers, payload: multipartBody({ manifest: v1_5 }, boundary) });
+    const first = await app.inject({ method: "POST", url: "/apps", headers, payload: multipartBody({ manifest: v2 }, boundary) });
+    const ownerToken = JSON.parse(first.body).ownerToken;
+    await app.inject({
+      method: "POST",
+      url: "/apps",
+      headers: { ...headers, authorization: `Bearer ${ownerToken}` },
+      payload: multipartBody({ manifest: v1_5 }, boundary),
+    });
 
     const latest = await app.inject({ method: "GET", url: "/apps/sample-app/latest" });
     assert.equal(JSON.parse(latest.body).version, "2.0.0");
