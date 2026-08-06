@@ -124,6 +124,65 @@ test("rpcUrl() appends the sandbox's preview-link token as a DAYTONA_SANDBOX_AUT
   assert.equal(url, "https://7300-sbx-4.daytona.example/?DAYTONA_SANDBOX_AUTH_KEY=sekrit-tok");
 });
 
+test("fork() calls sandbox.fork(params) and wraps the returned Sandbox in a new handle", async (t) => {
+  const forkedSandbox = { id: "sbx-fork-1", state: "started" };
+  const fork = t.mock.fn(async (_params?: { name?: string }) => forkedSandbox);
+  const sandbox = { id: "sbx-6", state: "started", fork };
+  const create = t.mock.fn(async (_params: unknown) => sandbox);
+  t.mock.module("@daytonaio/sdk", {
+    namedExports: {
+      Daytona: class {
+        create = create;
+      },
+    },
+  });
+
+  const { createDaytonaAdapter } = await import("./index.js");
+  const adapter = createDaytonaAdapter();
+  const handle = await adapter.start("snap-abc", { imageRef: "berth/x:1.0.0", manifest });
+
+  const forkedHandle = await adapter.fork!(handle, { name: "my-fork" });
+
+  assert.equal(forkedHandle.id, "sbx-fork-1");
+  assert.equal(fork.mock.calls.length, 1);
+  assert.deepEqual(fork.mock.calls[0]?.arguments[0], { name: "my-fork" });
+});
+
+test("fork() throws for a handle this adapter didn't create", async () => {
+  const { createDaytonaAdapter } = await import("./index.js");
+  const adapter = createDaytonaAdapter();
+  const foreignHandle = {
+    id: "not-daytona",
+    status: async () => "running" as const,
+    streamLogs: async function* () {},
+    stop: async () => {},
+  };
+
+  await assert.rejects(() => adapter.fork!(foreignHandle), /needs a handle this adapter created/);
+});
+
+test("snapshot() calls sandbox.createSnapshot(name)", async (t) => {
+  const createSnapshotFn = t.mock.fn(async (_name: string) => undefined);
+  const sandbox = { id: "sbx-7", state: "started", createSnapshot: createSnapshotFn };
+  const create = t.mock.fn(async (_params: unknown) => sandbox);
+  t.mock.module("@daytonaio/sdk", {
+    namedExports: {
+      Daytona: class {
+        create = create;
+      },
+    },
+  });
+
+  const { createDaytonaAdapter } = await import("./index.js");
+  const adapter = createDaytonaAdapter();
+  const handle = await adapter.start("snap-abc", { imageRef: "berth/x:1.0.0", manifest });
+
+  await adapter.snapshot!(handle, "my-snapshot");
+
+  assert.equal(createSnapshotFn.mock.calls.length, 1);
+  assert.equal(createSnapshotFn.mock.calls[0]?.arguments[0], "my-snapshot");
+});
+
 test("rpcUrl() leaves the URL bare when the preview link carries no token (non-private sandbox)", async (t) => {
   const sandbox = {
     id: "sbx-5",
