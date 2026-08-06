@@ -1,6 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 
 export interface AppRecord {
   name: string;
@@ -43,6 +44,20 @@ function rowToRecord(row: AppRow): AppRecord {
   };
 }
 
+function hashToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+function hashesMatch(a: string, b: string): boolean {
+  const bufA = Buffer.from(a, "hex");
+  const bufB = Buffer.from(b, "hex");
+  return bufA.length === bufB.length && timingSafeEqual(bufA, bufB);
+}
+
+export function generateOwnerToken(): string {
+  return randomBytes(32).toString("hex");
+}
+
 /** Compares two validated "x.y.z" semver strings; positive if `a` is newer. */
 export function compareSemver(a: string, b: string): number {
   const pa = a.split(".").map(Number);
@@ -74,11 +89,55 @@ export class RegistryDb {
         published_at TEXT NOT NULL,
         PRIMARY KEY (name, version)
       );
+      -- Namespace ownership, npm/PyPI-style: whoever publishes the FIRST
+      -- version of a name controls every later version of it. Separate from
+      -- the apps table (one row per name, not per name+version) so a name's
+      -- owner token survives that name's versions being published/
+      -- downloaded, and so this table's shape doesn't need to change if the
+      -- apps table's ever does.
+      CREATE TABLE IF NOT EXISTS app_owners (
+        name TEXT PRIMARY KEY,
+        owner_token_hash TEXT NOT NULL,
+        registered_at TEXT NOT NULL
+      );
     `);
   }
 
   close(): void {
     this.#db.close();
+  }
+
+  ownerExists(name: string): boolean {
+    return this.#db.prepare(`SELECT 1 FROM app_owners WHERE name = ?`).get(name) !== undefined;
+  }
+
+  /** Unknown name or missing token both fail closed. */
+  verifyOwnerToken(name: string, token: string | undefined): boolean {
+    if (!token) return false;
+    const row = this.#db.prepare(`SELECT owner_token_hash FROM app_owners WHERE name = ?`).get(name) as
+      | { owner_token_hash: string }
+      | undefined;
+    if (!row) return false;
+    return hashesMatch(hashToken(token), row.owner_token_hash);
+  }
+
+  /**
+   * Claims a brand-new name for the first time, minting and returning its
+   * owner token (once — never stored in plaintext, never returned again).
+   * Caller (routes.ts) must already have checked `!ownerExists(name)`; this
+   * throws instead of silently overwriting if that check was skipped and the
+   * name was claimed since, e.g. by a concurrent request.
+   */
+  registerOwner(name: string, now: string): string {
+    const token = generateOwnerToken();
+    try {
+      this.#db
+        .prepare(`INSERT INTO app_owners (name, owner_token_hash, registered_at) VALUES (?, ?, ?)`)
+        .run(name, hashToken(token), now);
+    } catch (err) {
+      throw new Error(`"${name}" was just claimed by another publish — try again: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return token;
   }
 
   /** Throws if this exact name+version was already published — versions are immutable, same as npm. */

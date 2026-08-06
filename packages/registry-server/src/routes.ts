@@ -1,4 +1,4 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import { parse as parseYaml } from "yaml";
 import { validateManifest, ManifestValidationError } from "@berth/manifest-schema";
 import type { RegistryDb, AppRecord } from "./db.js";
@@ -9,6 +9,12 @@ export interface RegistryRouteOptions {
   blobs: BlobStore;
   /** Injected so tests can pin a deterministic value instead of asserting against wall-clock time. */
   now?: () => string;
+}
+
+function bearerToken(request: FastifyRequest): string | undefined {
+  const header = request.headers.authorization;
+  if (!header?.startsWith("Bearer ")) return undefined;
+  return header.slice("Bearer ".length);
 }
 
 function summarize(record: AppRecord) {
@@ -54,6 +60,15 @@ export async function registerRegistryRoutes(app: FastifyInstance, opts: Registr
       return reply.code(400).send({ error: `could not parse manifest: ${err instanceof Error ? err.message : String(err)}` });
     }
 
+    // Namespace ownership, npm/PyPI-style: the first publish of a name mints
+    // its owner token (returned once, below); every later publish of that
+    // same name must present it. A brand-new name needs no token — nothing
+    // to prove ownership of yet.
+    const isNewName = !db.ownerExists(manifest.name);
+    if (!isNewName && !db.verifyOwnerToken(manifest.name, bearerToken(request))) {
+      return reply.code(401).send({ error: `"${manifest.name}" is already published by someone else — provide its owner token to publish a new version` });
+    }
+
     const bundlePath = await blobs.write(manifest.name, manifest.version, bundleBytes);
 
     try {
@@ -73,7 +88,17 @@ export async function registerRegistryRoutes(app: FastifyInstance, opts: Registr
       return reply.code(409).send({ error: err instanceof Error ? err.message : String(err) });
     }
 
-    return reply.code(201).send({ name: manifest.name, version: manifest.version, publishedAt: now() });
+    // Minted only after insert() actually succeeds — a rejected first
+    // publish (e.g. a duplicate version somehow raced in) shouldn't claim
+    // the namespace with no app behind it.
+    const ownerToken = isNewName ? db.registerOwner(manifest.name, now()) : undefined;
+
+    return reply.code(201).send({
+      name: manifest.name,
+      version: manifest.version,
+      publishedAt: now(),
+      ...(ownerToken ? { ownerToken } : {}),
+    });
   });
 
   app.get("/apps", async (request) => {
