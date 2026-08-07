@@ -33,6 +33,23 @@ jobs:
       - run: pnpm lint
       - run: pnpm test
 
+      # The Rust crates are Linux-only (Landlock, /dev/fuse, wg0) and are
+      # normally only ever compiled inside base.Dockerfile's builder stages,
+      # which means their unit tests never ran anywhere. agent-init's tests
+      # assert things a Docker-based enforcement test structurally cannot on a
+      # developer's Mac — Docker Desktop's linuxkit kernel has Landlock absent
+      # from its LSM stack, so capability-enforcement.mjs degrades every denial
+      # check to informational there. This runner is Linux, so they run.
+      #
+      # context-bus-daemon is deliberately not here: its build.rs needs protoc,
+      # which this runner doesn't have and which base.Dockerfile's builder
+      # stage installs for it. Adding it means adding a protoc install step —
+      # worth doing, but it isn't what this change is verifying.
+      - name: Test the Rust crates
+        run: |
+          cargo test --manifest-path packages/agent-init/Cargo.toml
+          cargo test --manifest-path packages/mesh-daemon/Cargo.toml
+
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
