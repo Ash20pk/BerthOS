@@ -16,8 +16,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use caps::{CapSet, Capability};
 use landlock::{
-    AccessFs, AccessNet, Access, NetPort, PathBeneath, PathFd, Ruleset, RulesetAttr, RulesetCreatedAttr,
-    RulesetStatus, ABI,
+    AccessFs, AccessNet, Access, BitFlags, NetPort, PathBeneath, PathFd, Ruleset, RulesetAttr,
+    RulesetCreatedAttr, RulesetStatus, ABI,
 };
 use serde::Deserialize;
 
@@ -217,6 +217,16 @@ fn main() {
     std::process::exit(1);
 }
 
+/// The write-ish filesystem rights handed to `handle_access()` and granted on
+/// each declared write path. Split out of apply_policy() so the unit test
+/// below can assert what's in the set without needing a kernel that actually
+/// enforces Landlock — the environment where this was originally wrong
+/// (Docker Desktop's linuxkit VM, Landlock absent from the LSM stack) is
+/// exactly the one where an end-to-end denial test proves nothing.
+fn write_access_rights() -> BitFlags<AccessFs> {
+    AccessFs::from_write(ABI::V3)
+}
+
 fn apply_policy(policy_path: &str) -> Result<(CapabilityPolicy, RulesetStatus), Box<dyn std::error::Error>> {
     let raw = std::fs::read_to_string(policy_path)?;
     let policy: CapabilityPolicy = serde_json::from_str(&raw)?;
@@ -235,16 +245,27 @@ fn apply_policy(policy_path: &str) -> Result<(CapabilityPolicy, RulesetStatus), 
     // outbound TCP, full stop. This is the PRD's "deny-by-default network
     // policies" claim, enforced by the kernel rather than left to whatever
     // the container's network namespace happens to allow.
-    let write_access = AccessFs::WriteFile
-        | AccessFs::RemoveDir
-        | AccessFs::RemoveFile
-        | AccessFs::MakeChar
-        | AccessFs::MakeDir
-        | AccessFs::MakeReg
-        | AccessFs::MakeSock
-        | AccessFs::MakeFifo
-        | AccessFs::MakeBlock
-        | AccessFs::MakeSym;
+    //
+    // Landlock only enforces the rights named in handled_access_fs — a right
+    // that isn't handled is *permitted everywhere*, so an omission here is a
+    // silent hole, not a smaller ruleset. AccessFs::from_write(ABI::V3) is
+    // used rather than an enumerated list precisely so a right added to a
+    // future ABI can't be forgotten: the enumerated version of this omitted
+    // Truncate (V3), which made `open(O_WRONLY)` outside a declared path fail
+    // while `truncate(path, 0)` on the same file succeeded — destroying its
+    // contents just as effectively.
+    //
+    // Not handled, deliberately: Execute and IoctlDev (both from_read/V5
+    // territory). Handling Execute would deny exec of every interpreter and
+    // shell outside the declared read paths — /bin and /sbin are not in
+    // BASELINE_READ_PATHS (see generate-capability-policy.ts), so it would
+    // break every app that shells out. That's a real gap; it needs the
+    // baseline exec set worked out first and is tracked separately.
+    //
+    // Ruleset::default() is best-effort, so a kernel whose Landlock ABI
+    // predates V3 downgrades to the rights it does support instead of
+    // failing the boot outright.
+    let write_access = write_access_rights();
     let read_access = AccessFs::ReadFile | AccessFs::ReadDir;
     let net_access = AccessNet::ConnectTcp;
 
@@ -337,4 +358,47 @@ fn apply_policy(policy_path: &str) -> Result<(CapabilityPolicy, RulesetStatus), 
     log_audit_event(&policy, &format!("{:?}", status.ruleset));
     let ruleset_status = status.ruleset;
     Ok((policy, ruleset_status))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Landlock only enforces the rights present in handled_access_fs; an
+    // unhandled right is permitted everywhere, so this set going quietly
+    // narrower is a security regression that no allow-path test would catch.
+    #[test]
+    fn write_access_set_covers_every_write_ish_right_through_abi_v3() {
+        let rights = write_access_rights();
+        for expected in [
+            AccessFs::WriteFile,
+            AccessFs::RemoveDir,
+            AccessFs::RemoveFile,
+            AccessFs::MakeChar,
+            AccessFs::MakeDir,
+            AccessFs::MakeReg,
+            AccessFs::MakeSock,
+            AccessFs::MakeFifo,
+            AccessFs::MakeBlock,
+            AccessFs::MakeSym,
+            // The one that was missing: without it, `open(O_WRONLY)` outside a
+            // declared write path is refused while `truncate(path, 0)` on that
+            // same path succeeds.
+            AccessFs::Truncate,
+        ] {
+            assert!(rights.contains(expected), "{expected:?} is not handled — it would be permitted everywhere");
+        }
+    }
+
+    // Read rights are a separate, opt-in handled set (see apply_policy). If a
+    // read right leaked into the write set it would be handled unconditionally
+    // and denied for apps that declared no filesystem:read capability at all,
+    // silently breaking them rather than failing loudly.
+    #[test]
+    fn write_access_set_contains_no_read_rights() {
+        let rights = write_access_rights();
+        for unexpected in [AccessFs::ReadFile, AccessFs::ReadDir, AccessFs::Execute] {
+            assert!(!rights.contains(unexpected), "{unexpected:?} must not be in the unconditional write set");
+        }
+    }
 }

@@ -265,6 +265,46 @@ async function main() {
       console.log("\nNOT VERIFIED (expected in this environment) — Landlock isn't enforced here.");
     }
 
+    console.log("\n--- Test 10: truncate(2) outside the declared write path ---");
+    // Landlock only enforces the access rights named in handled_access_fs, so
+    // a right that isn't handled is permitted *everywhere* — not merely
+    // ungranted. agent-init's handled set used to be an enumerated list that
+    // omitted AccessFs::Truncate (ABI V3), which meant the write denial Test 2
+    // proves had a clean bypass: open(O_WRONLY) on a path outside /workspace
+    // was refused, while truncate(path, 0) on that same path succeeded and
+    // destroyed its contents just as effectively. This runs both halves — the
+    // in-scope truncate must still work (handling a right must not break the
+    // grants that were already correct) and the out-of-scope one must not.
+    //
+    // The out-of-scope target is the /opt file Test 4 created via docker exec;
+    // it has to genuinely exist, or truncate() returns ENOENT from ordinary
+    // VFS lookup before Landlock's check is reached and the denial below would
+    // prove nothing (same reasoning as Test 4's own comment).
+    const insideTruncate = await rpc.call({ id: "10-inside", export: "truncate_file", input: { path: "allowed.txt", size: 0 } });
+    console.log("inside response:", insideTruncate);
+    assert(!insideTruncate.error, `expected truncate inside /workspace to succeed, got error: ${insideTruncate.error}`);
+
+    const outsideTruncate = await rpc.call({
+      id: "10-outside",
+      export: "truncate_file",
+      input: { path: "../../../opt/berth-should-not-be-readable.txt", size: 0 },
+    });
+    console.log("outside response:", outsideTruncate);
+    const truncateDenied = outsideTruncate.error && /EACCES|EPERM|permission/i.test(outsideTruncate.error);
+    if (landlockActive) {
+      assert(
+        truncateDenied,
+        `Landlock is active but truncate() outside the declared write path was NOT denied — AccessFs::Truncate is missing from agent-init's handled set: ${JSON.stringify(outsideTruncate)}`,
+      );
+      console.log("\nPASS — truncate() outside /workspace was refused by the kernel, same as an ordinary write.");
+    } else {
+      console.log(
+        truncateDenied
+          ? "\n(Interesting: denied anyway, despite ruleset != Enforced — logged for information, not asserted.)"
+          : "\nNOT VERIFIED (expected in this environment) — the truncate succeeded because Landlock isn't enforced here.",
+      );
+    }
+
     rpc.close();
   } finally {
     await containerLog.stop();
