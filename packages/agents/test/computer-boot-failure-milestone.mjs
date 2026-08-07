@@ -85,10 +85,14 @@ async function crashingAppFailsWithItsOwnLogs() {
 
 async function unenforcedKernelFailsClosed() {
   console.log("Booting a Computer with the default enforcement posture...");
+  // Explicit rather than relying on the default, so this case still asserts
+  // what it claims to when the whole milestone is run with
+  // BERTH_ALLOW_UNENFORCED=1 set in the environment.
   const failure = await bootAndProbe({
     appDir: FILESYSTEM_APP_DIR,
     tool: "write_file",
     input: { path: "boot-failure-probe.txt", content: "probe" },
+    enforcement: "required",
   });
 
   if (!failure) {

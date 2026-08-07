@@ -756,6 +756,7 @@ node examples/networked-crew.mjs    # Crew.networked(), two independent networke
 ```bash
 cd packages/agents
 node test/computer-boot-milestone.mjs          # real: single-app Computer, live tool list, write_file/read_file round trip
+node test/computer-boot-failure-milestone.mjs  # real: a container that exits during startup reports its own logs, not an RPC timeout; the default posture fails closed on a Landlock-less kernel
 node test/computer-multi-app-milestone.mjs     # real: filesystem + code-editor, namespaced tools, both independently callable
 node test/computer-http-rpc-milestone.mjs      # real: Computer.boot({httpRpc}), a real out-of-container HTTP+bearer-token round trip
 node test/governance-gate-milestone.mjs        # real: a governs:true app's evaluate_action gates every other app's Tool.invoke, blocking calls that don't return {allowed: true}
@@ -767,4 +768,12 @@ node test/crew-manager-milestone.mjs           # real: manager agent delegates a
 node test/crew-networked-milestone.mjs         # real: two independent networked agent-computers complete delegated tasks (needs ANTHROPIC_API_KEY)
 ```
 
-The first seven need only a local Docker daemon and run in CI (`.github/workflows/agents-milestone.yml`) — though `computer-http-rpc-milestone.mjs`, `code-interpreter-milestone.mjs`, and `declarative-config-milestone.mjs` all build a production-target image requiring real Landlock enforcement, so they're CI-verified only, not locally runnable on Docker Desktop for Mac/Windows (see each one's own header comment). The last three need real LLM API credentials and stay manual, local-only runs, consistent with how this repo treats anything needing external credentials.
+The first eight need only a local Docker daemon and run in CI (`.github/workflows/agents-milestone.yml`). The last three need real LLM API credentials and stay manual, local-only runs, consistent with how this repo treats anything needing external credentials.
+
+**On a host without Landlock** — Docker Desktop for Mac/Windows, or a Linux kernel older than 5.13 — every one of these fails by default, not just some of them. They all go through `Computer.boot()`, which builds a production-target image that refuses to run its app unrestricted; `agent-init` exits with a `capability_enforcement_refused` event and the container stops. That is the correct behavior, and it's what the error now says. To run them locally anyway:
+
+```bash
+BERTH_ALLOW_UNENFORCED=1 node test/computer-boot-milestone.mjs
+```
+
+The env var relaxes the enforcement gate for the whole process; `Computer.boot({ enforcement: "warn" })` does the same for one Computer. Both print a warning per boot, and neither provides any isolation on such a host — see the platform table in the README's prerequisites. `computer-boot-failure-milestone.mjs` is the one exception: it asserts on this behavior directly, so it passes with or without the env var and needs neither.
