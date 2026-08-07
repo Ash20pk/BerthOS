@@ -355,6 +355,22 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
+  packages/agents/test/fixtures/crash-on-boot:
+    dependencies:
+      '@berth/sdk':
+        specifier: workspace:*
+        version: link:../../../../sdk
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@types/node':
+        specifier: ^26.1.2
+        version: 26.1.2
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
   packages/agents/test/fixtures/governance-gate-tester:
     dependencies:
       '@berth/sdk':
