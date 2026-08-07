@@ -1,6 +1,6 @@
 import { defineApp, type ContextBusClient, type SemanticFsClient } from "@berth/sdk";
 import { z } from "zod";
-import { mkdir, readFile, writeFile, readdir } from "node:fs/promises";
+import { mkdir, readFile, writeFile, readdir, truncate } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { join } from "node:path";
 
@@ -89,6 +89,20 @@ export default defineApp((app) => {
     input: z.object({ topic: z.string(), payload: z.any() }),
     handler: async ({ topic, payload }) => {
       await contextBus?.publish(topic, payload);
+    },
+  });
+
+  // Diagnostic export used by capability-enforcement.mjs's truncate check.
+  // Deliberately calls truncate(2) by path rather than opening the file
+  // first: open(O_WRONLY) is gated by AccessFs::WriteFile, and the whole
+  // point is to exercise AccessFs::Truncate on its own, which is the right
+  // that used to be missing from agent-init's handled set (and so was
+  // permitted everywhere, including outside every declared write path).
+  app.export({
+    name: "truncate_file",
+    input: z.object({ path: z.string(), size: z.number() }),
+    handler: async ({ path: relativePath, size }) => {
+      await truncate(resolveInWorkspace(relativePath), size);
     },
   });
 

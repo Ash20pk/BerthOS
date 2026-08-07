@@ -27,6 +27,11 @@ exports:
     output: { results: array }
   - name: publish_context_event
     input: { topic: string, payload: object }
+  # Diagnostic export for capability-enforcement.mjs's truncate check —
+  # truncate(2) is a write-ish right Landlock only enforces when it's in the
+  # handled set, so this exercises it directly rather than through open().
+  - name: truncate_file
+    input: { path: string, size: number }
   # Diagnostic export for capability-enforcement.mjs's network deny-by-default
   # check — this app declares no network:connect capability, so it should
   # never be able to reach out.
