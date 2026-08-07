@@ -181,6 +181,52 @@ async function main() {
       );
     }
 
+    console.log("\n--- Test 5b: UDP and raw sockets are denied too, not just TCP ---");
+    // Landlock's network access rights (ABI v4) are ConnectTcp and BindTcp —
+    // there is no UDP, ICMP, or raw-socket right in any ABI. So Test 5 above,
+    // on its own, leaves an app with "no network capability" holding
+    // unrestricted UDP: DNS-tunnelled exfiltration, QUIC, arbitrary C2. The
+    // second mechanism is in agent-init — CAP_NET_RAW dropped, plus a seccomp
+    // filter refusing socket() for the datagram and raw families (see
+    // packages/agent-init/src/seccomp.rs).
+    //
+    // Unlike every other denial check in this file, these two are asserted
+    // unconditionally: seccomp-bpf and capability dropping work on Docker
+    // Desktop's linuxkit kernel just as they do on a real host, so there is
+    // no environment here to make an excuse for.
+    const udpProbe = await rpc.call({
+      id: "5b",
+      export: "probe_network_udp",
+      input: { host: "1.1.1.1", port: 53 },
+    });
+    console.log("udp response:", udpProbe);
+    assert(!udpProbe.error, `probe_network_udp itself errored (unexpected): ${udpProbe.error}`);
+    assert(
+      udpProbe.result?.sent === false,
+      `an app with no declared network capability sent a UDP datagram — seccomp filter missing or not applied: ${JSON.stringify(udpProbe)}`,
+    );
+    assert(
+      /EPERM|not permitted|denied/i.test(udpProbe.result?.error ?? ""),
+      `UDP send failed, but not with a permission error — the denial must come from the seccomp filter, not from the network being unreachable: ${JSON.stringify(udpProbe)}`,
+    );
+
+    const rawProbe = await rpc.call({
+      id: "5c",
+      export: "probe_raw_socket",
+      input: { host: "1.1.1.1" },
+    });
+    console.log("raw-socket response:", rawProbe);
+    assert(!rawProbe.error, `probe_raw_socket itself errored (unexpected): ${rawProbe.error}`);
+    assert(
+      rawProbe.result?.opened === false,
+      `an app with no declared network capability opened a raw/ICMP socket — CAP_NET_RAW is still present: ${JSON.stringify(rawProbe)}`,
+    );
+    assert(
+      /EPERM|not permitted|denied/i.test(rawProbe.result?.error ?? ""),
+      `ping failed for some reason other than being refused a socket, so this proves nothing: ${JSON.stringify(rawProbe)}`,
+    );
+    console.log("\nPASS — UDP and raw sockets are refused for an app declaring no network capability.");
+
     console.log("\n--- Test 6: symlink escape — a symlink INSIDE the declared path pointing OUTSIDE it ---");
     // PathBeneath rules bind to a real inode hierarchy (resolved when
     // agent-init opens the path via PathFd::new(), see main.rs), not a path

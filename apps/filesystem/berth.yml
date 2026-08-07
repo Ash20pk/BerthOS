@@ -38,6 +38,15 @@ exports:
   - name: probe_network_connect
     input: { host: string, port: number }
     output: { connected: boolean }
+  # The UDP and raw-socket halves of the same check. Landlock has no access
+  # right for either, so these exercise agent-init's seccomp filter and its
+  # CAP_NET_RAW drop rather than the Landlock ruleset.
+  - name: probe_network_udp
+    input: { host: string, port: number }
+    output: { sent: boolean }
+  - name: probe_raw_socket
+    input: { host: string }
+    output: { opened: boolean }
 
 on_install: []
 on_agent_ready:
