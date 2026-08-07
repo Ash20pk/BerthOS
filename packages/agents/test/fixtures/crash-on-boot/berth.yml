@@ -1,0 +1,12 @@
+name: crash-on-boot
+version: 0.1.0
+description: "computer-boot-failure-milestone.mjs fixture — throws during module load so the container exits before serving any RPC"
+
+capabilities: []
+
+exports:
+  - name: never_reached
+    input: {}
+    output: { ok: boolean }
+
+on_install: []

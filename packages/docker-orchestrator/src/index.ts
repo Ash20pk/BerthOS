@@ -8,6 +8,9 @@ export {
   declaresTerminalCapability,
   needsBrowserPorts,
   needsTerminalPort,
+  describeContainerFailure,
+  formatContainerFailure,
+  type ContainerFailure,
   type StartContainerOptions,
   type RunningContainer,
 } from "./container.js";

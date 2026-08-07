@@ -6,6 +6,8 @@ import {
   createStdioRpcClient,
   invokeAppExport,
   readOsState,
+  describeContainerFailure,
+  formatContainerFailure,
   type StdioRpcClient,
 } from "@berth/docker-orchestrator";
 import { resolveComputerApps, type ComputerAppSpec } from "./resolve-apps.js";
@@ -36,7 +38,42 @@ export interface BootComputerOptions {
    * stdio/docker-exec only, nothing extra starts.
    */
   httpRpc?: boolean | { app?: string };
+  /**
+   * Whether this Computer refuses to run its apps unrestricted.
+   *
+   * `"required"` (the default) keeps the production image's own posture: if
+   * the kernel didn't fully enforce the compiled Landlock policy, agent-init
+   * exits rather than exec-ing the app — see packages/agent-init/src/main.rs.
+   *
+   * `"warn"` sets BERTH_REQUIRE_ENFORCEMENT=0 in the container instead, so
+   * the app runs with whatever the kernel managed to apply (possibly
+   * nothing) and a warning is printed. This exists for one reason: Docker
+   * Desktop's linuxkit VM returns ENOSYS for landlock_create_ruleset, so on
+   * macOS and Windows *every* Computer.boot() otherwise fails, taking the
+   * README quickstart and all of packages/agents/test with it. It is a local
+   * iteration mode and nothing else — never use it where the isolation
+   * boundary is load-bearing.
+   *
+   * Setting BERTH_ALLOW_UNENFORCED=1 in the host environment has the same
+   * effect, so existing scripts and milestone tests can be run on a
+   * Landlock-less kernel without editing their source. An explicit
+   * `enforcement` value here always wins over the env var.
+   */
+  enforcement?: "required" | "warn";
   docker?: Docker;
+}
+
+/**
+ * Resolves BootComputerOptions.enforcement against the BERTH_ALLOW_UNENFORCED
+ * escape hatch. Note this deliberately does *not* sniff the host platform:
+ * "am I on a kernel that enforces Landlock" isn't answerable from outside the
+ * container (a Linux host running a Landlock-less kernel exists too), and
+ * silently relaxing the boundary based on a guess is exactly the failure mode
+ * the loud-warning design is meant to prevent.
+ */
+function enforcementRelaxed(option: BootComputerOptions["enforcement"]): boolean {
+  if (option) return option === "warn";
+  return process.env.BERTH_ALLOW_UNENFORCED === "1" || process.env.BERTH_ALLOW_UNENFORCED === "true";
 }
 
 export interface ConnectComputerOptions {
@@ -95,14 +132,40 @@ export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
  * or its RPC bridge answering /healthz) — same retry/backoff shape, no
  * reason to duplicate it just because the thing being polled differs.
  */
-export async function withReadyRetry<T>(fn: () => Promise<T>, ceilingMs = READY_RETRY_CEILING_MS): Promise<T> {
+export async function withReadyRetry<T>(
+  fn: () => Promise<T>,
+  ceilingMs = READY_RETRY_CEILING_MS,
+  /**
+   * Called once, only when the ceiling is exhausted, to explain *why* the
+   * thing being polled never became ready — its return value is appended to
+   * the final error's message. A Computer passes a container inspection here
+   * so an exhausted retry reports the container's exit code and log tail
+   * rather than the bare "attempt timed out after 3000ms" that the last
+   * individual attempt happened to produce. Best-effort: a diagnostic that
+   * itself fails must not replace the real error.
+   */
+  diagnose?: () => Promise<string>,
+  /**
+   * Checked before every attempt. Returning a string means the thing being
+   * polled can never become ready — a container that has exited, say — so
+   * the retry loop gives up immediately with that message instead of
+   * burning the whole ceiling on attempts that are all guaranteed to fail.
+   */
+  abort?: () => string | undefined,
+): Promise<T> {
   const start = Date.now();
   let delay = READY_RETRY_INITIAL_DELAY_MS;
   for (;;) {
+    const abortReason = abort?.();
+    if (abortReason) throw new Error(abortReason);
     try {
       return await withTimeout(fn(), READY_ATTEMPT_TIMEOUT_MS);
     } catch (err) {
-      if (Date.now() - start >= ceilingMs) throw err;
+      if (Date.now() - start >= ceilingMs) {
+        const detail = diagnose ? await diagnose().catch(() => "") : "";
+        if (detail && err instanceof Error) err.message += detail;
+        throw err;
+      }
       await new Promise((resolve) => setTimeout(resolve, delay));
       delay = Math.min(delay * 2, 2000);
     }
@@ -183,6 +246,21 @@ export class Computer implements ComputerHandle {
       throw new Error(`httpRpc.app "${httpRpcAppName}" isn't one of this Computer's apps: ${apps.map((a) => a.name).join(", ")}`);
     }
 
+    // Overrides the production image's own `ENV BERTH_REQUIRE_ENFORCEMENT=1`
+    // (base.Dockerfile) — container env wins over image env, and agent-init
+    // reads it at exec time, so this is the whole mechanism. Note we don't
+    // build the `dev` target for this: that stage has no `COPY . /app` at
+    // all (it expects a bind mount, which a Computer deliberately doesn't
+    // have), so it would boot an empty container. The image stays a real
+    // production image; only the enforcement gate moves.
+    const relaxed = enforcementRelaxed(options.enforcement);
+    if (relaxed) {
+      console.warn(
+        `[berth] WARNING: booting ${containerName} with capability enforcement DISABLED (enforcement: "warn"). ` +
+          `The resident app runs with whatever the kernel applied, possibly nothing — this is a local-iteration mode, not an isolation boundary.`,
+      );
+    }
+
     const { container, ports } = await startContainer({
       image,
       name: containerName,
@@ -192,10 +270,28 @@ export class Computer implements ComputerHandle {
           ? apps.map((a) => ({ name: a.name, workingDir: `/app/apps/${a.name}`, manifest: a.manifest }))
           : undefined,
       network: options.network,
-      env: options.env,
+      env: relaxed ? { ...options.env, BERTH_REQUIRE_ENFORCEMENT: "0" } : options.env,
       httpRpc: httpRpcRequested ? { authToken: httpRpcAuthToken!, appName: httpRpcAppName } : undefined,
       docker,
     });
+
+    // startContainer() resolves as soon as Docker reports the container
+    // started, which says nothing about whether entrypoint.sh got as far as
+    // running the app — agent-init refusing to exec (the ENOSYS-Landlock
+    // case above, a bad capability policy, a failing on_install) all leave a
+    // container that started and then immediately exited. Without this
+    // check, boot() returns a fully-populated `tools` array built from the
+    // *manifest*, and the caller only finds out ~30s later when the first
+    // tool call times out with no mention of the real cause.
+    const bootFailure = await describeContainerFailure(container);
+    if (bootFailure) {
+      await stopContainer(container).catch(() => {});
+      await docker
+        .getImage(image)
+        .remove()
+        .catch(() => {});
+      throw new Error(`Computer.boot() failed: ${containerName} exited during startup${formatContainerFailure(bootFailure)}`);
+    }
 
     // Single app: the container's own PID 1 stdio (attach, reused across
     // calls). Multi-app: no way to attach to a non-PID-1 process, so each
@@ -211,8 +307,28 @@ export class Computer implements ComputerHandle {
       return response.result;
     };
 
+    const diagnose = () => describeContainerFailure(container).then(formatContainerFailure);
+
+    // The boot-time inspect above only catches a container that was already
+    // dead the instant Docker reported it started; an app that throws a
+    // moment later (during module load, or in on_agent_ready) is still
+    // running at that point. This watcher covers the rest of the container's
+    // life: Docker's wait() resolves the moment it exits, so from then on
+    // every call fails immediately with the real reason instead of retrying
+    // an unreachable socket for the full 30s ceiling and reporting a
+    // timeout. Detached and best-effort — a Computer that stops normally
+    // resolves this too, which is harmless, since nothing calls it after.
+    let exitReason: string | undefined;
+    void container
+      .wait()
+      .then(() => diagnose())
+      .then((detail) => {
+        exitReason = `${containerName} exited${detail || " (no diagnostics available)"}`;
+      })
+      .catch(() => {});
+
     const call = (appName: string, exportName: string, input: unknown) =>
-      withReadyRetry(() => dispatch(appName, exportName, input));
+      withReadyRetry(() => dispatch(appName, exportName, input), READY_RETRY_CEILING_MS, diagnose, () => exitReason);
 
     const tools = applyGovernanceGate(apps, apps, computerToolsFor(apps, call), call, options.governance);
 
@@ -235,7 +351,7 @@ export class Computer implements ComputerHandle {
         // the app process is even listening, and a shared/cold CI runner is
         // measurably slower at this than a dev machine that's already
         // booted this image before.
-        await withReadyRetry(() => checkHttpRpcHealth(url, httpRpcAuthToken!), 60_000);
+        await withReadyRetry(() => checkHttpRpcHealth(url, httpRpcAuthToken!), 60_000, diagnose, () => exitReason);
         httpRpc = { url, authToken: httpRpcAuthToken!, appName: httpRpcAppName };
       } catch (err) {
         stdioClient?.close();
@@ -303,7 +419,10 @@ export class Computer implements ComputerHandle {
       return response.result;
     };
 
-    const call = (appName: string, exportName: string, input: unknown) => withReadyRetry(() => dispatch(appName, exportName, input));
+    const diagnose = () => describeContainerFailure(container).then(formatContainerFailure);
+
+    const call = (appName: string, exportName: string, input: unknown) =>
+      withReadyRetry(() => dispatch(appName, exportName, input), READY_RETRY_CEILING_MS, diagnose);
 
     const tools = applyGovernanceGate(allApps, apps, computerToolsFor(apps, call), call, options.governance);
 

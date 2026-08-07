@@ -111,6 +111,27 @@ Convinced, or just curious? Let's get something running.
 - Docker, running locally
 - `corepack enable` (ships with Node 22 and manages pnpm for you)
 
+#### Kernel enforcement, by platform
+
+Berth's capability scoping is enforced by [Landlock](https://docs.kernel.org/userspace-api/landlock.html), a Linux kernel feature. Whether your kernel provides it decides what you can run locally:
+
+| Host | Landlock | What works |
+|------|----------|------------|
+| Linux, kernel 5.13+ | Enforced | Everything, with real kernel enforcement |
+| Linux, kernel < 5.13 | Unavailable | `berth dev`; agent paths need the relaxed mode below |
+| macOS / Windows (Docker Desktop) | Unavailable — the linuxkit VM returns `ENOSYS` for `landlock_create_ruleset` | `berth dev`; agent paths need the relaxed mode below |
+
+`berth dev` builds the dev image, which never required enforcement, so resident-app development works on any host. `Computer.boot()` builds the production image, which refuses to run its app unrestricted — on a host without Landlock it exits rather than pretending to be sandboxed. To iterate locally there anyway:
+
+```bash
+BERTH_ALLOW_UNENFORCED=1 pnpm start        # or, in code:
+```
+```ts
+await Computer.boot({ apps: ["../../../apps/filesystem"], enforcement: "warn" });
+```
+
+Either one prints a warning on every boot. It is a local-iteration mode: the app runs with whatever the kernel managed to apply, which on Docker Desktop is nothing. Don't use it where the isolation boundary matters.
+
 ### Install and build
 
 ```bash
@@ -132,6 +153,8 @@ cd examples/agents/simple-agent
 export ANTHROPIC_API_KEY=sk-ant-...   # or OPENAI_API_KEY
 pnpm start
 ```
+
+On macOS or Windows, prefix that last command with `BERTH_ALLOW_UNENFORCED=1` — see the platform table above for why.
 
 That one call is `runAgent({ apps: "apps/filesystem", task: "..." })` under the hood. Head to [Building a Berth Agent](#building-a-berth-agent) for the full API, multi-agent `Crew`s, and how to skip the boot cost entirely on every dev loop run with `berth os up`.
 

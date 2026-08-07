@@ -343,6 +343,91 @@ async function ensureNetwork(docker: Docker, name: string): Promise<void> {
   }
 }
 
+/** How many trailing log lines describeContainerFailure() reports — enough to carry entrypoint.sh's boot narration plus agent-init's refusal, without pasting a whole app's startup output into an exception message. */
+const FAILURE_LOG_LINES = 40;
+
+export interface ContainerFailure {
+  /** The container's exit code, or undefined if Docker didn't report one. */
+  exitCode?: number;
+  /** Last FAILURE_LOG_LINES lines of combined stdout/stderr, already de-multiplexed and trimmed. */
+  logTail: string;
+}
+
+/**
+ * Why a container isn't (or is no longer) running, in a form worth putting
+ * in an exception message. Returns undefined while the container is still
+ * running — the caller's problem is then something other than a dead
+ * container, and there's nothing useful to add.
+ *
+ * The motivating case: entrypoint.sh hands off to agent-init, which exits 1
+ * with a `capability_enforcement_refused` event on any kernel that doesn't
+ * enforce Landlock. Without this, the container is simply gone and the
+ * caller's first RPC call fails 30s later with a bare timeout, leaving the
+ * real reason only in `docker logs` of a container nobody mentioned.
+ *
+ * Best-effort throughout: a container Docker has already reaped, or logs it
+ * won't hand over, still produce a usable (if emptier) result rather than
+ * masking the caller's original error with a second one.
+ */
+export async function describeContainerFailure(container: Docker.Container): Promise<ContainerFailure | undefined> {
+  let exitCode: number | undefined;
+  try {
+    const info = await container.inspect();
+    if (info.State.Running) return undefined;
+    exitCode = info.State.ExitCode;
+  } catch {
+    // Gone entirely (already removed, or the daemon went away) — still worth
+    // reporting whatever logs are reachable, so fall through rather than
+    // returning undefined, which the caller reads as "container is fine".
+  }
+
+  let logTail = "";
+  try {
+    const raw = await container.logs({ stdout: true, stderr: true, tail: FAILURE_LOG_LINES });
+    logTail = demultiplexLogs(raw as unknown as Buffer).trim();
+  } catch {
+    // Leave logTail empty; the exit code alone is still an improvement.
+  }
+
+  return { exitCode, logTail };
+}
+
+/**
+ * Renders a ContainerFailure as a suffix to append to an error message.
+ * Empty string when there's genuinely nothing to say, so callers can
+ * concatenate unconditionally.
+ */
+export function formatContainerFailure(failure: ContainerFailure | undefined): string {
+  if (!failure) return "";
+  const parts: string[] = [];
+  if (failure.exitCode !== undefined) parts.push(`container exited with code ${failure.exitCode}`);
+  if (failure.logTail) parts.push(`last ${FAILURE_LOG_LINES} log lines:\n${failure.logTail}`);
+  return parts.length > 0 ? ` — ${parts.join("; ")}` : "";
+}
+
+/**
+ * A non-TTY container's log stream is Docker's multiplexed framing: an
+ * 8-byte header per frame (stream type, three reserved bytes, then a big-
+ * endian payload length) followed by the payload. Left as-is, those headers
+ * render as control-character garbage interleaved with the text. A TTY
+ * container's stream has no framing at all, so a buffer that doesn't parse
+ * as frames is returned verbatim.
+ */
+function demultiplexLogs(buffer: Buffer): string {
+  const chunks: string[] = [];
+  let offset = 0;
+  while (offset + 8 <= buffer.length) {
+    const streamType = buffer[offset];
+    if (streamType !== 0 && streamType !== 1 && streamType !== 2) return buffer.toString("utf8");
+    const length = buffer.readUInt32BE(offset + 4);
+    const end = offset + 8 + length;
+    if (end > buffer.length) break;
+    chunks.push(buffer.subarray(offset + 8, end).toString("utf8"));
+    offset = end;
+  }
+  return offset === 0 ? buffer.toString("utf8") : chunks.join("");
+}
+
 export async function stopContainer(container: Docker.Container): Promise<void> {
   try {
     await container.stop();
