@@ -21,6 +21,8 @@ use landlock::{
 };
 use serde::Deserialize;
 
+mod seccomp;
+
 #[derive(Deserialize)]
 struct CapabilityPolicy {
     #[serde(rename = "appName")]
@@ -119,9 +121,32 @@ fn log_caps_dropped_event(app_name: &str, dropped: bool) {
     );
 }
 
-/// Drops only the two capabilities this repo's `container.ts` ever adds
-/// beyond Docker's own default set (SYS_ADMIN for semantic-fs's FUSE mount,
-/// NET_ADMIN for mesh-daemon's wg0) — not the whole bounding set. Landlock's
+/// Structured line for the seccomp filter in seccomp.rs — the UDP/raw-socket
+/// half of deny-by-default network access, which Landlock cannot express.
+/// Separate from log_audit_event for the same reason log_caps_dropped_event
+/// is: it happens in main(), after apply_policy() has returned.
+fn log_seccomp_event(app_name: &str, applied: bool, detail: &str) {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    eprintln!(
+        "[agent-init] {{\"event\":\"network_seccomp_filter\",\"bootId\":{:?},\"app\":{app_name:?},\"applied\":{applied},\"detail\":{detail:?},\"timestamp\":{now}}}",
+        boot_id()
+    );
+}
+
+/// Drops the two capabilities this repo's `container.ts` adds beyond Docker's
+/// own default set (SYS_ADMIN for semantic-fs's FUSE mount, NET_ADMIN for
+/// mesh-daemon's wg0), plus CAP_NET_RAW, which nothing adds because Docker
+/// grants it by default — and which is what lets a process open AF_PACKET
+/// sockets and speak TCP/IP in userspace, never calling the connect(2) that
+/// Landlock's AccessNet::ConnectTcp rule is watching for. Dropping it is half
+/// of REMEDIATION.md 1.2; the seccomp filter in seccomp.rs is the other half
+/// (it also covers UDP, which no capability gates at all).
+///
+/// The bounding set is the one that matters across the exec() below: for a
+/// uid-0 process exec'ing a file with no file capabilities, the kernel's
+/// "root rule" recomputes the permitted set from the bounding set, so
+/// dropping from permitted/effective here would simply be undone a few lines
+/// later. This is not the whole bounding set. Landlock's
 /// restrict_self() above narrows LSM-enforced syscall access but does
 /// nothing to the process's Linux capability set — those are two orthogonal
 /// kernel enforcement mechanisms. Since these containers run every process
@@ -139,12 +164,15 @@ fn log_caps_dropped_event(app_name: &str, dropped: bool) {
 /// write into a bind-mounted directory it doesn't literally own (e.g. this
 /// repo's own CI checkout, owned by a non-root runner user) — every write
 /// inside the declared /workspace path started failing with EACCES. Docker's
-/// own default capability set (CAP_DAC_OVERRIDE, CAP_CHOWN, CAP_FOWNER,
-/// CAP_NET_RAW, ...) is unaffected by this repo's `CapAdd`; only the two
-/// explicitly-added ones need to be revoked before the resident app runs.
+/// own default capability set (CAP_DAC_OVERRIDE, CAP_CHOWN, CAP_FOWNER, ...)
+/// is otherwise left alone: the two explicitly-added ones, plus NET_RAW,
+/// are what get revoked before the resident app runs. Dropping NET_RAW also
+/// means ping(8) no longer works inside a sandbox — an acceptable trade for
+/// closing a userspace-networking bypass, and worth knowing when a network
+/// probe from inside a container comes back "Operation not permitted."
 /// See docs/mesh-reference.md.
 fn drop_all_capabilities() -> Result<(), Box<dyn std::error::Error>> {
-    for cap in [Capability::CAP_SYS_ADMIN, Capability::CAP_NET_ADMIN] {
+    for cap in [Capability::CAP_SYS_ADMIN, Capability::CAP_NET_ADMIN, Capability::CAP_NET_RAW] {
         // caps::drop() on a capability that was never in the set (e.g.
         // CAP_NET_ADMIN for an app that never declared network:peer:*) is a
         // documented no-op, not an error.
@@ -167,7 +195,11 @@ fn main() {
 
     let require_enforcement = enforcement_required();
 
-    let app_name = match apply_policy(&policy_path) {
+    // Second element: whether this app declared no network access at all, and
+    // so should also get the UDP/raw-socket seccomp filter below. Unknown on
+    // the Err path (there's no policy to read it from), and false there —
+    // that path only survives at all when enforcement isn't required.
+    let (app_name, deny_datagram_sockets) = match apply_policy(&policy_path) {
         Ok((policy, ruleset_status)) => {
             if require_enforcement && ruleset_status != RulesetStatus::FullyEnforced {
                 let reason = format!("landlock ruleset status was {ruleset_status:?}, not FullyEnforced");
@@ -184,7 +216,12 @@ fn main() {
                 policy.write_paths.join(", "),
                 policy.declared_capabilities.join(", "),
             );
-            policy.app_name
+            // Only for apps with *no* declared outbound network at all. An
+            // app that declared even one port needs DNS (UDP 53) for that
+            // port to be reachable by name, and Landlock's per-port model
+            // can't express "UDP 53 only" — see seccomp.rs's header.
+            let no_network_declared = !policy.network_unrestricted && policy.network_ports.is_empty();
+            (policy.app_name, no_network_declared)
         }
         Err(err) => {
             if require_enforcement {
@@ -196,7 +233,7 @@ fn main() {
             eprintln!(
                 "[agent-init] WARNING: could not apply capability policy from {policy_path} ({err}) — continuing unrestricted."
             );
-            "unknown".to_string()
+            ("unknown".to_string(), false)
         }
     };
 
@@ -211,6 +248,37 @@ fn main() {
         eprintln!("[agent-init] WARNING: could not drop capabilities before exec — continuing anyway");
     }
     log_caps_dropped_event(&app_name, caps_dropped);
+
+    // Last thing before exec, and deliberately after the capability drop:
+    // installing this filter sets PR_SET_NO_NEW_PRIVS, and capset(2) is not
+    // in the filter's denied set either way, but ordering the irrevocable
+    // restrictions last keeps "everything agent-init does to itself happens
+    // before it becomes someone else's process" true by construction.
+    if deny_datagram_sockets {
+        match seccomp::install_no_udp_no_raw_filter() {
+            Ok(()) => {
+                eprintln!(
+                    "[agent-init] no network capability declared — UDP and raw sockets refused by seccomp for \"{app_name}\""
+                );
+                log_seccomp_event(&app_name, true, "udp_and_raw_sockets_denied");
+            }
+            Err(err) => {
+                let detail = format!("could not install seccomp filter ({err})");
+                if require_enforcement {
+                    eprintln!(
+                        "[agent-init] FATAL: BERTH_REQUIRE_ENFORCEMENT is set but {detail} for \"{app_name}\" — refusing to exec with unrestricted UDP."
+                    );
+                    log_seccomp_event(&app_name, false, &detail);
+                    log_enforcement_refused_event(&app_name, &detail);
+                    std::process::exit(1);
+                }
+                eprintln!("[agent-init] WARNING: {detail} — continuing with UDP and raw sockets available.");
+                log_seccomp_event(&app_name, false, &detail);
+            }
+        }
+    } else {
+        log_seccomp_event(&app_name, false, "network capability declared — datagram sockets left open for DNS");
+    }
 
     let err = Command::new(&args[0]).args(&args[1..]).exec();
     eprintln!("[agent-init] failed to exec {args:?}: {err}");
