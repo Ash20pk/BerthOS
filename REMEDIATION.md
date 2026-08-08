@@ -68,7 +68,7 @@ README line 88 currently reads: *"a prompt-injected 'ignore previous instruction
 | 1.9 | GitHub broker: `read:repos` also grants `/user/emails` etc. | High | 🔴 | 1d |
 | 1.10 | Capability tokens are never verified anywhere | High | 🔴 | 1d |
 | 1.11 | Signals unrestricted — any app can kill the governor | Medium | 🔴 | 1d |
-| 1.12 | `agent-init` mkdir's arbitrary manifest paths as root | Medium | 🔴 | 4h |
+| 1.12 | `agent-init` mkdir's arbitrary manifest paths as root | Medium | 🟢 | 4h |
 | 1.13 | Governance gate bypasses (MCP, agent-as-tool, rpc, mcp, http-rpc) | High | 🔴 | 2d |
 | 1.14 | semantic-fs / context-bus: unbounded frame allocation + spoofable identity | Medium | 🔴 | 1d |
 
@@ -220,6 +220,18 @@ In `berth dev` these directories are created on the **host** through the bind mo
 **Fix.** Add a manifest-time allowlist of permissible capability path prefixes (`/workspace`, `/context`, `/tmp/<app>`, the app dir) and reject anything else at validation time with a clear error. Don't create read paths at all — a missing read path should be a warning, not a side effect. Reject `/` outright.
 
 **Verify.** `berth test` fails a manifest declaring `filesystem:write:/`.
+
+**Closed.** The allowlist is `/workspace`, `/context`, `/tmp`, `/app` — exactly the four paths that exist for an app to use (`/app` because that's where `berth dev` mounts a single app; companions live under `/workspace/<rel>`). It lives in `@berth/manifest-schema` as `ALLOWED_FILESYSTEM_SCOPE_PREFIXES` and is enforced in three places, which is one more than it looks like it needs:
+
+1. `BerthManifestSchema`'s `superRefine`, per capability index, so `loadManifest()`'s YAML line mapping points at the offending list entry — every CLI path (`berth test`, `dev`, `publish`) and the registry get it for free.
+2. `compileCapabilityPolicy()`, which warns and skips. Not redundant: a grants-server `approved` string never passes through the schema at all, and the existing precedent there is to drop one bad capability rather than fail policy generation, since agent-init's fallback for "no policy file" is to run *unrestricted*.
+3. `agent-init` itself, in Rust, deliberately duplicating the list — it's the process running `create_dir_all()` as uid 0, and in `berth dev` those mkdirs land on the host, so it re-checks rather than trusting a policy file it didn't write. Applied to write paths only: the policy's `readPaths` mixes declared paths with the compiler's own `/usr`, `/lib`, `/etc` baseline, which this list would reject.
+
+Beyond the prefix check, a scope must be absolute and canonical (no `.`, `..`, empty segments, trailing slash), `/` is rejected by name with its own message, and `*` is accepted only as a trailing `/*` — `filesystem:write:*` isn't absolute, so it's now caught by the first check rather than creating a directory literally named `*`.
+
+Read paths are no longer created, per the fix above. The cost is stated rather than hidden: `PathFd::new()` then fails with ENOENT and the grant is skipped *permanently*, because the ruleset is sealed moments later — which bites in a multi-app container, where `entrypoint.sh` starts every app's chain concurrently and an app declaring read on a sibling's directory can run first. The warning now names that consequence; the real fix is boot ordering, not a root mkdir.
+
+Verified: `berth test` on a manifest declaring `filesystem:write:/` exits 1 with `berth.yml:4 capabilities.0: filesystem:*:/ would grant the entire container filesystem`, and `/etc/cron.d` fails the same way naming the allowed prefixes. All 19 real `berth.yml` files in the repo still validate unchanged (the only two that don't are `packages/cli/src/templates/*` with `{{ name }}` placeholders, which never validated). Test coverage: 6 new cases in `packages/manifest-schema/src/schema.test.ts` (including that non-filesystem scopes like `browser:navigate:*` are left alone), 2 new Rust unit tests on the write-path predicate under the `cargo test` step 1.1 added to CI, and the existing capability fuzz test in `packages/sdk` gained three adversarial generators plus a hard assertion that no path in a compiled policy ever falls outside the allowlist.
 
 ### 1.13 — Governance gate bypasses
 
