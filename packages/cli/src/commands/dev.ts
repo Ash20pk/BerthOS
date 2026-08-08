@@ -78,6 +78,7 @@ export default class Dev extends Command {
     this.printDiagnostics(
       apps.map((a) => a.manifest),
       running.ports,
+      running.credentials,
     );
     void this.tailLogs(running.container);
 
@@ -98,20 +99,31 @@ export default class Dev extends Command {
     process.on("SIGTERM", shutdown);
   }
 
-  private printDiagnostics(manifests: BerthManifest[], ports: { vnc?: number; novnc?: number; cdp?: number; terminal?: number }): void {
+  private printDiagnostics(
+    manifests: BerthManifest[],
+    ports: { vnc?: number; novnc?: number; terminal?: number },
+    credentials: { terminal?: string; vnc?: string },
+  ): void {
     const names = manifests.map((m) => m.name).join(", ");
-    if (ports.novnc) this.log(`[berth:dev] noVNC:    http://localhost:${ports.novnc}/vnc.html`);
-    if (ports.vnc) this.log(`[berth:dev] VNC:      localhost:${ports.vnc}`);
-    if (ports.cdp) this.log(`[berth:dev] CDP:      http://localhost:${ports.cdp}`);
-    if (!ports.novnc && !ports.vnc && !ports.cdp) {
+    // Every published port is bound to 127.0.0.1 and credential-gated — the
+    // password is printed here because it's generated fresh per boot, so
+    // there's nowhere else to get it. See docs/threat-model.md.
+    if (ports.novnc) this.log(`[berth:dev] noVNC:    http://127.0.0.1:${ports.novnc}/vnc.html`);
+    if (ports.vnc) this.log(`[berth:dev] VNC:      127.0.0.1:${ports.vnc}`);
+    if (credentials.vnc) this.log(`[berth:dev]           password: ${credentials.vnc}`);
+    if (!ports.novnc && !ports.vnc) {
       if (manifests.some(declaresBrowserCapability) && !manifests.some(needsBrowserPorts)) {
-        this.log(`[berth:dev] "${names}" sets expose.browser: false: VNC/CDP ports not published to the host`);
+        this.log(`[berth:dev] "${names}" sets expose.browser: false: VNC ports not published to the host`);
       } else {
-        this.log(`[berth:dev] "${names}" declares no browser:* capability: no VNC/CDP ports exposed`);
+        this.log(`[berth:dev] "${names}" declares no browser:* capability: no VNC ports exposed`);
       }
     }
     if (ports.terminal) {
-      this.log(`[berth:dev] Terminal: http://localhost:${ports.terminal}`);
+      this.log(`[berth:dev] Terminal: http://127.0.0.1:${ports.terminal}`);
+      if (credentials.terminal) {
+        const [user, ...rest] = credentials.terminal.split(":");
+        this.log(`[berth:dev]           login: ${user} / ${rest.join(":")}`);
+      }
     } else if (manifests.some(declaresTerminalCapability) && !manifests.some(needsTerminalPort)) {
       this.log(`[berth:dev] "${names}" sets expose.terminal: false: terminal port not published to the host`);
     } else {

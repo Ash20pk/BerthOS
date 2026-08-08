@@ -16,7 +16,11 @@ export function launchChromium(): Promise<Browser> {
       return chromium.launch({
         executablePath: process.env.CHROME_BIN,
         headless: process.env.BERTH_TEST_MODE === "1",
-        args: ["--remote-debugging-port=9222", "--remote-debugging-address=0.0.0.0", "--no-sandbox"],
+        // No --remote-debugging-address: Chromium defaults to the container's
+        // loopback interface, and it should stay there. An unauthenticated CDP
+        // endpoint reachable off-container is arbitrary local-file read and a
+        // bypass of whatever network scoping your berth.yml declares.
+        args: ["--remote-debugging-port=9222", "--no-sandbox"],
       });
     })();
   }

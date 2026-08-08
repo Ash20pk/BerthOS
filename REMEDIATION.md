@@ -63,7 +63,7 @@ README line 88 currently reads: *"a prompt-injected 'ignore previous instruction
 | 1.4 | App RPC sockets in world-writable `/tmp`, unauthenticated | Critical | 🔴 | 3d |
 | 1.5 | `on_install` is unsandboxed root shell run before enforcement | Critical | 🔴 | 2d |
 | 1.6 | `berth dev` bind-mounts the whole host repo read-write | Critical | 🔴 | 1d |
-| 1.7 | ttyd / VNC / CDP unauthenticated on all host interfaces | High | 🔴 | 1d |
+| 1.7 | ttyd / VNC / CDP unauthenticated on all host interfaces | High | 🟢 | 1d |
 | 1.8 | Egress broker: no port check, `*` → SSRF, DNS not pinned | High | 🔴 | 2d |
 | 1.9 | GitHub broker: `read:repos` also grants `/user/emails` etc. | High | 🔴 | 1d |
 | 1.10 | Capability tokens are never verified anywhere | High | 🔴 | 1d |
@@ -170,6 +170,26 @@ Running `berth dev` on `apps/terminal` on any routable network is an unauthentic
 **Fix.** Bind all published ports to `127.0.0.1` by default (`HostIp: "127.0.0.1"`), with an explicit opt-in for anything wider. Generate a random credential for ttyd and a VNC password at boot, print them alongside the URL. Bind CDP to `127.0.0.1` inside the container.
 
 **Verify.** `docker inspect` shows `127.0.0.1` bindings; connecting to ttyd without the credential is refused.
+
+**Closed.** Four changes, and one of them is a real capability removal rather than a hardening.
+
+**Binding.** Every published port now carries an explicit `HostIp`, defaulting to `127.0.0.1`. Docker's default for an *omitted* `HostIp` is `0.0.0.0`, which is how this happened in the first place — the old code never asked for every interface, it just didn't say. `BERTH_PUBLISH_HOST` (or a `publishHost` option) widens it for the genuine "reach this from my phone" case, and `startContainer` warns, naming the consequence, whenever it isn't loopback. An empty value is treated as unset, so a stray `BERTH_PUBLISH_HOST=` in someone's `.env` can't quietly restore the old behavior. A side effect worth naming: `berth os up` and `Computer.connect()` already *addressed* the HTTP RPC bridge as `http://127.0.0.1:<port>` while Docker was publishing it on every interface — the bearer token was the only thing between a LAN and a resident app's exports. The binding now matches what the code always assumed.
+
+**Credentials.** Generated per boot by `container.ts` and returned from `startContainer`, so `berth dev` can print them next to the URL — the container can only *log* a secret, and a secret in a log stream every resident app can also read isn't one. ttyd gets `--credential berth:<24 random bytes>`; x11vnc gets `-rfbauth` with an 8-character password (VNC's classic auth truncates to 8, so anything longer would overstate its strength) stored in a 0700 directory under `/root`, not the world-writable `/tmp`. Both consumers fail closed rather than falling back to no auth: `apps/terminal` generates and logs its own credential if none was passed in, because a bare `docker run` of that app otherwise produces an unauthenticated writable root shell; and if the VNC password file can't be written, `entrypoint.sh` starts *neither* x11vnc nor websockify — `-nopw` is not an acceptable fallback, and letting `set -e` abort would take the whole sandbox down over a feature nobody may be watching.
+
+**CDP is no longer published at all.** Chromium's `--remote-debugging-address=0.0.0.0` is gone, so it binds the container's loopback interface. This one isn't a hardening — it removes host-side CDP attach, which was a real (if undocumented) debugging affordance. It's the right trade: unauthenticated CDP is arbitrary local-file read (`Page.navigate("file:///etc/passwd")`) and a total bypass of the egress broker (`Browser.setDownloadBehavior`), i.e. it hands away every capability `browser-native`'s manifest carefully scopes, to anything that can open a TCP connection — which was the LAN, any sibling container on the same Docker network, and any app in the same container. Playwright drives Chromium over loopback from inside the container, so nothing legitimate depended on the wider bind. `9222` also came out of `base.Dockerfile`'s `EXPOSE`, so a future `docker run -P` can't republish it by accident. `--no-sandbox` stays and is now commented as to why: Chromium refuses its own sandbox as uid 0, and every process in a Berth container is uid 0 until the per-app uid work in 1.4/1.11.
+
+**Verification.** `packages/docker-orchestrator/test/published-port-security-milestone.mjs`, wired into CI as its own workflow, nine assertions across two real containers. It runs anywhere Docker does — none of it depends on the host kernel providing Landlock, unlike `capability-enforcement.mjs`.
+
+Both key assertions were confirmed to *fail* against the old behavior, not just pass against the new:
+- Loopback: re-running with `BERTH_PUBLISH_HOST=0.0.0.0` reproduces the old binding exactly and Test 1 fails on it — which doubles as the escape hatch's own test.
+- VNC: Test 9 asserts at the RFB protocol level, reading the security types the server offers a client rather than scraping a log line, because that list is what an attacker on the port actually sees. It offers `[2]` (VNC Authentication). Running x11vnc with the old `-nopw` in the same image offers `[1]` (None) — connect and you have keyboard and mouse.
+
+Two details the tests had to account for. ttyd starts lazily on `apps/terminal`'s first export call, not at boot, so the test drives `read_screen` first — otherwise there'd be nothing listening to authenticate against. And the VNC half needs its own container with `BERTH_TEST_MODE` *unset*: every existing browser milestone runs headless, which skips `entrypoint.sh`'s display stack entirely, so x11vnc would never have started and this change would have looked verified while being untested.
+
+Test 6 exists specifically because tests 4 and 5 would both pass if ttyd were simply broken; it asserts the correct credential still returns 200.
+
+**Not closed by this.** The ports remain reachable by any host-local process (T5 in the threat model) and by other apps in the same container — that's 1.4's per-app uid work, not this. The printed credential is only as private as the terminal it was printed to.
 
 ### 1.8 — Egress broker: no port check, `*` → SSRF, DNS not pinned
 

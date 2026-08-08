@@ -1,0 +1,38 @@
+name: Published Port Security
+
+# Verifies that the ports `berth dev` publishes to the host are bound to
+# loopback and gated by a per-boot credential — see REMEDIATION.md 1.7 and
+# packages/docker-orchestrator/test/published-port-security-milestone.mjs.
+#
+# Unlike capability-enforcement.yml, none of this depends on the runner's
+# kernel providing Landlock: Docker's port binding, ttyd's basic auth, and
+# x11vnc's RFB handshake behave identically on any Docker host. It runs here
+# anyway because it needs a real Docker daemon and two real image builds.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.21.0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Run published-port-security-milestone.mjs
+        working-directory: packages/docker-orchestrator
+        run: node test/published-port-security-milestone.mjs

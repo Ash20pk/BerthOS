@@ -11,6 +11,44 @@ set -euo pipefail
 export BERTH_BOOT_ID="$(cat /proc/sys/kernel/random/uuid)"
 echo "[berth:entrypoint] boot id: ${BERTH_BOOT_ID}" >&2
 
+# Starts the display stack a browser:* app needs: Xvfb for Chromium to draw
+# into, x11vnc to serve that display, and websockify/noVNC to put it in a
+# browser tab. Identical in single- and multi-app mode, so it lives here
+# rather than being duplicated into both branches.
+#
+# The VNC password is the one thing standing between this display — a live
+# view of, and mouse/keyboard control over, whatever the agent is doing — and
+# anything that can reach port 5900. x11vnc's `-nopw` (what this used to
+# pass) disables authentication entirely. container.ts generates
+# BERTH_VNC_PASSWORD per boot and hands it to `berth dev` to print; if it
+# somehow isn't set, one is generated here instead and logged, because
+# starting without a password at all is not an acceptable fallback. The
+# `-storepasswd` file lands in root-owned /root rather than the world-
+# writable /tmp every resident app can write to.
+start_display_stack() {
+  echo "[berth:entrypoint] browser:* capability declared — starting Xvfb + x11vnc + noVNC" >&2
+  Xvfb :99 -screen 0 1280x800x24 -nolisten tcp &
+  # give Xvfb a moment to create the display socket before Chromium/x11vnc attach
+  sleep 1
+  if [ -z "${BERTH_VNC_PASSWORD:-}" ]; then
+    BERTH_VNC_PASSWORD="$(head -c 6 /dev/urandom | base64 | tr '+/' '-_' | cut -c1-8)"
+    echo "[berth:entrypoint] WARNING: no BERTH_VNC_PASSWORD was passed in; generated one for this boot: ${BERTH_VNC_PASSWORD}" >&2
+  fi
+  mkdir -p /root/.berth
+  chmod 700 /root/.berth
+  # If the password file can't be written, start neither x11vnc nor
+  # websockify. Falling back to -nopw would serve the agent's live display,
+  # with input, to anything that can reach 5900; and letting `set -e` abort
+  # would take the whole container down over a feature nobody's watching yet.
+  # Fail closed on the display, not on the sandbox.
+  if ! x11vnc -storepasswd "$BERTH_VNC_PASSWORD" /root/.berth/vncpasswd >/dev/null 2>&1; then
+    echo "[berth:entrypoint] WARNING: could not write the VNC password file — starting no VNC server at all rather than an unauthenticated one. The browser itself is unaffected; only the human-facing view is." >&2
+    return 0
+  fi
+  x11vnc -display :99 -forever -shared -rfbauth /root/.berth/vncpasswd -quiet &
+  websockify --web=/usr/share/novnc 6080 localhost:5900 &
+}
+
 if [ -z "${BERTH_APPS:-}" ]; then
   # --- Single-app mode. ---
   # BERTH_APPS is only ever set by container.ts when more than one app
@@ -48,12 +86,7 @@ if [ -z "${BERTH_APPS:-}" ]; then
   NEEDS_EGRESS_BROKER="${LIFECYCLE_FLAGS#*,}"
 
   if [ "$NEEDS_BROWSER" = "1" ] && [ "${BERTH_TEST_MODE:-0}" != "1" ]; then
-    echo "[berth:entrypoint] browser:* capability declared — starting Xvfb + x11vnc + noVNC" >&2
-    Xvfb :99 -screen 0 1280x800x24 -nolisten tcp &
-    # give Xvfb a moment to create the display socket before Chromium/x11vnc attach
-    sleep 1
-    x11vnc -display :99 -forever -shared -nopw -quiet &
-    websockify --web=/usr/share/novnc 6080 localhost:5900 &
+    start_display_stack
   fi
 
   echo "[berth:entrypoint] starting context-bus daemon on ${BERTH_CONTEXT_BUS_SOCKET}" >&2
@@ -213,11 +246,7 @@ while IFS=$'\t' read -r _ APP_DIR; do
 done <<<"$APPS_TSV"
 
 if [ "$NEEDS_BROWSER" = "1" ] && [ "${BERTH_TEST_MODE:-0}" != "1" ]; then
-  echo "[berth:entrypoint] browser:* capability declared — starting Xvfb + x11vnc + noVNC" >&2
-  Xvfb :99 -screen 0 1280x800x24 -nolisten tcp &
-  sleep 1
-  x11vnc -display :99 -forever -shared -nopw -quiet &
-  websockify --web=/usr/share/novnc 6080 localhost:5900 &
+  start_display_stack
 fi
 
 # Exported before any app process forks below (the port itself is a fixed
