@@ -97,7 +97,15 @@ async function main() {
     }
 
     const url = `http://127.0.0.1:${ports.terminal}/`;
-    await waitFor(async () => (await probe(url)).status !== 0, 30000, "ttyd listening");
+    // The container's own log is where a Landlock denial shows up, and this
+    // step is exactly where one lands: ttyd binds a port, and an app that
+    // declares no network capability has BindTcp denied along with
+    // ConnectTcp unless the policy grants it (see computeBindPorts). Dumping
+    // it here rather than failing bare is the difference between diagnosing
+    // that from one CI run and diagnosing it from three.
+    await waitFor(async () => (await probe(url)).status !== 0, 30000, "ttyd listening", () =>
+      dumpLogs(running.container, "terminal"),
+    );
 
     console.log("\n--- Test 4: an unauthenticated request is refused ---");
     const anonymous = await probe(url);
@@ -186,7 +194,9 @@ async function checkVnc() {
 
     console.log("\n--- Test 9: the VNC server offers VNC Authentication, not None ---");
     const port = Number(mapped["5900/tcp"][0].HostPort);
-    await waitFor(async () => (await rfbSecurityTypes(port)) !== undefined, 60000, "x11vnc listening");
+    await waitFor(async () => (await rfbSecurityTypes(port)) !== undefined, 60000, "x11vnc listening", () =>
+      dumpLogs(running.container, "browser-native"),
+    );
     const types = await rfbSecurityTypes(port);
     console.log("  RFB security types offered:", types);
     check(
@@ -251,13 +261,26 @@ async function probe(url, credential) {
   }
 }
 
-async function waitFor(predicate, timeoutMs, label) {
+async function waitFor(predicate, timeoutMs, label, onTimeout) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (await predicate()) return;
     await new Promise((r) => setTimeout(r, 250));
   }
+  if (onTimeout) await onTimeout();
   throw new Error(`timed out waiting for ${label}`);
+}
+
+/** Prints the container's log tail, so a timeout says why rather than just that. */
+async function dumpLogs(container, label) {
+  try {
+    const buf = await container.logs({ stdout: true, stderr: true, tail: 60 });
+    console.log(`\n--- ${label} container log (last 60 lines) ---`);
+    console.log(buf.toString("utf-8").replace(/[\u0000-\u0008]/g, ""));
+    console.log(`--- end ${label} log ---\n`);
+  } catch (err) {
+    console.log(`(could not read ${label} logs: ${err})`);
+  }
 }
 
 main().catch((err) => {
