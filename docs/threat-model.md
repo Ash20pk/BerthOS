@@ -32,11 +32,11 @@ The order matters: T1 is the one Berth exists for, and T2/T3 are the ones its cu
 
 **T3 — A malicious manifest.** A `berth.yml` from the registry, a PR, or any repo you cloned. `on_install` is an unvalidated shell array executed as root *before* the capability policy is applied (*1.5*). Treat installing a third-party app as running its code as root, because that is what it is.
 
-**T4 — A network attacker on the same LAN as the developer.** `berth dev` publishes ttyd, VNC, and CDP with no `HostIp`, so Docker binds them on all host interfaces, and none of the three authenticates (*1.7*).
+**T4 — A network attacker on the same LAN as the developer.** Closed by *1.7*: every port `berth dev` publishes binds `127.0.0.1`, ttyd requires a per-boot HTTP basic credential, VNC requires a per-boot password, and Chromium's CDP port is no longer published at all. Widening the binding takes an explicit `BERTH_PUBLISH_HOST`, which warns. What's left is what a *host-local* process can reach, which is T5.
 
 **T5 — An unprivileged local user on the host or CI runner.** Reads `~/.berthrc` (0644), `~/.berth/os/<name>.json` (0644, holds the RPC bearer token), snapshot `env.json`, and `/context/*.json` — all world-readable (*5.4*, *5.5*).
 
-**T6 — A malicious remote endpoint.** A site the browser navigates to, or an API that responds. Chromium runs `--no-sandbox`, so a renderer exploit lands as root in the container, at which point T6 becomes T2 (*1.7*).
+**T6 — A malicious remote endpoint.** A site the browser navigates to, or an API that responds. Chromium runs `--no-sandbox` — it refuses its own sandbox as uid 0, and every process in a Berth container is uid 0 — so a renderer exploit lands as root in the container, at which point T6 becomes T2. Closing this needs the per-app uid work (*1.4*, *1.11*), not a Chromium flag.
 
 **Explicitly out of the model.** The host kernel, the Docker daemon, the hypervisor, and the base image's package sources are trusted. So is the LLM provider (it sees every prompt and every tool result — routing an agent's data to a third-party API is an inherent property of the design, not a defect). A host root user is game over by construction. Berth is not a defence against a compromised Docker daemon or a container-escape 0-day.
 
@@ -50,7 +50,7 @@ The order matters: T1 is the one Berth exists for, and T2/T3 are the ones its cu
 | B4 | App process → the daemons (context-bus, semantic-FS, mesh) | *Nothing* | Daemons run as root **outside any Landlock domain** — they start before `agent-init`. Identity is self-asserted from the request body in both (*1.14*) |
 | B5 | Container → internet | The egress broker and the GitHub API broker | **Partial.** Port is never checked, `*` reaches loopback/RFC1918/IMDS, DNS isn't pinned (*1.8*); the GitHub scope heuristic defaults to *allow* (*1.9*) |
 | B6 | Container → host filesystem | The image, plus whatever is bind-mounted | `Computer.boot()` and deployed targets mount nothing. **`berth dev` mounts the workspace root read-write** (*1.6*) |
-| B7 | Host network → published ports | *Nothing* | Unauthenticated on all interfaces (*1.7*) |
+| B7 | Host network → published ports | Loopback-only binding plus a per-boot credential on each | **Real for the LAN case** (*1.7*, closed): ttyd basic auth, VNC password, no published CDP. Still reachable by any host-local process, and a printed credential is only as private as the terminal it was printed to |
 | B8 | Manifest → enforced policy | `@berth/manifest-schema` validation and the filesystem path allowlist | Path scopes are constrained to `/workspace`, `/context`, `/tmp`, `/app` and checked three times, including in `agent-init` itself (*1.12*, closed). `on_install` is not constrained at all (*1.5*) |
 | B9 | Operator → grants / registry / mesh servers | Shared bearer tokens | Plain HTTP, no TLS option, no user/tenant/role model, no audit trail with a verifiable actor (*5.1*, *5.2*, *5.3*) |
 
@@ -69,6 +69,7 @@ Three tiers. Treat the tier, not the capability name, as the security claim.
 | **Kernel** | Capability bounding-set drop | `CAP_SYS_ADMIN`, `CAP_NET_ADMIN`, `CAP_NET_RAW` | `capabilities_dropped` audit event; **undone by `unshare(CLONE_NEWUSER)` (*1.3*)** |
 | **Broker** | Egress broker (CONNECT gate on the hostname) | `browser:navigate:<pattern>`, `network:host:<pattern>` | `egress-broker-milestone.mjs` |
 | **Broker** | GitHub API broker (TLS-terminating, verb + path) | `github:read:<scope>`, `github:write:<scope>` | `github-assistant-milestone.mjs` |
+| **Host** | Loopback-only port publishing, per-boot ttyd/VNC credentials | who can reach a sandbox's human-facing ports from outside it | `published-port-security-milestone.mjs` |
 | **Recorded** | Nothing — reported by `requestCapability()`, used for `expose:` | `browser:screenshot:*`, `terminal:attach:*`, any unimplemented namespace | — |
 
 Full mechanics in [capability tokens reference](./capability-tokens-reference.md); the per-capability table is in the [README](../README.md#available-capabilities).
@@ -89,7 +90,6 @@ Each is tracked with evidence, a fix, and a verification step in [REMEDIATION.md
 - **Cross-app capability borrowing (*1.4*).** Any app can connect to any other app's RPC socket in `/tmp` and invoke its exports, acting with that app's capabilities. Per-app Landlock rulesets are individually correct and this makes them not matter. Same reachability exposes the context-bus, semantic-FS, and mesh daemon sockets — all root, all outside any Landlock domain. Previously flagged in [multi-app reference](./multi-app-reference.md#known-residual-risk-documented-not-fixed-here).
 - **Unsandboxed `on_install` (*1.5*).** Arbitrary shell as root with `CAP_SYS_ADMIN`, before any policy is applied.
 - **`berth dev` workspace mount (*1.6*).** An app with `filesystem:write:/workspace` can rewrite its own `berth.yml`, `.git/hooks/pre-commit`, or `package.json` scripts on your host.
-- **Unauthenticated published ports (*1.7*).** ttyd (`--writable`, no credential), VNC (`-nopw`), CDP (`0.0.0.0`, `--no-sandbox`), all bound to every host interface.
 - **Broker gaps (*1.8*, *1.9*).** No port allowlist; `*` reaches IMDS, loopback, and `host.docker.internal`; DNS re-resolved after the check; GitHub scope classification defaults to `repos` rather than deny. An app declaring both `github:*` and `network:host:*` gets a raw CONNECT tunnel with no path inspection.
 - **Capability tokens are never verified (*1.10*).** The HMAC is correct and nothing calls it; the signing secret is in the constrained app's own environment.
 - **Signals are unrestricted (*1.11*).** Any app can `kill -9` the governance app or a broker and force its failure mode — which for governance is fail-open.
@@ -119,7 +119,7 @@ Not gaps to be closed — decisions, with the reason.
 
 **Reasonable today.** Running first-party or reviewed apps on your own machine or in CI, with an agent driving untrusted *content* — a web page, a repo, a document. That is T1, and B2 holds: an undeclared write or an undeclared outbound connection dies in the kernel, before any application code can catch it.
 
-**Not reasonable yet.** Installing a resident app or a `berth.yml` you haven't read (T3 has no boundary at all). Running mutually-distrusting apps in one container and expecting the per-app rulesets to keep them apart (B3, B4). Running `berth dev` on a routable network (T4). Putting PHI, PII, or regulated data through it (*5.4* — nothing is encrypted at rest, and conversation history is persisted 0644). Multi-tenant use of the grants server or registry (*5.2*).
+**Not reasonable yet.** Installing a resident app or a `berth.yml` you haven't read (T3 has no boundary at all). Running mutually-distrusting apps in one container and expecting the per-app rulesets to keep them apart (B3, B4). Publishing a sandbox's ports beyond loopback with `BERTH_PUBLISH_HOST` on an untrusted network — the credentials are real, but they're the only thing there (T4). Putting PHI, PII, or regulated data through it (*5.4* — nothing is encrypted at rest, and conversation history is persisted 0644). Multi-tenant use of the grants server or registry (*5.2*).
 
 **If you're evaluating Berth as a security boundary**, the honest one-line summary: *kernel-enforced filesystem and network scoping is real and testable today; cross-app and in-container privilege isolation is in progress.* Berth is a strong boundary around what an agent's code can touch, and not yet a boundary to trust against an attacker who already has code execution inside the container.
 
