@@ -351,13 +351,12 @@ Three enforcement tiers run through that table, and the difference matters more 
 
 | Tier | Mechanism | What it means for you |
 |---|---|---|
-| **Kernel** | Landlock (filesystem writes and reads, outbound TCP by port), seccomp-bpf (UDP/ICMP/raw sockets), capability dropping | Irrevocable, inherited across `execve()`, applied before your app's first line runs. Nothing in the container can widen it. Needs a kernel that provides Landlock — see [Kernel enforcement, by platform](#kernel-enforcement-by-platform). |
+| **Kernel** | Landlock (filesystem writes and reads, outbound TCP by port), seccomp-bpf (UDP/ICMP/raw sockets, and namespace creation), capability dropping | Irrevocable, inherited across `execve()`, applied before your app's first line runs. Nothing in the container can widen it. Needs a kernel that provides Landlock — see [Kernel enforcement, by platform](#kernel-enforcement-by-platform). |
 | **Broker** | The egress broker, the GitHub API broker | A real process in the request path that can be bypassed only by reaching the network some other way — which is what the kernel tier is there to prevent. Host- and verb/path-level, so more expressive than the kernel tier, and softer. |
 | **Recorded** | `browser:screenshot:*`, `terminal:attach:*`, any namespace nobody's implemented | Reported honestly by `requestCapability()` and used for `expose:` decisions. Not a control. Don't build a security argument on one. |
 
 And the parts that aren't closed yet. These are tracked with evidence, fixes, and verification steps in [REMEDIATION.md](./REMEDIATION.md), and they're listed here rather than there-only because they change what you should be willing to run:
 
-- **A process inside the container can regain dropped capabilities** via `unshare(CLONE_NEWUSER)`, because the container holds `CAP_SYS_ADMIN` for the semantic-FS FUSE mount. Landlock's filesystem rules still bind (they're inode-based and survive namespace tricks), but `SYS_ADMIN`-gated syscalls Landlock doesn't cover come back.
 - **Resident apps can call each other's exports directly.** Each app's RPC Unix socket lives in a world-writable `/tmp` and the RPC layer does no peer-credential check, so per-app Landlock rulesets — individually correct — don't stop app B from invoking app A's exports and acting with A's capabilities.
 - **`on_install` runs as unsandboxed root, before enforcement.** Shell from a `berth.yml` executes with no Landlock domain applied. Treat a manifest from anywhere you don't control as code you're about to run as root.
 - **`berth dev` bind-mounts your whole workspace read-write**, so an app declaring `filesystem:write:/workspace` can write your `.git/hooks` and `package.json` scripts. Deployed targets and `Computer.boot()` don't bind-mount.

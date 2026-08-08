@@ -59,7 +59,7 @@ README line 88 currently reads: *"a prompt-injected 'ignore previous instruction
 |---|------|----------|--------|--------|
 | 1.1 | `truncate(2)` is not a handled Landlock access right | High | 🟢 | 1h |
 | 1.2 | `CAP_NET_RAW` retained; Landlock covers TCP only | Critical | 🟢 | 1d |
-| 1.3 | Bounding-set drop undone by `unshare(CLONE_NEWUSER)` | Critical | 🔴 | 2d |
+| 1.3 | Bounding-set drop undone by `unshare(CLONE_NEWUSER)` | Critical | 🟢 | 2d |
 | 1.4 | App RPC sockets in world-writable `/tmp`, unauthenticated | Critical | 🔴 | 3d |
 | 1.5 | `on_install` is unsandboxed root shell run before enforcement | Critical | 🔴 | 2d |
 | 1.6 | `berth dev` bind-mounts the whole host repo read-write | Critical | 🔴 | 1d |
@@ -118,6 +118,25 @@ Landlock's FS rules still bind (inode-based, they survive namespace tricks), but
 **Fix.** Ship a custom seccomp profile that keeps Docker's defaults but re-adds the `clone`/`unshare`/`setns` namespace-flag restrictions unconditionally, and pass it via `SecurityOpt`. Longer term: stop granting container-wide `CAP_SYS_ADMIN` — it is only needed for the FUSE mount, so mount `/context` from a separate init step or use a fuse device plugin, then drop the cap before any app process exists.
 
 **Verify.** A test asserting `unshare -Urm` fails inside a booted sandbox.
+
+**Closed.** Not with a custom Docker seccomp profile, which was the fix sketched above. That would mean vendoring Docker's ~1000-line default and keeping it in sync forever to avoid silently losing everything else it blocks, and it would apply container-wide — including to the daemons `entrypoint.sh` starts before `agent-init`, one of which genuinely needs `CAP_SYS_ADMIN` to mount `/context`. Instead `agent-init` installs a second seccomp filter of its own, next to the one 1.2 added: `unshare(2)` and `clone(2)` are refused with `EPERM` when any `CLONE_NEW*` flag is set, `setns(2)` is refused outright, and `clone3(2)` returns `ENOSYS`. Same properties as the Landlock domain beside it — inherited across `execve()`, irrevocable, scoped to exactly the process this binary exists to constrain.
+
+Four details worth naming, because each is a place this could have been subtly wrong:
+
+1. **It's installed for every app, not conditionally.** 1.2's filter is deliberately narrow (only apps declaring no network capability); this one can't be, because the capability drop it protects is unconditional.
+2. **`clone3` returns `ENOSYS`, not `EPERM`.** Its flags arrive behind a pointer and seccomp cannot dereference pointers, so a flag-matching rule is impossible and the syscall has to go whole — which would otherwise break `pthread_create` on any libc that reaches for it first. `ENOSYS` is the answer glibc is written to fall back from, and is what Docker's own default profile has returned since 20.10.10, so every container image in the world already runs this way. (This image is Alpine/musl, which doesn't call `clone3` at all, so the fallback is belt-and-braces.) That difference in errno is also why this is two filters rather than one: a seccompiler `SeccompFilter` carries a single match action.
+3. **`CLONE_NEWTIME` is filtered on `unshare` but not on `clone`.** Its value (`0x80`) falls inside `clone(2)`'s `CSIGNAL` mask — the low byte of `clone_flags` is the child's exit signal — and the kernel rejects it for `clone(2)` anyway, accepting it only via `unshare`/`clone3`. Filtering it on `clone` would mask a bit the kernel reads as part of a signal number. There's a unit test asserting the two lists differ in exactly that one entry, and agree on every other.
+4. **The `unshare` rules match with `MaskedEq(flag)`, not equality.** An equality compare against the whole argument would be bypassed by OR-ing in any other flag, which every real caller does — `unshare -Urm` passes `NEWUSER|NEWNS|NEWPID` together.
+
+The false claim that made this possible is corrected at the source: `drop_all_capabilities()`'s doc comment called the bounding set "a hard ceiling a process can never widen for itself," and now says it is a ceiling *only within the process's own user namespace*, and that the drop and the filter are a pair worth little apart. Same correction in `docs/mesh-reference.md`, which had inherited the phrasing.
+
+**Verification, in three layers, and the negative control matters most.** A Rust unit test installs the filter on a scratch thread, makes the real `unshare(CLONE_NEWUSER)` call, and separately asserts `fork(2)` still works — a filter too broad here would break every child process an app spawns, and would otherwise show up as an unrelated app failing days later. `capability-enforcement.mjs` Test 11 drives a new `probe_user_namespace` diagnostic export on `apps/filesystem` end-to-end, asserted *unconditionally* rather than degraded to informational (like 1.2's Test 5b, and unlike every Landlock check in that file), because seccomp-bpf works on Docker Desktop's linuxkit kernel exactly as on a real host. It reports `created` and `regainedCaps` separately, so "the namespace was created but the mount happened not to work" can't be misread as a pass.
+
+The negative control was run against the *same booted container*, not a hypothetical one: a `docker exec` process — which is not a descendant of `agent-init` and so carries no filter — still returns `CapEff: 000001ffffffffff` and `MOUNT_SUCCEEDED_CAP_REGAINED`, while the app's own filtered process gets `unshare: unshare(0x10020000): Operation not permitted`. So the denial is demonstrably the filter and not the environment.
+
+**Regression-checked against the apps most likely to need namespaces**, since a seccomp filter that breaks process spawning would be a bad trade: Chromium was A/B'd directly (`--headless --no-sandbox --dump-dom`, run with and without `agent-init` in the same image — byte-identical output), `published-port-security-milestone.mjs` passes 9/9 including the tmux/ttyd and Xvfb/x11vnc display stacks, `multi-app-milestone.mjs` passes, and `code-interpreter`'s `run_code` still works for all three of python, javascript, and shell.
+
+**Not closed by this.** The container still holds `CAP_SYS_ADMIN` container-wide, and the pre-exec daemons (context-bus, semantic-fs, mesh) still carry it with no seccomp filter and no Landlock domain — B4 in the threat model, unchanged. The real fix is the second half of the original entry: mount `/context` from a separate init step or a FUSE device plugin, then drop the cap before any app process exists. That's now recorded as an open gap in `docs/threat-model.md` rather than being folded into this closure.
 
 ### 1.4 — App RPC sockets in world-writable `/tmp`, unauthenticated
 
@@ -340,7 +359,7 @@ Linked from three places: the README's `What isn't enforced yet` section (both a
 
 Specific lines that are currently false or unsupportable:
 
-- `README.md:88` — "a prompt-injected 'ignore previous instructions, delete everything' never even reaches the syscall." True for `open(O_WRONLY)` and, since 1.1, `truncate` on an enforcing kernel; still false for `unshare` (1.3), sibling sockets (1.4), and `on_install` (1.5).
+- `README.md:88` — "a prompt-injected 'ignore previous instructions, delete everything' never even reaches the syscall." True for `open(O_WRONLY)` and, since 1.1, `truncate` on an enforcing kernel; ~~`unshare` (1.3)~~ closed; still false for sibling sockets (1.4) and `on_install` (1.5).
 - `README.md:45` — "An undeclared write isn't caught by a try/catch. The kernel refuses the syscall outright." Same caveats. `truncate` used to be the clean counterexample; 1.1 closed it, and `execve` is the remaining unhandled right (deliberately — see 1.1).
 - ~~`README.md:100` — code-interpreter has "zero outbound network access, full stop." False for UDP (1.2).~~ Closed by 1.2: both this line and the `network:connect:` matrix row now name the two mechanisms (Landlock for TCP, seccomp for UDP/raw) and state the remaining limit — an app that declares any port keeps UDP for DNS.
 - ~~`README.md:316` — `network:connect:*` "denied by default... zero outbound TCP, full stop." The "TCP" qualifier is doing load-bearing work that readers will miss.~~ Same fix; the qualifier is no longer load-bearing because the non-TCP paths are closed for the apps the claim is about.
