@@ -311,26 +311,6 @@ fn write_access_rights() -> BitFlags<AccessFs> {
 /// manifest-validation time instead.
 const ALLOWED_WRITE_PATH_PREFIXES: [&str; 4] = ["/workspace", "/context", "/tmp", "/app"];
 
-/// The pty device pair, the one thing a terminal app needs write access to
-/// that can never live under the four roots above. `/dev/ptmx` is how a pty
-/// is allocated at all (`open(O_RDWR)`), and the slave the shell then opens
-/// appears under `/dev/pts`. Without both, `tmux` can't start its server and
-/// apps/terminal is dead on any kernel that enforces Landlock — which is
-/// precisely what happened, unnoticed, until published-port-security-milestone.mjs
-/// first ran this app against a real kernel.
-///
-/// Deliberately separate from ALLOWED_WRITE_PATH_PREFIXES rather than a fifth
-/// entry in it, because the two lists answer different questions.
-/// ALLOWED_WRITE_PATH_PREFIXES is *what a berth.yml may ask for*, and it must
-/// stay exactly those four — a manifest naming `/dev` would be a capability
-/// escape. This list is *what the policy compiler may add on the app's
-/// behalf*, and generate-capability-policy.ts only adds these two for an app
-/// declaring a `terminal:*` capability. So the guarantee 1.12 established is
-/// unchanged: no manifest can reach `/dev` through this.
-///
-/// Matched exactly, never as a prefix, and never created — see the write loop.
-const ALLOWED_PTY_WRITE_PATHS: [&str; 2] = ["/dev/ptmx", "/dev/pts"];
-
 /// Split out of apply_policy() so the unit tests below can exercise it without
 /// a kernel that enforces Landlock or a real policy file.
 fn is_allowed_write_path(path: &str) -> bool {
@@ -340,22 +320,9 @@ fn is_allowed_write_path(path: &str) -> bool {
     if path.split('/').skip(1).any(|segment| segment.is_empty() || segment == "." || segment == ".." || segment == "*") {
         return false;
     }
-    if ALLOWED_PTY_WRITE_PATHS.contains(&path) {
-        return true;
-    }
     ALLOWED_WRITE_PATH_PREFIXES
         .iter()
         .any(|prefix| path == *prefix || path.starts_with(&format!("{prefix}/")))
-}
-
-/// Whether apply_policy() should `create_dir_all()` a write path before
-/// granting it. False for the pty devices: `/dev/ptmx` is a character device
-/// the kernel provides, and `create_dir_all()` on it would either fail (it
-/// exists) or, if `/dev` were ever mounted differently, create a *directory*
-/// shadowing the device node and break pty allocation more thoroughly than
-/// the missing grant did.
-fn should_create_write_path(path: &str) -> bool {
-    !ALLOWED_PTY_WRITE_PATHS.contains(&path)
 }
 
 fn apply_policy(policy_path: &str) -> Result<(CapabilityPolicy, RulesetStatus), Box<dyn std::error::Error>> {
@@ -437,10 +404,8 @@ fn apply_policy(policy_path: &str) -> Result<(CapabilityPolicy, RulesetStatus), 
         // app's own first `mkdir(WORKSPACE_ROOT)` call fails with EACCES:
         // creating a not-yet-existing /workspace is an operation on its
         // *parent* (/), which was never granted, not on /workspace itself.
-        if should_create_write_path(path) {
-            if let Err(err) = std::fs::create_dir_all(path) {
-                eprintln!("[agent-init] WARNING: couldn't create \"{path}\" ahead of granting write access ({err})");
-            }
+        if let Err(err) = std::fs::create_dir_all(path) {
+            eprintln!("[agent-init] WARNING: couldn't create \"{path}\" ahead of granting write access ({err})");
         }
         match PathFd::new(path) {
             Ok(fd) => {
@@ -585,32 +550,6 @@ mod tests {
             "",
         ] {
             assert!(!is_allowed_write_path(path), "{path:?} must not be an allowed write path");
-        }
-    }
-
-    // The pty pair a terminal app needs. Exact matches only: /dev itself, and
-    // anything else under it, must stay refused — the point of allowing these
-    // two is that a terminal can allocate a pty, not that /dev is writable.
-    #[test]
-    fn pty_device_paths_are_allowed_exactly_and_nothing_else_under_dev() {
-        for path in ["/dev/ptmx", "/dev/pts"] {
-            assert!(is_allowed_write_path(path), "{path} must be allowed, or tmux cannot start under Landlock");
-        }
-        for path in ["/dev", "/dev/mem", "/dev/sda", "/dev/ptmx2", "/dev/pts/../mem", "/dev/ptmx/x"] {
-            assert!(!is_allowed_write_path(path), "{path:?} must not be an allowed write path");
-        }
-    }
-
-    // create_dir_all() on /dev/ptmx would either fail or, worse, create a
-    // directory shadowing the device node — breaking pty allocation more
-    // thoroughly than the missing grant this fix exists to add.
-    #[test]
-    fn pty_device_paths_are_never_created() {
-        for path in ["/dev/ptmx", "/dev/pts"] {
-            assert!(!should_create_write_path(path), "{path} is a device node, not a directory to mkdir");
-        }
-        for path in ["/workspace", "/tmp/scratch", "/context"] {
-            assert!(should_create_write_path(path), "{path} must still be created ahead of the grant");
         }
     }
 }
