@@ -50,7 +50,25 @@ const BASELINE_WRITE_PATHS = ["/tmp"];
 // Alpine, and this app's own working directory need to function at all.
 // Declaring a read path narrows visibility to baseline-plus-declared, never
 // below what the runtime itself needs.
-const BASELINE_READ_PATHS = ["/usr", "/lib", "/etc", "/proc", "/dev", "/tmp", process.cwd()];
+//
+// /bin and /sbin are in this list for a reason worth stating, because their
+// absence was a real bug that CI could see and nobody could reproduce locally.
+// On a merged-/usr distro they'd be symlinks into /usr and covered already;
+// on Alpine, which this image is built on, they are real directories. So an
+// app that declared any filesystem:read: capability got a ruleset where every
+// binary under /bin and /sbin was unreadable — and on a kernel that actually
+// enforces Landlock, execve() of an unreadable file fails with EACCES. That
+// app could not spawn `sh`, `ping`, or anything else busybox provides, while
+// working perfectly on Docker Desktop where the ruleset is NotEnforced.
+//
+// It surfaced as `capability-enforcement.mjs`'s raw-socket probe failing with
+// "spawn ping EACCES" on every ubuntu-latest run since the probe was added,
+// which read as a flaky test rather than as the app-visible breakage it is.
+// This is not a widening of the trust boundary: /usr/bin is already readable
+// via /usr, and these two directories hold the same kind of thing. Executable
+// *scoping* is a separate question — AccessFs::Execute is deliberately not in
+// agent-init's handled set, see its comment there.
+const BASELINE_READ_PATHS = ["/usr", "/bin", "/sbin", "/lib", "/etc", "/proc", "/dev", "/tmp", process.cwd()];
 
 export interface CapabilityPolicy {
   appName: string;

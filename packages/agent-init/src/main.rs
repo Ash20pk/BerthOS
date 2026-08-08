@@ -344,8 +344,8 @@ fn write_access_rights() -> BitFlags<AccessFs> {
 ///
 /// Applied to write paths only. Read paths are not created (see the read loop
 /// below) and the policy's readPaths list mixes declared paths with
-/// generate-capability-policy.ts's own baseline — /usr, /lib, /etc, /proc,
-/// /dev — which this list would reject; the declared half is validated at
+/// generate-capability-policy.ts's own baseline — /usr, /bin, /sbin, /lib,
+/// /etc, /proc, /dev — which this list would reject; the declared half is validated at
 /// manifest-validation time instead.
 const ALLOWED_WRITE_PATH_PREFIXES: [&str; 4] = ["/workspace", "/context", "/tmp", "/app"];
 
@@ -392,11 +392,15 @@ fn apply_policy(policy_path: &str) -> Result<(CapabilityPolicy, RulesetStatus), 
     // contents just as effectively.
     //
     // Not handled, deliberately: Execute and IoctlDev (both from_read/V5
-    // territory). Handling Execute would deny exec of every interpreter and
-    // shell outside the declared read paths — /bin and /sbin are not in
-    // BASELINE_READ_PATHS (see generate-capability-policy.ts), so it would
-    // break every app that shells out. That's a real gap; it needs the
-    // baseline exec set worked out first and is tracked separately.
+    // territory). Handling Execute would make exec denied-by-default and
+    // permitted only under paths granted an Execute rule — which is a real
+    // gap, and needs the baseline exec set worked out first rather than
+    // inheriting the read baseline wholesale. Tracked separately.
+    //
+    // Note this is a different question from whether an interpreter is
+    // *readable*: with read scoping on, execve() of a file outside every read
+    // rule already fails with EACCES, which is why /bin and /sbin had to be
+    // added to BASELINE_READ_PATHS (see generate-capability-policy.ts).
     //
     // Ruleset::default() is best-effort, so a kernel whose Landlock ABI
     // predates V3 downgrades to the rights it does support instead of
