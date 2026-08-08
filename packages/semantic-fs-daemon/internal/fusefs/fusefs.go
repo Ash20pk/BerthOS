@@ -26,10 +26,14 @@ type FS struct {
 	dataDir  string
 	idx      *index.Index
 	registry *control.PidRegistry
+	// Shared-group ownership for everything this filesystem creates. See
+	// ownership.go — pass 0 for "leave ownership alone", which is what any
+	// run outside a Berth image gets.
+	owner *ownership
 }
 
-func New(dataDir string, idx *index.Index, registry *control.PidRegistry) *FS {
-	return &FS{dataDir: dataDir, idx: idx, registry: registry}
+func New(dataDir string, idx *index.Index, registry *control.PidRegistry, sharedGid int) *FS {
+	return &FS{dataDir: dataDir, idx: idx, registry: registry, owner: newOwnership(sharedGid)}
 }
 
 func (f *FS) Root() (fs.Node, error) {
@@ -116,6 +120,7 @@ func (d *Dir) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.Cr
 	if err != nil {
 		return nil, nil, err
 	}
+	d.fs.owner.apply(full, false)
 
 	d.fs.recordWrite(full, req.Pid)
 
@@ -132,6 +137,7 @@ func (d *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, error
 	if err := os.Mkdir(full, mode); err != nil {
 		return nil, err
 	}
+	d.fs.owner.apply(full, true)
 	return &Dir{fs: d.fs, real: full}, nil
 }
 
@@ -176,10 +182,12 @@ func (f *File) Attr(ctx context.Context, a *fuse.Attr) error {
 }
 
 // Open always opens the backing file O_RDWR regardless of the requested
-// flags: this daemon runs as the container's root user for a single agent
-// workload, not a multi-tenant filesystem needing precise permission
-// enforcement, so a simpler blanket-RDWR open is enough to serve read,
-// write, and read-write callers correctly.
+// flags: this daemon runs as the container's root user, so a simpler
+// blanket-RDWR open is enough to serve read, write, and read-write callers
+// correctly. The access check that decides whether a caller was allowed to
+// ask has already happened by the time this runs — the mount sets
+// `default_permissions` (main.go), so the kernel evaluates the backing file's
+// mode against the calling uid before the request reaches this daemon at all.
 func (f *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenResponse) (fs.Handle, error) {
 	osFile, err := os.OpenFile(f.real, os.O_RDWR, 0)
 	if err != nil {

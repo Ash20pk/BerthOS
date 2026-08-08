@@ -50,6 +50,20 @@ jobs:
           cargo test --manifest-path packages/agent-init/Cargo.toml
           cargo test --manifest-path packages/mesh-daemon/Cargo.toml
 
+      # Same reasoning as the Rust crates above, and the same gap: semantic-fs
+      # is Linux-only (bazil.org/fuse doesn't build on darwin at all), so its
+      # tests could never run on a developer's Mac and nothing ran them here
+      # either. This runner is Linux and non-root, which is exactly what the
+      # ownership tests need — they chown to a group the process is already in,
+      # since chowning to an arbitrary gid needs privilege.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: packages/semantic-fs-daemon/go.mod
+          cache-dependency-path: packages/semantic-fs-daemon/go.sum
+      - name: Test semantic-fs-daemon
+        working-directory: packages/semantic-fs-daemon
+        run: go test ./...
+
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
