@@ -347,7 +347,7 @@ Granting a capability and exposing its session to a human watcher are two separa
 
 ### What isn't enforced yet
 
-Three enforcement tiers run through that table, and the difference matters more than any single row:
+Three enforcement tiers run through that table, and the difference matters more than any single row. If you're evaluating Berth as a security boundary rather than a convenience, read [docs/threat-model.md](./docs/threat-model.md) — it names the adversaries, the trust boundaries, and what holds each one.
 
 | Tier | Mechanism | What it means for you |
 |---|---|---|
@@ -366,6 +366,8 @@ And the parts that aren't closed yet. These are tracked with evidence, fixes, an
 - **Capability tokens are signed but never verified** by any broker or RPC path today, and the signing secret is in the app's own environment.
 
 The short version: **kernel-enforced filesystem and network scoping is real and testable today; cross-app and in-container privilege isolation is in progress.** Berth is a strong boundary around what an agent's *code* can touch, and not yet a boundary you should trust against a determined attacker who already has code execution inside the container.
+
+The full version — assets, adversaries, trust boundaries, and what's out of scope permanently versus not yet — is [docs/threat-model.md](./docs/threat-model.md).
 
 Full manifest schema lives in [docs/manifest-reference.md](./docs/manifest-reference.md). Full SDK surface (`defineApp`, `ContextBusClient`, `SemanticFsClient`, `requestCapability`) lives in [docs/sdk-reference.md](./docs/sdk-reference.md). Building in Python instead of TypeScript? See [docs/sdk-python-reference.md](./docs/sdk-python-reference.md) for resident apps, or [docs/agents-python-reference.md](./docs/agents-python-reference.md) for a Python `Agent`/`Crew` core (all six composition shapes but `networked`, checkpointing, streaming, structured-output repair, and `Computer.connect()` for a real sandbox's tools over `berth os up --http-rpc` — see that doc's scope notes).
 
