@@ -25,3 +25,18 @@ __pycache__/
 *.pyc
 *.egg-info/
 .venv/
+
+# Artifacts the Docker milestone tests write into the repo through the bind
+# mount. `berth dev` and several milestones mount the workspace root at
+# /workspace, and apps/filesystem's declared write path IS /workspace — so a
+# test that exercises an in-scope write lands a real file here. Ignored rather
+# than cleaned up afterwards because a test that fails midway never reaches its
+# own cleanup, and these were committed once already by a stray `git add -A`.
+# (capability-enforcement.mjs, multi-app-milestone.mjs)
+/allowed.txt
+/concurrent-inside-*.txt
+/escape-read-link
+/escape-write-link
+/multi-app-test.txt
+/packages/docker-orchestrator/test/fixtures/boundary-app-b/b-owned.txt
+/packages/docker-orchestrator/test/fixtures/boundary-app-b/pwned-by-a.txt
