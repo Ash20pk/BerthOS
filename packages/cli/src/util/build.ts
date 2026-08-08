@@ -11,9 +11,23 @@ export function productionImageTag(manifest: BerthManifest): string {
   return `berth/${manifest.name}:${manifest.version}`;
 }
 
-export async function buildDevImage(appDir: string, manifest: BerthManifest): Promise<string> {
+/**
+ * `companions` matters here for exactly one reason, and only since
+ * REMEDIATION.md 1.5: a dev image still has no companion *source* in it (that
+ * arrives via the bind mount), but each companion's `on_install` now runs as
+ * a build layer, so its manifest and files have to reach the build context.
+ * Omitting them would silently skip a companion's setup step in `berth dev`
+ * while it still ran in production.
+ */
+export async function buildDevImage(appDir: string, manifest: BerthManifest, companions: AppSpec[] = []): Promise<string> {
   const tag = devImageTag(manifest);
-  await buildImage({ appDir, tag, target: "dev" });
+  await buildImage({
+    appDir,
+    tag,
+    target: "dev",
+    appName: manifest.name,
+    ...(companions.length > 0 ? { companions: companions.map((c) => ({ name: c.name, appDir: c.appDir })) } : {}),
+  });
   return tag;
 }
 

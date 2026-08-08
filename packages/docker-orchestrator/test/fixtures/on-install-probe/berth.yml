@@ -1,0 +1,19 @@
+name: on-install-probe
+version: 0.1.0
+description: "on-install-milestone.mjs's fixture for REMEDIATION 1.5 — its on_install writes somewhere no declared capability would permit at runtime, which is how the test tells build time from boot time apart."
+
+# Deliberately empty. /etc is not a writable path for this app under any
+# policy the manifest could express, so the proof file below can only have
+# been written by something running *outside* the sandbox — which, since 1.5,
+# means the Docker build layer and nothing else.
+capabilities: []
+
+exports:
+  - name: read_path
+    input: { path: string }
+    output: { exists: boolean, content: string }
+
+on_install:
+  - "echo build-time-proof > /etc/berth-on-install-proof"
+
+on_agent_ready: []

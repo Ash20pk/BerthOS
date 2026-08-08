@@ -1,0 +1,40 @@
+name: on_install Build-Time Execution
+
+# Verifies that a manifest's on_install is a Docker build layer and that
+# nothing executes it at container boot — see REMEDIATION.md 1.5 and
+# packages/docker-orchestrator/test/on-install-milestone.mjs.
+#
+# Like published-port-security.yml and unlike capability-enforcement.yml, none
+# of this depends on the runner's kernel providing Landlock: the test relaxes
+# BERTH_REQUIRE_ENFORCEMENT precisely because what it asserts is about *when*
+# shell runs, not about what the kernel refuses. It needs a real Docker daemon,
+# a real image build, and a real container restart, which is why it's here
+# rather than in build-lint-test.yml.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.21.0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Run on-install-milestone.mjs
+        working-directory: packages/docker-orchestrator
+        run: node test/on-install-milestone.mjs
