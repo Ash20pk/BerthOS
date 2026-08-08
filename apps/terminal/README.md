@@ -27,7 +27,7 @@ Write is restricted to `/workspace` (same default as `apps/filesystem`), but no 
 Unlike `browser:*` (which needs `entrypoint.sh` to start Xvfb *before* the app's own process, so Chromium has a display to attach to), a pty has no such pre-condition — `apps/terminal` starts everything itself, lazily, on first use (`src/tmux-controller.ts`):
 
 1. A [tmux](https://github.com/tmux/tmux) session (`berth-terminal`) is created, rooted at `/workspace`. tmux owns the actual pty.
-2. [ttyd](https://github.com/tsl0922/ttyd) is spawned attached to that same session (`ttyd --writable -p 7681 tmux attach -t berth-terminal`) — a real xterm.js terminal in the browser, no CDN dependency.
+2. [ttyd](https://github.com/tsl0922/ttyd) is spawned attached to that same session (`ttyd --credential <per-boot> --writable -p 7681 tmux attach -t berth-terminal`) — a real xterm.js terminal in the browser, no CDN dependency.
 
 Both are spawned as children of this app's own process — the same process `agent-init` already applied a Landlock ruleset to — so the shell inherits whatever filesystem/network capabilities this app declares, exactly the way Chromium inherits `apps/browser-native`'s. There's no separate kernel-enforcement path to build for `terminal:*`.
 
@@ -47,7 +47,8 @@ pnpm exec berth dev
 Because this app declares `terminal:*`, `berth dev` prints a terminal URL:
 
 ```
-[berth:dev] Terminal: http://localhost:<port>
+[berth:dev] Terminal: http://127.0.0.1:<port>
+[berth:dev]           login: berth / <generated per boot>
 ```
 
 Open it to watch (and type into, `--writable` is on) the same session `run_command` drives.

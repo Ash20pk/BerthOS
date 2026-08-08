@@ -19,6 +19,26 @@ async function tmux(...args: string[]): Promise<string> {
 let sessionReady: Promise<void> | undefined;
 
 /**
+ * `user:password` for ttyd's HTTP basic auth. Normally generated per boot by
+ * the host (container.ts) and passed in, so `berth dev` can print it next to
+ * the URL — the container has no way to show a human anything except a log
+ * line every resident app in it can also read.
+ *
+ * The fallback is deliberately *not* "start without a credential": running
+ * `apps/terminal` some other way (a bare `docker run`, a test harness) would
+ * then quietly produce an unauthenticated writable root shell, which is the
+ * exact failure this closes. It generates one and logs it instead, which is
+ * worse than being handed one but strictly better than none.
+ */
+function credential(): string {
+  const provided = process.env.BERTH_TERMINAL_CREDENTIAL;
+  if (provided) return provided;
+  const generated = `berth:${randomUUID()}`;
+  console.warn(`[terminal] no BERTH_TERMINAL_CREDENTIAL was passed in; generated one for this boot: ${generated}`);
+  return generated;
+}
+
+/**
  * Lazily creates the shared tmux session (first call only) and starts ttyd
  * attached to it, both spawned as children of this already-Landlocked
  * process (see berth.yml) rather than by entrypoint.sh — unlike Xvfb for
@@ -55,8 +75,12 @@ export function ensureSession(): Promise<void> {
       // interfaces, which is what Docker's port mapping needs to reach it
       // from the host — -i takes an interface *name* (e.g. "eth0") or a
       // Unix socket path, not an IP address, so there's no "0.0.0.0" form
-      // of it to pass explicitly.
-      const ttyd = spawn("ttyd", ["--writable", "-p", TTYD_PORT, "tmux", "attach", "-t", SESSION_NAME], {
+      // of it to pass explicitly. Which is exactly why --credential is not
+      // optional here: this is a *writable* shell running as root, and the
+      // only reason it isn't reachable from the LAN is that container.ts
+      // binds the published port to loopback. Defence in depth, because
+      // that binding is one `--publish-host` away from being widened.
+      const ttyd = spawn("ttyd", ["--credential", credential(), "--writable", "-p", TTYD_PORT, "tmux", "attach", "-t", SESSION_NAME], {
         stdio: "ignore",
       });
       // Without this, a failed spawn (e.g. ttyd missing) fires an unhandled

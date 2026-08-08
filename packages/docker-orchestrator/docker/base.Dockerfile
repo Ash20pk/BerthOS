@@ -140,7 +140,11 @@ COPY docker/rpc-relay.js /usr/local/bin/berth-rpc-relay.js
 COPY docker/egress-broker.cjs /usr/local/bin/berth-egress-broker.js
 COPY docker/github-api-broker.cjs /usr/local/bin/berth-github-api-broker.js
 
-EXPOSE 5900 6080 9222 7681
+# 9222 (CDP) is deliberately not here: Chromium binds it to the container's
+# own loopback interface, and container.ts never publishes it. Documenting a
+# port as exposed that nothing should ever connect to from outside is how it
+# ends up published again by someone's `docker run -P`.
+EXPOSE 5900 6080 7681
 
 ENTRYPOINT ["/sbin/tini", "--", "/entrypoint.sh"]
 

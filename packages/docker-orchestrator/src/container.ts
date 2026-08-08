@@ -1,7 +1,18 @@
 import Docker from "dockerode";
+import { randomBytes } from "node:crypto";
 import type { BerthManifest } from "@berth/manifest-schema";
 
-const BROWSER_PORTS = { vnc: "5900", novnc: "6080", cdp: "9222" } as const;
+/**
+ * CDP (9222) is deliberately absent. Chromium binds its debugging port to
+ * the container's loopback interface (apps/browser-native's cdp-controller),
+ * so there is nothing for Docker's proxy to forward — an unauthenticated CDP
+ * endpoint is arbitrary local-file read (`Page.navigate("file:///etc/passwd")`)
+ * and a complete bypass of the egress broker (`Browser.setDownloadBehavior`),
+ * which is too much to hand to anything that can open a TCP connection.
+ * Attaching a debugger from the host means `docker exec` into the container,
+ * or a deliberate `docker run -p` of your own.
+ */
+const BROWSER_PORTS = { vnc: "5900", novnc: "6080" } as const;
 const TERMINAL_PORT = "7681";
 /** Container-internal port for @berth/sdk's HTTP RPC bridge — see StartContainerOptions.httpRpc. Same numeric default DEFAULT_FLEET_RPC_PORT (@berth/agents' network.ts) uses for a remote fleet deploy's bridge, for consistency, though the two are independent (this is a container-internal Docker port; that's a value baked into a remote instance's env). */
 const HTTP_RPC_CONTAINER_PORT = "7300";
@@ -126,13 +137,56 @@ export interface StartContainerOptions {
    * exports are reachable via the bridge; omit for a single-app container.
    */
   httpRpc?: { authToken: string; appName?: string };
+  /**
+   * Host interface every published port binds to. Defaults to `127.0.0.1`,
+   * or to `BERTH_PUBLISH_HOST` when that's set — the escape hatch for the
+   * genuine "I want to reach this sandbox's terminal from my phone" case,
+   * which has to be typed out rather than being what you get by accident.
+   * `0.0.0.0` publishes to every interface the host has; `startContainer`
+   * logs a warning naming the consequence when it does. An empty value is
+   * treated as unset, so `BERTH_PUBLISH_HOST=` in a stray `.env` can't
+   * silently widen the binding back to Docker's default.
+   */
+  publishHost?: string;
   docker?: Docker;
 }
 
 export interface RunningContainer {
   container: Docker.Container;
-  /** Host-mapped ports, populated only for apps declaring a browser:* or terminal:* capability, or when `httpRpc` was requested. */
-  ports: { vnc?: number; novnc?: number; cdp?: number; terminal?: number; httpRpc?: number };
+  /** Host-mapped ports, populated only for apps declaring a browser:* or terminal:* capability, or when `httpRpc` was requested. Note there is no `cdp` — see BROWSER_PORTS. */
+  ports: { vnc?: number; novnc?: number; terminal?: number; httpRpc?: number };
+  /**
+   * Per-boot secrets generated for the published human-facing ports, so the
+   * caller can print them next to the URL. Generated here rather than inside
+   * the container because the host is the only side that can show them to a
+   * human — the container can only log them, and a secret in a log stream a
+   * resident app can also read isn't much of one. Undefined for a port that
+   * wasn't published at all.
+   */
+  credentials: {
+    /** `user:password` for ttyd's `--credential`, i.e. HTTP basic auth on the terminal. */
+    terminal?: string;
+    /** VNC password, for both the raw 5900 port and the noVNC page on 6080. */
+    vnc?: string;
+  };
+}
+
+/**
+ * VNC's classic authentication truncates to 8 bytes (a DES key), so a longer
+ * one would be silently cut down and give a false sense of its strength.
+ * 8 bytes of base64url is ~48 bits, which is fine for a credential that only
+ * lives as long as one container and is only reachable over loopback by
+ * default. ttyd has no such limit, so it gets a full 32 bytes.
+ */
+const VNC_PASSWORD_BYTES = 6; // 6 bytes -> 8 base64 chars
+function randomSecret(bytes: number): string {
+  return randomBytes(bytes).toString("base64url");
+}
+
+function resolvePublishHost(explicit: string | undefined): string {
+  const value = explicit ?? process.env.BERTH_PUBLISH_HOST;
+  if (value === undefined || value === "") return "127.0.0.1";
+  return value;
 }
 
 export async function startContainer(options: StartContainerOptions): Promise<RunningContainer> {
@@ -151,22 +205,21 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
       : declaresMeshCapability(options.manifest);
   const wantsHttpRpc = !!options.httpRpc;
 
+  const publishHost = resolvePublishHost(options.publishHost);
+
   const exposedPorts: Record<string, {}> = {};
-  const portBindings: Record<string, Array<{ HostPort: string }>> = {};
-  if (wantsBrowserPorts) {
-    for (const port of Object.values(BROWSER_PORTS)) {
-      exposedPorts[`${port}/tcp`] = {};
-      portBindings[`${port}/tcp`] = [{ HostPort: "" }]; // "" = let Docker assign a free host port
-    }
-  }
-  if (wantsTerminalPort) {
-    exposedPorts[`${TERMINAL_PORT}/tcp`] = {};
-    portBindings[`${TERMINAL_PORT}/tcp`] = [{ HostPort: "" }];
-  }
-  if (wantsHttpRpc) {
-    exposedPorts[`${HTTP_RPC_CONTAINER_PORT}/tcp`] = {};
-    portBindings[`${HTTP_RPC_CONTAINER_PORT}/tcp`] = [{ HostPort: "" }];
-  }
+  const portBindings: Record<string, Array<{ HostIp: string; HostPort: string }>> = {};
+  // HostIp is what decides whether the LAN can reach these. Docker's own
+  // default for an omitted HostIp is 0.0.0.0 — every interface the host has —
+  // which for a writable terminal and a VNC session is an open door on any
+  // routable network. "" as the HostPort still means "assign a free one".
+  const publish = (port: string) => {
+    exposedPorts[`${port}/tcp`] = {};
+    portBindings[`${port}/tcp`] = [{ HostIp: publishHost, HostPort: "" }];
+  };
+  if (wantsBrowserPorts) for (const port of Object.values(BROWSER_PORTS)) publish(port);
+  if (wantsTerminalPort) publish(TERMINAL_PORT);
+  if (wantsHttpRpc) publish(HTTP_RPC_CONTAINER_PORT);
 
   const workingDir = options.workingDir ?? options.bindMount?.containerPath ?? "/app";
 
@@ -200,6 +253,26 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
     env.BERTH_HTTP_RPC_PORT = HTTP_RPC_CONTAINER_PORT;
     env.BERTH_HTTP_RPC_TOKEN = options.httpRpc.authToken;
     if (options.httpRpc.appName) env.BERTH_HTTP_RPC_APP = options.httpRpc.appName;
+  }
+
+  // Generated per boot, only for the ports actually being published. Both are
+  // consumed by processes started inside the container (entrypoint.sh's
+  // x11vnc, apps/terminal's ttyd) — see the note on RunningContainer.credentials
+  // for why the host generates them rather than the container.
+  const credentials: RunningContainer["credentials"] = {};
+  if (wantsTerminalPort) {
+    credentials.terminal = `berth:${randomSecret(24)}`;
+    env.BERTH_TERMINAL_CREDENTIAL = credentials.terminal;
+  }
+  if (wantsBrowserPorts) {
+    credentials.vnc = randomSecret(VNC_PASSWORD_BYTES);
+    env.BERTH_VNC_PASSWORD = credentials.vnc;
+  }
+
+  if (publishHost !== "127.0.0.1" && publishHost !== "localhost" && (wantsBrowserPorts || wantsTerminalPort || wantsHttpRpc)) {
+    console.warn(
+      `[berth] WARNING: publishing this sandbox's ports on ${publishHost}, not loopback — the terminal, VNC, and RPC bridge will be reachable from any host that can route to this machine. They are credential-gated, but that is the only thing standing in the way.`,
+    );
   }
 
   if (options.network) {
@@ -287,7 +360,7 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
     ports = await waitForPortMappings(container, { browser: wantsBrowserPorts, terminal: wantsTerminalPort, httpRpc: wantsHttpRpc });
   }
 
-  return { container, ports };
+  return { container, ports, credentials };
 }
 
 function hostPort(binding: Array<{ HostPort: string }> | undefined): number | undefined {
@@ -314,11 +387,10 @@ async function waitForPortMappings(
     const ports: RunningContainer["ports"] = {
       vnc: hostPort(mapped[`${BROWSER_PORTS.vnc}/tcp`]),
       novnc: hostPort(mapped[`${BROWSER_PORTS.novnc}/tcp`]),
-      cdp: hostPort(mapped[`${BROWSER_PORTS.cdp}/tcp`]),
       terminal: hostPort(mapped[`${TERMINAL_PORT}/tcp`]),
       httpRpc: hostPort(mapped[`${HTTP_RPC_CONTAINER_PORT}/tcp`]),
     };
-    const browserReady = !needs.browser || (ports.vnc && ports.novnc && ports.cdp);
+    const browserReady = !needs.browser || (ports.vnc && ports.novnc);
     const terminalReady = !needs.terminal || ports.terminal;
     const httpRpcReady = !needs.httpRpc || ports.httpRpc;
     if (browserReady && terminalReady && httpRpcReady) return ports;

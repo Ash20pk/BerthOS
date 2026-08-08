@@ -32,7 +32,7 @@ You should see:
 ```
 Building dev image for "hello-world"...
 Container started. Watching .../examples/resident-apps/hello-world/src and berth.yml for changes...
-[berth:dev] "hello-world" declares no browser:* capability: no VNC/CDP ports exposed
+[berth:dev] "hello-world" declares no browser:* capability: no VNC ports exposed
 [berth:dev] "hello-world" declares no terminal:* capability: no terminal port exposed
 [berth:dev] [berth:runtime] "hello-world" ready
 ```
@@ -60,13 +60,15 @@ pnpm exec berth dev
 Because this app declares `browser:navigate:*` in its `berth.yml`, `berth dev` prints a noVNC URL:
 
 ```
-[berth:dev] noVNC:  http://localhost:<port>/vnc.html
-[berth:dev] VNC:    localhost:<port>
-[berth:dev] CDP:    http://localhost:<port>
+[berth:dev] noVNC:    http://127.0.0.1:<port>/vnc.html
+[berth:dev] VNC:      127.0.0.1:<port>
+[berth:dev]           password: <generated per boot>
 [berth:dev] "browser-native" declares no terminal:* capability: no terminal port exposed
 ```
 
-Open the noVNC URL in a browser tab. You're looking at the headless Chromium instance running inside the sandboxed container, live.
+Open the noVNC URL in a browser tab and enter that password. You're looking at the headless Chromium instance running inside the sandboxed container, live.
+
+Both ports are published on `127.0.0.1` only, and the password is generated fresh on every boot — a live view of what your agent is doing, with mouse and keyboard control, is not something to leave open to your LAN. See [the threat model](./threat-model.md) for the reasoning.
 
 ## 5. Scaffold your own app
 

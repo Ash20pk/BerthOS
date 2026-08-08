@@ -27,8 +27,24 @@ export function launchChromium(): Promise<Browser> {
         headless: process.env.BERTH_TEST_MODE === "1",
         proxy: { server: `http://127.0.0.1:${process.env.BERTH_EGRESS_BROKER_PORT ?? "8090"}` },
         args: [
+          // No --remote-debugging-address: Chromium's default is the
+          // container's loopback interface, and that is the point. An
+          // unauthenticated CDP endpoint is not a debugging convenience, it's
+          // arbitrary local-file read (Page.navigate("file:///etc/passwd"))
+          // and a total bypass of the egress broker
+          // (Browser.setDownloadBehavior, Fetch.continueRequest) — every
+          // capability this app's berth.yml carefully scopes. Binding it to
+          // 0.0.0.0 handed that to anything that could open a TCP connection
+          // to the container: the LAN (Docker published it on every host
+          // interface), any sibling container on the same Docker network, and
+          // any other app in this one. Playwright connects over loopback from
+          // inside the container, so nothing legitimate needed the wider bind.
           "--remote-debugging-port=9222",
-          "--remote-debugging-address=0.0.0.0",
+          // Chromium refuses its own sandbox as uid 0, and every process in a
+          // Berth container is uid 0 today. So this stays until apps get
+          // distinct uids (REMEDIATION 1.4/1.11) — which is also why the
+          // loopback bind above matters: a renderer exploit here lands as
+          // root in the container.
           "--no-sandbox",
           // Standard hardening for headless Chromium in a Docker/CI container,
           // not a local-dev-only concern: Docker's default /dev/shm (64MB) is

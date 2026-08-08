@@ -30,11 +30,11 @@ cd apps/browser-native
 pnpm exec berth dev
 ```
 
-Because this app declares a `browser:*` capability, `berth dev` prints a noVNC URL — open it in a tab to watch the sandboxed Chromium instance live as the agent drives it.
+Because this app declares a `browser:*` capability, `berth dev` prints a noVNC URL and a per-boot VNC password — open it in a tab to watch the sandboxed Chromium instance live as the agent drives it. The port is bound to `127.0.0.1`.
 
 In `BERTH_TEST_MODE=1` (set automatically by `berth test`), Chromium launches headless instead of against Xvfb, so no display is required.
 
 ## Notes
 
 - Chromium is the system binary (`CHROME_BIN`), not Playwright's bundled download — the base image already ships `chromium`/`chromium-chromedriver`.
-- Chrome DevTools Protocol is exposed on `9222` for anyone building a debugger/inspector on top; VNC (`src/vnc.ts`) is a separate, simpler concern of waiting for Xvfb's display socket to exist before Chromium tries to attach to it.
+- Chrome DevTools Protocol listens on `9222`, on the container's own loopback interface only — it is deliberately **not** published to the host, because an unauthenticated CDP endpoint is arbitrary local-file read and a complete bypass of the egress broker. Reach it with `docker exec` if you're building a debugger on top. VNC (`src/vnc.ts`) is a separate, simpler concern of waiting for Xvfb's display socket to exist before Chromium tries to attach to it.

@@ -184,28 +184,67 @@ export function compileCapabilityPolicy(appName: string, rawCapabilities: string
 }
 
 /**
- * `BERTH_HTTP_RPC_PORT`/`BERTH_HTTP_RPC_APP` are container-wide env (see
- * container.ts's `httpRpc` option) — every app in a multi-app container's
- * own generate-capability-policy.ts run sees the same two values, so this
- * mirrors runtime.ts's own gating exactly (`!appName || appName ===
- * manifest.name`) to grant the bind only to whichever single app is
- * actually going to call startHttpRpcServer(), not every sibling. Split out
- * from main() so it's unit-testable without real env/filesystem I/O, same
- * reasoning compileCapabilityPolicy() already has.
+ * The ttyd port `apps/terminal` serves its human-facing session on. A fixed
+ * container port (container.ts's own TERMINAL_PORT), not something a
+ * berth.yml can set — an orchestration-level fact, exactly like the HTTP RPC
+ * port below, which is why neither is expressible as a capability.
  */
-export function computeBindPorts(appName: string, env: Partial<Pick<NodeJS.ProcessEnv, "BERTH_HTTP_RPC_PORT" | "BERTH_HTTP_RPC_APP">>): number[] {
-  const port = env.BERTH_HTTP_RPC_PORT ? Number(env.BERTH_HTTP_RPC_PORT) : undefined;
-  if (!port) return [];
+const TERMINAL_BIND_PORT = 7681;
+
+/**
+ * Ports an app is allowed to `bind()`, as opposed to `connect()` to.
+ *
+ * The distinction is easy to lose and has now caused the same bug twice:
+ * `restrict_network`'s `AccessNet::from_all` denies **both** `ConnectTcp` and
+ * `BindTcp` the moment network scoping is active at all, and network scoping
+ * is active for any app that doesn't declare `network:connect:*`. So an app
+ * with no network capability can't listen on its own port either — which is
+ * invisible on a kernel where Landlock isn't enforced (every dev Mac), and
+ * an immediate `EPERM` on one where it is.
+ *
+ * Two sources, both orchestration-level:
+ *
+ * 1. **The HTTP RPC bridge.** `BERTH_HTTP_RPC_PORT`/`BERTH_HTTP_RPC_APP` are
+ *    container-wide env (see container.ts's `httpRpc` option) — every app in
+ *    a multi-app container sees the same two values, so this mirrors
+ *    runtime.ts's own gating exactly (`!appName || appName ===
+ *    manifest.name`) to grant the bind only to whichever single app will
+ *    actually call startHttpRpcServer(), not every sibling.
+ *
+ * 2. **ttyd**, for an app declaring `terminal:*`. `apps/terminal` spawns ttyd
+ *    as a child of its own already-Landlocked process, so ttyd inherits this
+ *    domain and its `bind()` is subject to it. This grant was missing, which
+ *    meant `apps/terminal`'s web view had never worked on any kernel that
+ *    enforces Landlock — found by published-port-security-milestone.mjs on
+ *    its first CI run, which is also the first test to exercise this app
+ *    against a real kernel.
+ *
+ * Deliberately not gated on `expose.terminal`: that field governs whether
+ * the port is *published to the host*, and ttyd binds inside the container
+ * either way. Tying a kernel grant to a host-visibility flag would make the
+ * app work or not depending on a setting that has nothing to do with it.
+ */
+export function computeBindPorts(
+  appName: string,
+  env: Partial<Pick<NodeJS.ProcessEnv, "BERTH_HTTP_RPC_PORT" | "BERTH_HTTP_RPC_APP">>,
+  capabilities: readonly string[] = [],
+): number[] {
+  const ports: number[] = [];
+
+  const httpRpcPort = env.BERTH_HTTP_RPC_PORT ? Number(env.BERTH_HTTP_RPC_PORT) : undefined;
   const boundAppName = env.BERTH_HTTP_RPC_APP;
-  if (boundAppName && boundAppName !== appName) return [];
-  return [port];
+  if (httpRpcPort && (!boundAppName || boundAppName === appName)) ports.push(httpRpcPort);
+
+  if (capabilities.some((cap) => cap.startsWith("terminal:"))) ports.push(TERMINAL_BIND_PORT);
+
+  return [...new Set(ports)];
 }
 
 async function main(): Promise<void> {
   const manifest = await loadManifest(MANIFEST_PATH);
   const approved = await fetchApprovedCapabilities(manifest.name);
   const policy = compileCapabilityPolicy(manifest.name, [...manifest.capabilities, ...approved]);
-  policy.bindPorts = computeBindPorts(manifest.name, process.env);
+  policy.bindPorts = computeBindPorts(manifest.name, process.env, manifest.capabilities);
 
   await mkdir(dirname(POLICY_PATH), { recursive: true });
   await writeFile(POLICY_PATH, JSON.stringify(policy, null, 2));

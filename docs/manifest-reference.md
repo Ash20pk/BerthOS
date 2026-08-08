@@ -69,13 +69,13 @@ Don't confuse this with the SDK's `app.onAgentReady(fn)` callback (see [`@berth/
 
 ### `expose` (default: `{ browser: true, terminal: true, preview: false }`)
 
-Whether declaring `browser:*`/`terminal:*` also publishes the corresponding VNC/CDP/ttyd port to the host in `berth dev`. The capability itself (what the app is *allowed* to do) and exposure (whether a human can *watch* it happen over noVNC/ttyd) are separate decisions:
+Whether declaring `browser:*`/`terminal:*` also publishes the corresponding VNC/ttyd port to the host in `berth dev` (on `127.0.0.1`, credential-gated; Chromium's CDP port is never published). The capability itself (what the app is *allowed* to do) and exposure (whether a human can *watch* it happen over noVNC/ttyd) are separate decisions:
 
 ```yaml
 capabilities:
   - browser:navigate:*.github.com
 expose:
-  browser: false   # capability still granted — no VNC/CDP port published to the host
+  browser: false   # capability still granted — no VNC port published to the host
 ```
 
 `browser`/`terminal` both default to `true`, so an existing `berth.yml` with no `expose:` block keeps today's behavior unchanged (declaring the capability publishes the port). Set `browser: false` or `terminal: false` to run headless/unwatched — e.g. in CI, or for an app whose browser/terminal session shouldn't be reachable from the host at all.

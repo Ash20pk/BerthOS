@@ -63,7 +63,7 @@ README line 88 currently reads: *"a prompt-injected 'ignore previous instruction
 | 1.4 | App RPC sockets in world-writable `/tmp`, unauthenticated | Critical | 🔴 | 3d |
 | 1.5 | `on_install` is unsandboxed root shell run before enforcement | Critical | 🔴 | 2d |
 | 1.6 | `berth dev` bind-mounts the whole host repo read-write | Critical | 🔴 | 1d |
-| 1.7 | ttyd / VNC / CDP unauthenticated on all host interfaces | High | 🔴 | 1d |
+| 1.7 | ttyd / VNC / CDP unauthenticated on all host interfaces | High | 🟢 | 1d |
 | 1.8 | Egress broker: no port check, `*` → SSRF, DNS not pinned | High | 🔴 | 2d |
 | 1.9 | GitHub broker: `read:repos` also grants `/user/emails` etc. | High | 🔴 | 1d |
 | 1.10 | Capability tokens are never verified anywhere | High | 🔴 | 1d |
@@ -71,6 +71,7 @@ README line 88 currently reads: *"a prompt-injected 'ignore previous instruction
 | 1.12 | `agent-init` mkdir's arbitrary manifest paths as root | Medium | 🟢 | 4h |
 | 1.13 | Governance gate bypasses (MCP, agent-as-tool, rpc, mcp, http-rpc) | High | 🔴 | 2d |
 | 1.14 | semantic-fs / context-bus: unbounded frame allocation + spoofable identity | Medium | 🔴 | 1d |
+| 1.15 | `apps/terminal` is non-functional on any Landlock-enforcing kernel | High | 🔴 | 2d |
 
 ### 1.1 — `truncate(2)` is not a handled Landlock access right
 
@@ -171,6 +172,28 @@ Running `berth dev` on `apps/terminal` on any routable network is an unauthentic
 
 **Verify.** `docker inspect` shows `127.0.0.1` bindings; connecting to ttyd without the credential is refused.
 
+**Closed.** Four changes, and one of them is a real capability removal rather than a hardening.
+
+**Binding.** Every published port now carries an explicit `HostIp`, defaulting to `127.0.0.1`. Docker's default for an *omitted* `HostIp` is `0.0.0.0`, which is how this happened in the first place — the old code never asked for every interface, it just didn't say. `BERTH_PUBLISH_HOST` (or a `publishHost` option) widens it for the genuine "reach this from my phone" case, and `startContainer` warns, naming the consequence, whenever it isn't loopback. An empty value is treated as unset, so a stray `BERTH_PUBLISH_HOST=` in someone's `.env` can't quietly restore the old behavior. A side effect worth naming: `berth os up` and `Computer.connect()` already *addressed* the HTTP RPC bridge as `http://127.0.0.1:<port>` while Docker was publishing it on every interface — the bearer token was the only thing between a LAN and a resident app's exports. The binding now matches what the code always assumed.
+
+**Credentials.** Generated per boot by `container.ts` and returned from `startContainer`, so `berth dev` can print them next to the URL — the container can only *log* a secret, and a secret in a log stream every resident app can also read isn't one. ttyd gets `--credential berth:<24 random bytes>`; x11vnc gets `-rfbauth` with an 8-character password (VNC's classic auth truncates to 8, so anything longer would overstate its strength) stored in a 0700 directory under `/root`, not the world-writable `/tmp`. Both consumers fail closed rather than falling back to no auth: `apps/terminal` generates and logs its own credential if none was passed in, because a bare `docker run` of that app otherwise produces an unauthenticated writable root shell; and if the VNC password file can't be written, `entrypoint.sh` starts *neither* x11vnc nor websockify — `-nopw` is not an acceptable fallback, and letting `set -e` abort would take the whole sandbox down over a feature nobody may be watching.
+
+**CDP is no longer published at all.** Chromium's `--remote-debugging-address=0.0.0.0` is gone, so it binds the container's loopback interface. This one isn't a hardening — it removes host-side CDP attach, which was a real (if undocumented) debugging affordance. It's the right trade: unauthenticated CDP is arbitrary local-file read (`Page.navigate("file:///etc/passwd")`) and a total bypass of the egress broker (`Browser.setDownloadBehavior`), i.e. it hands away every capability `browser-native`'s manifest carefully scopes, to anything that can open a TCP connection — which was the LAN, any sibling container on the same Docker network, and any app in the same container. Playwright drives Chromium over loopback from inside the container, so nothing legitimate depended on the wider bind. `9222` also came out of `base.Dockerfile`'s `EXPOSE`, so a future `docker run -P` can't republish it by accident. `--no-sandbox` stays and is now commented as to why: Chromium refuses its own sandbox as uid 0, and every process in a Berth container is uid 0 until the per-app uid work in 1.4/1.11.
+
+**Verification.** `packages/docker-orchestrator/test/published-port-security-milestone.mjs`, wired into CI as its own workflow, nine assertions across two real containers. It runs anywhere Docker does — none of it depends on the host kernel providing Landlock, unlike `capability-enforcement.mjs`.
+
+Both key assertions were confirmed to *fail* against the old behavior, not just pass against the new:
+- Loopback: re-running with `BERTH_PUBLISH_HOST=0.0.0.0` reproduces the old binding exactly and Test 1 fails on it — which doubles as the escape hatch's own test.
+- VNC: Test 9 asserts at the RFB protocol level, reading the security types the server offers a client rather than scraping a log line, because that list is what an attacker on the port actually sees. It offers `[2]` (VNC Authentication). Running x11vnc with the old `-nopw` in the same image offers `[1]` (None) — connect and you have keyboard and mouse.
+
+Two details the tests had to account for. ttyd starts lazily on `apps/terminal`'s first export call, not at boot, so the test drives `read_screen` first — otherwise there'd be nothing listening to authenticate against. And the VNC half needs its own container with `BERTH_TEST_MODE` *unset*: every existing browser milestone runs headless, which skips `entrypoint.sh`'s display stack entirely, so x11vnc would never have started and this change would have looked verified while being untested.
+
+Test 6 exists specifically because tests 4 and 5 would both pass if ttyd were simply broken; it asserts the correct credential still returns 200.
+
+**Not closed by this.** The ports remain reachable by any host-local process (T5 in the threat model) and by other apps in the same container — that's 1.4's per-app uid work, not this. The printed credential is only as private as the terminal it was printed to.
+
+**One caveat on the verification, stated rather than buried.** Tests 4-6 (ttyd's authentication specifically) *skip on Linux*, because `apps/terminal` can't start tmux there at all — which this milestone is what discovered, now filed as 1.15. So on a Landlock-enforcing kernel, what's proven is the loopback binding, the absent CDP port, the credential reaching the container, and the whole VNC story; ttyd's `--credential` is proven on a host where tmux does start (Docker Desktop), not yet in CI. The skip is deliberately narrow — it triggers only on that exact tmux log signature and fails the run on any other reason ttyd might not answer, so it can't quietly absorb a real regression in the thing it's skipping.
+
 ### 1.8 — Egress broker: no port check, `*` → SSRF, DNS not pinned
 
 **Evidence.** `egress-broker.cjs:160` parses `port` and passes it to `net.connect` at `:182`, but `isHostAllowed` (`:89-91`) takes only `host` — **the port is never checked**. `apps/browser-native/berth.yml:20-21` claims `network:connect:8090`'s job is "to make direct-to-internet connections on other ports impossible"; `CONNECT internal-db.corp:5432` through the broker reaches 5432. Separately, `globToRegExp` (`:59-62`) turns `*` into `.*`, so `browser:navigate:*` permits `169.254.169.254` (cloud IMDS), `127.0.0.1`, and `host.docker.internal` — which `container.ts:258` explicitly wires to `host-gateway`. It also fails to escape `?`. And the check is on the *name*: `net.connect` re-resolves afterward, so DNS pointing an allowed name at a link-local address is unhandled.
@@ -232,6 +255,29 @@ Beyond the prefix check, a scope must be absolute and canonical (no `.`, `..`, e
 Read paths are no longer created, per the fix above. The cost is stated rather than hidden: `PathFd::new()` then fails with ENOENT and the grant is skipped *permanently*, because the ruleset is sealed moments later — which bites in a multi-app container, where `entrypoint.sh` starts every app's chain concurrently and an app declaring read on a sibling's directory can run first. The warning now names that consequence; the real fix is boot ordering, not a root mkdir.
 
 Verified: `berth test` on a manifest declaring `filesystem:write:/` exits 1 with `berth.yml:4 capabilities.0: filesystem:*:/ would grant the entire container filesystem`, and `/etc/cron.d` fails the same way naming the allowed prefixes. All 19 real `berth.yml` files in the repo still validate unchanged (the only two that don't are `packages/cli/src/templates/*` with `{{ name }}` placeholders, which never validated). Test coverage: 6 new cases in `packages/manifest-schema/src/schema.test.ts` (including that non-filesystem scopes like `browser:navigate:*` are left alone), 2 new Rust unit tests on the write-path predicate under the `cargo test` step 1.1 added to CI, and the existing capability fuzz test in `packages/sdk` gained three adversarial generators plus a hard assertion that no path in a compiled policy ever falls outside the allowlist.
+
+### 1.15 — `apps/terminal` is non-functional on any Landlock-enforcing kernel
+
+**Evidence.** Found by `published-port-security-milestone.mjs` on its first CI run (1.7) — the first time any test exercised this app against a kernel that actually enforces Landlock. On `ubuntu-latest`, with `ruleset=FullyEnforced`, the app's very first export call returns:
+
+```
+{"id":"1","error":"Command failed: tmux new-session -d -x 500 -y 50 -s berth-terminal -c /workspace\nserver exited unexpectedly"}
+```
+
+The app boots, registers with the context bus, and reports ready — then every one of its three exports fails, because they all go through `ensureSession()`. This is not a degraded web view: `run_command`, `read_screen`, and `send_keys` are the entire app, and none of them work. It passes on Docker Desktop for Mac purely because Landlock is `NotEnforced` there and `agent-init` fails open.
+
+**Cause, partially established.** Allocating a pty is `open("/dev/ptmx", O_RDWR)` — a *write* open — and `BASELINE_WRITE_PATHS` is `["/tmp"]`, so `/dev` is not writable. `apps/terminal` declares only `filesystem:write:/workspace`.
+
+**But granting the pty devices is not sufficient, and the obvious fix is actively harmful.** Attempted and reverted (see the revert on the 1.7 branch): adding `/dev/ptmx` and `/dev/pts` to the compiled write paths for `terminal:*` apps. Two results, both from a real CI run:
+
+1. tmux **still** fails with the same error, so pty write access is necessary but not the whole story. Note `/dev/ptmx` is a symlink to `pts/ptmx`, so a `/dev/pts` rule should already cover the real node — whatever tmux needs beyond that is unidentified.
+2. The ruleset status degraded from `FullyEnforced` to **`PartiallyEnforced`**. Adding a rule on the devpts mount is what changed it. That matters more than the feature: `agent-init` refuses to exec unless the status is exactly `FullyEnforced` when `BERTH_REQUIRE_ENFORCEMENT=1`, which is what a production deploy sets — so shipping that change would have turned a broken app into an **unbootable** one.
+
+**Fix.** Unknown; needs real investigation rather than another write-path guess. Establish first what tmux actually gets `EACCES`/`EPERM` on (strace it under an enforced ruleset), and separately why a devpts rule downgrades the ruleset — if `PartiallyEnforced` is unavoidable for any app needing a pty, then either the pty grant needs a different mechanism entirely, or `agent-init`'s exactly-`FullyEnforced` requirement needs a considered exception, which is a security decision, not a workaround.
+
+**Verify.** `published-port-security-milestone.mjs`'s Tests 4-6 stop skipping (they skip today only on this exact tmux signature, and fail on anything else), and a new assertion that `run_command` round-trips on a Landlock-enforcing kernel.
+
+**Wider implication worth noting.** This went unnoticed because every milestone test that runs on a real kernel happens to cover apps whose needs Landlock's write model expresses cleanly. `apps/terminal` had no CI coverage at all. It is worth asking which other first-party apps have never been run against an enforcing kernel — that is the same gap 6.3 describes from the other direction.
 
 ### 1.13 — Governance gate bypasses
 
