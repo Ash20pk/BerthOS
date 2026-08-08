@@ -189,6 +189,52 @@ export default defineApp((app) => {
       }),
   });
 
+  // Diagnostic export for capability-enforcement.mjs's namespace check
+  // (REMEDIATION.md 1.3). agent-init drops CAP_SYS_ADMIN from the bounding set
+  // before exec-ing this process, which is supposed to make mount(2)
+  // permanently unavailable — but creating a user namespace needs no privilege
+  // at all, and the kernel hands its creator a fresh CAP_FULL_SET bounding set
+  // inside the new namespace. So `unshare -Urm` used to regain every capability
+  // the drop had just removed, and `mount` worked again.
+  //
+  // Reported in two parts rather than one boolean, because they fail for
+  // different reasons and the difference is the whole point: `created` is
+  // whether the seccomp filter let unshare(2) through at all, `regainedCaps` is
+  // whether the capability drop turned out to be reversible. A regression that
+  // makes the filter too narrow shows up as created=true, regainedCaps=true; a
+  // container that simply lacks the /mnt mountpoint would show created=true,
+  // regainedCaps=false, which is a weaker result the test can distinguish.
+  //
+  // Runs via a child process because Node has no unshare(2) binding. That is
+  // not a weaker test: seccomp filters are inherited across fork and execve, so
+  // the busybox child is bound by exactly the filter this process carries.
+  app.export({
+    name: "probe_user_namespace",
+    output: z.object({ created: z.boolean(), regainedCaps: z.boolean(), error: z.string().optional() }),
+    handler: () =>
+      new Promise((resolve) => {
+        // The inner shell always exits 0 and reports through stdout markers, so
+        // a failed mount inside a successfully-created namespace can't be
+        // misread as unshare(2) itself having been refused — the two outcomes
+        // would otherwise both surface as a non-zero exit code.
+        execFile(
+          "unshare",
+          [
+            "-Urm",
+            "sh",
+            "-c",
+            "echo NAMESPACE_CREATED; mount -t tmpfs none /mnt 2>/dev/null && echo MOUNT_SUCCEEDED_CAP_REGAINED; exit 0",
+          ],
+          { timeout: 5000 },
+          (err, stdout, stderr) => {
+            const created = stdout.includes("NAMESPACE_CREATED");
+            const regainedCaps = stdout.includes("MOUNT_SUCCEEDED_CAP_REGAINED");
+            resolve(created ? { created, regainedCaps } : { created, regainedCaps, error: (stderr || err?.message || "").trim() });
+          },
+        );
+      }),
+  });
+
   app.onAgentReady(async (ctx) => {
     contextBus = ctx.contextBus;
     semanticFs = ctx.semanticFs;

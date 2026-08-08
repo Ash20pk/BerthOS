@@ -121,14 +121,16 @@ fn log_caps_dropped_event(app_name: &str, dropped: bool) {
     );
 }
 
-/// Structured line for the seccomp filter in seccomp.rs — the UDP/raw-socket
-/// half of deny-by-default network access, which Landlock cannot express.
-/// Separate from log_audit_event for the same reason log_caps_dropped_event
-/// is: it happens in main(), after apply_policy() has returned.
-fn log_seccomp_event(app_name: &str, applied: bool, detail: &str) {
+/// Structured line for the seccomp filters in seccomp.rs — the UDP/raw-socket
+/// half of deny-by-default network access, and the namespace-creation refusal
+/// that keeps the capability drop below irreversible. `event` names which one,
+/// so the two are independently greppable. Separate from log_audit_event for
+/// the same reason log_caps_dropped_event is: they happen in main(), after
+/// apply_policy() has returned.
+fn log_seccomp_event(event: &str, app_name: &str, applied: bool, detail: &str) {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     eprintln!(
-        "[agent-init] {{\"event\":\"network_seccomp_filter\",\"bootId\":{:?},\"app\":{app_name:?},\"applied\":{applied},\"detail\":{detail:?},\"timestamp\":{now}}}",
+        "[agent-init] {{\"event\":{event:?},\"bootId\":{:?},\"app\":{app_name:?},\"applied\":{applied},\"detail\":{detail:?},\"timestamp\":{now}}}",
         boot_id()
     );
 }
@@ -152,11 +154,19 @@ fn log_seccomp_event(app_name: &str, applied: bool, detail: &str) {
 /// kernel enforcement mechanisms. Since these containers run every process
 /// as root with no USER directive, a container-level `CapAdd` grant would
 /// otherwise reach the resident app's own process just as much as the
-/// pre-exec daemon it was actually intended for. The bounding set is a hard
-/// ceiling a process can never widen for itself or anything it execs —
-/// dropping these two here is what keeps "declared capability, enforced by
-/// the kernel" true for Linux capabilities, not just for Landlock's
-/// filesystem/network-port rules.
+/// pre-exec daemon it was actually intended for. Dropping these three here is
+/// what keeps "declared capability, enforced by the kernel" true for Linux
+/// capabilities, not just for Landlock's filesystem/network-port rules.
+///
+/// The bounding set is a ceiling a process can never widen for itself or
+/// anything it execs — but only within its own user namespace. An earlier
+/// version of this comment called it a hard ceiling full stop, and that was
+/// wrong: `unshare(CLONE_NEWUSER)` needs no privilege and hands its creator a
+/// fresh CAP_FULL_SET bounding set inside the new namespace, which was enough
+/// to mount(2) again (REMEDIATION.md 1.3). The drop below is only a ceiling
+/// because seccomp::install_no_new_namespaces_filter() runs right after it and
+/// refuses namespace creation outright. The two are a pair; neither is worth
+/// much alone.
 ///
 /// Deliberately NOT `caps::clear` (drop everything): a real CI run on a
 /// kernel where Landlock is actually enforced caught that dropping the
@@ -249,6 +259,34 @@ fn main() {
     }
     log_caps_dropped_event(&app_name, caps_dropped);
 
+    // Immediately after the drop above, and for every app rather than
+    // conditionally: without this, the drop is not a ceiling at all. Creating
+    // a user namespace needs no privilege, and the kernel hands its creator a
+    // full capability set — including a fresh CAP_FULL_SET bounding set —
+    // inside the new namespace, which is enough to mount(2) again. Docker's
+    // own default seccomp profile blocks this, but stops doing so when the
+    // container holds CAP_SYS_ADMIN, which every Berth container does for
+    // semantic-fs's FUSE mount. See seccomp.rs's header and REMEDIATION.md 1.3.
+    match seccomp::install_no_new_namespaces_filter() {
+        Ok(()) => {
+            eprintln!("[agent-init] namespace creation (unshare/clone/setns) refused by seccomp for \"{app_name}\"");
+            log_seccomp_event("namespace_seccomp_filter", &app_name, true, "new_namespaces_denied");
+        }
+        Err(err) => {
+            let detail = format!("could not install namespace seccomp filter ({err})");
+            if require_enforcement {
+                eprintln!(
+                    "[agent-init] FATAL: BERTH_REQUIRE_ENFORCEMENT is set but {detail} for \"{app_name}\" — refusing to exec, since the capability drop above would be reversible by the app itself."
+                );
+                log_seccomp_event("namespace_seccomp_filter", &app_name, false, &detail);
+                log_enforcement_refused_event(&app_name, &detail);
+                std::process::exit(1);
+            }
+            eprintln!("[agent-init] WARNING: {detail} — continuing with the capability drop reversible via unshare(CLONE_NEWUSER).");
+            log_seccomp_event("namespace_seccomp_filter", &app_name, false, &detail);
+        }
+    }
+
     // Last thing before exec, and deliberately after the capability drop:
     // installing this filter sets PR_SET_NO_NEW_PRIVS, and capset(2) is not
     // in the filter's denied set either way, but ordering the irrevocable
@@ -260,7 +298,7 @@ fn main() {
                 eprintln!(
                     "[agent-init] no network capability declared — UDP and raw sockets refused by seccomp for \"{app_name}\""
                 );
-                log_seccomp_event(&app_name, true, "udp_and_raw_sockets_denied");
+                log_seccomp_event("network_seccomp_filter", &app_name, true, "udp_and_raw_sockets_denied");
             }
             Err(err) => {
                 let detail = format!("could not install seccomp filter ({err})");
@@ -268,16 +306,16 @@ fn main() {
                     eprintln!(
                         "[agent-init] FATAL: BERTH_REQUIRE_ENFORCEMENT is set but {detail} for \"{app_name}\" — refusing to exec with unrestricted UDP."
                     );
-                    log_seccomp_event(&app_name, false, &detail);
+                    log_seccomp_event("network_seccomp_filter", &app_name, false, &detail);
                     log_enforcement_refused_event(&app_name, &detail);
                     std::process::exit(1);
                 }
                 eprintln!("[agent-init] WARNING: {detail} — continuing with UDP and raw sockets available.");
-                log_seccomp_event(&app_name, false, &detail);
+                log_seccomp_event("network_seccomp_filter", &app_name, false, &detail);
             }
         }
     } else {
-        log_seccomp_event(&app_name, false, "network capability declared — datagram sockets left open for DNS");
+        log_seccomp_event("network_seccomp_filter", &app_name, false, "network capability declared — datagram sockets left open for DNS");
     }
 
     let err = Command::new(&args[0]).args(&args[1..]).exec();
@@ -306,8 +344,8 @@ fn write_access_rights() -> BitFlags<AccessFs> {
 ///
 /// Applied to write paths only. Read paths are not created (see the read loop
 /// below) and the policy's readPaths list mixes declared paths with
-/// generate-capability-policy.ts's own baseline — /usr, /lib, /etc, /proc,
-/// /dev — which this list would reject; the declared half is validated at
+/// generate-capability-policy.ts's own baseline — /usr, /bin, /sbin, /lib,
+/// /etc, /proc, /dev — which this list would reject; the declared half is validated at
 /// manifest-validation time instead.
 const ALLOWED_WRITE_PATH_PREFIXES: [&str; 4] = ["/workspace", "/context", "/tmp", "/app"];
 
@@ -354,11 +392,15 @@ fn apply_policy(policy_path: &str) -> Result<(CapabilityPolicy, RulesetStatus), 
     // contents just as effectively.
     //
     // Not handled, deliberately: Execute and IoctlDev (both from_read/V5
-    // territory). Handling Execute would deny exec of every interpreter and
-    // shell outside the declared read paths — /bin and /sbin are not in
-    // BASELINE_READ_PATHS (see generate-capability-policy.ts), so it would
-    // break every app that shells out. That's a real gap; it needs the
-    // baseline exec set worked out first and is tracked separately.
+    // territory). Handling Execute would make exec denied-by-default and
+    // permitted only under paths granted an Execute rule — which is a real
+    // gap, and needs the baseline exec set worked out first rather than
+    // inheriting the read baseline wholesale. Tracked separately.
+    //
+    // Note this is a different question from whether an interpreter is
+    // *readable*: with read scoping on, execve() of a file outside every read
+    // rule already fails with EACCES, which is why /bin and /sbin had to be
+    // added to BASELINE_READ_PATHS (see generate-capability-policy.ts).
     //
     // Ruleset::default() is best-effort, so a kernel whose Landlock ABI
     // predates V3 downgrades to the rights it does support instead of
