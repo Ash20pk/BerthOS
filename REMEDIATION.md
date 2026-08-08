@@ -264,7 +264,7 @@ The gap between what the README claims and what the code does is the fastest way
 | # | Item | Status | Effort |
 |---|------|--------|--------|
 | 2.1 | Write an actual threat model | 🔴 | 1d |
-| 2.2 | Soften README claims to match current enforcement | 🔴 | 4h |
+| 2.2 | Soften README claims to match current enforcement | 🟢 | 4h |
 | 2.3 | Correct "query by intent" to describe what Semantic FS does | 🔴 | 2h |
 | 2.4 | Fix doc drift (Crew shape counts, provider tests, YAML count) | 🔴 | 2h |
 
@@ -288,6 +288,12 @@ Specific lines that are currently false or unsupportable:
 - ~~`README.md:316` — `network:connect:*` "denied by default... zero outbound TCP, full stop." The "TCP" qualifier is doing load-bearing work that readers will miss.~~ Same fix; the qualifier is no longer load-bearing because the non-TCP paths are closed for the apps the claim is about.
 
 **Fix.** State the enforcement matrix plainly — which syscall classes are kernel-enforced, which are broker-enforced, which are advisory — and add the platform caveat from 0.1. "Kernel-enforced filesystem scoping, with network and cross-app isolation in progress" is both more honest and, to a serious buyer, more credible than the current claim.
+
+**Closed.** A new `### What isn't enforced yet` section sits directly under the capability table and does two things: a three-tier table (kernel / broker / recorded, with the mechanism and what each is worth), then the seven open gaps that change what a reader should be willing to run — 1.3, 1.4, 1.5, 1.6, 1.7, 1.13, and 1.10 — each in one sentence, linked to this file for the evidence. It ends on the summary line this item asked for: kernel-enforced filesystem and network scoping is real and testable today, cross-app and in-container privilege isolation is in progress, and Berth is not yet a boundary to trust against an attacker who already has code execution inside the container.
+
+The three overclaiming lines are fixed rather than deleted. Line 45 now says *write* specifically, names the platform dependency with a link to 0.1's matrix, and points at both the per-capability table and the new limits section. Line 88 turned out to contain a claim the README's own table already contradicted — it said `terminal:attach:*` is "enforced by the kernel (Landlock)" while the table lists it as recorded-only — so that's corrected, and the surviving filesystem claim is made concrete (`rm -rf /etc` dies on `unlink(2)` with `EACCES`) rather than sweeping. Line 323's "the kernel enforces this list" became "filesystem and network scoping is compiled into a kernel policy; the rest is brokered or recorded."
+
+Not attempted here: 2.1's `docs/threat-model.md`, which is where the scattered deferred-scope notes should ultimately be consolidated. The README section is deliberately a summary with a pointer, not a substitute for it.
 
 ### 2.3 — Correct the Semantic FS description
 
