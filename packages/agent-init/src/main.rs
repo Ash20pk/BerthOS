@@ -11,6 +11,7 @@
 // the app's own code runs alongside.
 use std::env;
 use std::os::unix::process::CommandExt;
+use std::path::Path;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -333,6 +334,48 @@ fn write_access_rights() -> BitFlags<AccessFs> {
     AccessFs::from_write(ABI::V3)
 }
 
+/// The same rights, narrowed to those Landlock considers meaningful on a
+/// non-directory. This exists because getting it wrong is silent and
+/// expensive, and it already cost one failed attempt at REMEDIATION.md 1.15.
+///
+/// `PathBeneath`'s compatibility pass (landlock 0.4's `fs.rs`) fstat()s the
+/// rule's target and, if it isn't a directory, masks the requested access down
+/// to `ACCESS_FILE` — `ReadFile | WriteFile | Execute | Truncate | IoctlDev |
+/// ResolveUnix`. Everything else in `from_write(V3)` is directory-only
+/// (`MakeReg`, `MakeDir`, `RemoveFile`, `Refer`, ...). When that mask changes
+/// anything the crate returns `CompatResult::Partial`, its own source noting
+/// "Linux would return EINVAL" — and under `BestEffort` that downgrades the
+/// whole ruleset's status to `PartiallyEnforced`.
+///
+/// Which matters more than a status field suggests: `main()` refuses to exec
+/// at all unless the status is exactly `FullyEnforced` when
+/// `BERTH_REQUIRE_ENFORCEMENT` is set, i.e. in every production image. So
+/// adding one rule on one device node — `/dev/null`, `/dev/ptmx` — with the
+/// directory rights would turn a working app into an unbootable one, in
+/// production only, for a reason nothing in the error message points at. That
+/// is exactly what happened when 1.15 was first attempted.
+///
+/// Passing the narrowed set for files means the crate has nothing to mask, so
+/// no downgrade is reported and the rule is identical to what the kernel would
+/// have accepted anyway.
+fn file_write_access_rights() -> BitFlags<AccessFs> {
+    write_access_rights() & AccessFs::from_file(ABI::V3)
+}
+
+/// Which of the two above a given path needs. A symlink is followed, matching
+/// what `PathFd::new()` does a moment later — `/dev/ptmx` is a symlink to the
+/// `pts/ptmx` character device, and classifying it by the link rather than the
+/// target would pick the wrong set.
+fn access_rights_for(path: &str) -> BitFlags<AccessFs> {
+    match std::fs::metadata(path) {
+        Ok(metadata) if metadata.is_dir() => write_access_rights(),
+        // A path that can't be stat()'d gets the directory set: PathFd::new()
+        // is about to fail on it too, and the grant is skipped either way.
+        Err(_) => write_access_rights(),
+        _ => file_write_access_rights(),
+    }
+}
+
 /// Path prefixes a declared write path may live under. A deliberate duplicate
 /// of ALLOWED_FILESYSTEM_SCOPE_PREFIXES in @berth/manifest-schema's
 /// capability.ts — that's the layer that rejects a bad `berth.yml` with a
@@ -349,6 +392,17 @@ fn write_access_rights() -> BitFlags<AccessFs> {
 /// manifest-validation time instead.
 const ALLOWED_WRITE_PATH_PREFIXES: [&str; 4] = ["/workspace", "/context", "/tmp", "/app"];
 
+/// Device paths the *compiler* injects — never something a `berth.yml` can
+/// declare, which is why `@berth/manifest-schema`'s copy of the prefix list
+/// above deliberately does not grow to match. `/dev/null` and `/dev/tty` go to
+/// every app; `/dev/pts` and `/dev/ptmx` only to one declaring `terminal:*`
+/// (see generate-capability-policy.ts).
+///
+/// Matched exactly rather than as prefixes. `/dev` must stay rejected: it is a
+/// tmpfs holding every device node the container has, and a prefix match would
+/// turn a four-entry convenience into a grant over all of them.
+const ALLOWED_WRITE_DEVICE_PATHS: [&str; 4] = ["/dev/null", "/dev/tty", "/dev/pts", "/dev/ptmx"];
+
 /// Split out of apply_policy() so the unit tests below can exercise it without
 /// a kernel that enforces Landlock or a real policy file.
 fn is_allowed_write_path(path: &str) -> bool {
@@ -357,6 +411,9 @@ fn is_allowed_write_path(path: &str) -> bool {
     }
     if path.split('/').skip(1).any(|segment| segment.is_empty() || segment == "." || segment == ".." || segment == "*") {
         return false;
+    }
+    if ALLOWED_WRITE_DEVICE_PATHS.contains(&path) {
+        return true;
     }
     ALLOWED_WRITE_PATH_PREFIXES
         .iter()
@@ -446,12 +503,24 @@ fn apply_policy(policy_path: &str) -> Result<(CapabilityPolicy, RulesetStatus), 
         // app's own first `mkdir(WORKSPACE_ROOT)` call fails with EACCES:
         // creating a not-yet-existing /workspace is an operation on its
         // *parent* (/), which was never granted, not on /workspace itself.
-        if let Err(err) = std::fs::create_dir_all(path) {
-            eprintln!("[agent-init] WARNING: couldn't create \"{path}\" ahead of granting write access ({err})");
+        //
+        // Skipped when the path already exists, which is not just an
+        // optimisation: several of these are device nodes now (/dev/null,
+        // /dev/ptmx), and create_dir_all() on an existing character device
+        // fails with ENOTDIR — a warning about being unable to create
+        // something that is already there, on every single boot.
+        if !Path::new(path).exists() {
+            if let Err(err) = std::fs::create_dir_all(path) {
+                eprintln!("[agent-init] WARNING: couldn't create \"{path}\" ahead of granting write access ({err})");
+            }
         }
         match PathFd::new(path) {
             Ok(fd) => {
-                ruleset = ruleset.add_rule(PathBeneath::new(fd, write_access))?;
+                // Per path, not the one `write_access` set: a rule carrying
+                // directory-only rights on a device node downgrades the whole
+                // ruleset to PartiallyEnforced, which a production image
+                // refuses to boot on. See file_write_access_rights().
+                ruleset = ruleset.add_rule(PathBeneath::new(fd, access_rights_for(path)))?;
             }
             Err(err) => {
                 eprintln!("[agent-init] WARNING: couldn't open \"{path}\" to grant write access ({err}), skipping");
@@ -545,6 +614,89 @@ mod tests {
             AccessFs::Truncate,
         ] {
             assert!(rights.contains(expected), "{expected:?} is not handled — it would be permitted everywhere");
+        }
+    }
+
+    // The file variant carries no directory-only right. If one crept back in,
+    // landlock's PathBeneath compat pass would mask it off on any device-node
+    // rule and report a partial downgrade — turning the ruleset
+    // PartiallyEnforced and making every production image refuse to boot,
+    // which is precisely how REMEDIATION.md 1.15's first attempt failed.
+    #[test]
+    fn file_write_access_set_contains_no_directory_only_rights() {
+        let rights = file_write_access_rights();
+        for unexpected in [
+            AccessFs::MakeReg,
+            AccessFs::MakeDir,
+            AccessFs::MakeChar,
+            AccessFs::MakeSock,
+            AccessFs::MakeFifo,
+            AccessFs::MakeBlock,
+            AccessFs::MakeSym,
+            AccessFs::RemoveDir,
+            AccessFs::RemoveFile,
+        ] {
+            assert!(!rights.contains(unexpected), "{unexpected:?} is directory-only and would downgrade the ruleset on a file rule");
+        }
+        // ...and still grants what writing a device node actually needs.
+        assert!(rights.contains(AccessFs::WriteFile), "a file rule that can't WriteFile grants nothing");
+    }
+
+    // The downgrade condition itself, stated as an invariant rather than
+    // inferred from a passing boot — this is the one thing that cannot be
+    // observed without a kernel that enforces Landlock, so it is worth pinning
+    // where it can be.
+    //
+    // landlock 0.4's PathBeneath compat pass masks a non-directory rule's
+    // access down to AccessFs::from_file(ABI) and reports
+    // CompatResult::Partial *only if that mask changed something*. So "our
+    // file rights survive the mask unchanged" is exactly "no downgrade is
+    // reported", and the second assertion records why passing the directory
+    // set on a file was the original bug.
+    #[test]
+    fn file_rights_survive_landlocks_own_file_mask_but_directory_rights_do_not() {
+        let file_mask = AccessFs::from_file(ABI::V3);
+        assert_eq!(
+            file_write_access_rights() & file_mask,
+            file_write_access_rights(),
+            "the crate's file mask would change our file rights, which reports Partial and downgrades the ruleset",
+        );
+        assert_ne!(
+            write_access_rights() & file_mask,
+            write_access_rights(),
+            "if this ever becomes equal, the directory set is file-safe and this whole distinction is dead code",
+        );
+    }
+
+    // The classification, against real inodes rather than a mocked stat: /tmp
+    // is a directory, /dev/null is a character device, and getting them the
+    // wrong way round is silent in both directions — a file set on a directory
+    // quietly fails to grant mkdir, a directory set on a file downgrades the
+    // ruleset.
+    #[test]
+    fn access_rights_are_chosen_by_inode_type() {
+        assert_eq!(access_rights_for("/tmp"), write_access_rights(), "/tmp is a directory");
+        assert_eq!(access_rights_for("/dev/null"), file_write_access_rights(), "/dev/null is a device node");
+        // A symlink is classified by its target, matching what PathFd::new()
+        // resolves a moment later. /dev/ptmx -> pts/ptmx in this image.
+        if std::fs::symlink_metadata("/dev/ptmx").map(|m| m.file_type().is_symlink()).unwrap_or(false) {
+            assert_eq!(access_rights_for("/dev/ptmx"), file_write_access_rights(), "/dev/ptmx resolves to a device node");
+        }
+        // A path that doesn't exist falls back to the directory set; PathFd is
+        // about to fail on it anyway.
+        assert_eq!(access_rights_for("/nonexistent-berth-test-path"), write_access_rights());
+    }
+
+    // The device paths the policy compiler injects, and the line it must not
+    // cross: /dev itself is a tmpfs holding every device node the container
+    // has, so the allowance is exact-match only.
+    #[test]
+    fn write_path_allowlist_permits_only_the_injected_device_paths() {
+        for path in ["/dev/null", "/dev/tty", "/dev/pts", "/dev/ptmx"] {
+            assert!(is_allowed_write_path(path), "{path} is injected by generate-capability-policy.ts and must be grantable");
+        }
+        for path in ["/dev", "/dev/sda", "/dev/mem", "/dev/pts/0", "/dev/null/x", "/dev/kmsg"] {
+            assert!(!is_allowed_write_path(path), "{path} must not be grantable — the device allowance is exact-match, not a prefix");
         }
     }
 
