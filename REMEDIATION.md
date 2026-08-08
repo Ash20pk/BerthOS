@@ -61,8 +61,8 @@ README line 88 currently reads: *"a prompt-injected 'ignore previous instruction
 | 1.2 | `CAP_NET_RAW` retained; Landlock covers TCP only | Critical | 🟢 | 1d |
 | 1.3 | Bounding-set drop undone by `unshare(CLONE_NEWUSER)` | Critical | 🟢 | 2d |
 | 1.4 | App RPC sockets in world-writable `/tmp`, unauthenticated | Critical | 🔴 | 3d |
-| 1.5 | `on_install` is unsandboxed root shell run before enforcement | Critical | 🔴 | 2d |
-| 1.6 | `berth dev` bind-mounts the whole host repo read-write | Critical | 🔴 | 1d |
+| 1.5 | `on_install` is unsandboxed root shell run before enforcement | Critical | 🟢 | 2d |
+| 1.6 | `berth dev` bind-mounts the whole host repo read-write | Critical | 🟢 | 1d |
 | 1.7 | ttyd / VNC / CDP unauthenticated on all host interfaces | High | 🟢 | 1d |
 | 1.8 | Egress broker: no port check, `*` → SSRF, DNS not pinned | High | 🔴 | 2d |
 | 1.9 | GitHub broker: `read:repos` also grants `/user/emails` etc. | High | 🔴 | 1d |
@@ -71,7 +71,7 @@ README line 88 currently reads: *"a prompt-injected 'ignore previous instruction
 | 1.12 | `agent-init` mkdir's arbitrary manifest paths as root | Medium | 🟢 | 4h |
 | 1.13 | Governance gate bypasses (MCP, agent-as-tool, rpc, mcp, http-rpc) | High | 🔴 | 2d |
 | 1.14 | semantic-fs / context-bus: unbounded frame allocation + spoofable identity | Medium | 🔴 | 1d |
-| 1.15 | `apps/terminal` is non-functional on any Landlock-enforcing kernel | High | 🔴 | 2d |
+| 1.15 | `apps/terminal` is non-functional on any Landlock-enforcing kernel | High | 🟡 | 2d |
 
 ### 1.1 — `truncate(2)` is not a handled Landlock access right
 
@@ -171,19 +171,65 @@ Note: `entrypoint.sh` itself has no injection surface — manifest `name` is `^[
 
 **Verify.** A test asserting an `on_install` entry cannot write outside the app's declared write paths.
 
-> **Now a prerequisite for 1.4/1.11, not a successor.** See [docs/per-app-uid-design.md § Blocker 4](./docs/per-app-uid-design.md#blocker-4--on_install-is-defined-as-a-root-shell). The build-time fix above is the one that composes with per-app uids; leaving `on_install` at boot makes the uid boundary decorative, and running it *as* the app's uid breaks the documented `pip install` case that `base.Dockerfile:101` deliberately enables.
+> **Was a prerequisite for 1.4/1.11**, which is why it jumped the queue — see [docs/per-app-uid-design.md § Blocker 4](./docs/per-app-uid-design.md#blocker-4--on_install-is-defined-as-a-root-shell--resolved). Leaving `on_install` at boot would have made the uid boundary decorative, and running it *as* the app's uid would have broken the `pip install` case `base.Dockerfile:101` deliberately enables. The build-time fix avoids both.
+
+**Closed.** `on_install` is a Docker build layer, for **both** targets, and nothing executes it at container boot.
+
+Doing it for the production target only would have been the easy half — it already has a `COPY . /app` to hang a `RUN` off. But `berth dev` is the primary workflow and the one 1.6 makes most reachable, and a dev image deliberately contains no app source at all (it arrives via the bind mount at container start). The build *context* still has that source, though, so the dev stage stages a throwaway copy under `on-install/apps/<name>/`, runs each app's generated script against it, and deletes it in the same layer. What survives is exactly what the boot-time version existed to provide — site-packages, apk packages, a built asset — which is what the bind mount doesn't supply. One runner script (`docker/run-on-install.sh`) serves both stages because `apps/<name>/` is the layout production already uses.
+
+Four details worth naming:
+
+1. **The commands go into a generated file, never into a `RUN` directive.** Interpolating a manifest string into a Dockerfile line would make a command containing a newline able to end the `RUN` and have the rest parsed as further directives (`FROM`, `COPY --from`, …). A script file has no such escaping surface. `on_install` entries are also now schema-validated as non-empty and NUL-free, reported per-index so the YAML line mapping points at the offending entry.
+2. **The install marker is gone, not merely unused.** There is no boot-time action left to run at most once. `berth dev`'s named volume survives, because it still keeps the generated capability policy out of the developer's working tree, and is renamed `appStateVolume` / `berth-<name>-app-state` to stop describing a marker that no longer exists.
+3. **Docker's classic builder resolves `COPY` paths in stages it never runs.** The dev stage's `COPY on-install` failed a `target: "production"` build outright until the context was created for both targets. Found by a build failing at exactly that step, not by reasoning about it.
+4. **An `on_install` change now needs a rebuild**, since the watcher restarts the container without rebuilding. That's a real DX cost, stated in `docs/manifest-reference.md` rather than left to be discovered.
+
+**Verification — `packages/docker-orchestrator/test/on-install-milestone.mjs`**, four tests against a real build and a real container. Its fixture's `on_install` writes to `/etc`, which no capability this manifest could declare would permit at runtime; the proof file's presence therefore dates the execution.
+
+The third test is the one that matters, and it reproduces 1.6's chain in full: rewrite `berth.yml` inside a running container, delete the install marker, restart, assert the new `on_install` did not execute. **Confirmed to fail against the old code**, not merely to pass against the new — a negative control run with the boot-time path stashed back in fails all three of "no on_install in the boot logs", "no marker file", and "the rewritten `on_install` did not execute".
+
+That negative control earned its keep immediately: the first version of Test 3 passed against the old code too. `container.restart()` resolves when Docker has started the container, not when `entrypoint.sh` has finished, so the assertion was reading before the payload could have been written — an absence test that always passed. It now waits for the regenerated capability policy, which in both the old and new orderings is written *after* the lifecycle step, before asserting.
+
+Regression-checked: `multi-app-milestone` and `capability-enforcement` pass unchanged; `python-sdk-milestone` had an assertion that the Python lifecycle script *runs* `on_install` at boot — that assertion was the vulnerability, so it is inverted rather than deleted, and the Python path's build-time execution is visible in the same run's build output. `apps/github-assistant`'s `pip install -r requirements.txt` was built through the new dev path directly, and a system-level effect (`/etc` write) was confirmed to persist into a dev image and the staging copy confirmed absent from it.
 
 ### 1.6 — `berth dev` bind-mounts the whole host repo read-write
 
 **Evidence.** `packages/cli/src/util/workspace.ts:35-38` — `bindMount: { hostPath: workspaceRoot, containerPath: "/workspace" }` (the entire pnpm workspace root). `container.ts:174` — no `:ro`. Apps declaring `filesystem:write:/workspace` (code-interpreter, notes, terminal, filesystem all do) get Landlock write access to that exact directory. `packages/docker-orchestrator/src/watch.ts:24` restarts the container when `berth.yml` changes.
 
-Full chain: an app rewrites its own `berth.yml` with wider capabilities and a malicious `on_install`, deletes `.berth/installed`, chokidar restarts the container, and 1.5 executes the payload as root with the attacker's own capability list now compiled into the enforced policy. Independently, writing `/workspace/.git/hooks/pre-commit` or `package.json` scripts gives host-side code execution on the developer's next commit or build.
+Full chain: an app rewrites its own `berth.yml` with wider capabilities and a malicious `on_install`, deletes `.berth/installed`, chokidar restarts the container, and 1.5 executes the payload as root with the attacker's own capability list now compiled into the enforced policy. **The `on_install` half of that chain is closed by 1.5** — nothing executes it at boot any more, and `on-install-milestone.mjs` Test 3 asserts exactly this sequence produces nothing. The wider-capabilities half stands: a rewritten `berth.yml` still compiles into the enforced policy on the next restart, and the host-side writes below are untouched and are the more serious half regardless. Independently, writing `/workspace/.git/hooks/pre-commit` or `package.json` scripts gives host-side code execution on the developer's next commit or build.
 
 `berth os up` and `Computer.boot()` don't bind-mount, so this is `berth dev`-specific — which is the primary workflow.
 
 **Fix.** Narrow the bind mount to the app's own directory rather than the workspace root. Mount `berth.yml` read-only. Ignore manifest changes originating from inside the container, or re-read the manifest from the host copy rather than the mounted one.
 
 **Verify.** A test asserting an app cannot modify its own `berth.yml` through `/workspace`.
+
+**Closed.** Not by narrowing the mount, which was the fix sketched above and turns out not to be available: pnpm's `node_modules` symlinks point at sibling package directories by relative path, so mounting only the app's own directory leaves every `@berth/*` import dangling. That is why the whole workspace root was mounted in the first place.
+
+But nothing in that tree needs to be *writable* for module resolution, for reading source, or for reading a manifest. So the root is mounted **read-only** and the two things that genuinely need writing are mounted back over it:
+
+```
+/workspace                       workspace root, READ-ONLY
+/workspace/<app>/.berth          per-app named volume — the generated capability policy
+/workspace/.berth/dev-workspace  host directory — shared app data, via BERTH_WORKSPACE_ROOT
+```
+
+This is a *VFS* property (`EROFS`), not a Landlock rule, so unlike most of what this repo enforces it holds identically on a kernel with no Landlock — including Docker Desktop, where `agent-init` fails open and every Landlock assertion is unverifiable. That makes it one of the few boundaries here that is real on a Mac.
+
+Four things worth naming:
+
+1. **`berth.yml` is read-only inside the container**, which is what the fix above meant by mounting it read-only — but via the *directory* mount rather than a file-level bind, so an editor that replaces the file by rename (most of them do) still works on the host side. A file-level bind would have pinned an inode and silently stopped reflecting host edits.
+2. **App data moved.** `notes.json`, whatever `code-interpreter` writes, and everything `apps/filesystem` lists now land under `.berth/dev-workspace/` instead of the root of the developer's repo. Every first-party app already read `BERTH_WORKSPACE_ROOT` before falling back to `/workspace`, so this needed no app changes. It's a real host directory rather than a named volume specifically so it stays inspectable — and it's already gitignored, which the root of the repo was not (see `.gitignore`'s list of stray files milestone tests have committed by accident).
+3. **Every mountpoint has to exist on the host before the container starts.** Docker cannot create one inside a read-only bind: the nested mount fails at container init with `read-only file system`. Established by trying it, not assumed. That's why `resolveDevBindMount()` has side effects.
+4. **A declared write path under `/workspace` that doesn't exist yet no longer gets created.** `agent-init`'s `create_dir_all()` hits `EROFS`, warns, and the grant is skipped — the same failure mode declared *read* paths already have since 1.12. No first-party app is affected (they all declare `/workspace` or `/context`, which exist), and the honest fix is for such an app to write under the dev workspace instead.
+
+**Verification — `packages/docker-orchestrator/test/dev-workspace-mount-milestone.mjs`**, twelve assertions, wired into CI as its own workflow. It imports `resolveDevBindMount` from the built CLI rather than reconstructing the binds by hand, so a change to how `berth dev` mounts things cannot pass here while breaking there.
+
+The app under test is `apps/filesystem`: its declared write path *is* `/workspace`, and its exports are a thin unvalidating wrapper over `fs`, so any escape has to be refused by the kernel rather than by app code. Test 1 asserts it can still write its own workspace *and* that the file appears on the host — every denial below would also "pass" against an app that simply cannot write anything at all. Tests 2–4 are the three writes 1.6 names: the repo root, `.git/hooks/pre-commit`, and its own `berth.yml`, each asserted both as an RPC error and as an absence on the host. Test 6 boots a second, multi-app container, because a companion's `.berth` volume is added by hand in `dev.ts` rather than by `startContainer`'s own option — miss it and `generate-capability-policy.js` fails on the read-only mount, which surfaces much later as an app with no policy.
+
+**Confirmed to fail against the old behaviour**, not merely to pass against the new: with the mount put back to read-write, all seven security assertions fail — and the run really does plant `pwned-root.txt` and `.git/hooks/pre-commit` in the repository it was run from, and overwrite `apps/filesystem/berth.yml`. That is the finding rather than a test bug, so the test deliberately doesn't clean up after itself and its header says so.
+
+**Not closed by this.** `berth dev` still mounts the whole repo *readable*, so an app with `filesystem:read:/workspace` can still read every file in it, including `.env` and `.git`. Narrowing that needs the module-resolution problem solved a different way (a synthetic `node_modules` staged into the image, say), and is a separate piece of work from the write boundary this closes.
 
 ### 1.7 — ttyd / VNC / CDP unauthenticated on all host interfaces
 
@@ -215,7 +261,9 @@ Test 6 exists specifically because tests 4 and 5 would both pass if ttyd were si
 
 **Not closed by this.** The ports remain reachable by any host-local process (T5 in the threat model) and by other apps in the same container — that's 1.4's per-app uid work, not this. The printed credential is only as private as the terminal it was printed to.
 
-**One caveat on the verification, stated rather than buried.** Tests 4-6 (ttyd's authentication specifically) *skip on Linux*, because `apps/terminal` can't start tmux there at all — which this milestone is what discovered, now filed as 1.15. So on a Landlock-enforcing kernel, what's proven is the loopback binding, the absent CDP port, the credential reaching the container, and the whole VNC story; ttyd's `--credential` is proven on a host where tmux does start (Docker Desktop), not yet in CI. The skip is deliberately narrow — it triggers only on that exact tmux log signature and fails the run on any other reason ttyd might not answer, so it can't quietly absorb a real regression in the thing it's skipping.
+**One caveat on the verification, stated rather than buried — now addressed, pending a CI run.** Tests 4-6 (ttyd's authentication specifically) used to *skip on Linux*, because `apps/terminal` couldn't start tmux there at all — which this milestone is what discovered, filed as 1.15. So on a Landlock-enforcing kernel, what was proven was the loopback binding, the absent CDP port, the credential reaching the container, and the whole VNC story; ttyd's `--credential` was proven only on a host where tmux does start.
+
+1.15 is now fixed (the compiled policy grants the pty devices plus `/dev/null` and `/dev/tty`, and file-targeted rules no longer downgrade the ruleset), so the skip has been **removed** rather than narrowed: ttyd failing to listen is now a plain failure that dumps the container log. A sixteenth assertion checks tmux's server started at all. The first green `ubuntu-latest` run is what turns this caveat from "addressed" into "closed" — and is the same run 1.15 is waiting on.
 
 ### 1.8 — Egress broker: no port check, `*` → SSRF, DNS not pinned
 
@@ -301,6 +349,33 @@ The app boots, registers with the context bus, and reports ready — then every 
 **Fix.** Unknown; needs real investigation rather than another write-path guess. Establish first what tmux actually gets `EACCES`/`EPERM` on (strace it under an enforced ruleset), and separately why a devpts rule downgrades the ruleset — if `PartiallyEnforced` is unavoidable for any app needing a pty, then either the pty grant needs a different mechanism entirely, or `agent-init`'s exactly-`FullyEnforced` requirement needs a considered exception, which is a security decision, not a workaround.
 
 **Verify.** `published-port-security-milestone.mjs`'s Tests 4-6 stop skipping (they skip today only on this exact tmux signature, and fail on anything else), and a new assertion that `run_command` round-trips on a Landlock-enforcing kernel.
+
+**🟡 Fixed and unit-tested; the enforcing-kernel proof has not run.** Both unknowns above are now answered, by evidence rather than another guess. Status stays amber deliberately: the decisive artifact is a CI run on `ubuntu-latest`, and this was developed on a Mac where Landlock is absent, so the end-to-end assertion has never executed. Everything below is either established fact or verified locally.
+
+**Unknown 1 — what tmux actually needs.** `strace`d a real `tmux new-session` inside the terminal image. It opens four things read-write:
+
+```
+openat("/tmp/tmux-0/default.lock", O_WRONLY|O_CREAT)   /tmp — already baseline
+bind(AF_UNIX, "/tmp/tmux-0/default")                    /tmp — already baseline
+openat("/dev/null",  O_RDWR)                            ← never granted
+openat("/dev/ptmx",  O_RDWR|O_NOCTTY)                   ← the previous attempt granted this
+openat("/dev/pts/0", O_RDWR|O_NOCTTY)                   ← ...and this
+openat("/dev/tty",   O_RDWR)                            ← never granted
+```
+
+So "granting the pty devices is not sufficient" has a mundane answer: a tmux server also opens `/dev/null` to daemonize and `/dev/tty` for its controlling terminal. `/dev/null` and `/dev/tty` are now in `BASELINE_WRITE_PATHS` for *every* app rather than scoped to terminal ones — opening `/dev/null` read-write is what any process does when it redirects a child's stdio to it, so scoping it here would have left the same landmine for whichever app next spawns a child with `stdio: "ignore"`. `/dev/pts` and `/dev/ptmx` are added only for an app declaring `terminal:*`, which is the one thing that capability now compiles into the kernel policy.
+
+**Unknown 2 — why a devpts rule downgraded the ruleset.** Not devpts-specific, and not really about `/dev` at all. `landlock` 0.4's `PathBeneath` compatibility pass `fstat()`s the rule's target and, if it isn't a directory, masks the requested access down to `ACCESS_FILE` (`ReadFile | WriteFile | Execute | Truncate | IoctlDev | ResolveUnix`). Everything else in `AccessFs::from_write(ABI::V3)` is directory-only. When that mask changes anything the crate returns `CompatResult::Partial` — its own source comments "Linux would return EINVAL" — and under `BestEffort` that downgrades the whole ruleset to `PartiallyEnforced`.
+
+`/dev/ptmx` is a symlink to the `pts/ptmx` **character device**, and `PathFd::new()` follows it. So the rule targeted a file, carried directory rights, and downgraded the ruleset — which a production image refuses to boot on. **Any** file-targeted write rule would have done the same; the pty work merely happened to be the first to add one.
+
+`agent-init` now picks the access set per path from the inode type: `write_access_rights()` for a directory, `write_access_rights() & AccessFs::from_file(ABI::V3)` for anything else. The crate then has nothing to mask and reports no downgrade. It also stops calling `create_dir_all()` on a path that already exists — that would otherwise warn `ENOTDIR` on every boot now that some write paths are device nodes.
+
+**Verified locally.** Six new tests, all passing: five Rust unit tests (the file set contains no directory-only right; access rights are chosen by inode type against real `/tmp` and `/dev/null`; the device allowance is exact-match so `/dev`, `/dev/sda`, `/dev/mem` stay refused) plus a JS fuzz update. One of them is the closest thing to a kernel-free proof of the downgrade fix available: it asserts `file_write_access_rights() & AccessFs::from_file(V3) == file_write_access_rights()`, which *is* the crate's downgrade condition, and asserts the directory set fails that same check — so the distinction can't quietly become dead code. The `packages/sdk` capability fuzzer now generates `terminal:*` capabilities and asserts the pty grants appear **only** when one was declared, which is what keeps this from being a silent widening for every app in the repo.
+
+The skip is gone from `published-port-security-milestone.mjs`, per the verify criterion above, and replaced with a positive assertion that tmux's server started — made against the container log rather than an RPC result, because the stdio attach is documented as racy while the log line is not. That takes the milestone from 14 assertions to 15, and it passes on Docker Desktop.
+
+**What this does not prove.** Docker Desktop's kernel has no Landlock, so locally the ruleset is `NotEnforced` and `apps/terminal` worked before this change as well as after. Nothing here demonstrates that tmux now starts *under enforcement*, or that the status is `FullyEnforced` rather than `PartiallyEnforced` — those need the CI run. No VM tooling (colima/lima/multipass) is installed on this machine and installing one wasn't in scope. Move to 🟢 when a green `ubuntu-latest` run of `published-port-security-milestone.mjs` exists; if it fails, the log dump on the `!listening` path now prints the container log rather than skipping past it.
 
 **Wider implication worth noting.** This went unnoticed because every milestone test that runs on a real kernel happens to cover apps whose needs Landlock's write model expresses cleanly. `apps/terminal` had no CI coverage at all. It is worth asking which other first-party apps have never been run against an enforcing kernel — that is the same gap 6.3 describes from the other direction.
 

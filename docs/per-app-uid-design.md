@@ -66,9 +66,15 @@ The daemon sockets stay reachable by every app because `entrypoint.sh:103-107` a
 
 Each of these is a thing that breaks the moment an app is not uid 0. They are ordered by how likely they are to change the design rather than merely cost a day.
 
-### Blocker 1 — `/workspace` is host-owned in `berth dev`
+### Blocker 1 — `/workspace` is host-owned in `berth dev` — **mostly dissolved**
 
-`workspace.ts:36` bind-mounts the host repo at `/workspace`, so its contents are owned by whatever uid the developer or CI runner has. Root writes it today only because of `CAP_DAC_OVERRIDE`, and this is not hypothetical: `drop_all_capabilities()`'s doc comment (`main.rs:172-180`) records a real CI run where dropping the whole capability set stripped `CAP_DAC_OVERRIDE` and "every write inside the declared `/workspace` path started failing with `EACCES`." A per-app uid reproduces that failure deliberately, and this time `CAP_DAC_OVERRIDE` cannot be kept as the escape hatch, because keeping it would let the app write every other app's files too and defeat the point.
+> **Largely resolved since this was written**, by 1.6 rather than by any of the four options below. `berth dev` now mounts the workspace root **read-only**, so no app writes host-owned files there at all and the ownership question simply doesn't arise for the repo. What remains writable is two paths Berth creates itself: a per-app named volume for `.berth` (Docker-owned, `chown`able at boot with no effect on the developer's tree) and the shared `.berth/dev-workspace` directory. Both can be given to a per-app uid or a shared `berth` group without the mutation problem that made options 1 and 2 unacceptable.
+>
+> What's left of this blocker is much smaller: `.berth/dev-workspace` is a host directory owned by the developer, so a synthetic uid still can't write it without a `chgrp` — but `chgrp`ing one Berth-created, gitignored directory is a different proposition from `chown -R`-ing someone's repository. **The open decision is now narrow enough not to gate the design.** Option 4 is no longer needed as a hedge.
+>
+> The reasoning below is kept because the `CAP_DAC_OVERRIDE` mechanics still apply to the writable paths, and because option 3's objection still stands.
+
+`workspace.ts` used to bind-mount the host repo read-write at `/workspace`, so its contents are owned by whatever uid the developer or CI runner has. Root writes it today only because of `CAP_DAC_OVERRIDE`, and this is not hypothetical: `drop_all_capabilities()`'s doc comment (`main.rs:172-180`) records a real CI run where dropping the whole capability set stripped `CAP_DAC_OVERRIDE` and "every write inside the declared `/workspace` path started failing with `EACCES`." A per-app uid reproduces that failure deliberately, and this time `CAP_DAC_OVERRIDE` cannot be kept as the escape hatch, because keeping it would let the app write every other app's files too and defeat the point.
 
 Four apps declare `filesystem:write:/workspace` (`code-interpreter`, `notes`, `terminal`, `filesystem`), so this is the common path, not an edge case.
 
@@ -81,9 +87,7 @@ It also does not fail uniformly, which is worse than failing: Docker Desktop for
 3. Run each app at the **host** uid rather than a synthetic one, discovered from `stat()` of the mount. Solves ownership exactly, but collapses to a single uid whenever two apps share a workspace — which is every multi-app container, and multi-app is precisely where 1.4 bites.
 4. Keep `berth dev` at uid 0 and apply per-app uids only to `Computer.boot()` / `berth os up`, which do not bind-mount.
 
-**Leaning toward 4 as the first landing, then 2.** Option 4 is honest about what it covers and lets the whole mechanism be validated on the paths where the ownership question does not arise. It leaves `berth dev` — the primary workflow, and the one [1.6](../REMEDIATION.md#16--berth-dev-bind-mounts-the-whole-host-repo-read-write) already flags as the weakest — unprotected, which must be stated in the threat model rather than glossed. Option 2 afterward, once 1.6 has narrowed the mount to something it is reasonable to `chgrp`.
-
-**This is the open decision most worth resolving before writing code.**
+**Superseded by 1.6.** The plan when this was written was option 4 first (uids only where nothing is bind-mounted), then option 2 "once 1.6 has narrowed the mount to something it is reasonable to `chgrp`." 1.6 did exactly that, so option 2 applies directly to `.berth/dev-workspace` and there is no longer a reason to exempt `berth dev` from the uid work.
 
 ### Blocker 2 — `/context` disappears entirely for a non-root uid
 
@@ -99,7 +103,10 @@ It also does not fail uniformly, which is worse than failing: Docker Desktop for
 
 **Fix:** the daemon creates backing files `root:berth` mode `0660` and directories `2770` (setgid, so the group is inherited), with every app in the `berth` supplementary group. Same "shared by design" caveat as Blocker 2 — it makes `/context` writable by every app, not by the one that created a given file. Per-writer attribution is 1.14's `SO_PEERCRED` work, and it should be enforcement, not just attribution.
 
-### Blocker 4 — `on_install` is defined as a root shell
+### Blocker 4 — `on_install` is defined as a root shell — **resolved**
+
+> **Closed since this was written.** 1.5 landed: `on_install` is a Docker build layer for both targets, nothing executes it at container boot, and `run-lifecycle`'s marker mechanism is gone. The collision described below no longer exists, and Step 0 of the [migration](#migration-order) is that much shorter. The reasoning is kept because it is *why* 1.5 went first.
+
 
 `run-lifecycle.ts:34` runs manifest `on_install` commands with `execSync`, before `agent-init` exists. The base image deliberately deletes `EXTERNALLY-MANAGED` (`base.Dockerfile:101`) so that `pip install -r requirements.txt` into the *system* Python is a supported `on_install` — which a non-root uid cannot do.
 
@@ -141,7 +148,7 @@ Each step is independently shippable and independently revertable. The ordering 
 
 | Step | Change | Closes |
 |---|---|---|
-| 0 | **1.5 first** — `on_install` moves to build time (Blocker 4). `allow_other` + backing-file group on semantic-FS (Blockers 2, 3). Resolve Blocker 1's open decision. | 1.5 |
+| 0 | ~~`on_install` moves to build time (Blocker 4)~~ and ~~Blocker 1's open decision~~ — both **done**, the latter dissolved by 1.6's read-only mount. Remaining: `allow_other` + backing-file group on semantic-FS (Blockers 2, 3). | 1.5 ✅ 1.6 ✅ |
 | 1 | Create uids, groups, and `/run/berth/<app>`; `chown` the app dir, `.berth`, and the install-marker volume. No process changes uid yet. | — |
 | 2 | `setgroups`/`setresgid`/`setresuid` in `agent-init` before `exec`. Sockets stay where they are. **The whole risk lives here** — full regression matrix before anything is built on top. | — |
 | 3 | Sockets move to `/run/berth/<app>/rpc.sock`, mode `0700`; `/tmp` out of `BASELINE_WRITE_PATHS`, replaced by `/tmp/<app>`. | 1.4 (parts 1, 2) |
