@@ -40,9 +40,19 @@ const POLICY_PATH = process.env.BERTH_CAPABILITY_POLICY ?? join(process.cwd(), "
 const GRANTS_SERVER_URL = process.env.BERTH_GRANTS_SERVER_URL;
 const MESH_COORDINATOR_PORT = Number(process.env.BERTH_MESH_COORDINATOR_PORT ?? 4875);
 
-// Always writable regardless of what's declared: /tmp (scratch files, and
-// the context-bus Unix socket lives there) plus the context-bus socket path
-// itself, since connecting to a Unix socket requires write access to it.
+// Always writable regardless of what's declared: /tmp, where scratch files
+// and every daemon/app Unix socket live.
+//
+// An earlier version of this comment justified that with "connecting to a
+// Unix socket requires write access to it." That is a DAC fact and not a
+// Landlock one, and the difference matters: Landlock hangs its filesystem
+// enforcement off security_file_open and the path_* hooks, while connecting
+// to a *pathname* socket goes through unix_find_other() ->
+// inode_permission(MAY_WRITE), which Landlock does not hook. (ABI 6's
+// LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET scopes abstract sockets, not these.)
+// So omitting /tmp here would not stop an app connecting to a socket in it —
+// which is why REMEDIATION.md 1.4 needs per-app uids rather than a narrower
+// policy. See docs/per-app-uid-design.md.
 const BASELINE_WRITE_PATHS = ["/tmp"];
 
 // Only added when read scoping is actually enabled (i.e. the app declared at
