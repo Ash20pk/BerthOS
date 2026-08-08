@@ -45,6 +45,18 @@ const MESH_COORDINATOR_PORT = Number(process.env.BERTH_MESH_COORDINATOR_PORT ?? 
 // itself, since connecting to a Unix socket requires write access to it.
 const BASELINE_WRITE_PATHS = ["/tmp"];
 
+// Added only for an app declaring a terminal:* capability. Allocating a pty is
+// open("/dev/ptmx", O_RDWR) — a *write* open — and the shell then opens its
+// slave under /dev/pts, so without both, tmux's server dies at startup and a
+// terminal app cannot function at all on a kernel that enforces Landlock.
+//
+// These are compiler-added, never manifest-declarable: ALLOWED_FILESYSTEM_SCOPE_PREFIXES
+// still rejects a berth.yml naming /dev, so nothing here widens what an app
+// can ask for. agent-init keeps a matching exact-match list (its
+// ALLOWED_PTY_WRITE_PATHS) and deliberately doesn't create these, since
+// /dev/ptmx is a device node, not a directory.
+const TERMINAL_PTY_WRITE_PATHS = ["/dev/ptmx", "/dev/pts"];
+
 // Only added when read scoping is actually enabled (i.e. the app declared at
 // least one filesystem:read:<path> capability) — these are the paths Node,
 // Alpine, and this app's own working directory need to function at all.
@@ -163,6 +175,11 @@ export function compileCapabilityPolicy(appName: string, rawCapabilities: string
     } else if (parsed.namespace === "network" && parsed.action === "peer") {
       meshPeers.add(parsed.scope);
       networkPorts.add(MESH_COORDINATOR_PORT);
+    } else if (parsed.namespace === "terminal") {
+      // terminal:* is otherwise "recorded and reported only" — this is the
+      // one thing it compiles into the kernel policy, and it's an enabler,
+      // not a restriction: a pty is what a terminal *is*.
+      for (const path of TERMINAL_PTY_WRITE_PATHS) writePaths.add(path);
     }
   }
 
