@@ -2,6 +2,8 @@ import { defineApp, type ContextBusClient, type SemanticFsClient } from "@berth/
 import { z } from "zod";
 import { mkdir, readFile, writeFile, readdir, truncate } from "node:fs/promises";
 import { createConnection } from "node:net";
+import { createSocket } from "node:dgram";
+import { execFile } from "node:child_process";
 import { join } from "node:path";
 
 const WORKSPACE_ROOT = process.env.BERTH_WORKSPACE_ROOT ?? "/workspace";
@@ -129,6 +131,61 @@ export default defineApp((app) => {
           resolve({ connected: false, error: "timeout" });
         });
         socket.once("error", (err) => resolve({ connected: false, error: (err as Error).message }));
+      }),
+  });
+
+  // The UDP half of the same check. Landlock has no UDP access right at all,
+  // so this is not testing the Landlock ruleset — it's testing the seccomp
+  // filter agent-init installs for apps that declared no network capability
+  // (packages/agent-init/src/seccomp.rs). Unlike the Landlock probes above,
+  // this one is expected to be denied even on kernels where Landlock is
+  // inactive, because seccomp-bpf is available everywhere this runs.
+  app.export({
+    name: "probe_network_udp",
+    input: z.object({ host: z.string(), port: z.number() }),
+    output: z.object({ sent: z.boolean(), error: z.string().optional() }),
+    handler: ({ host, port }) =>
+      new Promise((resolve) => {
+        let socket: ReturnType<typeof createSocket>;
+        try {
+          // socket(AF_INET, SOCK_DGRAM) happens here, inside the dgram
+          // handle's constructor — when the filter is installed this throws
+          // synchronously rather than failing later at send().
+          socket = createSocket("udp4");
+        } catch (err) {
+          resolve({ sent: false, error: (err as Error).message });
+          return;
+        }
+        socket.once("error", (err) => {
+          socket.close();
+          resolve({ sent: false, error: err.message });
+        });
+        socket.send("berth-egress-probe", port, host, (err) => {
+          socket.close();
+          resolve(err ? { sent: false, error: err.message } : { sent: true });
+        });
+      }),
+  });
+
+  // Raw sockets, via the only tool in the base image that opens one: ping(8).
+  // Whichever way busybox's ping goes — SOCK_RAW (needs CAP_NET_RAW, which
+  // agent-init now drops) or the unprivileged ICMP SOCK_DGRAM path (which the
+  // seccomp filter refuses) — a sandboxed app with no declared network
+  // capability should not get a socket. Node itself has no raw-socket API, so
+  // there is no in-process way to make this call.
+  app.export({
+    name: "probe_raw_socket",
+    input: z.object({ host: z.string() }),
+    output: z.object({ opened: z.boolean(), error: z.string().optional() }),
+    handler: ({ host }) =>
+      new Promise((resolve) => {
+        execFile("ping", ["-c", "1", "-W", "1", host], { timeout: 5000 }, (err, _stdout, stderr) => {
+          if (!err) {
+            resolve({ opened: true });
+            return;
+          }
+          resolve({ opened: false, error: (stderr || err.message).trim() });
+        });
       }),
   });
 
