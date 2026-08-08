@@ -152,6 +152,8 @@ and executes with *filesystem's* capabilities. Per-app Landlock rulesets are rea
 
 **Fix.** Three parts, all needed:
 1. Move each app's socket to a per-app directory (`/run/berth/<app>/`) mode `0700`, owned by that app's uid — which requires giving each app a distinct uid (see 1.5's user story).
+
+> **Designed, not yet built:** [docs/per-app-uid-design.md](./docs/per-app-uid-design.md) works out the uid scheme, the eight blockers, and a five-step migration for 1.4, 1.11, and 1.14 together. Two findings change this entry. First, **1.5 must land before 1.4**, not after — `on_install` as a boot-time root shell can `chown` its way around every boundary the uid split creates, and moving it to build time is also what keeps system-Python installs working for a non-root app. Second, part 1 cannot be replaced by a narrower Landlock policy: Landlock does not gate `connect()` to a pathname Unix socket (no `inode_permission` hook; ABI 6's scope right covers *abstract* sockets only), so `generate-capability-policy.ts:43-45`'s "connecting to a Unix socket requires write access to it" is a DAC fact, not a ruleset one. The design also records a strictly weaker one-day fallback for 1.4 alone, if the uid work proves too costly.
 2. Remove `/tmp` from the unconditional baseline write set; grant only the app's own socket dir plus a private `/tmp/<app>` scratch.
 3. Add `SO_PEERCRED` verification in `rpc.ts`'s `connectionHandler` so a socket connection's uid is checked against the expected app identity.
 
@@ -168,6 +170,8 @@ Note: `entrypoint.sh` itself has no injection surface — manifest `name` is `^[
 **Fix.** Move `on_install` into the image build (a `RUN` layer in the app's Dockerfile stage) so it executes at build time under the builder's isolation rather than at boot in the runtime sandbox. If it must stay at boot, run it inside a Landlock domain built from the declared capabilities, and drop caps first.
 
 **Verify.** A test asserting an `on_install` entry cannot write outside the app's declared write paths.
+
+> **Now a prerequisite for 1.4/1.11, not a successor.** See [docs/per-app-uid-design.md § Blocker 4](./docs/per-app-uid-design.md#blocker-4--on_install-is-defined-as-a-root-shell). The build-time fix above is the one that composes with per-app uids; leaving `on_install` at boot makes the uid boundary decorative, and running it *as* the app's uid breaks the documented `pip install` case that `base.Dockerfile:101` deliberately enables.
 
 ### 1.6 — `berth dev` bind-mounts the whole host repo read-write
 
@@ -253,6 +257,8 @@ The HMAC/expiry/`timingSafeEqual` machinery is cryptographically correct and sem
 
 **Verify.** A test asserting app B cannot signal app A's process.
 
+> Step 5 of [docs/per-app-uid-design.md](./docs/per-app-uid-design.md#migration-order) — once uids differ, `kill(2)` between apps is refused by the kernel's ordinary permission check and no new mechanism is needed. `LANDLOCK_SCOPE_SIGNAL` stays optional rather than load-bearing.
+
 ### 1.12 — `agent-init` mkdir's arbitrary manifest paths as root
 
 **Evidence.** `main.rs:274` and `:300` — `create_dir_all(path)` for every entry in `writePaths` *and* `readPaths`, run as uid 0 with `CAP_SYS_ADMIN` before `restrict_self()` at `:332`. There is no allowlist in `compileCapabilityPolicy` (`generate-capability-policy.ts:133-136` adds any string). `filesystem:write:/` grants write to the whole container filesystem with no warning. `stripTrailingGlob` only strips a literal `/*` (`:73-75`), so `filesystem:write:*` creates and grants a directory literally named `*`.
@@ -319,6 +325,8 @@ Killing semantic-fs is worse than a crash: `runtime.ts:44-46` silently falls bac
 **Fix.** Cap frame length (a few MB) and reject oversized headers before allocating, in both daemons. Derive the app identity from `SO_PEERCRED` rather than the request body. Make the semantic-fs stub fallback throw rather than return empty, or at minimum emit a loud persistent warning on every call.
 
 **Verify.** A test sending an oversized length header and asserting the daemon survives; a test asserting app B cannot register as app A.
+
+> The frame cap is independent and can land any time. The identity half cannot: `SO_PEERCRED` returns uid 0 for every caller today, so it carries no information until [docs/per-app-uid-design.md](./docs/per-app-uid-design.md) Step 2 lands. Sequenced there as Step 4.
 
 ---
 
@@ -548,7 +556,7 @@ Only start this once Phases 0–2 are done; there is no point adding SSO to a sy
 ## Suggested sequencing
 
 1. **Week 1** — Phase 0 (both items), then 1.1, 1.2, 1.12, and 2.2. Small, high-signal; ends with a Mac-runnable framework and a README that doesn't overclaim.
-2. **Weeks 2–4** — the rest of Phase 1, with 2.1 (threat model) written *first* so it drives the design decisions in 1.4 and 1.5. Per-app uids are the shared unlock for 1.4, 1.7, and 1.11 — do that design once.
+2. **Weeks 2–4** — the rest of Phase 1, with 2.1 (threat model) written *first* so it drives the design decisions in 1.4 and 1.5. Per-app uids are the shared unlock for 1.4, 1.11, and 1.14's identity half — that design is now written down once, in [docs/per-app-uid-design.md](./docs/per-app-uid-design.md), and it reorders this list: **1.5 comes before 1.4**. It also argues *against* using the uid split to drop Chromium's `--no-sandbox` (1.7), since Chromium's own sandbox needs the `CLONE_NEWUSER` that 1.3 deliberately refuses — so 1.7 gains nothing here after all.
 3. **Week 5** — Phase 3, plus 6.1/6.2/6.3 so the fixes are actually verified.
 4. **Weeks 6–7** — Phase 4, prioritizing 4.1 and 4.2 (the two most likely to bite a real user).
 5. **Ongoing** — Phase 6 items alongside everything else.
