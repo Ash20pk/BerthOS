@@ -1,1 +1,0 @@
-only boundary-app-b should be able to write or read this
