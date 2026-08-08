@@ -47,6 +47,11 @@ exports:
   - name: probe_raw_socket
     input: { host: string }
     output: { opened: boolean }
+  # Diagnostic export for capability-enforcement.mjs's namespace check —
+  # creating a user namespace would hand back every capability agent-init just
+  # dropped, so this exercises the seccomp filter that refuses it.
+  - name: probe_user_namespace
+    output: { created: boolean, regainedCaps: boolean }
 
 on_install: []
 on_agent_ready:

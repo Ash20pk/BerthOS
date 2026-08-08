@@ -351,6 +351,43 @@ async function main() {
       );
     }
 
+    console.log("\n--- Test 11: creating a user namespace, which would undo the capability drop ---");
+    // agent-init drops CAP_SYS_ADMIN, CAP_NET_ADMIN, and CAP_NET_RAW from the
+    // bounding set before exec-ing the runtime, and the bounding set is what
+    // makes that stick across execve(). But creating a user namespace requires
+    // no privilege at all, and the kernel gives its creator a fresh
+    // CAP_FULL_SET bounding set *inside* the new namespace. So `unshare -Urm`
+    // handed back everything the drop had just removed, and mount(2) — which
+    // Landlock does not cover — worked again. Reproduced in the real
+    // berth/filesystem image during the audit; see REMEDIATION.md 1.3.
+    //
+    // Docker's own default seccomp profile blocks this, which is why it is not
+    // a problem for containers generally. It stops doing so when the container
+    // holds CAP_SYS_ADMIN — which every Berth container does, unconditionally,
+    // for semantic-fs's FUSE mount. The fix is a seccomp filter agent-init
+    // installs itself (packages/agent-init/src/seccomp.rs).
+    //
+    // Asserted unconditionally, like Test 5b and unlike every Landlock check in
+    // this file: seccomp-bpf works on Docker Desktop's linuxkit kernel exactly
+    // as it does on a real host, so there is no environment here to make an
+    // excuse for.
+    const nsProbe = await rpc.call({ id: "11", export: "probe_user_namespace" });
+    console.log("response:", nsProbe);
+    assert(!nsProbe.error, `probe_user_namespace itself errored (unexpected): ${nsProbe.error}`);
+    assert(
+      nsProbe.result?.regainedCaps === false,
+      `an app regained CAP_SYS_ADMIN and mounted a filesystem via unshare(CLONE_NEWUSER) — the capability drop is reversible again: ${JSON.stringify(nsProbe)}`,
+    );
+    assert(
+      nsProbe.result?.created === false,
+      `unshare(CLONE_NEWUSER) succeeded — the mount happened not to work this time, but the namespace was created, so the drop is one step from being reversible: ${JSON.stringify(nsProbe)}`,
+    );
+    assert(
+      /EPERM|not permitted|denied/i.test(nsProbe.result?.error ?? ""),
+      `unshare failed for some reason other than being refused, so this proves nothing: ${JSON.stringify(nsProbe)}`,
+    );
+    console.log("\nPASS — unshare(CLONE_NEWUSER) was refused, so the capability bounding-set drop is a real ceiling.");
+
     rpc.close();
   } finally {
     await containerLog.stop();
