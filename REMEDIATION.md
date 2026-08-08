@@ -263,7 +263,7 @@ The gap between what the README claims and what the code does is the fastest way
 
 | # | Item | Status | Effort |
 |---|------|--------|--------|
-| 2.1 | Write an actual threat model | 🔴 | 1d |
+| 2.1 | Write an actual threat model | 🟢 | 1d |
 | 2.2 | Soften README claims to match current enforcement | 🟢 | 4h |
 | 2.3 | Correct "query by intent" to describe what Semantic FS does | 🔴 | 2h |
 | 2.4 | Fix doc drift (Crew shape counts, provider tests, YAML count) | 🔴 | 2h |
@@ -277,6 +277,18 @@ The raw material already exists and is unusually honest, just scattered and fram
 **Fix.** One page, `docs/threat-model.md`: assets, adversaries (prompt-injected agent, malicious resident app, malicious manifest from the registry, network attacker, host-local attacker), trust boundaries, what is enforced by what mechanism, and an explicit "not protected against" list that consolidates the scattered notes. Link it from the README security section and from SECURITY.md.
 
 **Verify.** Every deferred-scope note in `docs/*.md` is either referenced from the threat model or moved into it.
+
+**Closed.** `docs/threat-model.md`: seven assets, six adversaries (T1 prompt-injected agent → T6 malicious remote endpoint, plus an explicit trusted-by-assumption list — host kernel, Docker daemon, LLM provider), nine trust boundaries with the mechanism holding each and its real strength, the three-tier enforcement table with a *verification artifact* per row, and two separate "not protected" lists.
+
+Three things worth naming about how it's written, because they're what make it useful rather than decorative:
+
+1. **The adversaries are ordered by how well Berth does against them, and it says so.** T1 is what the kernel layer is designed for and holds against; T2 (malicious resident app) and T3 (malicious manifest) are where the architecture is weakest, stated in those words. The section on trust boundaries ends on the pattern behind it — B2 is genuinely strong and everything adjacent to it is weak — which is the same sentence Phase 1's preamble opens with, now reachable by a reader who never opens this file.
+2. **"Not protected against" is split into *open gaps* and *out of scope by decision*,** because conflating them is how a threat model becomes a to-do list nobody trusts. Open gaps carry their remediation ID. The out-of-scope list carries the *reason* — per-syscall audit logging is impossible because Landlock has no deny-notification hook, not merely unimplemented; `docker exec` bypassing `agent-init` is inherent to Docker, not a bug `--apps` failed to fix.
+3. **A closing map from every `docs/*.md` scope section to the section covering it**, which is this item's verify criterion made checkable rather than asserted. Thirteen source docs, including the four whose scope notes have no threat-model impact (local-Docker-only, YAML shape limits, schema fidelity) — named as such rather than silently omitted, so the map is a complete accounting.
+
+Two claims got corrected against the source while writing it: the enforcement-tier table's test references (Tests 1–2 and 10 are writes, 3–4 reads, 6–7 symlink escape and concurrency — the earlier draft's grouping was wrong), and the snapshot entry, which separates a real decision (`BERTH_TOKEN_SECRET` deliberately not captured, since restoring a stale secret is a regression) from the gap sitting next to it (the whole container environment *is* captured to an unmodded `env.json`, 5.5).
+
+Linked from three places: the README's `What isn't enforced yet` section (both as an entry point for evaluators and as the "full version" pointer under the summary line 2.2 ended on), and SECURITY.md twice — once at the top as required reading before filing, once in the report checklist, replacing the capability-table-only pointer with one that names the specific section defining what counts as a vulnerability. All relative links and anchors verified to resolve.
 
 ### 2.2 — Soften README claims to match current enforcement
 
