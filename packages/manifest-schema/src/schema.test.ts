@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { BerthManifestSchema } from "./schema.js";
-import { matchesCapability, parseCapability } from "./capability.js";
+import { matchesCapability, parseCapability, capabilityIssue, filesystemScopeIssue } from "./capability.js";
 
 test("accepts the PRD's github-assistant manifest", () => {
   const result = BerthManifestSchema.safeParse({
@@ -125,4 +125,57 @@ test("matchesCapability handles glob scopes", () => {
 test("parseCapability splits namespace/action/scope", () => {
   const parsed = parseCapability("filesystem:read:/workspace");
   assert.deepEqual(parsed, { namespace: "filesystem", action: "read", scope: "/workspace" });
+});
+
+// filesystem: scopes are the one capability scope that becomes a real path
+// agent-init creates as uid 0 (with CAP_SYS_ADMIN, and in `berth dev` on the
+// developer's host through the bind mount) before Landlock is applied — so
+// they're validated here, at manifest-load time, where the error can name a
+// line in berth.yml. See REMEDIATION.md item 1.12.
+function capabilityResult(capability: string) {
+  return BerthManifestSchema.safeParse({ name: "app", version: "1.0.0", capabilities: [capability] });
+}
+
+test("rejects filesystem:write:/ — the whole container filesystem", () => {
+  const result = capabilityResult("filesystem:write:/");
+  assert.equal(result.success, false);
+  assert.match(result.error!.issues[0]!.message, /entire container filesystem/);
+  assert.deepEqual(result.error!.issues[0]!.path, ["capabilities", 0]);
+});
+
+test("rejects filesystem scopes outside the allowed prefixes", () => {
+  for (const scope of ["/etc", "/etc/passwd", "/root", "/usr/local/bin", "/workspacex", "/tmpfoo"]) {
+    assert.equal(capabilityResult(`filesystem:write:${scope}`).success, false, `filesystem:write:${scope} should be rejected`);
+    assert.equal(capabilityResult(`filesystem:read:${scope}`).success, false, `filesystem:read:${scope} should be rejected`);
+  }
+});
+
+test("rejects a filesystem scope that isn't an absolute canonical path", () => {
+  // "*" is the one worth spelling out: it used to compile into a Landlock
+  // grant on a literal directory named "*", which agent-init then created.
+  for (const scope of ["*", "workspace", "/workspace/../etc", "/workspace/./x", "/workspace//x", "/workspace/", "/workspace/*/src"]) {
+    assert.equal(capabilityResult(`filesystem:write:${scope}`).success, false, `filesystem:write:${scope} should be rejected`);
+  }
+});
+
+test("accepts the filesystem scopes first-party apps actually declare", () => {
+  for (const scope of ["/workspace", "/workspace/*", "/workspace/packages/docker-orchestrator/test/fixtures/boundary-app-a", "/context", "/tmp/my-app", "/app"]) {
+    assert.equal(capabilityResult(`filesystem:write:${scope}`).success, true, `filesystem:write:${scope} should be accepted`);
+    assert.equal(capabilityResult(`filesystem:read:${scope}`).success, true, `filesystem:read:${scope} should be accepted`);
+  }
+});
+
+test("leaves non-filesystem scopes alone — they're hosts, ports and peer names, not paths", () => {
+  for (const capability of ["browser:navigate:*", "browser:navigate:*.github.com", "github:read:repos", "network:connect:*", "network:peer:*", "terminal:attach:*"]) {
+    assert.equal(capabilityResult(capability).success, true, `${capability} should be accepted`);
+  }
+});
+
+test("filesystemScopeIssue is exported for callers that validate capabilities outside a manifest", () => {
+  // @berth/sdk's generate-capability-policy.ts uses this on grants-server
+  // strings, which never pass through BerthManifestSchema at all.
+  assert.equal(filesystemScopeIssue("/workspace/notes"), undefined);
+  assert.ok(filesystemScopeIssue("/etc"));
+  assert.ok(capabilityIssue("filesystem:write:/etc"));
+  assert.equal(capabilityIssue("github:read:repos"), undefined);
 });
