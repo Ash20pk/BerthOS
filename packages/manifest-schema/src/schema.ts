@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { capabilityIssue } from "./capability.js";
 
 /**
  * Capability strings are "namespace:action:scope", where scope may contain a
@@ -101,6 +102,18 @@ export const BerthManifestSchema = z
     resources: ResourcesSpec,
   })
   .superRefine((manifest, ctx) => {
+    // Semantic capability validation, on top of CapabilityString's grammar:
+    // a filesystem: scope becomes a real path agent-init creates as root and
+    // grants Landlock access beneath, so it can't be an arbitrary string.
+    // Reported per-index so loadManifest()'s YAML line mapping points at the
+    // offending list entry rather than the whole `capabilities:` block.
+    manifest.capabilities.forEach((capability, index) => {
+      const issue = capabilityIssue(capability);
+      if (issue) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["capabilities", index], message: issue });
+      }
+    });
+
     if (manifest.governs && !manifest.exports.some((exportSpec) => exportSpec.name === "evaluate_action")) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
