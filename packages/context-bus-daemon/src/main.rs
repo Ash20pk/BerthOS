@@ -57,6 +57,43 @@ fn try_send_payload(sender: &mpsc::Sender<Payload>, payload: Payload, context: &
     }
 }
 
+/// Hands a just-bound control socket to the shared `berth` group, mode 0660.
+///
+/// connect(2) on a pathname socket needs write permission on it, and a socket
+/// created under the default umask is 0755 — reachable by root and nobody
+/// else. Every app in the sandbox is meant to reach this daemon (that is what
+/// the bus *is*), so the moment apps stop being uid 0 this is what keeps it
+/// true. See docs/per-app-uid-design.md's socket table.
+///
+/// Deliberately not fatal. A missing group or a filesystem that refuses the
+/// chown leaves the daemon reachable by root, which is strictly better than
+/// refusing to start — and today, before any app has a uid of its own, it
+/// changes nothing at all.
+fn grant_shared_group(socket_path: &str) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let gid: u32 = match std::env::var("BERTH_SHARED_GID") {
+        Ok(raw) => match raw.parse() {
+            Ok(gid) => gid,
+            Err(_) => {
+                eprintln!("[context-bus] WARNING: BERTH_SHARED_GID={raw:?} is not a number — leaving {socket_path} root-owned");
+                return;
+            }
+        },
+        Err(_) => 9999,
+    };
+    if gid == 0 {
+        return;
+    }
+    if let Err(err) = std::os::unix::fs::chown(socket_path, None, Some(gid)) {
+        eprintln!("[context-bus] WARNING: chown {socket_path} to gid {gid} failed ({err}) — a non-root app cannot reach it");
+        return;
+    }
+    if let Err(err) = std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o660)) {
+        eprintln!("[context-bus] WARNING: chmod {socket_path} failed ({err}) — a non-root app cannot reach it");
+    }
+}
+
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     let socket_path =
@@ -66,6 +103,7 @@ async fn main() -> std::io::Result<()> {
     let _ = std::fs::remove_file(&socket_path);
 
     let listener = UnixListener::bind(&socket_path)?;
+    grant_shared_group(&socket_path);
     eprintln!("[context-bus] listening on {socket_path}");
 
     let subscribers: Subscribers = Arc::new(Mutex::new(HashMap::new()));

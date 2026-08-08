@@ -72,7 +72,7 @@ func main() {
 	registry := control.NewPidRegistry()
 
 	go func() {
-		if err := control.Serve(socketPath, idx, registry); err != nil {
+		if err := control.Serve(socketPath, idx, registry, gid); err != nil {
 			log.Fatalf("[semantic-fs] control socket: %v", err)
 		}
 	}()

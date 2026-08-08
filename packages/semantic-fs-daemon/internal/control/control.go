@@ -90,11 +90,26 @@ func resolveTgid(pid int) int {
 	return pid
 }
 
-func Serve(socketPath string, idx *index.Index, registry *PidRegistry) error {
+func Serve(socketPath string, idx *index.Index, registry *PidRegistry, sharedGid int) error {
 	_ = os.Remove(socketPath)
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", socketPath, err)
+	}
+	// connect(2) on a pathname socket needs write permission on it, and a
+	// socket created under the default umask is 0755 — reachable by root and
+	// nobody else. Every app is meant to reach this one (entrypoint.sh:
+	// "only the control socket is unconditionally reachable"), so it is given
+	// to the shared `berth` group the moment apps stop being root. Failure is
+	// logged rather than fatal: on a kernel or image without that group the
+	// daemon is still useful to root, and taking the container down over it
+	// would be a worse outcome than a control socket only root can reach.
+	if sharedGid > 0 {
+		if err := os.Chown(socketPath, -1, sharedGid); err != nil {
+			log.Printf("[semantic-fs:control] WARNING: chown %s to gid %d failed (%v) — a non-root app cannot reach it", socketPath, sharedGid, err)
+		} else if err := os.Chmod(socketPath, 0o660); err != nil {
+			log.Printf("[semantic-fs:control] WARNING: chmod %s failed (%v) — a non-root app cannot reach it", socketPath, err)
+		}
 	}
 
 	for {
