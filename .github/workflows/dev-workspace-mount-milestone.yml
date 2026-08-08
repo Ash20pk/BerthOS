@@ -1,0 +1,40 @@
+name: Dev Workspace Mount
+
+# Verifies that `berth dev` cannot write the developer's own repository — see
+# REMEDIATION.md 1.6 and
+# packages/docker-orchestrator/test/dev-workspace-mount-milestone.mjs.
+#
+# Like published-port-security.yml and on-install-milestone.yml, and unlike
+# capability-enforcement.yml, none of this depends on the runner's kernel
+# providing Landlock: a read-only bind mount is enforced by the VFS (EROFS),
+# so every assertion holds identically on a host where agent-init fails open.
+# It needs a real Docker daemon and a real image build, which is why it's here
+# rather than in build-lint-test.yml.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.21.0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Run dev-workspace-mount-milestone.mjs
+        working-directory: packages/docker-orchestrator
+        run: node test/dev-workspace-mount-milestone.mjs
