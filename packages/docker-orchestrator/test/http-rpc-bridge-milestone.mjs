@@ -44,6 +44,10 @@ async function main() {
     bindMount: { hostPath: REPO_ROOT, containerPath: "/workspace" },
     workingDir: "/workspace/apps/filesystem",
     httpRpc: { authToken },
+    // Where `berth dev` puts app data. Apps run as their own uid now (Step 2
+    // of docs/per-app-uid-design.md) and cannot write the bind-mounted
+    // repository root, which is owned by the developer or the CI runner.
+    env: { BERTH_WORKSPACE_ROOT: "/workspace/.berth/dev-workspace" },
     docker,
   });
 

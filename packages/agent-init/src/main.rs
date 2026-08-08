@@ -194,6 +194,123 @@ fn drop_all_capabilities() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// The identity this app was provisioned with by entrypoint.sh's
+/// provision_app_identity() — uid/gid `10000 + index`, plus the supplementary
+/// groups that reach the resources shared by design (`berth` for /context and
+/// the daemon control sockets, `tty` for a terminal:* app's pty).
+///
+/// Absent means "stay root", and that is a supported state, not a failure:
+/// provisioning warns and continues if adduser fails, `agent-init` is run
+/// directly by several tests, and neither should be forced into a uid that
+/// doesn't exist. Step 2 of docs/per-app-uid-design.md.
+struct AppIdentity {
+    uid: u32,
+    gid: u32,
+    supplementary_gids: Vec<u32>,
+}
+
+fn app_identity() -> Option<AppIdentity> {
+    parse_app_identity(
+        env::var("BERTH_APP_UID").ok().as_deref(),
+        env::var("BERTH_APP_GID").ok().as_deref(),
+        env::var("BERTH_APP_SUPPLEMENTARY_GIDS").ok().as_deref().unwrap_or(""),
+    )
+}
+
+/// Split from app_identity() so the unit tests below can exercise it without
+/// mutating the process environment — cargo runs tests as threads of one
+/// process, so a test that set BERTH_APP_UID would be visible to every other
+/// test running at the same time.
+///
+/// Anything malformed yields None, i.e. "stay root". A uid this process
+/// cannot parse is not one it should try to become, and refusing to boot over
+/// it would be a worse trade than the status quo it falls back to.
+fn parse_app_identity(uid: Option<&str>, gid: Option<&str>, supplementary: &str) -> Option<AppIdentity> {
+    let uid: u32 = uid?.trim().parse().ok()?;
+    let gid: u32 = gid?.trim().parse().ok()?;
+    // Zero is not an identity to switch *to* — it's the one being left. It
+    // reaches here when provisioning failed and something exported a
+    // placeholder, and treating it as valid would log a successful "drop" to
+    // root.
+    if uid == 0 || gid == 0 {
+        return None;
+    }
+    let supplementary_gids = supplementary
+        .split(',')
+        .filter_map(|entry| entry.trim().parse::<u32>().ok())
+        .filter(|gid| *gid != 0)
+        .collect();
+    Some(AppIdentity { uid, gid, supplementary_gids })
+}
+
+/// Becomes the app's uid, irreversibly, and verifies it.
+///
+/// Order is the whole of the correctness here, and each call is what removes
+/// the privilege the previous one needed: `setgroups` first (it needs
+/// CAP_SETGID), then `setresgid`, then `setresuid` last. Doing it the other
+/// way round leaves a process that has dropped to an unprivileged uid while
+/// still carrying root's supplementary groups — which for this container
+/// means gid 0, the group that owns everything.
+///
+/// All three of real, effective, and saved are set. Setting only the
+/// effective uid would leave the saved uid at 0 and make the whole thing a
+/// `setuid(0)` away from undone, which is the failure mode this is meant to
+/// prevent rather than reproduce.
+///
+/// No `capset` back to root is possible afterward: the kernel clears the
+/// permitted and effective capability sets when a process's uid moves away
+/// from 0 with SECBIT_KEEP_CAPS unset (it is unset — nothing here sets it).
+/// That is relied on, but not trusted: the verification below re-reads the
+/// uid and tries `setuid(0)`, because "the kernel does this" is exactly the
+/// kind of assumption REMEDIATION.md 1.3 was made of.
+fn switch_to_app_identity(identity: &AppIdentity) -> Result<(), String> {
+    let mut groups: Vec<libc::gid_t> = vec![identity.gid as libc::gid_t];
+    for gid in &identity.supplementary_gids {
+        if !groups.contains(&(*gid as libc::gid_t)) {
+            groups.push(*gid as libc::gid_t);
+        }
+    }
+
+    // SAFETY: each of these is a plain syscall wrapper over values this
+    // process owns; `groups` outlives the setgroups() call it is passed to.
+    unsafe {
+        if libc::setgroups(groups.len(), groups.as_ptr()) != 0 {
+            return Err(format!("setgroups({groups:?}) failed: {}", std::io::Error::last_os_error()));
+        }
+        if libc::setresgid(identity.gid, identity.gid, identity.gid) != 0 {
+            return Err(format!("setresgid({}) failed: {}", identity.gid, std::io::Error::last_os_error()));
+        }
+        if libc::setresuid(identity.uid, identity.uid, identity.uid) != 0 {
+            return Err(format!("setresuid({}) failed: {}", identity.uid, std::io::Error::last_os_error()));
+        }
+
+        // Verification, not decoration. A silent no-op here would hand the
+        // app root while every log line claimed otherwise — the worst
+        // possible outcome, since it is indistinguishable from success.
+        if libc::getuid() != identity.uid || libc::geteuid() != identity.uid {
+            return Err(format!(
+                "uid is {}/{} after setresuid({}) — the drop did not take",
+                libc::getuid(),
+                libc::geteuid(),
+                identity.uid
+            ));
+        }
+        if libc::setuid(0) == 0 {
+            return Err("setuid(0) succeeded after the drop — the uid change is reversible".to_string());
+        }
+    }
+    Ok(())
+}
+
+/// One structured line for the uid drop, matching the other audit events.
+fn log_uid_dropped_event(app_name: &str, uid: u32, gid: u32, dropped: bool, detail: &str) {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    eprintln!(
+        "[agent-init] {{\"event\":\"app_uid_applied\",\"bootId\":{:?},\"app\":{app_name:?},\"uid\":{uid},\"gid\":{gid},\"dropped\":{dropped},\"detail\":{detail:?},\"timestamp\":{now}}}",
+        boot_id()
+    );
+}
+
 fn main() {
     let policy_path =
         env::var("BERTH_CAPABILITY_POLICY").unwrap_or_else(|_| ".berth/capability-policy.json".to_string());
@@ -319,6 +436,46 @@ fn main() {
         log_seccomp_event("network_seccomp_filter", &app_name, false, "network capability declared — datagram sockets left open for DNS");
     }
 
+    // Genuinely last, after Landlock, the capability drop, and both seccomp
+    // filters — every one of those needs root, and none of them can be
+    // reapplied once this returns. See docs/per-app-uid-design.md's ordering
+    // note. Landlock's domain is inode-based and seccomp's filter is
+    // process-wide; neither cares about the uid change, and both survive it
+    // and the exec() below.
+    match app_identity() {
+        Some(identity) => match switch_to_app_identity(&identity) {
+            Ok(()) => {
+                eprintln!(
+                    "[agent-init] running \"{app_name}\" as uid {} (gid {}, supplementary {:?}) — no longer root",
+                    identity.uid, identity.gid, identity.supplementary_gids
+                );
+                log_uid_dropped_event(&app_name, identity.uid, identity.gid, true, "irreversible");
+            }
+            Err(detail) => {
+                // Fail closed wherever enforcement is required. A half-applied
+                // identity — supplementary groups set, uid not — is a worse
+                // state than either end of it, and there is no way to tell
+                // from here which half took.
+                if require_enforcement {
+                    eprintln!(
+                        "[agent-init] FATAL: BERTH_REQUIRE_ENFORCEMENT is set but the uid drop for \"{app_name}\" failed ({detail}) — refusing to exec as root."
+                    );
+                    log_uid_dropped_event(&app_name, identity.uid, identity.gid, false, &detail);
+                    log_enforcement_refused_event(&app_name, &detail);
+                    std::process::exit(1);
+                }
+                eprintln!("[agent-init] WARNING: could not run \"{app_name}\" as uid {} ({detail}) — continuing as root.", identity.uid);
+                log_uid_dropped_event(&app_name, identity.uid, identity.gid, false, &detail);
+            }
+        },
+        None => {
+            // Not a warning. entrypoint.sh exports nothing when provisioning
+            // failed or was never attempted (agent-init run directly by a
+            // test), and root is what every Berth container did until Step 2.
+            log_uid_dropped_event(&app_name, 0, 0, false, "no BERTH_APP_UID — running as root");
+        }
+    }
+
     let err = Command::new(&args[0]).args(&args[1..]).exec();
     eprintln!("[agent-init] failed to exec {args:?}: {err}");
     std::process::exit(1);
@@ -422,6 +579,19 @@ fn is_allowed_write_path(path: &str) -> bool {
         .any(|prefix| path == *prefix || path.starts_with(&format!("{prefix}/")))
 }
 
+/// Hands a directory this process just created to the app's own uid, so that
+/// a write path Landlock grants is one DAC also allows. A no-op when no app
+/// identity was provisioned, which is the pre-Step-2 world.
+fn give_to_app(path: &str) {
+    let Some(identity) = app_identity() else { return };
+    if let Err(err) = std::os::unix::fs::chown(path, Some(identity.uid), Some(identity.gid)) {
+        eprintln!(
+            "[agent-init] WARNING: created \"{path}\" but couldn't give it to uid {} ({err}) — writes there will fail with EACCES despite the Landlock grant",
+            identity.uid
+        );
+    }
+}
+
 fn apply_policy(policy_path: &str) -> Result<(CapabilityPolicy, RulesetStatus), Box<dyn std::error::Error>> {
     let raw = std::fs::read_to_string(policy_path)?;
     let policy: CapabilityPolicy = serde_json::from_str(&raw)?;
@@ -514,6 +684,18 @@ fn apply_policy(policy_path: &str) -> Result<(CapabilityPolicy, RulesetStatus), 
         if !Path::new(path).exists() {
             if let Err(err) = std::fs::create_dir_all(path) {
                 eprintln!("[agent-init] WARNING: couldn't create \"{path}\" ahead of granting write access ({err})");
+            } else {
+                // A directory this process just created as root, for an app
+                // that is about to stop being root, would otherwise be
+                // granted by Landlock and refused by DAC — an EACCES on a
+                // path the audit line says was allowed, which is the most
+                // confusing failure available.
+                //
+                // Only paths created here. An existing one belongs to
+                // somebody — /tmp, /context, a bind mount — and taking
+                // ownership of it is not agent-init's call to make (see
+                // Blocker 1 in docs/per-app-uid-design.md).
+                give_to_app(path);
             }
         }
         match PathFd::new(path) {
@@ -592,6 +774,94 @@ fn apply_policy(policy_path: &str) -> Result<(CapabilityPolicy, RulesetStatus), 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // "Stay root" is the fallback for every shape of missing or malformed
+    // input, and it has to be, since agent-init is run directly by several
+    // tests and by any container where provisioning warned and continued.
+    #[test]
+    fn a_missing_or_malformed_identity_means_staying_root() {
+        for (uid, gid) in [
+            (None, None),
+            (Some("10000"), None),
+            (None, Some("10000")),
+            (Some(""), Some("10000")),
+            (Some("root"), Some("10000")),
+            (Some("10000"), Some("wheel")),
+            // Zero is the uid being left, never one to switch to — it reaches
+            // here only when something exported a placeholder, and honouring
+            // it would log a successful "drop" into root.
+            (Some("0"), Some("0")),
+            (Some("10000"), Some("0")),
+            (Some("0"), Some("10000")),
+        ] {
+            assert!(
+                parse_app_identity(uid, gid, "9999").is_none(),
+                "uid={uid:?} gid={gid:?} must not produce an identity to switch to",
+            );
+        }
+    }
+
+    #[test]
+    fn a_well_formed_identity_carries_its_supplementary_groups() {
+        let identity = parse_app_identity(Some("10001"), Some("10001"), "9999,5").expect("should parse");
+        assert_eq!(identity.uid, 10001);
+        assert_eq!(identity.gid, 10001);
+        // `berth` (shared: /context and the daemon sockets) and `tty` (pty
+        // allocation for a terminal:* app). Losing these silently is what
+        // would make /context unreachable for a reason nothing points at.
+        assert_eq!(identity.supplementary_gids, vec![9999, 5]);
+    }
+
+    // Garbage in the list is dropped rather than aborting the whole identity:
+    // an unparseable supplementary group costs the app one shared resource,
+    // while refusing the identity costs it the entire uid boundary.
+    #[test]
+    fn supplementary_group_parsing_skips_what_it_cannot_use() {
+        let identity = parse_app_identity(Some("10000"), Some("10000"), " 9999 ,,0,tty,5").expect("should parse");
+        assert_eq!(identity.supplementary_gids, vec![9999, 5], "empty, zero, and non-numeric entries are dropped");
+        let identity = parse_app_identity(Some("10000"), Some("10000"), "").expect("should parse");
+        assert!(identity.supplementary_gids.is_empty());
+    }
+
+    // The drop itself, against the real kernel. It runs in a forked child
+    // because setresuid is irreversible and cargo runs every test as a thread
+    // of one shared process — dropping uid in-process would break every test
+    // that ran after it, in whatever order they happened to run.
+    //
+    // Needs root to have anywhere to drop *from*, so it skips on the CI
+    // runner (non-root) and runs in the Alpine builder image and in any
+    // container. That asymmetry is why the parsing above is tested separately
+    // rather than only through this.
+    #[test]
+    fn dropping_to_an_app_uid_is_real_and_irreversible() {
+        if unsafe { libc::geteuid() } != 0 {
+            eprintln!("skipping: not root, so there is no privilege to drop");
+            return;
+        }
+        let identity = AppIdentity { uid: 10000, gid: 10000, supplementary_gids: vec![] };
+
+        // SAFETY: the child does nothing that requires the parent's locks —
+        // it calls syscalls and _exit(2), never the Rust runtime's allocator
+        // via a lock a forked thread could have been holding.
+        let pid = unsafe { libc::fork() };
+        assert!(pid >= 0, "fork failed: {}", std::io::Error::last_os_error());
+        if pid == 0 {
+            let code = match switch_to_app_identity(&identity) {
+                // switch_to_app_identity() verifies both halves itself: that
+                // the uid actually changed, and that setuid(0) is refused
+                // afterward. A silent no-op is the failure mode that matters
+                // — it would hand the app root while the audit line claimed
+                // otherwise.
+                Ok(()) => 0,
+                Err(_) => 1,
+            };
+            unsafe { libc::_exit(code) };
+        }
+        let mut status = 0;
+        unsafe { libc::waitpid(pid, &mut status, 0) };
+        let exited_cleanly = libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0;
+        assert!(exited_cleanly, "the uid drop failed or was reversible (wait status {status})");
+    }
 
     // Landlock only enforces the rights present in handled_access_fs; an
     // unhandled right is permitted everywhere, so this set going quietly

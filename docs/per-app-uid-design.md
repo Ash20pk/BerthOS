@@ -148,9 +148,9 @@ Each step is independently shippable and independently revertable. The ordering 
 
 | Step | Change | Closes |
 |---|---|---|
-| 0 | ~~`on_install` moves to build time (Blocker 4)~~ and ~~Blocker 1's open decision~~ — both **done**, the latter dissolved by 1.6's read-only mount. Remaining: `allow_other` + backing-file group on semantic-FS (Blockers 2, 3). | 1.5 ✅ 1.6 ✅ |
-| 1 | Create uids, groups, and `/run/berth/<app>`; `chown` the app dir, `.berth`, and the install-marker volume. No process changes uid yet. | — |
-| 2 | `setgroups`/`setresgid`/`setresuid` in `agent-init` before `exec`. Sockets stay where they are. **The whole risk lives here** — full regression matrix before anything is built on top. | — |
+| 0 | ~~`on_install` moves to build time (Blocker 4)~~, ~~Blocker 1's open decision~~, ~~`allow_other` + backing-file group on semantic-FS (Blockers 2, 3)~~ — **done**. | 1.5 ✅ 1.6 ✅ |
+| 1 | ~~Create uids, groups, and `/run/berth/<app>`; `chown` `.berth` and the install-marker volume~~ — **done**. No process changes uid yet. | — |
+| 2 | ~~`setgroups`/`setresgid`/`setresuid` in `agent-init` before `exec`~~ — **done**. Sockets stay where they are. **The whole risk lives here** — full regression matrix before anything is built on top. | — |
 | 3 | Sockets move to `/run/berth/<app>/rpc.sock`, mode `0700`; `/tmp` out of `BASELINE_WRITE_PATHS`, replaced by `/tmp/<app>`. | 1.4 (parts 1, 2) |
 | 4 | `SO_PEERCRED` in `rpc.ts`'s `connectionHandler` (`rpc.ts:58`), and in the context-bus (`main.rs:125`) and semantic-FS (`control.go:136`) control paths, replacing self-asserted identity. | 1.4 (part 3), 1.14 identity half |
 | 5 | Assert and test signal isolation; make `fail-closed` the governance default. | 1.11 |

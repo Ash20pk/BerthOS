@@ -114,8 +114,56 @@ provision_app_identity() {
   chown -R "$id:$id" "$app_dir/.berth" 2>/dev/null \
     || echo "[berth:entrypoint] WARNING: could not chown ${app_dir}/.berth to ${user} — the app may fail to write its own state" >&2
 
+  # Read by agent-init, which calls setgroups() with exactly this list before
+  # it drops uid. Without it the app would keep *root's* supplementary groups
+  # — gid 0, which owns most of the container — while holding an unprivileged
+  # uid, which is the worst of both.
+  local supplementary="${BERTH_SHARED_GID:-9999}"
+  local tty_gid
+  tty_gid="$(getent group tty | cut -d: -f3)"
+  if [ -n "$tty_gid" ] && id -nG "$user" 2>/dev/null | grep -qw tty; then
+    supplementary="${supplementary},${tty_gid}"
+  fi
+
   export BERTH_APP_UID="$id"
   export BERTH_APP_GID="$id"
+  export BERTH_APP_SUPPLEMENTARY_GIDS="$supplementary"
+}
+
+# The one host-owned directory a `berth dev` app still has to write, and the
+# whole of what is left of Blocker 1 in docs/per-app-uid-design.md. The
+# workspace root itself is read-only since REMEDIATION.md 1.6, so this is not
+# the repository — it is `.berth/dev-workspace`, which Berth creates,
+# gitignores, and mounts specifically to hold app data.
+#
+# Option 2 from that blocker: chgrp to the shared group rather than chown to
+# any one app, because this directory is deliberately shared (a companion
+# writing a file the primary reads is the point of multi-app mode). setgid so
+# files created in it stay reachable by the next app.
+#
+# It does mutate ownership on the developer's host, and that is a real cost
+# stated rather than hidden — bounded to one Berth-created, gitignored
+# directory, which is the trade the design accepted.
+grant_dev_workspace() {
+  local dir="${BERTH_WORKSPACE_ROOT:-}"
+  [ -n "$dir" ] || return 0
+  case "$dir" in
+    */.berth/dev-workspace) ;;
+    # Anything else is not the directory this was written for — a standalone
+    # app, a workspace root, a path someone set by hand. Leave it alone.
+    *) return 0 ;;
+  esac
+  # `berth dev` creates this host-side before the container starts (a nested
+  # mountpoint has to exist inside a read-only bind), but a caller using
+  # startContainer directly may only have set the variable. Creating it here
+  # as root, once, is what lets the app — which is about to stop being root —
+  # write there at all.
+  mkdir -p "$dir" 2>/dev/null || true
+  [ -d "$dir" ] || return 0
+  chgrp -R berth "$dir" 2>/dev/null \
+    || { echo "[berth:entrypoint] WARNING: could not chgrp ${dir} to berth — a non-root app cannot write it" >&2; return 0; }
+  chmod -R g+rwX "$dir" 2>/dev/null || true
+  chmod g+s "$dir" 2>/dev/null || true
 }
 
 # Run after generate-capability-policy.js, never before: the app must be able
@@ -221,6 +269,7 @@ if [ -z "${BERTH_APPS:-}" ]; then
   APP_NAME="$(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).appName)" "$SINGLE_APP_POLICY" 2>/dev/null || true)"
   if [ -n "$APP_NAME" ]; then
     provision_app_identity "$APP_NAME" 0 "$PWD"
+    grant_dev_workspace
     secure_capability_policy "$SINGLE_APP_POLICY"
   else
     echo "[berth:entrypoint] WARNING: could not read the app name from ${SINGLE_APP_POLICY} — running as root" >&2
@@ -427,6 +476,7 @@ while IFS=$'\t' read -r APP_NAME APP_DIR; do
   # the very next line, then overwritten by the next iteration. That is the
   # whole lifetime of the value; nothing after this loop should read it.
   provision_app_identity "$APP_NAME" "$INDEX" "$APP_DIR"
+  grant_dev_workspace
 
   # No app in multi-app mode reads the container's raw stdin — every app,
   # primary included, is reached exclusively via its own RPC Unix socket
