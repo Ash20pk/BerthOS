@@ -394,14 +394,16 @@ const ALLOWED_WRITE_PATH_PREFIXES: [&str; 4] = ["/workspace", "/context", "/tmp"
 
 /// Device paths the *compiler* injects — never something a `berth.yml` can
 /// declare, which is why `@berth/manifest-schema`'s copy of the prefix list
-/// above deliberately does not grow to match. `/dev/null` and `/dev/tty` go to
-/// every app; `/dev/pts` and `/dev/ptmx` only to one declaring `terminal:*`
-/// (see generate-capability-policy.ts).
+/// above deliberately does not grow to match. `/dev/null` goes to every app;
+/// `/dev/pts` and `/dev/ptmx` only to one declaring `terminal:*` (see
+/// generate-capability-policy.ts, which also records why `/dev/tty` is not
+/// here: it cannot be opened without a controlling terminal, and the pty it
+/// would resolve to is already covered).
 ///
 /// Matched exactly rather than as prefixes. `/dev` must stay rejected: it is a
 /// tmpfs holding every device node the container has, and a prefix match would
 /// turn a four-entry convenience into a grant over all of them.
-const ALLOWED_WRITE_DEVICE_PATHS: [&str; 4] = ["/dev/null", "/dev/tty", "/dev/pts", "/dev/ptmx"];
+const ALLOWED_WRITE_DEVICE_PATHS: [&str; 3] = ["/dev/null", "/dev/pts", "/dev/ptmx"];
 
 /// Split out of apply_policy() so the unit tests below can exercise it without
 /// a kernel that enforces Landlock or a real policy file.
@@ -692,10 +694,10 @@ mod tests {
     // has, so the allowance is exact-match only.
     #[test]
     fn write_path_allowlist_permits_only_the_injected_device_paths() {
-        for path in ["/dev/null", "/dev/tty", "/dev/pts", "/dev/ptmx"] {
+        for path in ["/dev/null", "/dev/pts", "/dev/ptmx"] {
             assert!(is_allowed_write_path(path), "{path} is injected by generate-capability-policy.ts and must be grantable");
         }
-        for path in ["/dev", "/dev/sda", "/dev/mem", "/dev/pts/0", "/dev/null/x", "/dev/kmsg"] {
+        for path in ["/dev", "/dev/sda", "/dev/mem", "/dev/pts/0", "/dev/null/x", "/dev/kmsg", "/dev/tty"] {
             assert!(!is_allowed_write_path(path), "{path} must not be grantable — the device allowance is exact-match, not a prefix");
         }
     }

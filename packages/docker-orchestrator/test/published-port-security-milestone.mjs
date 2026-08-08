@@ -118,7 +118,7 @@ async function main() {
     check(
       "apps/terminal's tmux server started",
       !/server exited unexpectedly/.test(tmuxLog),
-      "tmux died — REMEDIATION 1.15 has regressed; check the compiled policy still grants /dev/pts, /dev/ptmx, /dev/null, /dev/tty",
+      "tmux died — REMEDIATION 1.15 has regressed; check the compiled policy still grants /dev/pts, /dev/ptmx, /dev/null",
     );
 
     const url = `http://127.0.0.1:${ports.terminal}/`;
@@ -135,7 +135,7 @@ async function main() {
       // unexpectedly" signature — apps/terminal could not allocate a pty on a
       // Landlock-enforcing kernel, so ttyd never started and its credential
       // could not be tested there (REMEDIATION.md 1.15). That is now fixed:
-      // the compiled policy grants the pty devices plus /dev/null and /dev/tty,
+      // the compiled policy grants the pty devices plus /dev/null,
       // which a strace of a real tmux server showed it opens O_RDWR. So the
       // skip is gone and this is a plain failure, which is the point — a
       // silent skip is how the breakage survived unnoticed in the first place.

@@ -14,11 +14,11 @@ from pathlib import Path
 
 from .manifest import load_manifest, parse_capability
 
-# /dev/null and /dev/tty are here, not just for terminal apps, because opening
-# /dev/null read-write is what any process does when it redirects a child's
-# stdio to it — see the TypeScript original for the strace this came from
-# (REMEDIATION.md 1.15).
-BASELINE_WRITE_PATHS = ["/tmp", "/dev/null", "/dev/tty"]
+# /dev/null is here, not just for terminal apps, because opening it read-write
+# is what any process does when it redirects a child's stdio to it — see the
+# TypeScript original for the strace this came from, and for why /dev/tty is
+# deliberately absent (REMEDIATION.md 1.15).
+BASELINE_WRITE_PATHS = ["/tmp", "/dev/null"]
 
 # Added only for an app declaring terminal:* — the one thing that capability
 # compiles into the kernel policy. Without it a tmux server cannot allocate a
