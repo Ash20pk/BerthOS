@@ -33,7 +33,7 @@
 import { writeFile, mkdir } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { loadManifest, parseCapability, CapabilityString, type ParsedCapability } from "@berth/manifest-schema";
+import { loadManifest, parseCapability, capabilityIssue, CapabilityString, type ParsedCapability } from "@berth/manifest-schema";
 
 const MANIFEST_PATH = process.env.BERTH_MANIFEST_PATH ?? join(process.cwd(), "berth.yml");
 const POLICY_PATH = process.env.BERTH_CAPABILITY_POLICY ?? join(process.cwd(), ".berth", "capability-policy.json");
@@ -126,6 +126,21 @@ export function compileCapabilityPolicy(appName: string, rawCapabilities: string
       parsed = parseCapability(validated.data);
     } catch (err) {
       console.error(`[berth:capability-policy] WARNING: ignoring capability string ${JSON.stringify(capability)} that failed to parse (${err})`);
+      continue;
+    }
+
+    // The filesystem-scope allowlist, re-checked here for the same reason the
+    // CapabilityString regex above is: a manifest's own capabilities were
+    // already rejected by BerthManifestSchema's superRefine, but a
+    // grants-server `approved` string arrives with no schema check at all,
+    // and every path in this policy is one agent-init will mkdir as root
+    // before enforcement. Skipped with a warning rather than thrown, matching
+    // the malformed-string handling above — agent-init's fallback for "no
+    // policy file" is to run *unrestricted*, so failing policy generation is
+    // strictly worse than dropping one bad capability.
+    const semanticIssue = capabilityIssue(validated.data);
+    if (semanticIssue) {
+      console.error(`[berth:capability-policy] WARNING: ignoring capability ${JSON.stringify(capability)} — ${semanticIssue}`);
       continue;
     }
 
