@@ -295,6 +295,36 @@ fn write_access_rights() -> BitFlags<AccessFs> {
     AccessFs::from_write(ABI::V3)
 }
 
+/// Path prefixes a declared write path may live under. A deliberate duplicate
+/// of ALLOWED_FILESYSTEM_SCOPE_PREFIXES in @berth/manifest-schema's
+/// capability.ts — that's the layer that rejects a bad `berth.yml` with a
+/// line-numbered error, but *this* process is the one that runs
+/// create_dir_all() as uid 0 with CAP_SYS_ADMIN, so it re-checks rather than
+/// trusting a policy file it didn't write. In `berth dev` those mkdirs land on
+/// the developer's host through the bind mount, which is what makes trusting
+/// the file upstream a bad trade.
+///
+/// Applied to write paths only. Read paths are not created (see the read loop
+/// below) and the policy's readPaths list mixes declared paths with
+/// generate-capability-policy.ts's own baseline — /usr, /lib, /etc, /proc,
+/// /dev — which this list would reject; the declared half is validated at
+/// manifest-validation time instead.
+const ALLOWED_WRITE_PATH_PREFIXES: [&str; 4] = ["/workspace", "/context", "/tmp", "/app"];
+
+/// Split out of apply_policy() so the unit tests below can exercise it without
+/// a kernel that enforces Landlock or a real policy file.
+fn is_allowed_write_path(path: &str) -> bool {
+    if !path.starts_with('/') || path == "/" || path.contains('\0') {
+        return false;
+    }
+    if path.split('/').skip(1).any(|segment| segment.is_empty() || segment == "." || segment == ".." || segment == "*") {
+        return false;
+    }
+    ALLOWED_WRITE_PATH_PREFIXES
+        .iter()
+        .any(|prefix| path == *prefix || path.starts_with(&format!("{prefix}/")))
+}
+
 fn apply_policy(policy_path: &str) -> Result<(CapabilityPolicy, RulesetStatus), Box<dyn std::error::Error>> {
     let raw = std::fs::read_to_string(policy_path)?;
     let policy: CapabilityPolicy = serde_json::from_str(&raw)?;
@@ -350,6 +380,20 @@ fn apply_policy(policy_path: &str) -> Result<(CapabilityPolicy, RulesetStatus), 
     let mut ruleset = builder.create()?;
 
     for path in &policy.write_paths {
+        // Refused before create_dir_all(), not after: the mkdir is the
+        // dangerous half. A path outside the allowlist is dropped from the
+        // ruleset entirely rather than failing the boot — the app then hits a
+        // real EACCES on its first write there, which is a truthful outcome,
+        // whereas exiting would turn a bad capability line into a container
+        // that won't start at all long after `berth test` should have caught
+        // it (see ALLOWED_WRITE_PATH_PREFIXES).
+        if !is_allowed_write_path(path) {
+            eprintln!(
+                "[agent-init] WARNING: refusing to create or grant write access to \"{path}\" — outside the allowed prefixes {}. Fix the filesystem:write capability in berth.yml.",
+                ALLOWED_WRITE_PATH_PREFIXES.join(", ")
+            );
+            continue;
+        }
         // PathFd::new() opens the path via a real file descriptor - it must
         // already exist on disk, or this (and the write grant along with
         // it) silently fails below. A declared write path like /workspace
@@ -375,26 +419,30 @@ fn apply_policy(policy_path: &str) -> Result<(CapabilityPolicy, RulesetStatus), 
 
     if restrict_reads {
         for path in &policy.read_paths {
-            // Same reasoning as the write-path loop above: a declared read
-            // path (e.g. another app's /workspace) isn't guaranteed to exist
-            // yet when this app's own agent-init runs — in a multi-app
-            // container, entrypoint.sh starts every app's chain concurrently
-            // with no ordering barrier, so whichever app actually creates
-            // the directory (typically the one with a *write* grant there)
-            // may not have run yet. PathFd::new() below would then fail with
-            // ENOENT and silently skip the grant — permanently, since the
-            // ruleset is finalized moments later by restrict_self() — even
-            // though the path exists by the time this app actually tries to
-            // read from it.
-            if let Err(err) = std::fs::create_dir_all(path) {
-                eprintln!("[agent-init] WARNING: couldn't create \"{path}\" ahead of granting read access ({err})");
-            }
+            // Deliberately NOT created, unlike the write loop above: a read
+            // grant needs no directory to exist for the app to work, so
+            // creating one is a pure side effect of *declaring* a capability
+            // — as uid 0, and in `berth dev` on the developer's host through
+            // the bind mount. A missing read path is reported instead.
+            //
+            // The cost is real and worth naming: PathFd::new() fails with
+            // ENOENT and the grant is skipped permanently, since the ruleset
+            // is finalized moments later by restrict_self(). That bites in a
+            // multi-app container, where entrypoint.sh starts every app's
+            // chain concurrently with no ordering barrier — an app declaring
+            // filesystem:read on a sibling's directory can run before the
+            // sibling (the one with the *write* grant) has created it. The
+            // fix for that is ordering, not mkdir'ing arbitrary manifest
+            // paths as root; until then the warning below says exactly what
+            // was lost rather than papering over it.
             match PathFd::new(path) {
                 Ok(fd) => {
                     ruleset = ruleset.add_rule(PathBeneath::new(fd, read_access))?;
                 }
                 Err(err) => {
-                    eprintln!("[agent-init] WARNING: couldn't open \"{path}\" to grant read access ({err}), skipping");
+                    eprintln!(
+                        "[agent-init] WARNING: couldn't open \"{path}\" to grant read access ({err}) — reads there will be DENIED for the whole life of this process, since the ruleset is about to be sealed. Create the path before boot if the app needs it."
+                    );
                 }
             }
         }
@@ -467,6 +515,41 @@ mod tests {
         let rights = write_access_rights();
         for unexpected in [AccessFs::ReadFile, AccessFs::ReadDir, AccessFs::Execute] {
             assert!(!rights.contains(unexpected), "{unexpected:?} must not be in the unconditional write set");
+        }
+    }
+
+    // Every path that reaches create_dir_all() as uid 0 goes through this
+    // predicate first, so a hole here is a root mkdir of an attacker-chosen
+    // path (and, under `berth dev`, on the host).
+    #[test]
+    fn allowed_write_paths_are_the_four_app_visible_roots_and_paths_beneath_them() {
+        for path in ["/workspace", "/workspace/pkg/app", "/context", "/context/agent-runs", "/tmp", "/tmp/my-app", "/app", "/app/.berth"] {
+            assert!(is_allowed_write_path(path), "{path} should be an allowed write path");
+        }
+    }
+
+    #[test]
+    fn write_path_allowlist_refuses_the_whole_filesystem_and_paths_outside_it() {
+        for path in [
+            "/",           // filesystem:write:/ — the entire container
+            "/etc",        // ...and the interesting parts of it
+            "/etc/passwd",
+            "/usr/local/bin",
+            "/root",
+            "/proc/sys",
+            "workspace",       // relative: resolved against whatever cwd happens to be
+            "*",               // filesystem:write:* — a literal directory named "*"
+            "/workspace/*/src",// a glob that isn't the trailing one the compiler strips
+            "/workspace/../etc",
+            "/workspace/./x",
+            "/workspace//x",
+            "/workspace/",     // non-canonical; the canonical form is already allowed
+            "/workspacex",     // prefix match must be segment-aware, not string-prefix
+            "/tmpfoo",
+            "/appdata",
+            "",
+        ] {
+            assert!(!is_allowed_write_path(path), "{path:?} must not be an allowed write path");
         }
     }
 }
