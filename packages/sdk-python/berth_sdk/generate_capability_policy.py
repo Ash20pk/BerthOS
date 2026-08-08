@@ -14,7 +14,16 @@ from pathlib import Path
 
 from .manifest import load_manifest, parse_capability
 
-BASELINE_WRITE_PATHS = ["/tmp"]
+# /dev/null is here, not just for terminal apps, because opening it read-write
+# is what any process does when it redirects a child's stdio to it — see the
+# TypeScript original for the strace this came from, and for why /dev/tty is
+# deliberately absent (REMEDIATION.md 1.15).
+BASELINE_WRITE_PATHS = ["/tmp", "/dev/null"]
+
+# Added only for an app declaring terminal:* — the one thing that capability
+# compiles into the kernel policy. Without it a tmux server cannot allocate a
+# pty on a Landlock-enforcing kernel.
+TERMINAL_WRITE_PATHS = ["/dev/pts", "/dev/ptmx"]
 
 
 def _baseline_read_paths() -> list[str]:
@@ -72,6 +81,8 @@ def main() -> None:
                 network_ports.add(port)
             else:
                 print(f'[berth:capability-policy] WARNING: ignoring invalid network:connect scope "{parsed.scope}" (expected a port 1-65535, or "*")')
+        elif parsed.namespace == "terminal":
+            write_paths.update(TERMINAL_WRITE_PATHS)
 
     read_paths = sorted(set(_baseline_read_paths()) | declared_read_paths) if declared_read_paths else []
 

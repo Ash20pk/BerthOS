@@ -9,9 +9,14 @@ capabilities:
   # narrowing to just /workspace: a general-purpose shell that can't `cat`
   # outside one directory isn't very useful as a terminal.
   - filesystem:write:/workspace
-  # Not kernel-enforced on its own (like browser:*/github:*) — just the
-  # signal @berth/docker-orchestrator's container.ts uses to map the ttyd
-  # port and start it. No network:connect:* is declared, so — same as every
+  # Two jobs. It's the signal @berth/docker-orchestrator's container.ts uses
+  # to map the ttyd port and start it — and, since REMEDIATION.md 1.15, it's
+  # also what grants Landlock write access to /dev/pts and /dev/ptmx. Without
+  # that grant tmux cannot allocate a pty at all on a kernel that enforces
+  # Landlock, which made all three of this app's exports fail there while
+  # working fine on Docker Desktop. It does not widen what the shell may then
+  # do: that's the filesystem/network capabilities above, inherited by every
+  # process the shell spawns. No network:connect:* is declared, so — same as every
   # other app here — the shell this spawns has zero outbound network access
   # under deny-by-default, inherited via Landlock same as any other child
   # process of this app.

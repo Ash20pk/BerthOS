@@ -41,10 +41,18 @@ export function launchChromium(): Promise<Browser> {
           // inside the container, so nothing legitimate needed the wider bind.
           "--remote-debugging-port=9222",
           // Chromium refuses its own sandbox as uid 0, and every process in a
-          // Berth container is uid 0 today. So this stays until apps get
-          // distinct uids (REMEDIATION 1.4/1.11) — which is also why the
-          // loopback bind above matters: a renderer exploit here lands as
-          // root in the container.
+          // Berth container is uid 0 today. A distinct per-app uid (REMEDIATION
+          // 1.4/1.11) is necessary to lift this but is not sufficient, and an
+          // earlier version of this comment was wrong to imply it would be
+          // enough on its own: Chromium's namespace sandbox calls
+          // clone(CLONE_NEWUSER|CLONE_NEWPID), which agent-init's seccomp
+          // filter refuses for every app unconditionally and deliberately
+          // (REMEDIATION 1.3). Enabling one means punching a hole in the
+          // other, for the app with the largest remote attack surface — the
+          // wrong app to make the exception for. See
+          // docs/per-app-uid-design.md § Blocker 5. So this stays, and the
+          // loopback bind above is what limits the blast radius: a renderer
+          // exploit here lands as root in the container.
           "--no-sandbox",
           // Standard hardening for headless Chromium in a Docker/CI container,
           // not a local-dev-only concern: Docker's default /dev/shm (64MB) is

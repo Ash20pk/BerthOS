@@ -14,12 +14,12 @@ What an attacker would actually be after, roughly in order of how bad it is to l
 
 | # | Asset | Where it lives |
 |---|---|---|
-| A1 | **The developer's host machine** | Anything reachable through a bind mount, a published port, or a git hook — `berth dev` mounts the workspace root read-write (*1.6*) |
+| A1 | **The developer's host machine** | Anything reachable through a bind mount, a published port, or a git hook — `berth dev` mounts the workspace root read-only, with writable paths mounted back over it (*1.6*, closed) |
 | A2 | **Credentials** | LLM API keys and `GITHUB_TOKEN` in the container environment (visible in `docker inspect`, *5.5*), fleet credentials in `~/.berthrc`, the grants-server operator token, registry per-name owner tokens, mesh peer tokens, and `BERTH_TOKEN_SECRET` |
 | A3 | **Agent state and conversation data** | `/context/agent-runs/*.json` (checkpoints, full message history) and `/context/agent-sessions/*.json`, mode 0644, unencrypted (*5.4*), plus everything under the semantic-FS data dir and any snapshot tarball |
 | A4 | **Outbound network reach** | What the container can connect to — including networks it can reach that you can't, i.e. SSRF into a corporate VPN, cloud instance metadata, or `host.docker.internal` (*1.8*) |
 | A5 | **The capability boundary between apps** | One app's declared capabilities being usable by another app in the same container (*1.4*, *1.11*) |
-| A6 | **Integrity of the capability policy itself** | `.berth/capability-policy.json` and the `berth.yml` it's compiled from — if either is writable by the thing being constrained, nothing below it matters (*1.6*) |
+| A6 | **Integrity of the capability policy itself** | `.berth/capability-policy.json` and the `berth.yml` it's compiled from — if either is writable by the thing being constrained, nothing below it matters. `berth.yml` is read-only inside the container since *1.6*; the policy lives in a volume the app can still write, which matters only because it is regenerated from the manifest on every boot |
 | A7 | **Availability of the enforcement path** | The governance app, the brokers, and the semantic-FS daemon, all killable by any app in the container (*1.11*, *1.14*) |
 
 ## Adversaries
@@ -30,7 +30,7 @@ The order matters: T1 is the one Berth exists for, and T2/T3 are the ones its cu
 
 **T2 — A malicious or compromised resident app.** Third-party code from the registry, a PR, or a dependency. It runs as uid 0 inside the container by construction (no `USER` directive anywhere), shares one PID namespace and one world-writable `/tmp` with every other app and daemon, and its own Landlock domain does not stop it from talking to processes that have wider domains. **Berth is currently a weak boundary against T2** — see [Not protected against](#not-protected-against-today).
 
-**T3 — A malicious manifest.** A `berth.yml` from the registry, a PR, or any repo you cloned. `on_install` is an unvalidated shell array executed as root *before* the capability policy is applied (*1.5*). Treat installing a third-party app as running its code as root, because that is what it is.
+**T3 — A malicious manifest.** A `berth.yml` from the registry, a PR, or any repo you cloned. `on_install` used to be an unvalidated shell array executed as root inside the sandbox, before the capability policy was applied; since *1.5* it runs as a Docker build layer instead, so it is no longer a boot-time escape from the sandbox. The trust question moves rather than disappearing: building a third-party app still executes its shell, with the build daemon's authority, on the machine doing the build. Treat installing a third-party app as running its code — at build time, on your host, not at runtime in the container.
 
 **T4 — A network attacker on the same LAN as the developer.** Closed by *1.7*: every port `berth dev` publishes binds `127.0.0.1`, ttyd requires a per-boot HTTP basic credential, VNC requires a per-boot password, and Chromium's CDP port is no longer published at all. Widening the binding takes an explicit `BERTH_PUBLISH_HOST`, which warns. What's left is what a *host-local* process can reach, which is T5.
 
@@ -49,9 +49,9 @@ The order matters: T1 is the one Berth exists for, and T2/T3 are the ones its cu
 | B3 | App process → sibling app process | *Nothing* | Sockets in world-writable `/tmp`, no `SO_PEERCRED` check, one shared uid, one shared PID namespace (*1.4*, *1.11*) |
 | B4 | App process → the daemons (context-bus, semantic-FS, mesh) | *Nothing* | Daemons run as root **outside any Landlock domain** — they start before `agent-init`. Identity is self-asserted from the request body in both (*1.14*) |
 | B5 | Container → internet | The egress broker and the GitHub API broker | **Partial.** Port is never checked, `*` reaches loopback/RFC1918/IMDS, DNS isn't pinned (*1.8*); the GitHub scope heuristic defaults to *allow* (*1.9*) |
-| B6 | Container → host filesystem | The image, plus whatever is bind-mounted | `Computer.boot()` and deployed targets mount nothing. **`berth dev` mounts the workspace root read-write** (*1.6*) |
+| B6 | Container → host filesystem | The image, plus whatever is bind-mounted | `Computer.boot()` and deployed targets mount nothing. `berth dev` mounts the workspace root **read-only** and mounts writable paths back over it — a shared `.berth/dev-workspace` for app data and a per-app volume for `.berth` (*1.6*, closed). Read-only is a VFS property, so this holds on kernels without Landlock too. `dev-workspace-mount-milestone.mjs` |
 | B7 | Host network → published ports | Loopback-only binding plus a per-boot credential on each | **Real for the LAN case** (*1.7*, closed): ttyd basic auth, VNC password, no published CDP. Still reachable by any host-local process, and a printed credential is only as private as the terminal it was printed to |
-| B8 | Manifest → enforced policy | `@berth/manifest-schema` validation and the filesystem path allowlist | Path scopes are constrained to `/workspace`, `/context`, `/tmp`, `/app` and checked three times, including in `agent-init` itself (*1.12*, closed). `on_install` is not constrained at all (*1.5*) |
+| B8 | Manifest → enforced policy | `@berth/manifest-schema` validation and the filesystem path allowlist | Path scopes are constrained to `/workspace`, `/context`, `/tmp`, `/app` and checked three times, including in `agent-init` itself (*1.12*, closed). `on_install` is unconstrained shell, but runs at image build rather than inside the sandbox (*1.5*, closed) |
 | B9 | Operator → grants / registry / mesh servers | Shared bearer tokens | Plain HTTP, no TLS option, no user/tenant/role model, no audit trail with a verifiable actor (*5.1*, *5.2*, *5.3*) |
 
 The pattern worth internalising: **B2 is genuinely strong and everything adjacent to it is weak.** Landlock is correctly implemented and correctly inherited; the bypasses are all *around* it — unsandboxed root daemons sharing a namespace and a writable `/tmp` with the app that was carefully sandboxed.
@@ -71,7 +71,8 @@ Three tiers. Treat the tier, not the capability name, as the security claim.
 | **Broker** | Egress broker (CONNECT gate on the hostname) | `browser:navigate:<pattern>`, `network:host:<pattern>` | `egress-broker-milestone.mjs` |
 | **Broker** | GitHub API broker (TLS-terminating, verb + path) | `github:read:<scope>`, `github:write:<scope>` | `github-assistant-milestone.mjs` |
 | **Host** | Loopback-only port publishing, per-boot ttyd/VNC credentials | who can reach a sandbox's human-facing ports from outside it | `published-port-security-milestone.mjs` |
-| **Recorded** | Nothing — reported by `requestCapability()`, used for `expose:` | `browser:screenshot:*`, `terminal:attach:*`, any unimplemented namespace | — |
+| **Kernel** | Landlock write rules on the pty devices | `terminal:*` — grants `/dev/pts` and `/dev/ptmx`, without which a tmux server cannot allocate a pty at all under enforcement (*1.15*) | `published-port-security-milestone.mjs`; Rust unit tests |
+| **Recorded** | Nothing — reported by `requestCapability()`, used for `expose:` | `browser:screenshot:*`, any unimplemented namespace | — |
 
 Full mechanics in [capability tokens reference](./capability-tokens-reference.md); the per-capability table is in the [README](../README.md#available-capabilities).
 
@@ -88,9 +89,7 @@ Full mechanics in [capability tokens reference](./capability-tokens-reference.md
 Each is tracked with evidence, a fix, and a verification step in [REMEDIATION.md](../REMEDIATION.md). These change what you should be willing to run.
 
 - **The container still holds `CAP_SYS_ADMIN`, and the daemons still run outside every filter (*1.3*, partially).** The reversibility of the capability drop is closed — `agent-init` refuses namespace creation outright — but that is a filter on the *app*, not a removal of the grant. `CAP_SYS_ADMIN` is added container-wide for the semantic-FS FUSE mount, and the context-bus, semantic-FS, and mesh daemons start before `agent-init` and so carry it with no seccomp filter and no Landlock domain. Mounting `/context` from a separate init step and dropping the cap before any app process exists is the real fix.
-- **Cross-app capability borrowing (*1.4*).** Any app can connect to any other app's RPC socket in `/tmp` and invoke its exports, acting with that app's capabilities. Per-app Landlock rulesets are individually correct and this makes them not matter. Same reachability exposes the context-bus, semantic-FS, and mesh daemon sockets — all root, all outside any Landlock domain. Previously flagged in [multi-app reference](./multi-app-reference.md#known-residual-risk-documented-not-fixed-here).
-- **Unsandboxed `on_install` (*1.5*).** Arbitrary shell as root with `CAP_SYS_ADMIN`, before any policy is applied.
-- **`berth dev` workspace mount (*1.6*).** An app with `filesystem:write:/workspace` can rewrite its own `berth.yml`, `.git/hooks/pre-commit`, or `package.json` scripts on your host.
+- **Cross-app capability borrowing (*1.4*).** Any app can connect to any other app's RPC socket in `/tmp` and invoke its exports, acting with that app's capabilities. Per-app Landlock rulesets are individually correct and this makes them not matter. Same reachability exposes the context-bus, semantic-FS, and mesh daemon sockets — all root, all outside any Landlock domain. Previously flagged in [multi-app reference](./multi-app-reference.md#known-residual-risk-documented-not-fixed-here). The fix is designed but not built — see [per-app uid design](./per-app-uid-design.md), which also establishes that a narrower Landlock policy cannot close this (Landlock does not gate `connect()` to a pathname Unix socket).
 - **Broker gaps (*1.8*, *1.9*).** No port allowlist; `*` reaches IMDS, loopback, and `host.docker.internal`; DNS re-resolved after the check; GitHub scope classification defaults to `repos` rather than deny. An app declaring both `github:*` and `network:host:*` gets a raw CONNECT tunnel with no path inspection.
 - **Capability tokens are never verified (*1.10*).** The HMAC is correct and nothing calls it; the signing secret is in the constrained app's own environment.
 - **Signals are unrestricted (*1.11*).** Any app can `kill -9` the governance app or a broker and force its failure mode — which for governance is fail-open.

@@ -31,7 +31,6 @@ const BROWSER_APP_DIR = join(REPO_ROOT, "apps", "browser-native");
 
 const docker = new Docker();
 const failures = [];
-const skipped = [];
 
 function check(name, condition, detail) {
   if (condition) {
@@ -108,6 +107,20 @@ async function main() {
       console.log(`  (the trigger call itself didn't complete: ${err instanceof Error ? err.message : err})`);
     }
 
+    // REMEDIATION 1.15's own assertion, and deliberately made against the
+    // container log rather than the RPC result: whether the *call* completed
+    // is subject to the stdio-attach raciness described above, whereas whether
+    // tmux's server died is not. This is the exact signature that made
+    // apps/terminal non-functional on every Landlock-enforcing kernel — all
+    // three of its exports go through ensureSession(), so this failing means
+    // the app does nothing at all, not that one feature degraded.
+    const tmuxLog = await containerLog(running.container);
+    check(
+      "apps/terminal's tmux server started",
+      !/server exited unexpectedly/.test(tmuxLog),
+      "tmux died — REMEDIATION 1.15 has regressed; check the compiled policy still grants /dev/pts, /dev/ptmx, /dev/null",
+    );
+
     const url = `http://127.0.0.1:${ports.terminal}/`;
     // The container's own log is where a Landlock denial shows up, and this
     // step is exactly where one lands: ttyd binds a port, and an app that
@@ -118,30 +131,16 @@ async function main() {
     const listening = await waitForOrFalse(async () => (await probe(url)).status !== 0, 30000);
 
     if (!listening) {
-      // Known, separately-tracked breakage — NOT a failure of the thing this
-      // file verifies. On a kernel that actually enforces Landlock, tmux's
-      // server can't start (allocating a pty is a write open of /dev/ptmx,
-      // which no declared write path covers), so apps/terminal never reaches
-      // the point of spawning ttyd. See REMEDIATION.md 1.15.
-      //
-      // Deliberately narrow: this skips ONLY when the container log carries
-      // that exact signature. Anything else — ttyd crashing, binding the
-      // wrong interface, a regression in the credential wiring — still fails
-      // the run, because those are what this test exists to catch.
-      const log = await containerLog(running.container);
-      const isKnownTmuxFailure = /tmux new-session[\s\S]*server exited unexpectedly/.test(log);
-      if (!isKnownTmuxFailure) {
-        console.log("\n--- terminal container log ---\n" + log + "\n--- end ---");
-        check("ttyd came up so its authentication could be tested", false, "ttyd never listened, and not for the known tmux/Landlock reason");
-      } else {
-        console.log("");
-        console.log("  SKIP: Tests 4-6 (ttyd authentication) — apps/terminal cannot start tmux on this kernel.");
-        console.log("        This is REMEDIATION 1.15 (apps/terminal is non-functional under Landlock),");
-        console.log("        a pre-existing bug this milestone discovered, not a failure of the port");
-        console.log("        binding or credential wiring asserted above. ttyd's --credential is");
-        console.log("        verified on any host where tmux does start (e.g. Docker Desktop).");
-        skipped.push("Tests 4-6: ttyd authentication (REMEDIATION 1.15)");
-      }
+      // This used to skip Tests 4-6 when the log carried tmux's "server exited
+      // unexpectedly" signature — apps/terminal could not allocate a pty on a
+      // Landlock-enforcing kernel, so ttyd never started and its credential
+      // could not be tested there (REMEDIATION.md 1.15). That is now fixed:
+      // the compiled policy grants the pty devices plus /dev/null,
+      // which a strace of a real tmux server showed it opens O_RDWR. So the
+      // skip is gone and this is a plain failure, which is the point — a
+      // silent skip is how the breakage survived unnoticed in the first place.
+      console.log("\n--- terminal container log ---\n" + (await containerLog(running.container)) + "\n--- end ---");
+      check("ttyd came up so its authentication could be tested", false, "ttyd never listened");
     } else {
 
     console.log("\n--- Test 4: an unauthenticated request is refused ---");
@@ -174,7 +173,6 @@ async function main() {
   await checkVnc();
 
   console.log("");
-  for (const s of skipped) console.log(`SKIPPED: ${s}`);
   if (failures.length > 0) {
     console.error(`FAILED (${failures.length}): ${failures.join(", ")}`);
     process.exit(1);

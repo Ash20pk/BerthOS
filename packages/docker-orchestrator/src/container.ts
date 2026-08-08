@@ -81,15 +81,29 @@ export interface StartContainerOptions {
    * package directories are present at the same relative path inside the
    * container. Omit for test/prod, where a real (non-symlinked) image was
    * already built via `npm ci`.
+   *
+   * `readOnly` mounts it `:ro`, which `berth dev` uses to stop an app with
+   * `filesystem:write:/workspace` writing the developer's own repository —
+   * `.git/hooks/pre-commit`, any `package.json`'s scripts, or its own
+   * `berth.yml` (REMEDIATION.md 1.6). Writable paths are then mounted back
+   * over it; see the CLI's resolveDevBindMount(). It defaults to off, so the
+   * milestone tests that mount the repo root read-write on purpose keep
+   * working unchanged.
    */
-  bindMount?: { hostPath: string; containerPath: string };
+  bindMount?: { hostPath: string; containerPath: string; readOnly?: boolean };
   /** Working directory inside the container — defaults to the bind mount's containerPath, or /app. */
   workingDir?: string;
-  /** Named volume used for the on_install marker file, so warm restarts skip reinstalling. */
-  installMarkerVolume?: string;
+  /**
+   * Named volume mounted over the app's `.berth/` directory. It used to hold
+   * the on_install marker that made warm restarts skip reinstalling; since
+   * that moved to a build layer (REMEDIATION.md 1.5) there is no marker, and
+   * what the volume does now is keep the generated capability policy out of
+   * the developer's own working tree, which `berth dev` bind-mounts.
+   */
+  appStateVolume?: string;
   /**
    * Additional `host:container` bind-mount strings, appended after
-   * `bindMount`/`installMarkerVolume`'s own binds. Used by `berth snapshot
+   * `bindMount`/`appStateVolume`'s own binds. Used by `berth snapshot
    * restore` to pre-populate a fresh container's semantic-fs backing
    * directory (BERTH_CONTEXT_DATA) from a restored snapshot's on-disk
    * archive, *before* semantic-fs-daemon opens its SQLite index at boot —
@@ -224,8 +238,12 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
   const workingDir = options.workingDir ?? options.bindMount?.containerPath ?? "/app";
 
   const binds: string[] = [];
-  if (options.bindMount) binds.push(`${options.bindMount.hostPath}:${options.bindMount.containerPath}`);
-  if (options.installMarkerVolume) binds.push(`${options.installMarkerVolume}:${workingDir}/.berth`);
+  if (options.bindMount) {
+    binds.push(
+      `${options.bindMount.hostPath}:${options.bindMount.containerPath}${options.bindMount.readOnly ? ":ro" : ""}`,
+    );
+  }
+  if (options.appStateVolume) binds.push(`${options.appStateVolume}:${workingDir}/.berth`);
   if (options.extraBinds) binds.push(...options.extraBinds);
 
   // Set whenever the caller passes a non-empty `apps` array — including a

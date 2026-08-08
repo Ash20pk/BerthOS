@@ -61,9 +61,17 @@ async function main() {
   const containerLog = await startLogCapture(running.container);
   try {
     await waitFor(() => /"hello-world-py" ready/.test(containerLog.text()), 20000, "hello-world-py runtime ready");
+    // Inverted by REMEDIATION 1.5. This used to assert that the Python
+    // lifecycle script *ran* the manifest's on_install at boot; that was the
+    // vulnerability — an unsandboxed root shell from a berth.yml, executed
+    // before any Landlock domain existed. on_install is a Docker build layer
+    // now, in both SDKs, so the boot-time absence is what proves the Python
+    // path was migrated too rather than quietly left behind. That its command
+    // still runs at all is covered at build time by on-install-milestone.mjs,
+    // and visible in this very run's build output as "python-on-install-ran".
     assert(
-      /running on_install: echo python-on-install-ran/.test(containerLog.text()),
-      "expected the Python lifecycle script to have actually run the manifest's on_install command",
+      !/running on_install/.test(containerLog.text()),
+      "expected no on_install execution at boot — the Python lifecycle script still runs manifest shell as root",
     );
     assert(
       /\[berth:capability-policy\] wrote/.test(containerLog.text()),

@@ -135,7 +135,8 @@ COPY --from=mesh-daemon-builder /mesh-daemon/target/release/mesh-daemon /usr/loc
 COPY --from=boringtun-builder /out/bin/boringtun-cli /usr/local/bin/boringtun-cli
 
 COPY docker/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY docker/run-on-install.sh /usr/local/bin/berth-run-on-install
+RUN chmod +x /entrypoint.sh /usr/local/bin/berth-run-on-install
 COPY docker/rpc-relay.js /usr/local/bin/berth-rpc-relay.js
 COPY docker/egress-broker.cjs /usr/local/bin/berth-egress-broker.js
 COPY docker/github-api-broker.cjs /usr/local/bin/berth-github-api-broker.js
@@ -151,6 +152,20 @@ ENTRYPOINT ["/sbin/tini", "--", "/entrypoint.sh"]
 # --- dev target: bind-mounted source, devDependencies kept for fast iteration ---
 FROM base AS dev
 ENV NODE_ENV=development
+# on_install runs here, at build time, and nowhere else — see
+# docker/run-on-install.sh and REMEDIATION.md 1.5. A dev image holds no app
+# source (it arrives via `berth dev`'s bind mount at container start), so this
+# copies a throwaway staging copy of it, runs each app's generated script
+# against that copy, and deletes it in the same layer. What survives is
+# whatever on_install installed *outside* the app directory — site-packages,
+# apk packages, a built asset — which is exactly what the bind mount doesn't
+# supply and what the boot-time version existed to provide.
+#
+# The context is always present (image.ts writes it unconditionally) and is
+# usually just a .keep file, so this is a no-op layer for the common case of
+# a manifest with no on_install.
+COPY on-install /berth-install-ctx
+RUN /usr/local/bin/berth-run-on-install /berth-install-ctx && rm -rf /berth-install-ctx
 CMD ["node", "node_modules/@berth/sdk/dist/runtime.js"]
 
 # --- production target: source + a real (non-symlinked) node_modules ---
@@ -168,4 +183,9 @@ ENV NODE_ENV=production
 # would make local iteration impossible.
 ENV BERTH_REQUIRE_ENFORCEMENT=1
 COPY . /app
+# Same build-time on_install as the dev stage above, but run in place: a
+# production image already holds the app's real source and node_modules at
+# /app, so there's nothing to stage twice and the working directory is the
+# one the app will actually run from. REMEDIATION.md 1.5.
+RUN /usr/local/bin/berth-run-on-install /app
 CMD ["node", "node_modules/@berth/sdk/dist/runtime.js"]

@@ -69,11 +69,15 @@ if [ -z "${BERTH_APPS:-}" ]; then
     export PYTHONPATH="/workspace/packages/sdk-python${PYTHONPATH:+:$PYTHONPATH}"
   fi
 
-  # Runs on_install hooks (once) and reports two independent flags: whether a
-  # browser:* capability is declared (needs Xvfb/a display) and whether a
-  # browser:navigate:*/network:host:* capability is declared (needs the
-  # egress broker) — deliberately not the same flag, since a plain
-  # network:host:* app (no Chromium, no display) still needs the broker.
+  # Reports two independent flags: whether a browser:* capability is declared
+  # (needs Xvfb/a display) and whether a browser:navigate:*/network:host:*
+  # capability is declared (needs the egress broker) — deliberately not the
+  # same flag, since a plain network:host:* app (no Chromium, no display)
+  # still needs the broker.
+  #
+  # It no longer runs the manifest's on_install commands: those are a Docker
+  # build layer now (docker/run-on-install.sh), not a root shell this script
+  # execs before agent-init has applied any Landlock domain. REMEDIATION.md 1.5.
   # The lifecycle script's last stdout line is "<0|1>,<0|1>" — everything
   # before that is its own on_install command output (already streamed to
   # stderr/stdout by execSync's inherited stdio).
@@ -287,11 +291,13 @@ run_app() {
 
   cd "$app_dir"
   export BERTH_MANIFEST_PATH="$app_dir/berth.yml"
-  export BERTH_INSTALL_MARKER="$app_dir/.berth/installed"
   export BERTH_CAPABILITY_POLICY="$app_dir/.berth/capability-policy.json"
   export BERTH_RPC_SOCKET="/tmp/berth-rpc/${app_name}.sock"
 
-  node "node_modules/@berth/sdk/dist/run-lifecycle.js" >/dev/null
+  # No run-lifecycle.js call here any more. Multi-app mode never used its
+  # browser/egress flags (the grep loop above decides those for the whole
+  # container), so once on_install moved to build time — REMEDIATION.md 1.5 —
+  # the only thing this invocation still did was cost a Node startup per app.
   node "node_modules/@berth/sdk/dist/generate-capability-policy.js"
   export BERTH_TOKEN_SECRET="$(node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))")"
 

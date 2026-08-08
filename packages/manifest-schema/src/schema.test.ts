@@ -27,6 +27,31 @@ test("rejects a malformed capability string", () => {
   assert.equal(result.success, false);
 });
 
+// on_install entries become lines in a generated build script (REMEDIATION
+// 1.5). The script file is what removes the Dockerfile-injection surface, so
+// these two checks are only about an entry being a command at all — a
+// multi-line command is legal and stays legal, which the third case pins so a
+// future "harden this" change doesn't quietly break a working manifest.
+test("rejects an empty on_install command", () => {
+  const result = BerthManifestSchema.safeParse({ name: "app", version: "1.0.0", on_install: ["echo ok", "   "] });
+  assert.equal(result.success, false);
+  assert.deepEqual(result.error?.issues[0]?.path, ["on_install", 1]);
+});
+
+test("rejects an on_install command containing a NUL byte", () => {
+  const result = BerthManifestSchema.safeParse({ name: "app", version: "1.0.0", on_install: ["echo \0 oops"] });
+  assert.equal(result.success, false);
+});
+
+test("accepts a multi-line on_install command", () => {
+  const result = BerthManifestSchema.safeParse({
+    name: "app",
+    version: "1.0.0",
+    on_install: ["set -x\napk add --no-cache jq"],
+  });
+  assert.equal(result.success, true);
+});
+
 test("rejects a non-semver version", () => {
   const result = BerthManifestSchema.safeParse({ name: "app", version: "v1" });
   assert.equal(result.success, false);

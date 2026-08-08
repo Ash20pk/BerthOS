@@ -40,10 +40,54 @@ const POLICY_PATH = process.env.BERTH_CAPABILITY_POLICY ?? join(process.cwd(), "
 const GRANTS_SERVER_URL = process.env.BERTH_GRANTS_SERVER_URL;
 const MESH_COORDINATOR_PORT = Number(process.env.BERTH_MESH_COORDINATOR_PORT ?? 4875);
 
-// Always writable regardless of what's declared: /tmp (scratch files, and
-// the context-bus Unix socket lives there) plus the context-bus socket path
-// itself, since connecting to a Unix socket requires write access to it.
-const BASELINE_WRITE_PATHS = ["/tmp"];
+// Always writable regardless of what's declared: /tmp, where scratch files
+// and every daemon/app Unix socket live.
+//
+// An earlier version of this comment justified that with "connecting to a
+// Unix socket requires write access to it." That is a DAC fact and not a
+// Landlock one, and the difference matters: Landlock hangs its filesystem
+// enforcement off security_file_open and the path_* hooks, while connecting
+// to a *pathname* socket goes through unix_find_other() ->
+// inode_permission(MAY_WRITE), which Landlock does not hook. (ABI 6's
+// LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET scopes abstract sockets, not these.)
+// So omitting /tmp here would not stop an app connecting to a socket in it —
+// which is why REMEDIATION.md 1.4 needs per-app uids rather than a narrower
+// policy. See docs/per-app-uid-design.md.
+const BASELINE_WRITE_PATHS = ["/tmp", "/dev/null"];
+
+// Granted to any app declaring a terminal:* capability. Established by
+// straceing a real `tmux new-session` rather than guessed — the previous
+// attempt at this (see REMEDIATION.md 1.15) granted the pty devices alone and
+// tmux still died, because a tmux server also opens /dev/null O_RDWR to
+// daemonize. That one is in the baseline above rather than here: opening
+// /dev/null read-write is what *any* process does when it redirects a child's
+// stdio to it, so scoping it to terminal apps would leave the same landmine
+// for every other app, waiting on whichever one next spawns a child with
+// stdio: "ignore".
+//
+// The strace also showed /dev/tty O_RDWR, and granting it turned out to be
+// both impossible and unnecessary. Impossible because /dev/tty is the calling
+// process's *controlling terminal*, and agent-init has none — these containers
+// are created with Tty: false — so the open fails with ENXIO and the grant is
+// skipped, warning on every boot of every app. Unnecessary because the process
+// that opens it is the shell running inside the pty, for which /dev/tty
+// resolves to /dev/pts/N — already covered by the rule below. Confirmed the
+// direct way: CI's published-port-security run has tmux starting under real
+// enforcement with that grant skipped.
+//
+// /dev/pts is the devpts mount, so a rule on it covers every pty slave the
+// kernel materialises under it (/dev/pts/0, /dev/pts/1, ...) as they're
+// created. /dev/ptmx is listed separately even though it is a symlink to
+// pts/ptmx in this image — whether a runtime makes it a symlink or a real
+// device node is a runtime detail, and a duplicate rule on the same inode
+// costs nothing.
+//
+// Worth stating plainly: this lets a terminal app write any pty in the
+// container, including another app's. That is not a new boundary — every
+// process here is uid 0 and shares one PID namespace (1.4, 1.11) — but it is
+// the kind of grant that should stop being container-wide once per-app uids
+// land. See docs/per-app-uid-design.md.
+const TERMINAL_WRITE_PATHS = ["/dev/pts", "/dev/ptmx"];
 
 // Only added when read scoping is actually enabled (i.e. the app declared at
 // least one filesystem:read:<path> capability) — these are the paths Node,
@@ -181,6 +225,12 @@ export function compileCapabilityPolicy(appName: string, rawCapabilities: string
     } else if (parsed.namespace === "network" && parsed.action === "peer") {
       meshPeers.add(parsed.scope);
       networkPorts.add(MESH_COORDINATOR_PORT);
+    } else if (parsed.namespace === "terminal") {
+      // terminal:* is otherwise a recorded-only capability (it's what makes
+      // container.ts publish ttyd's port). This is the one thing it compiles
+      // into the kernel policy, and without it apps/terminal cannot allocate a
+      // pty at all on a kernel that enforces Landlock — REMEDIATION.md 1.15.
+      for (const path of TERMINAL_WRITE_PATHS) writePaths.add(path);
     }
   }
 

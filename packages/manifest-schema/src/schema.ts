@@ -114,6 +114,22 @@ export const BerthManifestSchema = z
       }
     });
 
+    // on_install entries become lines in a generated shell script that runs
+    // as a Docker build layer (see @berth/docker-orchestrator's
+    // stageOnInstallScript()). The script file is what keeps this from being
+    // a Dockerfile-injection surface, so these checks are about a command
+    // being a *command* rather than about escaping: an empty or
+    // whitespace-only entry is always a mistake, and a NUL byte can't
+    // survive into a file the shell will read either way. Reported per-index
+    // for loadManifest()'s YAML line mapping.
+    manifest.on_install.forEach((command, index) => {
+      if (command.trim() === "") {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["on_install", index], message: "on_install command must not be empty" });
+      } else if (command.includes("\0")) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["on_install", index], message: "on_install command must not contain a NUL byte" });
+      }
+    });
+
     if (manifest.governs && !manifest.exports.some((exportSpec) => exportSpec.name === "evaluate_action")) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
