@@ -41,9 +41,11 @@ interface CrewCheckpointOptions<S> {
 
 /**
  * Crew's own checkpoint is stored under a key namespaced away from the bare
- * `runId` — `runId` itself is also handed to every step's Agent.run() call
- * unchanged, purely for trace correlation (so every step's AgentStepEvents
- * share one runId). If Crew's checkpoint used that same bare runId as its
+ * `runId` — `runId` itself is handed to each step's Agent.run() call for
+ * trace correlation, unchanged in the shapes whose steps run one at a time
+ * (sequential, loopUntil, route, withManager, networked) and derived per
+ * agent in the one that fans out (see fanOutRunIdFor()). If Crew's checkpoint
+ * used that same bare runId as its
  * storage key, and a step's own Agent *also* happened to have its own
  * `checkpoint` store pointed at the same backend, both checkpoints would
  * collide on the same CheckpointStore path and corrupt each other. Namespacing
@@ -56,6 +58,29 @@ interface CrewCheckpointOptions<S> {
 // in two places.
 export function checkpointKeyFor(runId: string): string {
   return `crew__${runId}`;
+}
+
+/**
+ * Every agent in a fan-out shape gets its own derived runId rather than the
+ * crew's bare one. Handing N concurrently-running agents a single runId meant
+ * all N wrote the same checkpoint key and the same trace blob: the surviving
+ * checkpoint was an interleaved mixture of unrelated runs, and `resume(runId)`
+ * replayed it as though it were one. The trace side was already a known race
+ * (tracing.ts's read-modify-write note); the checkpoint side was not.
+ * See REMEDIATION 3.3.
+ *
+ * The index comes before the name and is what actually guarantees uniqueness:
+ * Agent's default name is "agent", so a crew built from agents nobody named
+ * would otherwise collide exactly as before. The name is included after it
+ * purely so a stored key is recognizable when you go looking for one — it's
+ * sanitized because these ids become path segments (`agent-runs/<id>.json`)
+ * in the Semantic FS-backed store.
+ *
+ * The parent runId stays a prefix, so trace correlation across a fan-out is
+ * still a prefix match rather than an exact one.
+ */
+export function fanOutRunIdFor(runId: string, agentName: string, index: number): string {
+  return `${runId}:${index}:${agentName.replace(/[^A-Za-z0-9._-]/g, "_")}`;
 }
 
 async function loadCrewCheckpoint<S>(options: CrewCheckpointOptions<S>): Promise<CrewCheckpoint<S> | null> {
@@ -231,9 +256,16 @@ export const Crew = {
     return {
       async run(input: string): Promise<string> {
         const results = await Promise.all(
-          agents.map(async (agent) => ({
+          agents.map(async (agent, index) => ({
             name: agent.name,
-            text: (await agent.run(input, { runId: options.runId })).text,
+            // Each concurrent agent gets its own derived runId — see
+            // fanOutRunIdFor(). Passing options.runId to all N made them
+            // overwrite each other's checkpoints and traces.
+            text: (
+              await agent.run(input, {
+                runId: options.runId === undefined ? undefined : fanOutRunIdFor(options.runId, agent.name, index),
+              })
+            ).text,
           })),
         );
         return merge(results);
