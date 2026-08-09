@@ -60,6 +60,26 @@ export function createOpenAIProvider(options: OpenAIProviderOptions = {}): LLMPr
 }
 
 /**
+ * The OpenAI API rejects `tools: []` outright — the key has to be absent, not
+ * empty. That matters beyond tidiness: createLlmGuardrail() and llmJudge()
+ * both call chat() with no tools at all, so every LLM-judge feature was
+ * broken against OpenAI, Azure, Bedrock, and Ollama (all four share the
+ * implementation below). Anthropic tolerates the empty array and google.ts
+ * already guarded it, which is why this went unnoticed. Spread into the
+ * request so the key simply doesn't exist rather than being set to
+ * undefined. See REMEDIATION 3.1.
+ */
+function toolsParam(tools: Tool[]) {
+  if (tools.length === 0) return {};
+  return {
+    tools: tools.map((t) => ({
+      type: "function" as const,
+      function: { name: t.name, description: t.description, parameters: t.inputSchema as Record<string, unknown> },
+    })),
+  };
+}
+
+/**
  * The actual chat()/chatStream() implementation, shared by every provider
  * built on an `openai`-shaped client — `createOpenAIProvider()` above, and
  * `createAzureOpenAIProvider()`/`createBedrockProvider()`/
@@ -82,10 +102,7 @@ export function createOpenAICompatibleProvider(client: OpenAI, model: string, na
       const response = await client.chat.completions.create({
         model,
         messages: chatMessages,
-        tools: tools.map((t) => ({
-          type: "function" as const,
-          function: { name: t.name, description: t.description, parameters: t.inputSchema as Record<string, unknown> },
-        })),
+        ...toolsParam(tools),
       });
 
       const choice = response.choices[0];
@@ -121,10 +138,7 @@ export function createOpenAICompatibleProvider(client: OpenAI, model: string, na
       const stream = await client.chat.completions.create({
         model,
         messages: chatMessages,
-        tools: tools.map((t) => ({
-          type: "function" as const,
-          function: { name: t.name, description: t.description, parameters: t.inputSchema as Record<string, unknown> },
-        })),
+        ...toolsParam(tools),
         stream: true,
         // Without this, a streamed response never carries a usage field at
         // all (unlike the non-streamed chat() call, where it's always
