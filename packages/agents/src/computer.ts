@@ -13,7 +13,7 @@ import {
 import { resolveComputerApps, type ComputerAppSpec } from "./resolve-apps.js";
 import { buildComputerImage } from "./build.js";
 import { computerToolsFor } from "./tools.js";
-import { applyGovernanceGate, type GovernanceGateOptions } from "./governance.js";
+import { resolveGovernanceGate, type GovernanceGate, type GovernanceGateOptions } from "./governance.js";
 import type { Tool } from "./types.js";
 
 export interface BootComputerOptions {
@@ -217,6 +217,15 @@ export class Computer implements ComputerHandle {
     /** False for a Computer obtained via connect() — see stop(). */
     private readonly ownsLifecycle: boolean,
     httpRpc: ComputerHandle["httpRpc"],
+    /**
+     * This Computer's governance authority, or undefined when no loaded app
+     * declares `governs: true`. Exposed so tools that never reach this
+     * Computer's dispatch — MCP servers, a delegated agent — can be routed
+     * through the same gate rather than silently escaping it
+     * (REMEDIATION.md 1.13). Resident-app calls are already gated at the
+     * dispatch and must not be wrapped a second time.
+     */
+    readonly governance?: GovernanceGate,
   ) {
     this.tools = tools;
     this.containerName = containerName;
@@ -330,7 +339,12 @@ export class Computer implements ComputerHandle {
     const call = (appName: string, exportName: string, input: unknown) =>
       withReadyRetry(() => dispatch(appName, exportName, input), READY_RETRY_CEILING_MS, diagnose, () => exitReason);
 
-    const tools = applyGovernanceGate(apps, apps, computerToolsFor(apps, call), call, options.governance);
+    // Gated at the dispatch, not over the tool array — REMEDIATION.md 1.13.
+    // Tools are then built from the gated dispatch, so a tool cannot exist on
+    // this Computer that skipped the gate by not matching a name lookup.
+    const governance = resolveGovernanceGate(apps, call, options.governance);
+    const gatedCall = governance ? governance.gateDispatch(call) : call;
+    const tools = computerToolsFor(apps, gatedCall);
 
     let httpRpc: ComputerHandle["httpRpc"];
     if (httpRpcRequested) {
@@ -364,7 +378,7 @@ export class Computer implements ComputerHandle {
       }
     }
 
-    return new Computer(container, apps, stdioClient, tools, containerName, docker, image, true, httpRpc);
+    return new Computer(container, apps, stdioClient, tools, containerName, docker, image, true, httpRpc, governance);
   }
 
   /**
@@ -424,7 +438,12 @@ export class Computer implements ComputerHandle {
     const call = (appName: string, exportName: string, input: unknown) =>
       withReadyRetry(() => dispatch(appName, exportName, input), READY_RETRY_CEILING_MS, diagnose);
 
-    const tools = applyGovernanceGate(allApps, apps, computerToolsFor(apps, call), call, options.governance);
+    // Same as boot(): the gate lives on the dispatch. `allApps` rather than
+    // `apps` because a governor running in this container still governs a
+    // scoped connect() that didn't name it — see resolveGovernanceGate.
+    const governance = resolveGovernanceGate(allApps, call, options.governance);
+    const gatedCall = governance ? governance.gateDispatch(call) : call;
+    const tools = computerToolsFor(apps, gatedCall);
 
     // Passed through as a plain read of what `berth os up --http-rpc`
     // recorded, not re-verified live here — connect() already has a working
@@ -433,7 +452,7 @@ export class Computer implements ComputerHandle {
     // a Python subprocess) rather than something this method depends on.
     const httpRpc = state.httpRpc ? { url: state.httpRpc.url, authToken: state.httpRpc.token, appName: state.httpRpc.app } : undefined;
 
-    return new Computer(container, apps, undefined, tools, state.containerName, docker, undefined, false, httpRpc);
+    return new Computer(container, apps, undefined, tools, state.containerName, docker, undefined, false, httpRpc, governance);
   }
 
   async call(toolName: string, input: unknown): Promise<unknown> {

@@ -14,6 +14,7 @@ import {
 import { createSemanticFsRetriever, type Retriever } from "./retrieval.js";
 import { createMcpClientTools, type McpClientHandle, type McpClientToolsOptions } from "./mcp-client.js";
 import { runGuardrails, type Guardrail } from "./guardrails.js";
+import type { GovernanceGate } from "./governance.js";
 import type { Session } from "./session.js";
 import type { AgentMessage, LLMProvider, Tool } from "./types.js";
 
@@ -31,6 +32,13 @@ export interface AgentOptions {
    * saved turn instead of re-running from scratch. See checkpoint.ts.
    */
   checkpoint?: CheckpointStore;
+  /**
+   * The governance authority to route this agent's own *delegation* through
+   * — see asTool(). Set by createAgent() from the Computer it built; there
+   * is no reason to pass it by hand. Every other tool an agent holds is
+   * already gated at that Computer's dispatch (REMEDIATION.md 1.13).
+   */
+  governance?: GovernanceGate;
   /**
    * When set alongside `runId`, run()/resume() emit an AgentStepEvent after
    * every LLM turn and every tool call — turn number, duration, and error if
@@ -97,6 +105,13 @@ export class Agent {
   private readonly tracer: StepTracer | undefined;
   private readonly inputGuardrails: Guardrail[];
   private readonly outputGuardrails: Guardrail[];
+  /**
+   * The governance authority of the Computer this agent was built from, set
+   * by createAgent(). Only asTool() uses it — every other tool this agent
+   * holds was already gated at the Computer's dispatch. Undefined for an
+   * Agent constructed directly, which has no Computer and so no governor.
+   */
+  private readonly governance: GovernanceGate | undefined;
 
   constructor(options: AgentOptions) {
     this.name = options.name ?? "agent";
@@ -108,6 +123,7 @@ export class Agent {
     this.tracer = options.trace;
     this.inputGuardrails = options.inputGuardrails ?? [];
     this.outputGuardrails = options.outputGuardrails ?? [];
+    this.governance = options.governance;
   }
 
   async run<T = never>(
@@ -312,6 +328,7 @@ export class Agent {
       trace: this.tracer,
       inputGuardrails: this.inputGuardrails,
       outputGuardrails: this.outputGuardrails,
+      governance: this.governance,
     });
   }
 
@@ -322,7 +339,7 @@ export class Agent {
    * through the exact same Tool.invoke() dispatch path.
    */
   asTool(description: string): Tool {
-    return {
+    const tool: Tool = {
       name: this.name,
       description,
       inputSchema: {
@@ -336,6 +353,21 @@ export class Agent {
         return result.text;
       },
     };
+    // REMEDIATION.md 1.13: delegation used to be completely ungated. A
+    // manager agent handed a worker's asTool() could reach every capability
+    // that worker holds without the governor being consulted once — the
+    // worker's *own* tool calls were gated, but the decision to delegate,
+    // and the task text driving it, were not.
+    //
+    // Gated under `agent:<name>` with a single export, "invoke": a governor
+    // is deciding whether this agent may be handed work at all, which is one
+    // decision, not one per tool the delegate happens to own.
+    //
+    // The gate comes from the delegate's own Computer (set by createAgent),
+    // which is also the manager's in every shape Crew builds — withManager()
+    // composes agents from one Computer. An Agent constructed directly with
+    // no Computer has no governor to consult and is returned unchanged.
+    return this.governance ? this.governance.gateExternalTool(tool, { app: `agent:${this.name}`, export: "invoke" }) : tool;
   }
 }
 
@@ -476,7 +508,20 @@ export async function createAgent(
         requesterName: options.humanApproval.requesterName ?? options.name ?? "agent",
       })
     : computer.tools;
-  const mcpTools = mcpServers.flatMap((server) => server.tools);
+  // MCP tools used to be concatenated *after* the governance gate, so a
+  // governed Computer gated every resident-app tool and none of the MCP ones
+  // — REMEDIATION.md 1.13. They don't reach the Computer's dispatch (they
+  // talk to an external MCP server), so they're gated explicitly here, under
+  // a synthetic app name: `mcp:<server>`, with the tool's own name as the
+  // export. A governance app therefore sees MCP calls in the same
+  // `{app, export, input}` shape as everything else, and the `mcp:` prefix
+  // is what tells it this action leaves the sandbox entirely.
+  const mcpTools = mcpServers.flatMap((server) => {
+    const serverName = server.name;
+    return server.tools.map((tool) =>
+      computer.governance ? computer.governance.gateExternalTool(tool, { app: `mcp:${serverName}`, export: tool.name }) : tool,
+    );
+  });
   const tools = retriever ? [...gatedTools, ...mcpTools, retriever.asTool()] : [...gatedTools, ...mcpTools];
 
   const agent = new Agent({
@@ -489,6 +534,9 @@ export async function createAgent(
     trace,
     inputGuardrails: options.inputGuardrails,
     outputGuardrails: options.outputGuardrails,
+    // So this agent's own asTool() delegation is gated too — the manager
+    // that receives it need not know a governor exists.
+    governance: computer.governance,
   });
   return { agent, computer, mcpServers };
 }

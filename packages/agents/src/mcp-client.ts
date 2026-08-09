@@ -36,6 +36,13 @@ export interface McpClientToolsOptions {
  * ecosystem becomes reachable without writing a single bespoke connector.
  */
 export interface McpClientHandle {
+  /**
+   * This server's name, as `createAgent()` announces its tools to a
+   * governance app: `mcp:<name>`. Defaults to "mcp" when the caller didn't
+   * name it — several unnamed servers therefore share one identity, which is
+   * a reason to name them when a governor needs to tell them apart.
+   */
+  readonly name: string;
   readonly tools: Tool[];
   close(): Promise<void>;
 }
@@ -128,6 +135,11 @@ export async function createMcpClientTools(options: McpClientToolsOptions): Prom
   }));
 
   return {
+    // Carried on the result rather than left in the caller's options, so a
+    // consumer that only has the returned object — the governance gate in
+    // createAgent(), which announces these tools as `mcp:<name>` — can name
+    // the server without reaching back into how it was configured.
+    name: options.name ?? "mcp",
     tools,
     close: () => client.close(),
   };
