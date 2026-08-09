@@ -23,7 +23,7 @@ export interface BootComputerOptions {
   network?: string;
   /** Extra container environment variables — e.g. an LLM API key for a synthesized agent-server companion app. */
   env?: Record<string, string>;
-  /** Passed through to applyGovernanceGate() when this Computer has a `governs: true` app loaded — see GovernanceGateOptions and gaps.md gap #26. Defaults to "fail-open", unchanged from before this option existed. */
+  /** Passed through to applyGovernanceGate() when this Computer has a `governs: true` app loaded — see GovernanceGateOptions. Defaults to "fail-closed" since REMEDIATION.md 1.11: an unreachable governor refuses the call rather than letting it run. */
   governance?: GovernanceGateOptions;
   /**
    * Also starts @berth/sdk's HTTP RPC bridge inside the container (see
@@ -88,7 +88,7 @@ export interface ConnectComputerOptions {
    * app the OS has loaded.
    */
   apps?: string[];
-  /** Same as BootComputerOptions.governance — see GovernanceGateOptions and gaps.md gap #26. */
+  /** Same as BootComputerOptions.governance — see GovernanceGateOptions. Defaults to "fail-closed". */
   governance?: GovernanceGateOptions;
   docker?: Docker;
 }

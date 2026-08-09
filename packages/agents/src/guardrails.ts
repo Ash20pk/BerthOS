@@ -3,9 +3,9 @@ import type { LLMProvider } from "./types.js";
 import { parseStructuredOutput } from "./structured-output.js";
 
 /**
- * `governance.ts` gates every other app's *tool calls*, fail-open by design
- * (see docs/governance-reference.md and gaps.md gap #26) — nothing gates the
- * model's own input or final answer. A guardrail is that missing seam:
+ * `governance.ts` gates every other app's *tool calls*, fail-closed by
+ * default since REMEDIATION.md 1.11 (see docs/governance-reference.md) —
+ * nothing gates the model's own input or final answer. A guardrail is that missing seam:
  * `tripwireTriggered: true` halts the run (see GuardrailTripwireError) —
  * "tripwire" is the same term OpenAI's Agents SDK guardrails use for the
  * same concept, kept rather than inventing a different name for an already

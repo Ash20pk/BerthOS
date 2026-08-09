@@ -154,7 +154,7 @@ Each step is independently shippable and independently revertable. The ordering 
 | 2 | ~~`setgroups`/`setresgid`/`setresuid` in `agent-init` before `exec`~~ — **done**. Sockets stay where they are. **The whole risk lives here** — full regression matrix before anything is built on top. | — |
 | 3 | ~~Sockets move to `/run/berth/<app>/rpc.sock`; `/tmp` out of the baseline write set, replaced by `/tmp/<app>`~~ — **done**, at mode `0710` rather than `0700`, plus a new `app:invoke:<name>` capability (see below). | 1.4 (parts 1, 2) |
 | 4 | ~~`SO_PEERCRED` in the context-bus and semantic-FS control paths~~ — **done**. `rpc.ts` gets the same property a different way (a socket per authorized caller), because Node cannot read peer credentials at all — see below. | 1.4 (part 3) ✅ 1.14 identity half ✅ |
-| 5 | Assert and test signal isolation; make `fail-closed` the governance default. | 1.11 |
+| 5 | ~~Assert and test signal isolation; make `fail-closed` the governance default~~ — **done**. No new mechanism for signals: distinct uids are the whole fix, so this step is a test (Test 12, with a `docker exec` root process as the negative control). Inverting the governance default is the half that changed behaviour — see below. | 1.11 ✅ |
 
 Steps 3 and 4 are each about a day once Step 2 holds. Step 2 is the unknown, and Step 0 is most of the calendar time.
 
@@ -172,7 +172,7 @@ New assertions, per step:
 
 - **Step 4** — ~~a forged `app` field in a context-bus register frame is rejected in favour of the uid the kernel reports~~ **done**, as `capability-enforcement.mjs` Test 9's daemon half, and for semantic-FS's `register` too — where the forged *pid* mattered as much as the name, since that is what the FUSE layer attributes writes by. One correction to what this line assumed:
   - **`SO_PEERCRED` was not available for the third of the three call sites.** Node exposes no `getsockopt` and no way to read ancillary credentials on a Unix socket, so `rpc.ts` cannot ask the kernel who connected — and this SDK is vendored into images as a tarball with no build step, so a native addon is not a real option either. Instead each authorized caller gets its own socket, in a directory `2710` owned by the target and group-owned by the caller: which socket a connection arrived on is then a fact the kernel established at `connect(2)`, and the caller cannot influence it. Same property, one layer up. It also replaced Step 3's group grant, which was strictly weaker — it let a caller reach the target's socket but told the server nothing about who was calling.
-- **Step 5** — app B cannot `kill` app A's pid.
+- **Step 5** — app B cannot `kill` app A's pid; a root `docker exec` process still can, which is what proves the refusal is the uid boundary rather than a stale pid. Plus: an unreachable governor now refuses gated calls instead of waving them through, because a `kill -9` on the governor was a *bypass* under the old fail-open default, not merely a denial of service.
 
 The Step 3 assertion is the one that matters, and it was confirmed against the pre-Step-3 code before being claimed against the new — the same discipline 1.7's closure used. That is exactly how the second correction above was found: the control did not reproduce what 1.4 describes, and saying so is more useful than a green run.
 

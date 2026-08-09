@@ -65,6 +65,29 @@ export default defineApp((app) => {
       }),
   });
 
+  // REMEDIATION.md 1.11, as an export: send a signal to another process and
+  // report what the kernel said. Reports rather than throws, so the test can
+  // tell "refused" apart from "no such process" — an absence test that passed
+  // because the target had already exited would prove nothing.
+  //
+  // Signal 0 is the standard permission probe: it delivers nothing and runs
+  // exactly the same kernel permission check as a real signal, so a positive
+  // control can be run against a live process without killing it.
+  app.export({
+    name: "probe_signal",
+    input: z.object({ pid: z.number(), signal: z.union([z.number(), z.string()]).optional() }),
+    output: z.object({ sent: z.boolean(), code: z.string() }),
+    handler: async ({ pid, signal }) => {
+      try {
+        process.kill(pid, (signal ?? 0) as NodeJS.Signals | number);
+        return { sent: true, code: "" };
+      } catch (err) {
+        const e = err as NodeJS.ErrnoException;
+        return { sent: false, code: e.code ?? e.message };
+      }
+    },
+  });
+
   // A full RPC round trip over an arbitrary socket path — the exploit in its
   // complete form, not just a connect(). What comes back is the *serving*
   // app's answer, so a successful call here means this app executed with that

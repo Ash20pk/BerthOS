@@ -49,17 +49,19 @@ governance:
   exempt: true
 ```
 
-## Failure mode: fails open by default, fail-closed available
+## Failure mode: fails closed by default, fail-open available
 
-If the `evaluate_action` call itself errors or exceeds a 10-second timeout, `Computer` logs a warning and lets the underlying call through rather than wedging the agent indefinitely — the default, unchanged from before this option existed. This is a v1 default, not a security guarantee — a governance app that's down doesn't block the agent, it just stops being consulted.
+If the `evaluate_action` call itself errors or exceeds a 10-second timeout, the gated call throws `GovernanceUnavailableError` (carrying `.appName`, `.exportName`, `.cause`) rather than running — "the policy check didn't happen" never quietly becomes "the policy check passed." This is the default as of REMEDIATION.md 1.11.
 
-A real fail-closed option exists too, for anywhere an unreachable governor should read as "denied," not "allowed": pass `governance: { mode: "fail-closed" }` to `Computer.boot()`/`Computer.connect()` (or `createAgent()`, which forwards it) or `HttpBridgeComputer.deploy()`. An unreachable/timed-out `evaluate_action` call then throws `GovernanceUnavailableError` (carrying `.appName`, `.exportName`, `.cause`) instead of letting the call through — distinct from `GovernanceDeniedError`, since the governor never actually rendered a verdict here, it just couldn't be reached:
+That item is why: any app sharing the container could `kill -9` the governance app, and under the previous fail-open default one signal turned the gate off entirely, with nothing but a `console.warn` to show for it. Per-app uids now make that particular kill impossible — the kernel refuses cross-uid signals, asserted by `capability-enforcement.mjs` Test 12 — but a governor can still crash, hang, or simply be slow, and a gate that opens under those conditions is not a gate.
+
+Fail-open is still available, and is a legitimate choice where availability genuinely matters more than the guarantee — a governor outage then takes down every gated app's tool calls instead. It is simply no longer what you get by not deciding: pass `governance: { mode: "fail-open" }` to `Computer.boot()`/`Computer.connect()` (or `createAgent()`, which forwards it) or `HttpBridgeComputer.deploy()`. An unreachable/timed-out `evaluate_action` call then throws `GovernanceUnavailableError` (carrying `.appName`, `.exportName`, `.cause`) instead of letting the call through — distinct from `GovernanceDeniedError`, since the governor never actually rendered a verdict here, it just couldn't be reached:
 
 ```ts
-const computer = await Computer.boot({ apps: [...], governance: { mode: "fail-closed" } });
+const computer = await Computer.boot({ apps: [...], governance: { mode: "fail-open" } });
 ```
 
-An explicitly-denied call (`allowed: false`) still throws the normal `GovernanceDeniedError` either way — `mode` only changes what happens when the governor itself can't be consulted at all. Pick fail-closed for anything where "the policy check didn't happen" must never quietly become "the policy check passed"; fail-open (the default) for anything where availability matters more than that specific guarantee.
+An explicitly-denied call (`allowed: false`) still throws the normal `GovernanceDeniedError` either way — `mode` only changes what happens when the governor itself can't be consulted at all. Pick fail-open only where availability matters more than the guarantee that "the policy check didn't happen" never becomes "the policy check passed."
 
 ## Building your own governance app
 
