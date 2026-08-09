@@ -802,6 +802,101 @@ async function main() {
     );
 
     console.log("\nPASS — both daemons record the uid the kernel reports, not the name the caller sent, and survive a 4 GiB length header (REMEDIATION.md 1.14).");
+
+    // --- Test 12: signal isolation (REMEDIATION.md 1.11) ---------------------
+    //
+    // Before per-app uids every app in the container ran as uid 0 in one PID
+    // namespace, so `kill -9` on the governance app or a broker was available
+    // to any of them — and under the old fail-open governance default that was
+    // a complete bypass of the gate rather than a denial of service.
+    //
+    // No new mechanism closes it: distinct uids mean kill(2) is refused by the
+    // kernel's ordinary permission check. Which is exactly why it needs a
+    // test — nothing in this repo would fail if a future change quietly put
+    // two apps back on the same uid.
+    //
+    // Asserted unconditionally, like the socket half of Test 9: this is DAC,
+    // so it holds on Docker Desktop exactly as on an enforcing kernel.
+    console.log("\n--- Test 12: one app must not be able to signal another's process ---");
+
+    // uid, not process name: all three run the identical `node
+    // .../runtime.js` command line, so argv can't tell them apart. uid is
+    // assigned by index in entrypoint.sh (10000 + position in the app list),
+    // and boundaryApps is that list.
+    const pidsByUid = await execInContainer(boundaryRunning.container, [
+      "sh",
+      "-c",
+      'for p in /proc/[0-9]*; do u=$(awk "/^Uid:/{print \\$2}" "$p/status" 2>/dev/null); [ -n "$u" ] && echo "$u $(basename "$p")"; done',
+    ]);
+    const pidForUid = (uid) =>
+      pidsByUid
+        .split("\n")
+        .map((line) => line.trim().split(/\s+/))
+        .filter(([u]) => u === String(uid))
+        .map(([, pid]) => Number(pid))
+        .find((pid) => Number.isFinite(pid));
+
+    const appAPid = pidForUid(10000);
+    const appBPid = pidForUid(10001);
+    assert(appAPid, `couldn't find boundary-app-a's process (uid 10000) in the container: ${JSON.stringify(pidsByUid)}`);
+    assert(appBPid, `couldn't find boundary-app-b's process (uid 10001) in the container: ${JSON.stringify(pidsByUid)}`);
+
+    // Positive control first. Every denial below would also "pass" against an
+    // app whose probe_signal export is simply broken, or against a pid that
+    // had already exited.
+    const selfSignal = await invokeAppExport(boundaryRunning.container, "boundary-app-a", {
+      id: "12a",
+      export: "probe_signal",
+      input: { pid: appAPid, signal: 0 },
+    });
+    console.log("app A -> its own process:", selfSignal);
+    assert(selfSignal.result?.sent === true, `app A could not signal its own process — the probe proves nothing: ${JSON.stringify(selfSignal)}`);
+
+    const crossSignal = await invokeAppExport(boundaryRunning.container, "boundary-app-a", {
+      id: "12b",
+      export: "probe_signal",
+      input: { pid: appBPid, signal: 0 },
+    });
+    console.log("app A -> app B's process:", crossSignal);
+    assert(
+      crossSignal.result?.sent === false && crossSignal.result?.code === "EPERM",
+      `app A was able to signal app B's process — cross-app signal isolation is gone (REMEDIATION.md 1.11): ${JSON.stringify(crossSignal)}`,
+    );
+
+    // SIGKILL specifically, not just the permission probe: signal 0 shares the
+    // same permission check, but asserting the real thing is what makes this
+    // test about `kill -9 the governor` rather than about a kernel detail.
+    const crossKill = await invokeAppExport(boundaryRunning.container, "boundary-app-a", {
+      id: "12c",
+      export: "probe_signal",
+      input: { pid: appBPid, signal: 9 },
+    });
+    console.log("app A -> SIGKILL app B:", crossKill);
+    assert(
+      crossKill.result?.sent === false && crossKill.result?.code === "EPERM",
+      `app A was able to SIGKILL app B: ${JSON.stringify(crossKill)}`,
+    );
+
+    const stillAlive = await invokeAppExport(boundaryRunning.container, "boundary-app-b", {
+      id: "12d",
+      export: "probe_signal",
+      input: { pid: appBPid, signal: 0 },
+    });
+    assert(stillAlive.result?.sent === true, `boundary-app-b did not survive the SIGKILL attempt: ${JSON.stringify(stillAlive)}`);
+
+    // The negative control, run against this same container rather than a
+    // hypothetical one — the discipline 1.3's closure used. A `docker exec`
+    // process is root and is not a descendant of any agent-init, so it can
+    // signal app B's pid. That is what proves the two refusals above are the
+    // uid boundary doing its job, and not a stale pid or a broken probe.
+    const rootSignal = await execInContainer(boundaryRunning.container, ["sh", "-c", `kill -0 ${appBPid} && echo ROOT_CAN_SIGNAL`]);
+    console.log("root (docker exec) -> app B's process:", rootSignal.trim());
+    assert(
+      /ROOT_CAN_SIGNAL/.test(rootSignal),
+      `negative control failed: even root could not signal pid ${appBPid}, so Test 12's refusals prove nothing about uids: ${JSON.stringify(rootSignal)}`,
+    );
+
+    console.log("\nPASS — an app cannot signal a sibling's process; the kernel refuses it on uid alone (REMEDIATION.md 1.11).");
   } finally {
     await boundaryLog.stop();
     await stopContainer(boundaryRunning.container).catch(() => {});
