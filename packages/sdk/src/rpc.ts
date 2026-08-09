@@ -3,6 +3,7 @@ import * as net from "node:net";
 import { chmodSync, readdirSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { BerthApp } from "./app.js";
+import { evaluateAction } from "./governance-gate.js";
 
 export interface RpcRequest {
   id: string;
@@ -67,7 +68,7 @@ function envNetworkPort(): number | undefined {
  * says it is — see startPeerSocketServers(). `undefined` means a channel where
  * only root and this app itself can reach us (stdio, the relay's socket).
  */
-function connectionHandler(app: BerthApp, peer?: string): (socket: net.Socket) => void {
+function connectionHandler(app: BerthApp, peer?: string, channel = "host"): (socket: net.Socket) => void {
   return (socket) => {
     let buffer = "";
     socket.on("data", (chunk: Buffer) => {
@@ -76,7 +77,7 @@ function connectionHandler(app: BerthApp, peer?: string): (socket: net.Socket) =
       buffer = lines.pop() ?? "";
       for (const line of lines) {
         if (!line.trim()) continue;
-        void handleFramedLine(app, line, (resp) => socket.write(resp + "\n"), peer);
+        void handleFramedLine(app, line, (resp) => socket.write(resp + "\n"), peer, channel);
       }
     });
   };
@@ -168,13 +169,17 @@ function startPeerSocketServers(app: BerthApp, socketPath: string): void {
 }
 
 function startTcpServer(app: BerthApp, port: number): void {
-  const server = net.createServer(connectionHandler(app));
+  // "tcp" rather than "host": this listener is reachable from *other
+  // containers* on a shared Docker network (Crew.networked), which is a
+  // materially different caller from the root-only relay socket, and a
+  // governor should be able to tell them apart.
+  const server = net.createServer(connectionHandler(app, undefined, "tcp"));
   server.listen(port, "0.0.0.0", () => {
     console.error(`[berth:runtime] RPC server also listening on 0.0.0.0:${port}`);
   });
 }
 
-async function handleFramedLine(app: BerthApp, line: string, write: (encodedResponse: string) => void, peer?: string): Promise<void> {
+async function handleFramedLine(app: BerthApp, line: string, write: (encodedResponse: string) => void, peer?: string, channel = "host"): Promise<void> {
   let request: RpcRequest;
   try {
     request = JSON.parse(line);
@@ -191,14 +196,37 @@ async function handleFramedLine(app: BerthApp, line: string, write: (encodedResp
     console.error(`[berth:runtime] "${peer}" invoked export "${request.export}"`);
   }
 
-  const response = await invokeExport(app, request);
+  const response = await invokeExport(app, request, peer ?? channel);
   write(JSON.stringify(response));
 }
 
-export async function invokeExport(app: BerthApp, request: RpcRequest): Promise<RpcResponse> {
+/**
+ * `caller` is who the kernel says is asking — a sibling's name when the
+ * request arrived on that sibling's own peer socket, or one of the named
+ * non-sibling channels ("host", "http", "tcp"). It reaches the governance
+ * gate unchanged and is not something a request can set: the peer sockets
+ * carry it structurally (see startPeerSocketServers), and the other three are
+ * decided by which listener accepted the connection.
+ *
+ * Defaulted rather than required so an in-process caller (the unit tests, and
+ * any embedder calling this directly) keeps working — those are not a
+ * transport into the container, which is what 1.13 is about.
+ */
+export async function invokeExport(app: BerthApp, request: RpcRequest, caller = "host"): Promise<RpcResponse> {
   const exportDef = app._exports.get(request.export);
   if (!exportDef) {
     return { id: request.id, error: `no such export "${request.export}"` };
+  }
+
+  // REMEDIATION.md 1.13: every transport into this container converges here,
+  // so this is where a governor can see them all. Returns null when no
+  // governor is loaded, which is the common case and costs one env lookup.
+  const decision = await evaluateAction({ caller, export: request.export, input: request.input });
+  if (decision && !decision.allowed) {
+    console.error(
+      `[berth:governance] {"event":"denied","caller":${JSON.stringify(caller)},"export":${JSON.stringify(request.export)},"reason":${JSON.stringify(decision.reason)}}`,
+    );
+    return { id: request.id, error: `governance denied ${request.export}: ${decision.reason}` };
   }
 
   try {

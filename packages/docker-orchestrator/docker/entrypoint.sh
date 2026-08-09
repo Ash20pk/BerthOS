@@ -194,6 +194,62 @@ grant_invoke_access() {
   done
 }
 
+# The governed app's route to the governor — REMEDIATION.md 1.13.
+#
+# Deliberately *not* driven by a declared `app:invoke:<governor>` capability,
+# unlike grant_invoke_access above. A gate an app can opt out of by not
+# declaring something is not a gate: an app that simply omits the capability
+# would find the governor unreachable, and fail-closed would then make it
+# unable to serve any request at all. So the wiring is provided rather than
+# requested, and what an app *can* declare is `governance: { exempt: true }`,
+# which is visible in its manifest and in this log line.
+#
+# Same directory shape as grant_invoke_access, for the same reason: mode 2710
+# owned by the governor and group-owned by the caller means the caller is the
+# only unprivileged uid that can traverse in, so the governor learns which app
+# is asking from the kernel rather than from the request body.
+# What @berth/sdk's gate reads, per app. Unset (rather than empty) when no
+# governor is loaded, which is the common case and the one where the gate
+# costs nothing: with no BERTH_GOVERNANCE_APP the SDK skips the check
+# entirely. The governor's own exports are exempted here *and* in the SDK —
+# asking evaluate_action whether evaluate_action may run never terminates, so
+# both ends state the rule rather than either inferring it.
+export_governance_environment() {
+  local app_name="$1"
+  local app_dir="$2"
+  unset BERTH_GOVERNANCE_APP BERTH_GOVERNANCE_EXEMPT
+  [ -n "$GOVERNANCE_APP" ] || return 0
+  [ "$app_name" != "$GOVERNANCE_APP" ] || return 0
+  export BERTH_GOVERNANCE_APP="$GOVERNANCE_APP"
+  if grep -qE '^[[:space:]]*exempt:[[:space:]]*true' "$app_dir/berth.yml" 2>/dev/null; then
+    export BERTH_GOVERNANCE_EXEMPT=1
+  fi
+}
+
+grant_governor_access() {
+  local caller_name="$1"
+  local caller_dir="$2"
+  [ -n "$GOVERNANCE_APP" ] || return 0
+  [ "$caller_name" != "$GOVERNANCE_APP" ] || return 0
+  if grep -qE '^[[:space:]]*exempt:[[:space:]]*true' "$caller_dir/berth.yml" 2>/dev/null; then
+    echo "[berth:entrypoint] ${caller_name} declares governance.exempt — not gated by ${GOVERNANCE_APP}" >&2
+    return 0
+  fi
+
+  local governor_uid caller_gid
+  governor_uid="$(id -u "berth-${GOVERNANCE_APP}" 2>/dev/null)"
+  caller_gid="$(id -g "berth-${caller_name}" 2>/dev/null)"
+  if [ -z "$governor_uid" ] || [ -z "$caller_gid" ]; then
+    echo "[berth:entrypoint] WARNING: could not resolve ids for ${caller_name} -> ${GOVERNANCE_APP} — ${caller_name} will fail closed on every RPC" >&2
+    return 0
+  fi
+  if install -d -m 2710 -o "$governor_uid" -g "$caller_gid" "/run/berth/${GOVERNANCE_APP}/peers/${caller_name}" 2>/dev/null; then
+    echo "[berth:entrypoint] ${caller_name} is gated by ${GOVERNANCE_APP} via /run/berth/${GOVERNANCE_APP}/peers/${caller_name}" >&2
+  else
+    echo "[berth:entrypoint] WARNING: could not create /run/berth/${GOVERNANCE_APP}/peers/${caller_name} — ${caller_name} will fail closed on every RPC" >&2
+  fi
+}
+
 # Exports the identity agent-init reads and drops to, immediately before the
 # app is forked. Split out of provision_app_identity so it runs *after*
 # grant_invoke_access has finished wiring group membership — the supplementary
@@ -514,8 +570,18 @@ EGRESS_APP_DIR=""
 # assertAtMostOneMeshApp guarantees at most one hit here.
 NEEDS_MESH=0
 MESH_APP_DIR=""
-while IFS=$'\t' read -r _ APP_DIR; do
+# The app declaring `governs: true`, if any. @berth/manifest-schema allows at
+# most one per Computer and already refuses such a manifest unless it exports
+# evaluate_action, so this loop only has to find the name — REMEDIATION.md
+# 1.13. What it enables is the gate at @berth/sdk's own RPC dispatch, which is
+# the only place `berth rpc`, the HTTP bridge, the TCP listener and a
+# sibling's direct socket call can all be seen from.
+GOVERNANCE_APP=""
+while IFS=$'\t' read -r APP_NAME APP_DIR; do
   [ -z "$APP_DIR" ] && continue
+  if grep -qE '^[[:space:]]*governs:[[:space:]]*true' "$APP_DIR/berth.yml" 2>/dev/null; then
+    GOVERNANCE_APP="$APP_NAME"
+  fi
   if grep -q "browser:" "$APP_DIR/berth.yml" 2>/dev/null; then
     NEEDS_BROWSER=1
     BROWSER_APP_DIR="$APP_DIR"
@@ -583,7 +649,13 @@ run_app() {
   # only by declaring app:invoke:<name>, which puts it in this app's group;
   # the host relay reaches it as root (docker exec), which is unchanged.
   export BERTH_RPC_SOCKET="/run/berth/${app_name}/rpc.sock"
+  # Who this app is, in its own environment — @berth/sdk's governance gate
+  # announces actions under this name, and it is set by the orchestrator
+  # rather than read from the manifest so it cannot disagree with the identity
+  # the peers/ directories were built around (REMEDIATION.md 1.13).
+  export BERTH_APP_NAME="$app_name"
   export_app_environment "$app_name"
+  export_governance_environment "$app_name" "$app_dir"
 
   # No run-lifecycle.js call here any more. Multi-app mode never used its
   # browser/egress flags (the grep loop above decides those for the whole
@@ -702,6 +774,7 @@ grant_dev_workspace
 while IFS=$'\t' read -r APP_NAME APP_DIR; do
   [ -z "$APP_NAME" ] && continue
   grant_invoke_access "$APP_NAME" "$APP_DIR"
+  grant_governor_access "$APP_NAME" "$APP_DIR"
 done <<<"$APPS_TSV"
 
 # After grant_dev_workspace (so a declared path *inside* the dev workspace

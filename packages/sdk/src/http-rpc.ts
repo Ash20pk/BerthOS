@@ -77,6 +77,8 @@ async function handleRequest(app: BerthApp, body: string, res: http.ServerRespon
     return;
   }
 
-  const response = await invokeExport(app, request);
+  // "http" so a governor can distinguish the bridge from the root-only relay
+  // socket — same reason the TCP listener names itself (REMEDIATION.md 1.13).
+  const response = await invokeExport(app, request, "http");
   res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(response));
 }
