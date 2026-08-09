@@ -3,7 +3,22 @@ version: 0.1.0
 description: "capability-enforcement.mjs's cross-app boundary fixture — scoped ONLY to its own subdirectory, sharing a container with boundary-app-a, whose subdirectory it must NOT be able to reach."
 
 capabilities:
+  # Its own data directory — the only one of the three reads below that is
+  # per-app, and what the cross-app read assertion in
+  # capability-enforcement.mjs Test 9 turns on.
   - filesystem:read:/workspace/.berth/dev-workspace/boundary-app-b
+  # The code this app boots from. `node_modules/@berth/sdk` is a pnpm
+  # symlink to /workspace/packages/sdk, and Landlock resolves symlinks to
+  # the real inode — so without these the app cannot read its own entry
+  # point and dies at startup with EACCES on
+  # /workspace/packages/sdk/dist/runtime.js. That is invisible wherever
+  # Landlock is inactive, which is why it only ever failed on CI.
+  #
+  # Code, not data: every fixture reads the same source tree, and the
+  # isolation this test exists to prove is about each app's data
+  # directory above.
+  - filesystem:read:/workspace/packages
+  - filesystem:read:/workspace/node_modules
   - filesystem:write:/workspace/.berth/dev-workspace/boundary-app-b
 
 exports:
