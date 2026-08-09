@@ -10,7 +10,7 @@
 
 ## Why this needed a new RPC client, not `berth rpc`'s existing one
 
-`berth rpc`/`invokeAppExport()` (`packages/docker-orchestrator/src/relay.ts`) reaches an app via `docker exec` + a per-app Unix socket at `/tmp/berth-rpc/<app>.sock` — but that socket is **only created in multi-app mode** (`entrypoint.sh`'s `BERTH_APPS`-driven branch). A plain single-app `berth dev` container (the common case, and this bridge's actual target) execs straight into the app's own runtime as PID 1, with no such socket — the app is only reachable over the container's own stdio, exactly how `capability-enforcement.mjs`'s and `grants-server-milestone.mjs`'s test-only RPC clients already work. `createStdioRpcClient()` is that same pattern, productionized as a reusable export instead of copy-pasted per test file.
+`berth rpc`/`invokeAppExport()` (`packages/docker-orchestrator/src/relay.ts`) reaches an app via `docker exec` + a per-app Unix socket at `/run/berth/<app>/rpc.sock` — but that socket is **only created in multi-app mode** (`entrypoint.sh`'s `BERTH_APPS`-driven branch). A plain single-app `berth dev` container (the common case, and this bridge's actual target) execs straight into the app's own runtime as PID 1, with no such socket — the app is only reachable over the container's own stdio, exactly how `capability-enforcement.mjs`'s and `grants-server-milestone.mjs`'s test-only RPC clients already work. `createStdioRpcClient()` is that same pattern, productionized as a reusable export instead of copy-pasted per test file.
 
 ## What's real vs. deliberately deferred
 

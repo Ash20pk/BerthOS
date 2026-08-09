@@ -47,10 +47,23 @@ export async function createUnixSocketSemanticFs(socketPath: string): Promise<Se
     }
   });
 
-  socket.on("close", () => {
-    for (const waiter of pending.values()) waiter.reject(new Error("semantic-fs control socket closed"));
+  // Whether the connection has gone away, and why. Without this, a daemon that
+  // dies mid-life fails in two bad ways: every subsequent call sits until
+  // CALL_TIMEOUT_MS before rejecting with a timeout that names nothing useful,
+  // and — worse — `socket.write()` on a destroyed socket emits an "error"
+  // event that nothing was listening for, which in Node is an uncaught
+  // exception that takes the whole app down. Both are the same failure this
+  // client is meant to report clearly (REMEDIATION.md 1.14).
+  let closedReason: string | undefined;
+
+  function fail(reason: string): void {
+    closedReason ??= reason;
+    for (const waiter of pending.values()) waiter.reject(new Error(`semantic-fs control socket ${reason}`));
     pending.clear();
-  });
+  }
+
+  socket.on("close", () => fail("closed"));
+  socket.on("error", (err) => fail(`failed: ${err.message}`));
 
   function handleFrame(frame: Buffer): void {
     const resp = JSON.parse(frame.toString("utf-8")) as RawResponse;
@@ -61,6 +74,11 @@ export async function createUnixSocketSemanticFs(socketPath: string): Promise<Se
   }
 
   function call(op: string, fields: Record<string, unknown>): Promise<RawResponse> {
+    if (closedReason) {
+      // Rejected immediately and by name, rather than after a 5s timeout that
+      // would read as "the daemon is slow" instead of "the daemon is gone".
+      return Promise.reject(new Error(`semantic-fs call "${op}" cannot be sent: the control socket ${closedReason}`));
+    }
     const id = String(nextId++);
     const encoded = Buffer.from(JSON.stringify({ id, op, ...fields }), "utf-8");
     const lengthPrefix = Buffer.alloc(4);

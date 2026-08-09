@@ -3,8 +3,8 @@ version: 0.1.0
 description: "capability-enforcement.mjs's cross-app boundary fixture — scoped ONLY to its own subdirectory, sharing a container with boundary-app-a, whose subdirectory it must NOT be able to reach."
 
 capabilities:
-  - filesystem:read:/workspace/packages/docker-orchestrator/test/fixtures/boundary-app-b
-  - filesystem:write:/workspace/packages/docker-orchestrator/test/fixtures/boundary-app-b
+  - filesystem:read:/workspace/.berth/dev-workspace/boundary-app-b
+  - filesystem:write:/workspace/.berth/dev-workspace/boundary-app-b
 
 exports:
   - name: write_file
@@ -12,6 +12,23 @@ exports:
   - name: read_file
     input: { path: string }
     output: { content: string }
+  # Declares no app:invoke: capability on purpose — reaching a sibling's RPC
+  # socket is what this export probes, and what REMEDIATION.md 1.4 refuses.
+  - name: probe_unix_socket
+    input: { path: string }
+    output: { connected: boolean, code: string }
+  - name: register_on_bus
+    input: { app: string }
+    output: { ok: boolean }
+  - name: register_on_semantic_fs
+    input: { app: string, pid: number }
+    output: { ok: boolean }
+  - name: send_oversized_frame
+    input: { path: string }
+    output: { ok: boolean }
+  - name: invoke_via_socket
+    input: { path: string, export: string, input: object }
+    output: { response: string }
 
 on_install: []
 on_agent_ready: []

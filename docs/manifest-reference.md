@@ -142,6 +142,12 @@ namespace:action:scope
 
 `@berth/manifest-schema`'s `matchesCapability(granted, requested)` implements glob matching on `scope` while requiring exact matches on `namespace`/`action` — this is the exact function the kernel-level token issuer calls to decide grants.
 
+`app:invoke:<name>` lets this app call another resident app's exports directly, inside the same container. It is the *only* way to do so: since [REMEDIATION 1.4](../REMEDIATION.md#14--app-rpc-sockets-in-world-writable-tmp-unauthenticated) an app's own socket at `/run/berth/<app>/rpc.sock` is mode `0600`, reachable by that app and by root (the host relay) and nobody else. Declaring this capability gets the caller its own socket instead — `/run/berth/<target>/peers/<caller>/rpc.sock`, in a directory only the caller can traverse — created at boot. An app that declares nothing gets `EACCES` on `connect(2)`, from the kernel rather than from a check in the SDK. `@berth/agents` emits one of these per sibling whose exports it embeds as tools in a synthesized agent app.
+
+Because each authorized caller reaches the target on a socket only it can reach, the target knows *which* app is calling without trusting anything on the wire, and logs it. That is the same property `SO_PEERCRED` gives the daemons; Node exposes no way to read peer credentials, so the identity comes from the path instead.
+
+One limit worth knowing: it is a connect-time gate, so it says *who may call*, not *which exports they may call* — the target's whole export surface is reachable once granted. Naming an app that isn't in the same container is a warning at boot, not an error, since there is nothing to grant.
+
 `network:peer:<name>` (e.g. `network:peer:database-service`, or `network:peer:*` for any peer) joins a resident app to a real WireGuard mesh with other apps whose own `network:peer:<pattern>` names it back — mutual consent, decided by `mesh-coordinator`, not a flat "everyone who opts in reaches everyone else" mesh. See [mesh reference](./mesh-reference.md).
 
 ## Schema compatibility policy

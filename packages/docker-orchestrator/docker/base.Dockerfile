@@ -106,7 +106,20 @@ RUN apk add --no-cache \
     # already resolvable before a TS app's own on_install runs.
     && pip install --no-cache-dir pydantic pyyaml protobuf
 
-ENV CHROME_BIN=/usr/bin/chromium-browser \
+# The one group every resident app belongs to, and the only identity shared
+# between them. It exists so that resources which are shared *by design* stay
+# reachable once apps stop being uid 0 — today that is the semantic filesystem
+# backing /context (root:berth, see semantic-fs-daemon's ownership.go) and the
+# three daemon control sockets. Everything else an app touches is either its
+# own or nobody's. See docs/per-app-uid-design.md.
+#
+# A fixed gid rather than an allocated one: /var/berth is a persistent volume,
+# so the numeric gid stamped into its files has to mean the same thing in the
+# next image that mounts it.
+RUN addgroup -g 9999 berth
+
+ENV BERTH_SHARED_GID=9999 \
+    CHROME_BIN=/usr/bin/chromium-browser \
     DISPLAY=:99 \
     BERTH_APP_ROOT=/app \
     BERTH_CONTEXT_BUS_SOCKET=/tmp/berth-context-bus.sock \

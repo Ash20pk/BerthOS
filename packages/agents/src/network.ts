@@ -67,7 +67,19 @@ function embeddedToolsFor(apps: ComputerAppSpec[]): EmbeddedToolSpec[] {
   return specs;
 }
 
-function renderManifestYaml(name: string): string {
+function renderManifestYaml(name: string, siblingApps: ComputerAppSpec[]): string {
+  // One app:invoke: line per sibling whose exports were embedded as tools
+  // above. This is what entrypoint.sh turns into membership of each target
+  // app's group, and without it callSibling() below gets EACCES on the
+  // target's 0710 socket directory: since REMEDIATION.md 1.4, reaching
+  // another app's RPC socket is something an app declares rather than
+  // something every app in a container simply has.
+  //
+  // Generated from the same siblingApps list the tools come from, so the
+  // declaration cannot drift from what the agent can actually call — an agent
+  // that can see a tool can invoke it, and nothing more.
+  const invokes = siblingApps.map((app) => `  - app:invoke:${app.name}`).join("\n");
+
   return `name: ${name}
 version: 0.1.0
 description: "Synthesized by @berth/agents — runs an in-container agent loop reachable as a Crew.networked() peer"
@@ -78,7 +90,7 @@ capabilities:
   # docs/egress-broker-reference.md). Documented follow-up in
   # docs/agents-reference.md.
   - network:connect:*
-
+${invokes ? `${invokes}\n` : ""}
 exports:
   - name: run_task
     input: { task: string }
@@ -144,6 +156,7 @@ function renderAgentServerSource(options: GenerateAgentServerAppOptions): string
 import { z } from "zod";
 import * as net from "node:net";
 
+const SELF = ${JSON.stringify(options.name)};
 const TOOLS = ${JSON.stringify(tools)};
 const LLM = ${JSON.stringify(llm)};
 const SYSTEM_PROMPT = ${JSON.stringify(systemPrompt)};
@@ -151,7 +164,13 @@ const MAX_TURNS = 25;
 
 function callSibling(appName, exportName, input) {
   return new Promise((resolve, reject) => {
-    const socket = net.createConnection(\`/tmp/berth-rpc/\${appName}.sock\`);
+    // Not <appName>/rpc.sock, which is 0600 and reachable only by that app and
+    // root: an authorized caller gets its own socket, in a directory only it
+    // can traverse, so the server knows which sibling called it without having
+    // to trust anything on the wire. See REMEDIATION.md 1.4 and @berth/sdk's
+    // startPeerSocketServers(). SELF is this generated app's own name, which
+    // is also what its berth.yml declares app:invoke: from.
+    const socket = net.createConnection(\`/run/berth/\${appName}/peers/\${SELF}/rpc.sock\`);
     const id = \`\${Date.now()}-\${Math.random().toString(36).slice(2)}\`;
     let buffer = "";
     const timer = setTimeout(() => {
@@ -293,7 +312,7 @@ export default defineApp((app) => {
 export async function generateAgentServerApp(options: GenerateAgentServerAppOptions): Promise<GeneratedAgentServerApp> {
   const appDir = await mkdtemp(join(tmpdir(), "berth-agent-server-"));
 
-  await writeFile(join(appDir, "berth.yml"), renderManifestYaml(options.name));
+  await writeFile(join(appDir, "berth.yml"), renderManifestYaml(options.name, options.siblingApps));
   await writeFile(join(appDir, "package.json"), renderPackageJson(options.name));
   await vendorSdk(appDir);
 

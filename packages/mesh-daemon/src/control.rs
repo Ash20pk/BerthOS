@@ -47,9 +47,47 @@ struct OkResponse {
 /// context-bus-daemon's IPC — this is low-frequency control-plane chatter
 /// (a human/SDK asking "what's my mesh status"), not a high-volume data bus,
 /// so the extra codegen/build-dependency isn't justified.
+/// Hands a just-bound control socket to the shared `berth` group, mode 0660 —
+/// the same helper context-bus-daemon carries, duplicated rather than shared
+/// because these are separate crates and the alternative is a workspace-wide
+/// utility crate for fifteen lines.
+///
+/// connect(2) on a pathname socket needs write permission on it, and a socket
+/// created under the default umask is 0755 — root and nobody else. An app
+/// that declared network:peer:* is meant to reach this one, and stops being
+/// able to the moment it stops being uid 0. See docs/per-app-uid-design.md.
+///
+/// Not fatal: a mesh daemon reachable only by root is a degraded mesh, and
+/// refusing to start would be worse than that.
+fn grant_shared_group(socket_path: &str) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let gid: u32 = match std::env::var("BERTH_SHARED_GID") {
+        Ok(raw) => match raw.parse() {
+            Ok(gid) => gid,
+            Err(_) => {
+                eprintln!("[mesh-daemon] WARNING: BERTH_SHARED_GID={raw:?} is not a number — leaving {socket_path} root-owned");
+                return;
+            }
+        },
+        Err(_) => 9999,
+    };
+    if gid == 0 {
+        return;
+    }
+    if let Err(err) = std::os::unix::fs::chown(socket_path, None, Some(gid)) {
+        eprintln!("[mesh-daemon] WARNING: chown {socket_path} to gid {gid} failed ({err}) — a non-root app cannot reach it");
+        return;
+    }
+    if let Err(err) = std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o660)) {
+        eprintln!("[mesh-daemon] WARNING: chmod {socket_path} failed ({err}) — a non-root app cannot reach it");
+    }
+}
+
 pub async fn run(socket_path: String, state: Shared, nudge_tx: mpsc::UnboundedSender<()>) -> std::io::Result<()> {
     let _ = std::fs::remove_file(&socket_path);
     let listener = UnixListener::bind(&socket_path)?;
+    grant_shared_group(&socket_path);
     eprintln!("[mesh-daemon] control socket listening on {socket_path}");
 
     loop {

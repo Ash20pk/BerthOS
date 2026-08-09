@@ -18,6 +18,9 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{mpsc, Mutex};
 
+mod peer;
+use peer::{identify_from_system, PeerIdentity};
+
 pub mod pb {
     include!(concat!(env!("OUT_DIR"), "/berth.contextbus.rs"));
 }
@@ -44,6 +47,13 @@ type Subscribers = Arc<Mutex<HashMap<String, HashMap<u64, mpsc::Sender<Payload>>
 /// without hiding a truly stuck subscriber for long.
 const SUBSCRIBER_QUEUE_CAPACITY: usize = 256;
 
+/// Largest frame this daemon will allocate for. Events on this bus are small
+/// JSON-ish payloads between resident apps in one sandbox, so 8 MiB is orders
+/// of magnitude above real traffic and still refuses the 4 GiB a `0xFFFFFFFF`
+/// length header used to reserve. Mirrored in semantic-fs-daemon's
+/// control.go, which had the identical bug.
+const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
+
 /// Non-blocking by design: a full or closed queue means this one payload is
 /// dropped for this one subscriber, logged, and everything else (this
 /// publish to other subscribers, every other topic, every other connection)
@@ -57,6 +67,43 @@ fn try_send_payload(sender: &mpsc::Sender<Payload>, payload: Payload, context: &
     }
 }
 
+/// Hands a just-bound control socket to the shared `berth` group, mode 0660.
+///
+/// connect(2) on a pathname socket needs write permission on it, and a socket
+/// created under the default umask is 0755 — reachable by root and nobody
+/// else. Every app in the sandbox is meant to reach this daemon (that is what
+/// the bus *is*), so the moment apps stop being uid 0 this is what keeps it
+/// true. See docs/per-app-uid-design.md's socket table.
+///
+/// Deliberately not fatal. A missing group or a filesystem that refuses the
+/// chown leaves the daemon reachable by root, which is strictly better than
+/// refusing to start — and today, before any app has a uid of its own, it
+/// changes nothing at all.
+fn grant_shared_group(socket_path: &str) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let gid: u32 = match std::env::var("BERTH_SHARED_GID") {
+        Ok(raw) => match raw.parse() {
+            Ok(gid) => gid,
+            Err(_) => {
+                eprintln!("[context-bus] WARNING: BERTH_SHARED_GID={raw:?} is not a number — leaving {socket_path} root-owned");
+                return;
+            }
+        },
+        Err(_) => 9999,
+    };
+    if gid == 0 {
+        return;
+    }
+    if let Err(err) = std::os::unix::fs::chown(socket_path, None, Some(gid)) {
+        eprintln!("[context-bus] WARNING: chown {socket_path} to gid {gid} failed ({err}) — a non-root app cannot reach it");
+        return;
+    }
+    if let Err(err) = std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o660)) {
+        eprintln!("[context-bus] WARNING: chmod {socket_path} failed ({err}) — a non-root app cannot reach it");
+    }
+}
+
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     let socket_path =
@@ -66,6 +113,7 @@ async fn main() -> std::io::Result<()> {
     let _ = std::fs::remove_file(&socket_path);
 
     let listener = UnixListener::bind(&socket_path)?;
+    grant_shared_group(&socket_path);
     eprintln!("[context-bus] listening on {socket_path}");
 
     let subscribers: Subscribers = Arc::new(Mutex::new(HashMap::new()));
@@ -76,15 +124,29 @@ async fn main() -> std::io::Result<()> {
         let subscribers = subscribers.clone();
         let conn_id = next_conn_id.fetch_add(1, Ordering::SeqCst);
 
+        // SO_PEERCRED, read once at accept() rather than per frame: the uid
+        // the kernel stamped on this connection cannot change for its
+        // lifetime, and a client cannot influence it. This is what makes the
+        // `app` field of a Register frame advisory rather than authoritative
+        // (REMEDIATION.md 1.14). A failure to read it is treated as the most
+        // restrictive answer available, not as root.
+        let peer = match stream.peer_cred() {
+            Ok(cred) => identify_from_system(cred.uid()),
+            Err(err) => {
+                eprintln!("[context-bus] conn {conn_id}: could not read peer credentials ({err}) — treating it as an unidentified caller");
+                PeerIdentity::Unknown(u32::MAX)
+            }
+        };
+
         tokio::spawn(async move {
-            if let Err(err) = handle_connection(stream, conn_id, subscribers).await {
+            if let Err(err) = handle_connection(stream, conn_id, subscribers, peer).await {
                 eprintln!("[context-bus] connection {conn_id} error: {err}");
             }
         });
     }
 }
 
-async fn handle_connection(stream: UnixStream, conn_id: u64, subscribers: Subscribers) -> std::io::Result<()> {
+async fn handle_connection(stream: UnixStream, conn_id: u64, subscribers: Subscribers, peer: PeerIdentity) -> std::io::Result<()> {
     let (mut read_half, write_half) = stream.into_split();
     let (tx, mut rx) = mpsc::channel::<Payload>(SUBSCRIBER_QUEUE_CAPACITY);
 
@@ -100,7 +162,10 @@ async fn handle_connection(stream: UnixStream, conn_id: u64, subscribers: Subscr
         }
     });
 
-    let mut app_name = String::from("unknown");
+    // Attributed from the kernel's answer before any Register frame arrives,
+    // so a connection that publishes without registering is still logged as
+    // whoever it actually is rather than as "unknown".
+    let mut app_name = peer.resolve_claim("");
 
     loop {
         let frame = match read_frame(&mut read_half).await {
@@ -122,8 +187,16 @@ async fn handle_connection(stream: UnixStream, conn_id: u64, subscribers: Subscr
 
         match envelope.kind {
             Some(Kind::Register(req)) => {
-                app_name = req.app;
-                eprintln!("[context-bus] conn {conn_id} registered as \"{app_name}\"");
+                // The frame's `app` is a request, not a fact. Whether it is
+                // honoured is the kernel's call, made above.
+                if peer.contradicts(&req.app) {
+                    eprintln!(
+                        "[context-bus] conn {conn_id} claimed to be \"{}\" but the kernel says {peer:?} — registering it as the latter",
+                        req.app
+                    );
+                }
+                app_name = peer.resolve_claim(&req.app);
+                eprintln!("[context-bus] conn {conn_id} registered as \"{app_name}\" ({peer:?})");
                 send_ack(&tx, true, "");
             }
             Some(Kind::Subscribe(req)) => {
@@ -214,6 +287,18 @@ async fn read_frame(reader: &mut (impl AsyncRead + Unpin)) -> std::io::Result<Op
         Err(err) => return Err(err),
     }
     let len = u32::from_be_bytes(len_bytes) as usize;
+    // Checked before the allocation, which is the whole point: a 4-byte header
+    // of 0xFFFFFFFF used to allocate 4 GiB in this daemon, which runs as root
+    // outside any Landlock domain and is reachable by every app in the sandbox
+    // (REMEDIATION.md 1.14). The error is returned rather than skipped so the
+    // connection is dropped — a client that framed one message this badly has
+    // no credible next frame on the same stream.
+    if len > MAX_FRAME_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("frame length {len} exceeds the {MAX_FRAME_BYTES}-byte maximum"),
+        ));
+    }
     let mut buf = vec![0u8; len];
     reader.read_exact(&mut buf).await?;
     Ok(Some(buf))
@@ -278,7 +363,10 @@ mod tests {
                 let subscribers = accept_subscribers.clone();
                 let conn_id = next_conn_id.fetch_add(1, Ordering::SeqCst);
                 tokio::spawn(async move {
-                    let _ = handle_connection(stream, conn_id, subscribers).await;
+                    // The test harness runs as whoever ran `cargo test`, so it
+                    // asks for the same identity path a real accept() takes.
+                    let peer = stream.peer_cred().map(|c| identify_from_system(c.uid())).unwrap_or(PeerIdentity::Unknown(u32::MAX));
+                    let _ = handle_connection(stream, conn_id, subscribers, peer).await;
                 });
             }
         });

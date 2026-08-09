@@ -15,6 +15,7 @@ import { dirname, join } from "node:path";
 import { loadManifest } from "@berth/manifest-schema";
 import { buildImage, startContainer, stopContainer } from "@berth/docker-orchestrator";
 import { Agent, createMcpClientTools } from "../dist/index.js";
+import { resolveDevBindMount } from "../../cli/dist/util/workspace.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");
@@ -50,13 +51,28 @@ async function main() {
   console.log("Building filesystem's dev image...");
   await buildImage({ appDir: FILESYSTEM_APP_DIR, tag: "berth/filesystem:dev", target: "dev", docker });
 
+  // `berth dev`'s real mount layout, via the CLI's own helper. This was a
+  // read-WRITE bind of the repository root, which stopped working once apps
+  // got their own uid: the checkout belongs to whoever cloned it, the app is
+  // uid 10000, and a Linux bind mount preserves that, so the write below was a
+  // plain EACCES. (Docker Desktop virtualizes bind-mount ownership, so it only
+  // ever failed on CI.) The root is read-only since REMEDIATION.md 1.6 and app
+  // data goes to the shared dev-workspace directory, which entrypoint.sh
+  // chgrp's to the `berth` group precisely so a non-root app can write it.
+  const { bindMount, extraBinds, workingDir, workspaceRoot } = resolveDevBindMount(FILESYSTEM_APP_DIR);
+  const stateVolume = "berth-mcp-client-milestone-app-state";
+  await docker.createVolume({ Name: stateVolume }).catch(() => {});
+
   console.log("Starting filesystem's sandbox as berth-dev-filesystem (matches `berth mcp`'s default container naming)...");
   const running = await startContainer({
     image: "berth/filesystem:dev",
     name: "berth-dev-filesystem",
     manifest,
-    bindMount: { hostPath: REPO_ROOT, containerPath: "/workspace" },
-    workingDir: "/workspace/apps/filesystem",
+    bindMount,
+    extraBinds,
+    workingDir,
+    appStateVolume: stateVolume,
+    env: { BERTH_WORKSPACE_ROOT: workspaceRoot },
     docker,
   });
 
@@ -80,7 +96,9 @@ async function main() {
     assert(result.text === "done", `expected the agent to reach its final answer, got: ${JSON.stringify(result)}`);
     assert(result.toolCalls.length === 1 && !result.toolCalls[0].result?.error, `expected the tool call to succeed, got: ${JSON.stringify(result.toolCalls)}`);
 
-    const catOutput = await execInContainer(running.container, ["cat", "/workspace/mcp-client-milestone.txt"]);
+    // Read back where the app actually writes — apps/filesystem resolves a
+    // relative path against BERTH_WORKSPACE_ROOT, not the mount root.
+    const catOutput = await execInContainer(running.container, ["cat", `${workspaceRoot}/mcp-client-milestone.txt`]);
     console.log("file contents seen via docker exec:", JSON.stringify(catOutput));
     assert(
       catOutput.includes("written via createMcpClientTools()"),

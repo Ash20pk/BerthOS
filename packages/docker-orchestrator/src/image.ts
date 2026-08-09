@@ -69,6 +69,31 @@ function findWorkspaceRoot(startDir: string): string | undefined {
 }
 
 /**
+ * What never belongs in a build context, whichever of the three copies below
+ * is doing the copying.
+ *
+ * `node_modules` is the obvious one: it's either staged properly by
+ * `pnpm deploy` or supplied by a bind mount.
+ *
+ * `.berth` is the one that bites. It holds per-boot generated state — the
+ * compiled capability policy — so copying a previous run's copy into an image
+ * is wrong on its own terms. It also *fails*: since apps run as their own uid,
+ * `entrypoint.sh` leaves `capability-policy.json` mode 0640 owned by
+ * `root:<app>`, and when the app directory is a bind mount that ownership is
+ * real on the host. A later host-side build then can't read it, and the whole
+ * build dies with `EACCES ... copyfile .berth/capability-policy.json`. Found
+ * on Linux CI only: Docker Desktop virtualizes bind-mount ownership, so on a
+ * Mac the file comes back readable and nothing looks wrong.
+ *
+ * Anything the build genuinely needs under `.berth` (the generated
+ * `on-install.sh`) is written into the staging directory directly, after this
+ * filter has already excluded the source copy.
+ */
+function excludedFromBuildContext(appDir: string, src: string): boolean {
+  return src.includes(join(appDir, "node_modules")) || src.includes(join(appDir, ".berth"));
+}
+
+/**
  * Materializes a real (non-symlinked-outside) node_modules for the
  * production image. A dev image relies on a bind mount plus the host's own
  * pnpm-managed node_modules, so it never needs this — but a production image
@@ -92,7 +117,7 @@ async function stageProductionSource(appDir: string, stagingDir: string): Promis
 
   await cp(appDir, stagingDir, {
     recursive: true,
-    filter: (src) => !src.includes(join(appDir, "node_modules")),
+    filter: (src) => !excludedFromBuildContext(appDir, src),
   });
   try {
     await execFileAsync("pnpm", ["install", "--prod"], { cwd: stagingDir });
@@ -218,7 +243,7 @@ async function stageDevOnInstallContext(options: BuildImageOptions, stagingDir: 
     await cp(app.appDir, stagedAppRoot, {
       recursive: true,
       force: false,
-      filter: (src) => !src.includes(join(app.appDir, "node_modules")),
+      filter: (src) => !excludedFromBuildContext(app.appDir, src),
     });
   }
 }
@@ -261,7 +286,7 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
     } else {
       await cp(options.appDir, stagingDir, {
         recursive: true,
-        filter: (src) => !src.includes(join(options.appDir, "node_modules")),
+        filter: (src) => !excludedFromBuildContext(options.appDir, src),
       });
       await stageDevOnInstallContext(options, stagingDir);
     }

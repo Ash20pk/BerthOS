@@ -29,6 +29,7 @@
 import Docker from "dockerode";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
+import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { loadManifest } from "@berth/manifest-schema";
 import { buildImage, startContainer, stopContainer, invokeAppExport } from "../dist/index.js";
@@ -38,10 +39,33 @@ const REPO_ROOT = join(__dirname, "..", "..", "..");
 const FILESYSTEM_APP_DIR = join(REPO_ROOT, "apps", "filesystem");
 const BOUNDARY_APP_A_DIR = join(__dirname, "fixtures", "boundary-app-a");
 const BOUNDARY_APP_B_DIR = join(__dirname, "fixtures", "boundary-app-b");
+// The authorized counterpart to app A: same source, but its berth.yml declares
+// app:invoke:boundary-app-b (REMEDIATION.md 1.4).
+const BOUNDARY_APP_C_DIR = join(__dirname, "fixtures", "boundary-app-c");
+
+// Where the app's own writes land, and why this test needs one at all.
+//
+// The mount below is still the repository root, read-write, because Tests 6-7
+// need root (via docker exec) to plant a symlink *inside* the granted
+// /workspace hierarchy. But the app is no longer root: since the per-app uid
+// work it runs as uid 10000, and a real Linux bind mount preserves the host's
+// ownership, so the checkout belongs to whoever cloned it and every app write
+// under /workspace is a plain EACCES. Docker Desktop virtualizes bind-mount
+// ownership, which is why this only ever failed on CI.
+//
+// So app data goes where `berth dev` puts it: a directory entrypoint.sh
+// chgrp's to the shared `berth` group precisely so a non-root app can write
+// it. It sits *inside* /workspace deliberately — every Landlock assertion
+// below is about the declared `filesystem:write:/workspace` scope, and a path
+// outside that scope would be denied for the wrong reason.
+const DEV_WORKSPACE = "/workspace/.berth/dev-workspace";
+const DEV_WORKSPACE_HOST_DIR = join(REPO_ROOT, ".berth", "dev-workspace");
 
 const docker = new Docker();
 
 async function main() {
+  mkdirSync(DEV_WORKSPACE_HOST_DIR, { recursive: true });
+
   const manifest = await loadManifest(join(FILESYSTEM_APP_DIR, "berth.yml"));
 
   console.log("Building filesystem's dev image...");
@@ -53,7 +77,9 @@ async function main() {
     name: "berth-capability-enforcement-filesystem",
     manifest,
     bindMount: { hostPath: REPO_ROOT, containerPath: "/workspace" },
+    extraBinds: [`${DEV_WORKSPACE_HOST_DIR}:${DEV_WORKSPACE}`],
     workingDir: "/workspace/apps/filesystem",
+    env: { BERTH_WORKSPACE_ROOT: DEV_WORKSPACE },
     docker,
   });
 
@@ -236,7 +262,7 @@ async function main() {
     // the classic "escape the sandbox via a symlink" technique; proving it
     // doesn't work here is what makes the write/read-path grants above mean
     // anything against an app that tries to plant one.
-    await execInContainer(running.container, ["sh", "-c", "ln -sfn /opt /workspace/escape-write-link"]);
+    await execInContainer(running.container, ["sh", "-c", `ln -sfn /opt ${DEV_WORKSPACE}/escape-write-link`]);
     const symlinkWrite = await rpc.call({
       id: "6",
       export: "write_file",
@@ -245,7 +271,7 @@ async function main() {
     console.log("write response:", symlinkWrite);
     const symlinkWriteDenied = symlinkWrite.error && /EACCES|EPERM|permission/i.test(symlinkWrite.error);
 
-    await execInContainer(running.container, ["sh", "-c", "ln -sfn /opt /workspace/escape-read-link"]);
+    await execInContainer(running.container, ["sh", "-c", `ln -sfn /opt ${DEV_WORKSPACE}/escape-read-link`]);
     const symlinkRead = await rpc.call({
       id: "7",
       export: "read_file",
@@ -450,29 +476,57 @@ async function main() {
   // B's directory just because they share a container and a bind mount.
   const boundaryAManifest = await loadManifest(join(BOUNDARY_APP_A_DIR, "berth.yml"));
   const boundaryBManifest = await loadManifest(join(BOUNDARY_APP_B_DIR, "berth.yml"));
+  const boundaryCManifest = await loadManifest(join(BOUNDARY_APP_C_DIR, "berth.yml"));
 
   console.log("Building boundary-app-a's dev image (shared by both apps in this container)...");
   await buildImage({ appDir: BOUNDARY_APP_A_DIR, tag: "berth/boundary-app-a:dev", target: "dev", docker });
 
   const BOUNDARY_APP_A_CONTAINER_DIR = "/workspace/packages/docker-orchestrator/test/fixtures/boundary-app-a";
   const BOUNDARY_APP_B_CONTAINER_DIR = "/workspace/packages/docker-orchestrator/test/fixtures/boundary-app-b";
+  const BOUNDARY_APP_C_CONTAINER_DIR = "/workspace/packages/docker-orchestrator/test/fixtures/boundary-app-c";
   const boundaryApps = [
     { name: "boundary-app-a", workingDir: BOUNDARY_APP_A_CONTAINER_DIR, manifest: boundaryAManifest },
     { name: "boundary-app-b", workingDir: BOUNDARY_APP_B_CONTAINER_DIR, manifest: boundaryBManifest },
+    { name: "boundary-app-c", workingDir: BOUNDARY_APP_C_CONTAINER_DIR, manifest: boundaryCManifest },
   ];
+  // Created on the host so entrypoint.sh's grant_dev_workspace() — which runs
+  // once, before any app starts — chgrp's them to `berth` and adds g+rwX. That
+  // is what makes DAC *permit* app A to write app B's directory, leaving
+  // Landlock as the only thing that can refuse it. Letting agent-init create
+  // them instead would produce root:root 0755 directories that no app could
+  // write, and the cross-app assertions below would pass without Landlock
+  // doing anything.
+  for (const name of ["boundary-app-a", "boundary-app-b", "boundary-app-c"]) {
+    mkdirSync(join(DEV_WORKSPACE_HOST_DIR, name), { recursive: true });
+  }
+
   const boundaryRunning = await startContainer({
     image: "berth/boundary-app-a:dev",
     name: "berth-capability-enforcement-boundary",
     manifest: boundaryAManifest,
     bindMount: { hostPath: REPO_ROOT, containerPath: "/workspace" },
+    extraBinds: [`${DEV_WORKSPACE_HOST_DIR}:${DEV_WORKSPACE}`],
     workingDir: BOUNDARY_APP_A_CONTAINER_DIR,
+    env: { BERTH_WORKSPACE_ROOT: DEV_WORKSPACE },
     apps: boundaryApps,
     docker,
   });
   const boundaryLog = await startLogCapture(boundaryRunning.container);
   try {
-    await waitFor(() => /"boundary-app-a" ready/.test(boundaryLog.text()), 20000, "boundary-app-a runtime ready");
-    await waitFor(() => /"boundary-app-b" ready/.test(boundaryLog.text()), 20000, "boundary-app-b runtime ready");
+    // Dumped on timeout, because without it this failure says only "not ready"
+    // and the container's own account of why is thrown away — which is exactly
+    // how this spent a CI round undiagnosable. Same lesson as 1.15's
+    // !listening path.
+    try {
+      await waitFor(() => /"boundary-app-a" ready/.test(boundaryLog.text()), 20000, "boundary-app-a runtime ready");
+      await waitFor(() => /"boundary-app-b" ready/.test(boundaryLog.text()), 20000, "boundary-app-b runtime ready");
+      await waitFor(() => /"boundary-app-c" ready/.test(boundaryLog.text()), 20000, "boundary-app-c runtime ready");
+    } catch (err) {
+      console.error("\n--- boundary container log (none of the three apps reported ready) ---");
+      console.error(boundaryLog.text() || "(the container produced no output at all)");
+      console.error("--- end boundary container log ---\n");
+      throw err;
+    }
 
     // Seed a file only boundary-app-b is allowed to touch, via app B itself
     // (not a raw docker exec) so it's a real write through B's own ruleset.
@@ -514,6 +568,240 @@ async function main() {
     } else {
       console.log("\nNOT VERIFIED (expected in this environment) — Landlock isn't enforced here.");
     }
+
+    // --- The RPC-socket half of the same boundary: REMEDIATION.md 1.4. ---
+    //
+    // Asserted UNCONDITIONALLY, unlike everything above it in this test, and
+    // that is the point. The filesystem assertions above are Landlock, so they
+    // degrade to informational on a kernel that doesn't enforce it (Docker
+    // Desktop's linuxkit). This one is DAC — a 0710 directory owned by the
+    // serving app's uid — which every kernel that runs a container enforces.
+    // If it starts passing conditionally, something has silently reverted to
+    // running apps as root.
+    //
+    // Deliberately not "can app A write into app B's socket directory": an app
+    // does not need write access to *connect* to a pathname socket (Landlock
+    // hooks neither, and the design doc works through why), so the only
+    // meaningful assertion is the connect itself.
+    console.log("\n--- App A attempting to CONNECT to app B's RPC socket (the 1.4 exploit) ---");
+    const ownSocket = await invokeAppExport(boundaryRunning.container, "boundary-app-a", {
+      id: "4",
+      export: "probe_unix_socket",
+      input: { path: "/run/berth/boundary-app-a/rpc.sock" },
+    });
+    console.log("app A -> its own socket:", ownSocket);
+    // The positive control, and it has to come first: every denial below would
+    // also "pass" if the sockets had simply moved somewhere nothing binds, or
+    // if probe_unix_socket were broken.
+    assert(
+      ownSocket.result?.connected === true,
+      `boundary-app-a could not reach its OWN RPC socket (${JSON.stringify(ownSocket)}) — the denial below would prove nothing`,
+    );
+
+    const siblingSocket = await invokeAppExport(boundaryRunning.container, "boundary-app-a", {
+      id: "5",
+      export: "probe_unix_socket",
+      input: { path: "/run/berth/boundary-app-b/rpc.sock" },
+    });
+    console.log("app A -> app B's socket:", siblingSocket);
+    assert(
+      siblingSocket.result?.connected === false,
+      `boundary-app-a reached boundary-app-b's RPC socket — REMEDIATION.md 1.4 has regressed and one app can invoke another's exports with its capabilities: ${JSON.stringify(siblingSocket)}`,
+    );
+    assert(
+      /^(EACCES|EPERM)$/.test(siblingSocket.result?.code ?? ""),
+      `boundary-app-a's connect to boundary-app-b's socket failed with "${siblingSocket.result?.code}" rather than EACCES/EPERM — that is not the kernel refusing it, which is what this test is for`,
+    );
+
+    // And the socket the old layout used must not be there at all: an app
+    // rebinding /tmp/berth-rpc/<name>.sock would restore the whole exploit,
+    // since /tmp itself is still traversable by everyone.
+    const oldPathSocket = await invokeAppExport(boundaryRunning.container, "boundary-app-a", {
+      id: "6",
+      export: "probe_unix_socket",
+      input: { path: "/tmp/berth-rpc/boundary-app-b.sock" },
+    });
+    console.log("app A -> app B's pre-1.4 socket path:", oldPathSocket);
+    assert(
+      oldPathSocket.result?.connected === false,
+      `something is still listening at the pre-1.4 world-writable socket path: ${JSON.stringify(oldPathSocket)}`,
+    );
+
+    // And the authorized direction: app C is identical to app A except that its
+    // berth.yml declares app:invoke:boundary-app-b. Without this half, the
+    // denial above would be satisfied just as well by a boundary nothing can
+    // cross — including @berth/agents' agent-as-tool path, which is the reason
+    // an opt-in exists at all.
+    console.log("\n--- App C, which DECLARED app:invoke:boundary-app-b, on its own peer socket ---");
+    const grantedSocket = await invokeAppExport(boundaryRunning.container, "boundary-app-c", {
+      id: "7",
+      export: "probe_unix_socket",
+      input: { path: "/run/berth/boundary-app-b/peers/boundary-app-c/rpc.sock" },
+    });
+    console.log("app C -> its peer socket on app B:", grantedSocket);
+    assert(
+      grantedSocket.result?.connected === true,
+      `boundary-app-c declares app:invoke:boundary-app-b but was still refused (${JSON.stringify(grantedSocket)}) — the grant is not being wired up at boot`,
+    );
+
+    // Declaring the capability must not be transitive: C may reach B, which
+    // says nothing about C reaching A.
+    const ungrantedDirection = await invokeAppExport(boundaryRunning.container, "boundary-app-c", {
+      id: "8",
+      export: "probe_unix_socket",
+      input: { path: "/run/berth/boundary-app-a/rpc.sock" },
+    });
+    console.log("app C -> app A's socket:", ungrantedDirection);
+    assert(
+      ungrantedDirection.result?.connected === false,
+      `boundary-app-c reached boundary-app-a, which it never declared app:invoke: on: ${JSON.stringify(ungrantedDirection)}`,
+    );
+
+    // --- Identity, not just reachability: REMEDIATION.md 1.4 part 3. ---
+    //
+    // The per-caller socket is what lets the server say which sibling called
+    // it. Two things have to hold for that to be a boundary rather than a
+    // convention: an authorized caller cannot use *another* caller's channel,
+    // and the target's own general-purpose socket is not a way around it.
+    // App A, which declared nothing, against the channel B keeps for C. This is
+    // the impersonation case: if it were reachable, A could invoke B's exports
+    // and be recorded as C.
+    const impersonation = await invokeAppExport(boundaryRunning.container, "boundary-app-a", {
+      id: "9",
+      export: "probe_unix_socket",
+      input: { path: "/run/berth/boundary-app-b/peers/boundary-app-c/rpc.sock" },
+    });
+    console.log("app A -> the socket app B keeps for app C:", impersonation);
+    assert(
+      impersonation.result?.code === "EACCES",
+      `boundary-app-a was not refused with EACCES on the channel boundary-app-b keeps for boundary-app-c — it could invoke exports while being attributed to another app: ${JSON.stringify(impersonation)}`,
+    );
+
+    const backDoor = await invokeAppExport(boundaryRunning.container, "boundary-app-c", {
+      id: "10",
+      export: "probe_unix_socket",
+      input: { path: "/run/berth/boundary-app-b/rpc.sock" },
+    });
+    console.log("app C -> app B's relay socket:", backDoor);
+    assert(
+      backDoor.result?.connected === false,
+      `boundary-app-c reached boundary-app-b's root-only socket, which carries no caller identity: ${JSON.stringify(backDoor)}`,
+    );
+
+    // And the identity actually reaches the server, rather than merely being
+    // derivable from the layout: a real call over the peer socket, and B's own
+    // audit line naming who made it. This is also the first assertion here
+    // that exercises the whole exploit shape end to end — app C executing an
+    // export with app B's capabilities — except that it is now the authorized
+    // case, so it should succeed and be attributed.
+    const attributed = await invokeAppExport(boundaryRunning.container, "boundary-app-c", {
+      id: "11",
+      export: "invoke_via_socket",
+      input: {
+        path: "/run/berth/boundary-app-b/peers/boundary-app-c/rpc.sock",
+        export: "write_file",
+        input: { path: "written-for-c.txt", content: "written by B, on C's behalf" },
+      },
+    });
+    console.log("app C -> write_file on app B:", attributed);
+    assert(
+      /"id"\s*:\s*"x"/.test(attributed.result?.response ?? "") && !/error/.test(attributed.result?.response ?? ""),
+      `app C's authorized call to app B did not return a clean response: ${JSON.stringify(attributed)}`,
+    );
+    await waitFor(
+      () => /"boundary-app-c" invoked export "write_file"/.test(boundaryLog.text()),
+      5000,
+      'boundary-app-b to attribute the call to "boundary-app-c"',
+    );
+    // The file must exist and must be inside B's scope — proof the call really
+    // ran with B's capabilities and not C's.
+    const writtenBack = await invokeAppExport(boundaryRunning.container, "boundary-app-b", {
+      id: "12",
+      export: "read_file",
+      input: { path: "written-for-c.txt" },
+    });
+    assert(
+      writtenBack.result?.content === "written by B, on C's behalf",
+      `expected app B to have written the file on C's behalf, got ${JSON.stringify(writtenBack)}`,
+    );
+
+    // The boot must survive a grant naming an app that isn't here — C declares
+    // app:invoke:no-such-app, and every assertion above depends on C having
+    // started at all.
+    assert(
+      /no app named no-such-app is in this container/.test(boundaryLog.text()),
+      "expected a warning for boundary-app-c's app:invoke:no-such-app; without one, the unknown-target path is untested",
+    );
+
+    console.log("\nPASS — an app reaches a sibling's RPC socket only where app:invoke: declared it (REMEDIATION.md 1.4).");
+
+    // --- The daemons' identity, REMEDIATION.md 1.14. ---
+    //
+    // Both the context bus and semantic-fs used to take the caller's own word
+    // for which app it is, so any app could publish under another's name or
+    // poison semantic-fs's write attribution. Both now derive it from
+    // SO_PEERCRED. Asserted on the daemon's own log line rather than on a
+    // response, because both daemons ack a register either way — the point is
+    // not that the call fails, it is that the name recorded is not the one
+    // sent.
+    console.log("\n--- App A registering with both daemons under app B's name ---");
+    const busSpoof = await invokeAppExport(boundaryRunning.container, "boundary-app-a", {
+      id: "13",
+      export: "register_on_bus",
+      input: { app: "boundary-app-b" },
+    });
+    assert(busSpoof.result?.ok === true, `the context-bus register probe did not run: ${JSON.stringify(busSpoof)}`);
+    await waitFor(
+      () => /\[context-bus\].*claimed to be "boundary-app-b" but the kernel says App\("boundary-app-a"\)/.test(boundaryLog.text()),
+      5000,
+      "context-bus to override boundary-app-a's claim to be boundary-app-b",
+    );
+    assert(
+      /\[context-bus\] conn \d+ registered as "boundary-app-a"/.test(boundaryLog.text()),
+      "context-bus overrode the claim but did not register the connection under the kernel's answer",
+    );
+
+    // pid 1 is the deliberate part: registering *another* process's pid is how
+    // an app would attribute its own /context writes to something else, and
+    // the pid is now taken from SO_PEERCRED too, not from the request.
+    const fsSpoof = await invokeAppExport(boundaryRunning.container, "boundary-app-a", {
+      id: "14",
+      export: "register_on_semantic_fs",
+      input: { app: "boundary-app-b", pid: 1 },
+    });
+    assert(fsSpoof.result?.ok === true, `the semantic-fs register probe did not run: ${JSON.stringify(fsSpoof)}`);
+    await waitFor(
+      () => /\[semantic-fs:control\].*registered as "boundary-app-b" but the kernel says "boundary-app-a"/.test(boundaryLog.text()),
+      5000,
+      "semantic-fs to override boundary-app-a's claim to be boundary-app-b",
+    );
+
+    // The allocation half of the same item: a 0xFFFFFFFF length header. The
+    // assertion is that the daemon is still there afterwards and still serving
+    // *other* connections — a daemon that died would fail the register below,
+    // and one that allocated 4 GiB would likely take the container with it.
+    console.log("\n--- App A sending an oversized frame header to both daemons ---");
+    for (const socketPath of ["/tmp/berth-context-bus.sock", "/tmp/berth-semantic-fs.sock"]) {
+      const oversized = await invokeAppExport(boundaryRunning.container, "boundary-app-a", {
+        id: "15",
+        export: "send_oversized_frame",
+        input: { path: socketPath },
+      });
+      assert(oversized.result?.ok === true, `the oversized-frame probe did not reach ${socketPath}: ${JSON.stringify(oversized)}`);
+    }
+    const survived = await invokeAppExport(boundaryRunning.container, "boundary-app-a", {
+      id: "16",
+      export: "register_on_bus",
+      input: { app: "boundary-app-a" },
+    });
+    assert(survived.result?.ok === true, `the context bus stopped accepting connections after an oversized frame header: ${JSON.stringify(survived)}`);
+    const registrations = boundaryLog.text().match(/\[context-bus\] conn \d+ registered as/g) ?? [];
+    assert(
+      registrations.length >= 2,
+      `expected the context bus to serve a fresh registration after the oversized frame, saw ${registrations.length}`,
+    );
+
+    console.log("\nPASS — both daemons record the uid the kernel reports, not the name the caller sent, and survive a 4 GiB length header (REMEDIATION.md 1.14).");
   } finally {
     await boundaryLog.stop();
     await stopContainer(boundaryRunning.container).catch(() => {});
@@ -556,6 +844,11 @@ async function startLogCapture(container) {
 // container.
 async function createRpcClient(container) {
   const stream = await container.attach({ stream: true, stdin: true, stdout: true, stderr: true, hijack: true });
+  // Terminates the attach options object docker-modem sends as this POST's
+  // body straight into the container's stdin, so it can't concatenate onto the
+  // first real request — see @berth/docker-orchestrator's stdio-rpc.ts for the
+  // full explanation.
+  stream.write("\n");
   const stdout = new PassThrough();
   const stderr = new PassThrough();
   docker.modem.demuxStream(stream, stdout, stderr);

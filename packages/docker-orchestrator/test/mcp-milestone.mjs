@@ -37,6 +37,10 @@ async function main() {
     manifest,
     bindMount: { hostPath: REPO_ROOT, containerPath: "/workspace" },
     workingDir: "/workspace/apps/filesystem",
+    // Where `berth dev` puts app data. Apps run as their own uid now (Step 2
+    // of docs/per-app-uid-design.md) and cannot write the bind-mounted
+    // repository root, which is owned by the developer or the CI runner.
+    env: { BERTH_WORKSPACE_ROOT: "/workspace/.berth/dev-workspace" },
     docker,
   });
 
@@ -73,8 +77,8 @@ async function main() {
     assert(!result.isError, `expected the write_file tool call to succeed, got: ${JSON.stringify(result)}`);
 
     // write_file resolves relative paths against BERTH_WORKSPACE_ROOT
-    // (/workspace by default), not the app's own working directory.
-    const catOutput = await execInContainer(running.container, ["cat", "/workspace/mcp-milestone.txt"]);
+    // (set above), not the app's own working directory.
+    const catOutput = await execInContainer(running.container, ["cat", "/workspace/.berth/dev-workspace/mcp-milestone.txt"]);
     console.log("file contents seen via docker exec:", JSON.stringify(catOutput));
     assert(
       catOutput.includes("written via the real MCP bridge"),

@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { loadManifest } from "@berth/manifest-schema";
 import { buildImage, startContainer, stopContainer, invokeAppExport } from "../dist/index.js";
+import { resolveDevBindMount } from "../../cli/dist/util/workspace.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");
@@ -34,13 +35,41 @@ async function main() {
     { name: "code-editor", workingDir: "/workspace/apps/code-editor", manifest: codeEditorManifest },
   ];
 
+  // The real `berth dev` mount layout, via the CLI's own helper rather than a
+  // hand-rolled bind — the same reason dev-workspace-mount-milestone.mjs
+  // imports it. This used to be one read-WRITE bind of the repository root at
+  // /workspace, and the write below landed `multi-app-test.txt` in the
+  // developer's own repository.
+  //
+  // That stopped working the moment apps got their own uid: the repo is owned
+  // by whoever checked it out, the app is uid 10000, and a real Linux bind
+  // mount preserves that — so the write is a plain EACCES. Docker Desktop
+  // virtualizes bind-mount ownership, which is why this only ever failed on
+  // Linux CI. The fix is the layout `berth dev` already uses: the root stays
+  // read-only (REMEDIATION.md 1.6) and app data goes to the shared
+  // dev-workspace directory, which entrypoint.sh chgrp's to the `berth` group
+  // precisely so a non-root app can write it.
+  const { bindMount, extraBinds, workingDir, workspaceRoot } = resolveDevBindMount(FILESYSTEM_APP_DIR, [
+    { appDir: CODE_EDITOR_APP_DIR, relPath: "apps/code-editor" },
+  ]);
+  // Each app's .berth is a named volume, exactly as dev.ts adds them — without
+  // it, generate-capability-policy.js hits EROFS on the read-only mount and
+  // the app fails much later for a reason that looks nothing like a mount.
+  for (const relPath of ["apps/filesystem", "apps/code-editor"]) {
+    const volume = `berth-multi-app-milestone-${relPath.split("/")[1]}-app-state`;
+    await docker.createVolume({ Name: volume }).catch(() => {});
+    extraBinds.push(`${volume}:/workspace/${relPath}/.berth`);
+  }
+
   console.log("Starting a real multi-app sandbox (filesystem + code-editor)...");
   const running = await startContainer({
     image: "berth/filesystem:dev",
     name: "berth-multi-app-milestone",
     manifest: filesystemManifest,
-    bindMount: { hostPath: REPO_ROOT, containerPath: "/workspace" },
-    workingDir: "/workspace/apps/filesystem",
+    bindMount,
+    extraBinds,
+    workingDir,
+    env: { BERTH_WORKSPACE_ROOT: workspaceRoot },
     apps,
     docker,
   });

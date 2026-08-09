@@ -24,9 +24,16 @@ berth dev --apps=apps/code-editor
 - **v1 scope: at most one app across the whole set may declare a `browser:*` capability** (`assertAtMostOneBrowserApp`) — two simultaneous browser-capable apps would need per-app Xvfb displays and dynamic VNC/CDP port allocation, real additional scope this pass doesn't attempt. The existing fixed port set is unchanged. Same constraint, same reason, for `terminal:*` (`assertAtMostOneTerminalApp`) — the ttyd port (7681) is a single fixed container port too, not allocated per-app; see `apps/terminal`. Same constraint again for `network:peer:*` (`assertAtMostOneMeshApp`) — `entrypoint.sh`'s `NEEDS_MESH` branch starts a single mesh daemon on a single `wg0` interface per container, not one per app; see [mesh reference](./mesh-reference.md). **Only `berth dev` (`dev.ts`) checks all three before build/start today. `berth test` and `berth deploy` (`test.ts`, `deploy.ts`) only call `assertAtMostOneBrowserApp`** — a terminal or mesh conflict between companion apps isn't caught pre-build/deploy there, only on `dev`.
 - **`berth test`'s multi-app path** is structurally different from its single-app one-shot `docker.run(AutoRemove)`: there's no way to keep companions alive alongside a one-shot exec, so multi-app instead starts a real container (`startContainer`), execs the check inside the primary's own directory, then tears the container down.
 
-## Known residual risk (documented, not fixed here)
+## Reaching another app's exports
 
-`generate-capability-policy.js`'s baseline `/tmp` write grant (needed for the context-bus socket) already covers all of `/tmp`; the new per-app RPC sockets under `/tmp/berth-rpc/` inherit that same breadth, so any app can technically write into another app's RPC socket path. Same class of risk as the pre-existing context-bus socket, not a new hole introduced here — flagged, not solved, in this pass.
+```
+/run/berth/<app>/rpc.sock                    0600  <app>:<app>     the app itself, and root (the host relay)
+/run/berth/<app>/peers/<caller>/rpc.sock     0660  <app>:<caller>  one authorized sibling, and nobody else
+```
+
+An app's own socket is not reachable by any sibling. A sibling that declares `app:invoke:<name>` gets a socket of its own under `peers/`, created at boot in a directory mode `2710` owned by the target and group-owned by the caller — so the caller is the only unprivileged uid that can traverse to it, and the connection's arrival there is the kernel's statement about who connected. That is what lets the target log which app invoked which export. Undeclared, `connect(2)` fails with `EACCES`. The host is unaffected: `invokeAppExport()` enters via `docker exec` as root, and the uid boundary is between apps, never between the host and an app.
+
+This replaced a `1777` `/tmp/berth-rpc/` directory that every app could bind and connect into, which is [REMEDIATION 1.4](../REMEDIATION.md#14--app-rpc-sockets-in-world-writable-tmp-unauthenticated). One limit remains, recorded there: the grant is connect-time, so it authorizes a *caller* and not a per-export subset.
 
 ## Verification
 

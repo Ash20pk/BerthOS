@@ -40,20 +40,45 @@ const POLICY_PATH = process.env.BERTH_CAPABILITY_POLICY ?? join(process.cwd(), "
 const GRANTS_SERVER_URL = process.env.BERTH_GRANTS_SERVER_URL;
 const MESH_COORDINATOR_PORT = Number(process.env.BERTH_MESH_COORDINATOR_PORT ?? 4875);
 
-// Always writable regardless of what's declared: /tmp, where scratch files
-// and every daemon/app Unix socket live.
+// Always writable regardless of what's declared, and — apart from /dev/null —
+// per-app rather than shared. This used to be all of `/tmp`, unconditionally,
+// for every app in the container: REMEDIATION.md 1.4's finding, and the reason
+// one app could bind or connect to any other's RPC socket.
 //
-// An earlier version of this comment justified that with "connecting to a
-// Unix socket requires write access to it." That is a DAC fact and not a
-// Landlock one, and the difference matters: Landlock hangs its filesystem
-// enforcement off security_file_open and the path_* hooks, while connecting
-// to a *pathname* socket goes through unix_find_other() ->
+// The old comment justified the blanket /tmp with "connecting to a Unix socket
+// requires write access to it." That is a DAC fact and not a Landlock one, and
+// the difference is why this alone was never the fix: Landlock hangs its
+// filesystem enforcement off security_file_open and the path_* hooks, while
+// connecting to a *pathname* socket goes through unix_find_other() ->
 // inode_permission(MAY_WRITE), which Landlock does not hook. (ABI 6's
 // LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET scopes abstract sockets, not these.)
-// So omitting /tmp here would not stop an app connecting to a socket in it —
-// which is why REMEDIATION.md 1.4 needs per-app uids rather than a narrower
-// policy. See docs/per-app-uid-design.md.
-const BASELINE_WRITE_PATHS = ["/tmp", "/dev/null"];
+// *Binding* one is a different question — that goes through path_mknod, which
+// Landlock does hook as AccessFs::MakeSock — so narrowing this list stops an
+// app squatting a path, and DAC (the 0710 owner-only directory these two paths
+// now live in) is what stops it connecting. Both halves are needed; see
+// docs/per-app-uid-design.md.
+//
+// The three daemon control sockets stay at /tmp/berth-*.sock and stay
+// reachable by every app, which is deliberate (see the socket table in that
+// design doc) and, per the paragraph above, needs no write grant here to keep
+// working — only membership of the shared `berth` group, which
+// provision_app_identity gives every app.
+//
+// /dev/null is the one genuinely container-wide entry, and it is a device
+// node, not a directory: see the TERMINAL_WRITE_PATHS comment below.
+function baselineWritePaths(appName: string): string[] {
+  return ["/dev/null", appTmpDir(appName), appRunDir(appName)];
+}
+
+/** This app's private scratch directory — TMPDIR/TMUX_TMPDIR/XDG_* all point here (entrypoint.sh). */
+function appTmpDir(appName: string): string {
+  return `/tmp/${appName}`;
+}
+
+/** This app's private runtime directory, holding the RPC socket it binds in multi-app mode. */
+function appRunDir(appName: string): string {
+  return `/run/berth/${appName}`;
+}
 
 // Granted to any app declaring a terminal:* capability. Established by
 // straceing a real `tmux new-session` rather than guessed — the previous
@@ -83,10 +108,12 @@ const BASELINE_WRITE_PATHS = ["/tmp", "/dev/null"];
 // costs nothing.
 //
 // Worth stating plainly: this lets a terminal app write any pty in the
-// container, including another app's. That is not a new boundary — every
-// process here is uid 0 and shares one PID namespace (1.4, 1.11) — but it is
-// the kind of grant that should stop being container-wide once per-app uids
-// land. See docs/per-app-uid-design.md.
+// container, including another app's — the Landlock rule is on the devpts
+// mount, not on the ptys this app happens to have allocated. Per-app uids
+// narrow it in practice (a pty's slave is owned by whoever allocated it, so
+// DAC refuses what this rule permits) but not in the ruleset itself. It is
+// still the one container-wide grant left in this file. See
+// docs/per-app-uid-design.md § Blocker 6.
 const TERMINAL_WRITE_PATHS = ["/dev/pts", "/dev/ptmx"];
 
 // Only added when read scoping is actually enabled (i.e. the app declared at
@@ -112,7 +139,14 @@ const TERMINAL_WRITE_PATHS = ["/dev/pts", "/dev/ptmx"];
 // via /usr, and these two directories hold the same kind of thing. Executable
 // *scoping* is a separate question — AccessFs::Execute is deliberately not in
 // agent-init's handled set, see its comment there.
-const BASELINE_READ_PATHS = ["/usr", "/bin", "/sbin", "/lib", "/etc", "/proc", "/dev", "/tmp", process.cwd()];
+//
+// /tmp stays here in full even though the *write* baseline above no longer
+// does. Read access to it is what lets an app stat the daemon control sockets
+// and /tmp/.X11-unix before connecting; none of that is a boundary, and
+// narrowing reads is not what 1.4 was about.
+function baselineReadPaths(appName: string): string[] {
+  return ["/usr", "/bin", "/sbin", "/lib", "/etc", "/proc", "/dev", "/tmp", appRunDir(appName), process.cwd()];
+}
 
 export interface CapabilityPolicy {
   appName: string;
@@ -168,7 +202,7 @@ async function fetchApprovedCapabilities(appName: string): Promise<string[]> {
  */
 export function compileCapabilityPolicy(appName: string, rawCapabilities: string[]): CapabilityPolicy {
   const effectiveCapabilities: string[] = [];
-  const writePaths = new Set(BASELINE_WRITE_PATHS);
+  const writePaths = new Set(baselineWritePaths(appName));
   const declaredReadPaths = new Set<string>();
   const networkPorts = new Set<number>();
   const meshPeers = new Set<string>();
@@ -237,7 +271,7 @@ export function compileCapabilityPolicy(appName: string, rawCapabilities: string
   // Opt-in: only restrict reads at all if the app declared at least one
   // filesystem:read:<path> capability — otherwise leave readPaths empty,
   // which agent-init treats as "don't touch read access."
-  const readPaths = declaredReadPaths.size > 0 ? [...new Set([...BASELINE_READ_PATHS, ...declaredReadPaths])] : [];
+  const readPaths = declaredReadPaths.size > 0 ? [...new Set([...baselineReadPaths(appName), ...declaredReadPaths])] : [];
 
   return {
     appName,

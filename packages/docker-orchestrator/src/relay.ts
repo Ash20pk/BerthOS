@@ -1,10 +1,21 @@
 import Docker from "dockerode";
 import { PassThrough } from "node:stream";
 
-export const RPC_SOCKET_DIR = "/tmp/berth-rpc";
+/**
+ * Parent of the per-app socket directories, not a directory sockets sit in
+ * directly. Each app binds /run/berth/<app>/rpc.sock in a directory mode 0710
+ * and owned by that app's own uid, which is what stops a sibling reaching it
+ * (REMEDIATION.md 1.4). This used to be /tmp/berth-rpc, mode 1777.
+ *
+ * The relay below is unaffected by that: `docker exec` enters as root, and
+ * root traverses a 0710 directory regardless of owner. That asymmetry is
+ * deliberate and documented — the uid boundary is between apps, never between
+ * the host and an app (docs/per-app-uid-design.md § Blocker 7).
+ */
+export const RPC_SOCKET_DIR = "/run/berth";
 
 export function rpcSocketPathFor(appName: string): string {
-  return `${RPC_SOCKET_DIR}/${appName}.sock`;
+  return `${RPC_SOCKET_DIR}/${appName}/rpc.sock`;
 }
 
 export interface RpcRequest {

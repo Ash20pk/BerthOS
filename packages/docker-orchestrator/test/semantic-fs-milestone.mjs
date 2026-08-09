@@ -17,7 +17,7 @@ import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { loadManifest } from "@berth/manifest-schema";
-import { buildImage, startContainer, stopContainer } from "../dist/index.js";
+import { buildImage, startContainer, stopContainer, createStdioRpcClient } from "../dist/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");
@@ -160,6 +160,44 @@ async function main() {
     console.log("/context is a real FUSE mount.");
 
     console.log("\nPASS — query-by-intent over a seeded, real FUSE-backed semantic FS returned the correct fixture.");
+
+    // --- REMEDIATION.md 1.14: a dead daemon must be an error, not silence. ---
+    //
+    // Deliberately last: it kills the daemon, so nothing after it can query.
+    //
+    // The failure this replaces was the worst kind — `query()` returned an
+    // empty array, indistinguishable from "nothing matched", so retrieval,
+    // checkpoints, sessions and traces degraded to silent data loss while
+    // every call reported success. So the assertion is not "the query fails"
+    // in the abstract: it is that the *same query that just returned a
+    // fixture* now returns an error rather than `[]`.
+    //
+    // Driven through the shipped createStdioRpcClient rather than this file's
+    // local copy, because that one reattaches if its stream has gone — and a
+    // Docker attach connection quietly ending, while the container and app are
+    // both healthy, is exactly what made this assertion impossible to write
+    // before (see stdio-rpc.ts).
+    console.log("\n--- Killing semantic-fs-daemon and re-running the query that just worked ---");
+    await execOutput(running.container, ["pkill", "-9", "-f", "semantic-fs-daemon"]);
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+
+    const resilientRpc = await createStdioRpcClient(running.container, docker);
+    const afterKill = await resilientRpc.call({
+      id: "after-kill",
+      export: "query_context",
+      input: { text: "find files related to the auth bug" },
+    });
+    console.log("query after the daemon died:", JSON.stringify(afterKill));
+    assert(
+      afterKill.error,
+      `querying a dead semantic-fs daemon returned success instead of an error — this is REMEDIATION.md 1.14's silent data loss: ${JSON.stringify(afterKill)}`,
+    );
+    assert(
+      /semantic-fs|control socket/i.test(afterKill.error),
+      `the error names neither the daemon nor the socket, so whoever reads it cannot tell what broke: ${afterKill.error}`,
+    );
+
+    console.log("\nPASS — a dead semantic-fs daemon surfaces as an error, not as an empty result set (REMEDIATION.md 1.14).");
   } finally {
     await containerLog.stop();
     await stopContainer(running.container);
@@ -207,6 +245,11 @@ async function startLogCapture(container) {
 // would silently break every subsequent RPC call against this container.
 async function createRpcClient(container) {
   const stream = await container.attach({ stream: true, stdin: true, stdout: true, stderr: true, hijack: true });
+  // Terminates the attach options object docker-modem sends as this POST's
+  // body straight into the container's stdin, so it can't concatenate onto the
+  // first real request — see @berth/docker-orchestrator's stdio-rpc.ts for the
+  // full explanation.
+  stream.write("\n");
   const stdout = new PassThrough();
   const stderr = new PassThrough();
   docker.modem.demuxStream(stream, stdout, stderr);

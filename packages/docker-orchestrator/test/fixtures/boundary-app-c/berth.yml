@@ -1,10 +1,16 @@
-name: boundary-app-a
+name: boundary-app-c
 version: 0.1.0
-description: "capability-enforcement.mjs's cross-app boundary fixture — scoped ONLY to its own subdirectory, sharing a container with boundary-app-b, whose subdirectory it must NOT be able to reach."
+description: "capability-enforcement.mjs's cross-app boundary fixture — the authorized counterpart to boundary-app-a: it declares app:invoke:boundary-app-b, so its connect to that app's RPC socket must succeed where boundary-app-a's is refused."
 
 capabilities:
-  - filesystem:read:/workspace/.berth/dev-workspace/boundary-app-a
-  - filesystem:write:/workspace/.berth/dev-workspace/boundary-app-a
+  - filesystem:read:/workspace/.berth/dev-workspace/boundary-app-c
+  - filesystem:write:/workspace/.berth/dev-workspace/boundary-app-c
+  # The grant under test. Without it, connect(2) to boundary-app-b's socket is
+  # refused by the kernel — see REMEDIATION.md 1.4.
+  - app:invoke:boundary-app-b
+  # Names an app that isn't in this container: must warn at boot and be
+  # ignored, never fail the boot.
+  - app:invoke:no-such-app
 
 exports:
   - name: write_file
@@ -12,8 +18,6 @@ exports:
   - name: read_file
     input: { path: string }
     output: { content: string }
-  # Declares no app:invoke: capability on purpose — reaching a sibling's RPC
-  # socket is what this export probes, and what REMEDIATION.md 1.4 refuses.
   - name: probe_unix_socket
     input: { path: string }
     output: { connected: boolean, code: string }

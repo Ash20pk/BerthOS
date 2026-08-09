@@ -49,6 +49,257 @@ start_display_stack() {
   websockify --web=/usr/share/novnc 6080 localhost:5900 &
 }
 
+# Creates the uid, gid, and directories one app runs as, and exports
+# BERTH_APP_UID/BERTH_APP_GID for agent-init to drop to just before exec.
+# Step 1 of docs/per-app-uid-design.md.
+#
+# uid = 10000 + the app's index in BERTH_APPS (single-app mode is always
+# index 0, so uid 10000). Index-derived rather than name-hashed because a
+# hash collides, and the failure mode of a collision is two apps silently
+# sharing an identity — the exact thing this exists to stop.
+#
+# Every failure below warns and continues rather than aborting the boot. A
+# container where identity provisioning failed is exactly as (un)isolated as
+# every Berth container was before this existed: agent-init sees no
+# BERTH_APP_UID and stays root, which is a known posture rather than a new
+# one. Failing the boot instead would turn a `chown` that a read-only mount
+# refused into a container that won't start.
+provision_app_identity() {
+  local app_name="$1"
+  local app_index="$2"
+  local app_dir="$3"
+  local id=$((10000 + app_index))
+  local user="berth-${app_name}"
+
+  if ! addgroup -g "$id" "$user" 2>/dev/null; then
+    echo "[berth:entrypoint] WARNING: could not create group ${user} (gid ${id}) — ${app_name} will keep running as root" >&2
+    return 0
+  fi
+  if ! adduser -S -D -H -u "$id" -G "$user" -s /sbin/nologin "$user" 2>/dev/null; then
+    echo "[berth:entrypoint] WARNING: could not create user ${user} (uid ${id}) — ${app_name} will keep running as root" >&2
+    return 0
+  fi
+  # The one identity shared between apps: what it grants is /context and the
+  # three daemon control sockets, all of which are shared by design (see the
+  # socket table in docs/per-app-uid-design.md).
+  addgroup "$user" berth 2>/dev/null || true
+  # /dev/ptmx and the devpts mount are root:tty, so allocating a pty is a DAC
+  # question as well as a Landlock one (REMEDIATION.md 1.15 covers the latter).
+  # Granted only to an app that declared terminal:*, matching exactly what
+  # generate-capability-policy.ts compiles the pty write paths for.
+  if grep -q "terminal:" "$app_dir/berth.yml" 2>/dev/null; then
+    addgroup "$user" tty 2>/dev/null || true
+  fi
+
+  # Where this app's RPC socket lives, since Step 3 of the design doc took it
+  # out of world-writable /tmp/berth-rpc (REMEDIATION.md 1.4).
+  #
+  # 0711 — traverse, but not list. Nothing in here is reachable by a sibling by
+  # default: rpc.sock itself is 0600 (the app and root, i.e. the host relay).
+  # An authorized sibling instead gets its own socket under peers/<caller>/,
+  # created by grant_invoke_access below, and the `x` bit here is only what
+  # lets it walk to that. Without `x` a caller could not reach its own
+  # directory; with `r` it could enumerate every other caller's, which it has
+  # no reason to see.
+  #
+  # The private scratch directory is the other half: /tmp itself is no longer
+  # in any app's write policy, so TMPDIR (exported by run_app / the single-app
+  # path) points here instead. 0700 — nothing is ever granted into it.
+  install -d -m 0711 -o "$id" -g "$id" "/run/berth/${app_name}" 2>/dev/null \
+    || echo "[berth:entrypoint] WARNING: could not create /run/berth/${app_name} — this app's RPC socket has nowhere to live" >&2
+  install -d -m 0711 -o "$id" -g "$id" "/run/berth/${app_name}/peers" 2>/dev/null \
+    || echo "[berth:entrypoint] WARNING: could not create /run/berth/${app_name}/peers — no sibling will be able to call this app" >&2
+  install -d -m 0700 -o "$id" -g "$id" "/tmp/${app_name}" 2>/dev/null \
+    || echo "[berth:entrypoint] WARNING: could not create /tmp/${app_name} — this app has no writable scratch directory" >&2
+
+  # .berth only — deliberately NOT the app directory itself. That directory is
+  # the developer's own repository under `berth dev`'s bind mount, and
+  # chown -R'ing someone's working tree is option 1 in Blocker 1 of
+  # docs/per-app-uid-design.md, rejected there for that reason. .berth is
+  # different in kind: Berth creates it, it is gitignored, and in a real
+  # `berth dev` it is a Docker-owned named volume (container.ts's
+  # appStateVolume) rather than a host directory at all.
+  #
+  # The cost is Blocker 1's, unchanged: an app that declares a write path
+  # inside a host-owned bind mount cannot write it as a non-root uid. 1.6
+  # made that mount read-only, so for `berth dev` the question is now mostly
+  # moot; where it is not, the app gets a truthful EACCES rather than Berth
+  # rewriting ownership on the host to paper over it.
+  mkdir -p "$app_dir/.berth"
+  chown -R "$id:$id" "$app_dir/.berth" 2>/dev/null \
+    || echo "[berth:entrypoint] WARNING: could not chown ${app_dir}/.berth to ${user} — the app may fail to write its own state" >&2
+
+}
+
+# One app's declared `app:invoke:<target>` capabilities, turned into a private
+# channel: `/run/berth/<target>/peers/<caller>/`, owned by the target and
+# group-owned by the *caller*, mode 2710.
+#
+# Each bit of that is load-bearing:
+#   owner <target>  — the target binds its socket in here, and it is not root
+#   group <caller>  — the caller is the only unprivileged uid that can traverse
+#   0710            — no "other" access at all; siblings see nothing
+#   setgid (2)      — the socket the target creates inherits the *caller's*
+#                     group, so it lands reachable without the target (a
+#                     non-root process) needing to chown anything
+#
+# Group membership was the Step 3 mechanism and is deliberately gone: adding
+# the caller to the target's group let it reach that app's socket, but told the
+# *server* nothing about which sibling had called. A directory per caller is
+# both the authorization and the identity, because which socket a connection
+# arrived on is a fact the kernel established at connect(2) and the caller
+# cannot influence. That is Step 4's SO_PEERCRED property, obtained the only
+# way available to a Node server — see @berth/sdk's rpc.ts.
+#
+# This is the authorized half of REMEDIATION.md 1.4. The unauthorized half —
+# any app reaching any other app's socket because they all sat in a 1777
+# directory — is what Step 3 closes; but @berth/agents' generated agent app
+# genuinely calls its sibling apps' exports (network.ts's callSibling, the
+# agent-as-tool path), so closing it without an opt-in would delete a shipped
+# feature rather than secure it. Declaring the capability is now what buys it,
+# and the declaration is visible in `berth.yml` and in the audit line.
+#
+# Must run after *every* app's identity and peers/ directory exist, not inline
+# with provisioning: both belong to the target, which may come later in the app
+# list than its caller. Hence the separate pass in the loop below.
+#
+grant_invoke_access() {
+  local caller_name="$1"
+  local caller_dir="$2"
+  local target
+  # Deliberately a grep rather than a YAML parse, matching how this script
+  # already decides about browser:/network:peer:/github: — the CapabilityString
+  # grammar has already been validated by loadManifest() on the host, and the
+  # name that follows is constrained to ^[a-z0-9-]+$ by the manifest schema.
+  for target in $(grep -oE '^[[:space:]]*-[[:space:]]*app:invoke:[a-z0-9-]+' "$caller_dir/berth.yml" 2>/dev/null | sed 's/.*app:invoke://'); do
+    if ! getent group "berth-${target}" >/dev/null 2>&1; then
+      echo "[berth:entrypoint] WARNING: ${caller_name} declares app:invoke:${target}, but no app named ${target} is in this container — ignoring" >&2
+      continue
+    fi
+    # Numeric ids rather than names: busybox's `install` resolves both, but the
+    # rest of this script already works in numeric ids and one convention is
+    # easier to check than two.
+    local target_uid caller_gid
+    target_uid="$(id -u "berth-${target}" 2>/dev/null)"
+    caller_gid="$(id -g "berth-${caller_name}" 2>/dev/null)"
+    if [ -z "$target_uid" ] || [ -z "$caller_gid" ]; then
+      echo "[berth:entrypoint] WARNING: could not resolve ids for ${caller_name} -> ${target} — its app:invoke:${target} calls will fail with EACCES" >&2
+      continue
+    fi
+    if install -d -m 2710 -o "$target_uid" -g "$caller_gid" "/run/berth/${target}/peers/${caller_name}" 2>/dev/null; then
+      echo "[berth:entrypoint] ${caller_name} may invoke ${target}'s exports (app:invoke:${target}) via /run/berth/${target}/peers/${caller_name}" >&2
+    else
+      echo "[berth:entrypoint] WARNING: could not create /run/berth/${target}/peers/${caller_name} — ${caller_name}'s app:invoke:${target} calls will fail with EACCES" >&2
+    fi
+  done
+}
+
+# Exports the identity agent-init reads and drops to, immediately before the
+# app is forked. Split out of provision_app_identity so it runs *after*
+# grant_invoke_access has finished wiring group membership — the supplementary
+# list is read back from the user database here rather than assembled by hand,
+# so a group added by any of the steps above (berth, tty, a sibling's group)
+# is picked up without this function needing to know about it.
+#
+# Without it the app would keep *root's* supplementary groups — gid 0, which
+# owns most of the container — while holding an unprivileged uid, which is the
+# worst of both.
+export_app_identity() {
+  local app_name="$1"
+  local app_index="$2"
+  local user="berth-${app_name}"
+
+  if ! id "$user" >/dev/null 2>&1; then
+    # provision_app_identity warned already; agent-init sees no BERTH_APP_UID
+    # and stays root, which is the pre-Step-2 posture rather than a new one.
+    unset BERTH_APP_UID BERTH_APP_GID BERTH_APP_SUPPLEMENTARY_GIDS
+    return 0
+  fi
+
+  export BERTH_APP_UID=$((10000 + app_index))
+  export BERTH_APP_GID=$((10000 + app_index))
+  export BERTH_APP_SUPPLEMENTARY_GIDS="$(id -G "$user" 2>/dev/null | tr ' ' ',')"
+}
+
+# Points every "somewhere to scratch" convention at the app's own 0700
+# directory, now that /tmp itself is no longer in any app's write policy
+# (REMEDIATION.md 1.4, and see generate-capability-policy.ts's baseline).
+#
+# Each of these was found by asking what actually writes to a hardcoded /tmp
+# path in this image, rather than by guessing:
+#   TMPDIR       — Node's os.tmpdir() and Python's tempfile both honour it,
+#                  which covers Playwright's browser profile directories and
+#                  Chromium's own base::GetTempDir (--disable-dev-shm-usage
+#                  puts shared memory there).
+#   TMUX_TMPDIR  — a tmux server's socket directory, otherwise /tmp/tmux-<uid>
+#                  (apps/terminal; see REMEDIATION.md 1.15 for the strace).
+#   XDG_*        — base.Dockerfile sets these to /tmp/.chromium image-wide,
+#                  which every app in a multi-app container would otherwise
+#                  share; overridden per app here.
+#   HOME         — /root by default, which a non-root app cannot write. This
+#                  is not new in Step 3 (it was already true once apps stopped
+#                  being uid 0) but pointing it somewhere real is what stops
+#                  a tool that writes a dotfile failing for no visible reason.
+#
+# The daemon control sockets stay at /tmp/berth-*.sock and are unaffected:
+# connecting to a pathname socket needs neither a Landlock write rule nor
+# write access to /tmp, only DAC on the socket itself (0660 root:berth).
+export_app_environment() {
+  local app_name="$1"
+  export TMPDIR="/tmp/${app_name}"
+  export TMUX_TMPDIR="$TMPDIR"
+  export XDG_CONFIG_HOME="$TMPDIR/.config"
+  export XDG_CACHE_HOME="$TMPDIR/.cache"
+  export HOME="$TMPDIR"
+}
+
+# The one host-owned directory a `berth dev` app still has to write, and the
+# whole of what is left of Blocker 1 in docs/per-app-uid-design.md. The
+# workspace root itself is read-only since REMEDIATION.md 1.6, so this is not
+# the repository — it is `.berth/dev-workspace`, which Berth creates,
+# gitignores, and mounts specifically to hold app data.
+#
+# Option 2 from that blocker: chgrp to the shared group rather than chown to
+# any one app, because this directory is deliberately shared (a companion
+# writing a file the primary reads is the point of multi-app mode). setgid so
+# files created in it stay reachable by the next app.
+#
+# It does mutate ownership on the developer's host, and that is a real cost
+# stated rather than hidden — bounded to one Berth-created, gitignored
+# directory, which is the trade the design accepted.
+grant_dev_workspace() {
+  local dir="${BERTH_WORKSPACE_ROOT:-}"
+  [ -n "$dir" ] || return 0
+  case "$dir" in
+    */.berth/dev-workspace) ;;
+    # Anything else is not the directory this was written for — a standalone
+    # app, a workspace root, a path someone set by hand. Leave it alone.
+    *) return 0 ;;
+  esac
+  # `berth dev` creates this host-side before the container starts (a nested
+  # mountpoint has to exist inside a read-only bind), but a caller using
+  # startContainer directly may only have set the variable. Creating it here
+  # as root, once, is what lets the app — which is about to stop being root —
+  # write there at all.
+  mkdir -p "$dir" 2>/dev/null || true
+  [ -d "$dir" ] || return 0
+  chgrp -R berth "$dir" 2>/dev/null \
+    || { echo "[berth:entrypoint] WARNING: could not chgrp ${dir} to berth — a non-root app cannot write it" >&2; return 0; }
+  chmod -R g+rwX "$dir" 2>/dev/null || true
+  chmod g+s "$dir" 2>/dev/null || true
+}
+
+# Run after generate-capability-policy.js, never before: the app must be able
+# to read the policy agent-init applies to it, and must never be able to
+# rewrite it for the next boot. 0640 root:<app> is both.
+secure_capability_policy() {
+  local policy_path="$1"
+  [ -f "$policy_path" ] || return 0
+  [ -n "${BERTH_APP_GID:-}" ] || return 0
+  chown "0:${BERTH_APP_GID}" "$policy_path" 2>/dev/null || true
+  chmod 0640 "$policy_path" 2>/dev/null || true
+}
+
 if [ -z "${BERTH_APPS:-}" ]; then
   # --- Single-app mode. ---
   # BERTH_APPS is only ever set by container.ts when more than one app
@@ -131,6 +382,25 @@ if [ -z "${BERTH_APPS:-}" ]; then
     python3 -m berth_sdk.generate_capability_policy
   else
     node "$PWD/node_modules/@berth/sdk/dist/generate-capability-policy.js"
+  fi
+
+  # The app's name comes from the policy that was just generated rather than
+  # from a second YAML parse here — it is the same name agent-init logs and
+  # the same one the RPC socket is named for, so taking it from anywhere else
+  # is an opportunity for the two to disagree.
+  SINGLE_APP_POLICY="${BERTH_CAPABILITY_POLICY:-$PWD/.berth/capability-policy.json}"
+  APP_NAME="$(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).appName)" "$SINGLE_APP_POLICY" 2>/dev/null || true)"
+  if [ -n "$APP_NAME" ]; then
+    provision_app_identity "$APP_NAME" 0 "$PWD"
+    # No grant_invoke_access here: single-app mode has no siblings to invoke,
+    # and no app RPC socket at all — the app is reached over the container's
+    # own stdio (see docs/mcp-bridge-reference.md).
+    export_app_identity "$APP_NAME" 0
+    export_app_environment "$APP_NAME"
+    grant_dev_workspace
+    secure_capability_policy "$SINGLE_APP_POLICY"
+  else
+    echo "[berth:entrypoint] WARNING: could not read the app name from ${SINGLE_APP_POLICY} — running as root" >&2
   fi
 
   if [ "$NEEDS_EGRESS_BROKER" = "1" ]; then
@@ -262,7 +532,12 @@ if [ "$NEEDS_EGRESS_BROKER" = "1" ]; then
   export BERTH_EGRESS_PROXY_URL="http://127.0.0.1:${BERTH_EGRESS_BROKER_PORT:-8090}"
 fi
 
-mkdir -p /tmp/berth-rpc
+# 0755 root-owned, and deliberately not writable by any app: the per-app
+# directories beneath it are created (0710, owned by that app) by
+# provision_app_identity, and nothing else may add an entry here. This
+# replaces the 1777 /tmp/berth-rpc every app could bind or connect into,
+# which was REMEDIATION.md 1.4's finding.
+install -d -m 0755 -o 0 -g 0 /run/berth
 
 echo "[berth:entrypoint] starting context-bus daemon on ${BERTH_CONTEXT_BUS_SOCKET}" >&2
 /usr/local/bin/context-bus-daemon &
@@ -292,17 +567,54 @@ run_app() {
   cd "$app_dir"
   export BERTH_MANIFEST_PATH="$app_dir/berth.yml"
   export BERTH_CAPABILITY_POLICY="$app_dir/.berth/capability-policy.json"
-  export BERTH_RPC_SOCKET="/tmp/berth-rpc/${app_name}.sock"
+  # /run/berth/<app>/, mode 0710 owned by this app — not the shared 1777
+  # /tmp/berth-rpc it used to be (REMEDIATION.md 1.4). A sibling reaches it
+  # only by declaring app:invoke:<name>, which puts it in this app's group;
+  # the host relay reaches it as root (docker exec), which is unchanged.
+  export BERTH_RPC_SOCKET="/run/berth/${app_name}/rpc.sock"
+  export_app_environment "$app_name"
 
   # No run-lifecycle.js call here any more. Multi-app mode never used its
   # browser/egress flags (the grep loop above decides those for the whole
   # container), so once on_install moved to build time — REMEDIATION.md 1.5 —
   # the only thing this invocation still did was cost a Node startup per app.
   node "node_modules/@berth/sdk/dist/generate-capability-policy.js"
+  secure_capability_policy "$BERTH_CAPABILITY_POLICY"
   export BERTH_TOKEN_SECRET="$(node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))")"
 
   exec /usr/local/bin/agent-init "$@"
 }
+
+# Three serial passes over the app list, not one, because each depends on the
+# previous having finished for *every* app:
+#
+#   1. identities — adduser/addgroup rewrite /etc/passwd and /etc/group with no
+#      locking between them, and run_app is forked into the background, so N
+#      concurrent subshells creating users is a corrupted passwd file waiting
+#      to happen. Serial here in the parent, so each app's identity exists
+#      before any app's process does.
+#   2. app:invoke: grants — a caller can only be added to its target's group
+#      once that group exists, and the target may come later in the list.
+#   3. the forks themselves.
+#
+# BERTH_APP_UID/GID and TMPDIR are exported into *this* shell by pass 3 and
+# read by the fork on the very next line, then overwritten by the next
+# iteration. That is the whole lifetime of those values; nothing after the
+# loop should read them.
+INDEX=0
+while IFS=$'\t' read -r APP_NAME APP_DIR; do
+  [ -z "$APP_NAME" ] && continue
+  mkdir -p "$APP_DIR/.berth"
+  provision_app_identity "$APP_NAME" "$INDEX" "$APP_DIR"
+  INDEX=$((INDEX + 1))
+done <<<"$APPS_TSV"
+
+grant_dev_workspace
+
+while IFS=$'\t' read -r APP_NAME APP_DIR; do
+  [ -z "$APP_NAME" ] && continue
+  grant_invoke_access "$APP_NAME" "$APP_DIR"
+done <<<"$APPS_TSV"
 
 PRIMARY_PID=""
 COMPANION_PIDS=()
@@ -310,7 +622,7 @@ INDEX=0
 
 while IFS=$'\t' read -r APP_NAME APP_DIR; do
   [ -z "$APP_NAME" ] && continue
-  mkdir -p "$APP_DIR/.berth"
+  export_app_identity "$APP_NAME" "$INDEX"
 
   # No app in multi-app mode reads the container's raw stdin — every app,
   # primary included, is reached exclusively via its own RPC Unix socket

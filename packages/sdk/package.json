@@ -49,7 +49,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/build-external.mjs",
     "dev": "tsc -p tsconfig.json --watch",
-    "test": "node --test dist/**/*.test.js",
+    "test": "node --test dist/*.test.js dist/*/*.test.js",
     "lint": "tsc -p tsconfig.json --noEmit",
     "postinstall": "node scripts/prefetch-embedding-model.mjs",
     "prepublishOnly": "pnpm run build"

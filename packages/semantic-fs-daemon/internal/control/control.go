@@ -21,6 +21,13 @@ import (
 	"berth/semantic-fs-daemon/internal/index"
 )
 
+// Largest control frame this daemon will allocate for. Control calls are
+// register/tag/query with small JSON payloads — an embedding vector is the
+// biggest thing on the wire — so 8 MiB is orders of magnitude above real
+// traffic and still refuses the 4 GiB a 0xFFFFFFFF length header used to
+// reserve. Same ceiling as context-bus-daemon's MAX_FRAME_BYTES.
+const maxFrameBytes = 8 * 1024 * 1024
+
 type request struct {
 	ID          string    `json:"id"`
 	Op          string    `json:"op"`
@@ -90,11 +97,26 @@ func resolveTgid(pid int) int {
 	return pid
 }
 
-func Serve(socketPath string, idx *index.Index, registry *PidRegistry) error {
+func Serve(socketPath string, idx *index.Index, registry *PidRegistry, sharedGid int) error {
 	_ = os.Remove(socketPath)
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", socketPath, err)
+	}
+	// connect(2) on a pathname socket needs write permission on it, and a
+	// socket created under the default umask is 0755 — reachable by root and
+	// nobody else. Every app is meant to reach this one (entrypoint.sh:
+	// "only the control socket is unconditionally reachable"), so it is given
+	// to the shared `berth` group the moment apps stop being root. Failure is
+	// logged rather than fatal: on a kernel or image without that group the
+	// daemon is still useful to root, and taking the container down over it
+	// would be a worse outcome than a control socket only root can reach.
+	if sharedGid > 0 {
+		if err := os.Chown(socketPath, -1, sharedGid); err != nil {
+			log.Printf("[semantic-fs:control] WARNING: chown %s to gid %d failed (%v) — a non-root app cannot reach it", socketPath, sharedGid, err)
+		} else if err := os.Chmod(socketPath, 0o660); err != nil {
+			log.Printf("[semantic-fs:control] WARNING: chmod %s failed (%v) — a non-root app cannot reach it", socketPath, err)
+		}
 	}
 
 	for {
@@ -103,11 +125,16 @@ func Serve(socketPath string, idx *index.Index, registry *PidRegistry) error {
 			log.Printf("[semantic-fs:control] accept error: %v", err)
 			continue
 		}
-		go handleConn(conn, idx, registry)
+		// SO_PEERCRED, read once per connection rather than per frame: the
+		// pid and uid the kernel stamped on it cannot change for its
+		// lifetime, and the client cannot influence them. This is what makes
+		// a register frame's `pid` and `app` advisory rather than
+		// authoritative (REMEDIATION.md 1.14).
+		go handleConn(conn, idx, registry, identifyPeer(conn))
 	}
 }
 
-func handleConn(conn net.Conn, idx *index.Index, registry *PidRegistry) {
+func handleConn(conn net.Conn, idx *index.Index, registry *PidRegistry, peer peerIdentity) {
 	defer conn.Close()
 	reader := bufio.NewReader(conn)
 
@@ -123,17 +150,33 @@ func handleConn(conn net.Conn, idx *index.Index, registry *PidRegistry) {
 			continue
 		}
 
-		resp := handle(req, idx, registry)
+		resp := handle(req, idx, registry, peer)
 		if err := writeFrame(conn, resp); err != nil {
 			return
 		}
 	}
 }
 
-func handle(req request, idx *index.Index, registry *PidRegistry) response {
+func handle(req request, idx *index.Index, registry *PidRegistry, peer peerIdentity) response {
 	switch req.Op {
 	case "register":
-		registry.Register(req.Pid, req.App)
+		// Both fields of the request are ignored in favour of what the kernel
+		// reported for this connection. The pid matters as much as the name:
+		// the FUSE layer attributes a write by looking up the writing pid in
+		// this registry, so a caller able to register *another* process's pid
+		// could attribute its own writes to a different app.
+		if peer.contradicts(req.App) {
+			log.Printf("[semantic-fs:control] a caller (pid %d, uid %d) registered as %q but the kernel says %q — using the latter",
+				peer.pid, peer.uid, req.App, peer.resolveClaim(req.App))
+		}
+		pid := peer.pid
+		if pid == 0 {
+			// Credentials unreadable (see identifyPeer). Falling back to the
+			// claimed pid is not a widening: without a pid there is nothing to
+			// attribute at all, and the name is still the kernel's answer.
+			pid = req.Pid
+		}
+		registry.Register(pid, peer.resolveClaim(req.App))
 		return response{ID: req.ID, OK: true}
 
 	case "tag":
@@ -168,6 +211,16 @@ func readFrame(reader *bufio.Reader) ([]byte, error) {
 		return nil, err
 	}
 	length := binary.BigEndian.Uint32(lengthBuf[:])
+	// Checked before the allocation, which is the whole point: a 4-byte header
+	// of 0xFFFFFFFF used to allocate 4 GiB in this daemon, which runs as root
+	// outside any Landlock domain and is reachable by every app in the sandbox
+	// (REMEDIATION.md 1.14). Returning an error drops the connection — a
+	// client that framed one message this badly has no credible next frame on
+	// the same stream. Mirrored in context-bus-daemon, which had the identical
+	// bug and uses the same ceiling.
+	if length > maxFrameBytes {
+		return nil, fmt.Errorf("frame length %d exceeds the %d-byte maximum", length, maxFrameBytes)
+	}
 	frame := make([]byte, length)
 	if _, err := readFull(reader, frame); err != nil {
 		return nil, err

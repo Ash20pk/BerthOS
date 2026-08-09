@@ -1,5 +1,5 @@
 // Fixture app for packages/docker-orchestrator/test/capability-enforcement.mjs's
-// cross-app boundary test. Identical to boundary-app-b's source — only each
+// cross-app boundary test. Identical to boundary-app-a/-b's source — only each
 // one's berth.yml differs (scoped to its own /workspace/apps/<name>
 // subdirectory only, same pattern as mesh-echo-planner/-browser). Deliberately
 // no path validation of its own here: any escape must be caught by the
