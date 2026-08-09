@@ -8,15 +8,37 @@
 import { defineApp } from "@berth/sdk";
 import { z } from "zod";
 import { writeFile, readFile, mkdir } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { createConnection } from "node:net";
+
+/**
+ * Where this fixture's reads and writes resolve, and why it isn't cwd.
+ *
+ * cwd is this app's own directory under the repository bind mount, which
+ * stopped being writable when apps got their own uid: the checkout belongs to
+ * whoever cloned it, the app is uid 10000+, and a Linux bind mount preserves
+ * that. (Docker Desktop virtualizes the ownership, so it only failed on CI.)
+ *
+ * The shared dev-workspace directory is group-writable by `berth` — which is
+ * exactly what this fixture wants, and a *stronger* test than before: DAC now
+ * permits app A to reach app B's directory, so a denial can only come from
+ * Landlock. Under the old layout the two apps' directories were mutually
+ * unwritable anyway, and the cross-app assertions could have passed without
+ * Landlock doing anything at all.
+ *
+ * basename(cwd) rather than a hardcoded name: all three fixtures share this
+ * source, and each one's directory is already named after it.
+ */
+const DATA_ROOT = process.env.BERTH_WORKSPACE_ROOT
+  ? join(process.env.BERTH_WORKSPACE_ROOT, basename(process.cwd()))
+  : process.cwd();
 
 export default defineApp((app) => {
   app.export({
     name: "write_file",
     input: z.object({ path: z.string(), content: z.string() }),
     handler: async ({ path: relativePath, content }) => {
-      const absolutePath = join(process.cwd(), relativePath);
+      const absolutePath = join(DATA_ROOT, relativePath);
       await mkdir(dirname(absolutePath), { recursive: true });
       await writeFile(absolutePath, content, "utf-8");
     },
@@ -151,7 +173,7 @@ export default defineApp((app) => {
     input: z.object({ path: z.string() }),
     output: z.object({ content: z.string() }),
     handler: async ({ path: relativePath }) => ({
-      content: await readFile(join(process.cwd(), relativePath), "utf-8"),
+      content: await readFile(join(DATA_ROOT, relativePath), "utf-8"),
     }),
   });
 });

@@ -29,6 +29,7 @@
 import Docker from "dockerode";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
+import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { loadManifest } from "@berth/manifest-schema";
 import { buildImage, startContainer, stopContainer, invokeAppExport } from "../dist/index.js";
@@ -42,9 +43,29 @@ const BOUNDARY_APP_B_DIR = join(__dirname, "fixtures", "boundary-app-b");
 // app:invoke:boundary-app-b (REMEDIATION.md 1.4).
 const BOUNDARY_APP_C_DIR = join(__dirname, "fixtures", "boundary-app-c");
 
+// Where the app's own writes land, and why this test needs one at all.
+//
+// The mount below is still the repository root, read-write, because Tests 6-7
+// need root (via docker exec) to plant a symlink *inside* the granted
+// /workspace hierarchy. But the app is no longer root: since the per-app uid
+// work it runs as uid 10000, and a real Linux bind mount preserves the host's
+// ownership, so the checkout belongs to whoever cloned it and every app write
+// under /workspace is a plain EACCES. Docker Desktop virtualizes bind-mount
+// ownership, which is why this only ever failed on CI.
+//
+// So app data goes where `berth dev` puts it: a directory entrypoint.sh
+// chgrp's to the shared `berth` group precisely so a non-root app can write
+// it. It sits *inside* /workspace deliberately — every Landlock assertion
+// below is about the declared `filesystem:write:/workspace` scope, and a path
+// outside that scope would be denied for the wrong reason.
+const DEV_WORKSPACE = "/workspace/.berth/dev-workspace";
+const DEV_WORKSPACE_HOST_DIR = join(REPO_ROOT, ".berth", "dev-workspace");
+
 const docker = new Docker();
 
 async function main() {
+  mkdirSync(DEV_WORKSPACE_HOST_DIR, { recursive: true });
+
   const manifest = await loadManifest(join(FILESYSTEM_APP_DIR, "berth.yml"));
 
   console.log("Building filesystem's dev image...");
@@ -56,7 +77,9 @@ async function main() {
     name: "berth-capability-enforcement-filesystem",
     manifest,
     bindMount: { hostPath: REPO_ROOT, containerPath: "/workspace" },
+    extraBinds: [`${DEV_WORKSPACE_HOST_DIR}:${DEV_WORKSPACE}`],
     workingDir: "/workspace/apps/filesystem",
+    env: { BERTH_WORKSPACE_ROOT: DEV_WORKSPACE },
     docker,
   });
 
@@ -239,7 +262,7 @@ async function main() {
     // the classic "escape the sandbox via a symlink" technique; proving it
     // doesn't work here is what makes the write/read-path grants above mean
     // anything against an app that tries to plant one.
-    await execInContainer(running.container, ["sh", "-c", "ln -sfn /opt /workspace/escape-write-link"]);
+    await execInContainer(running.container, ["sh", "-c", `ln -sfn /opt ${DEV_WORKSPACE}/escape-write-link`]);
     const symlinkWrite = await rpc.call({
       id: "6",
       export: "write_file",
@@ -248,7 +271,7 @@ async function main() {
     console.log("write response:", symlinkWrite);
     const symlinkWriteDenied = symlinkWrite.error && /EACCES|EPERM|permission/i.test(symlinkWrite.error);
 
-    await execInContainer(running.container, ["sh", "-c", "ln -sfn /opt /workspace/escape-read-link"]);
+    await execInContainer(running.container, ["sh", "-c", `ln -sfn /opt ${DEV_WORKSPACE}/escape-read-link`]);
     const symlinkRead = await rpc.call({
       id: "7",
       export: "read_file",
@@ -466,12 +489,25 @@ async function main() {
     { name: "boundary-app-b", workingDir: BOUNDARY_APP_B_CONTAINER_DIR, manifest: boundaryBManifest },
     { name: "boundary-app-c", workingDir: BOUNDARY_APP_C_CONTAINER_DIR, manifest: boundaryCManifest },
   ];
+  // Created on the host so entrypoint.sh's grant_dev_workspace() — which runs
+  // once, before any app starts — chgrp's them to `berth` and adds g+rwX. That
+  // is what makes DAC *permit* app A to write app B's directory, leaving
+  // Landlock as the only thing that can refuse it. Letting agent-init create
+  // them instead would produce root:root 0755 directories that no app could
+  // write, and the cross-app assertions below would pass without Landlock
+  // doing anything.
+  for (const name of ["boundary-app-a", "boundary-app-b", "boundary-app-c"]) {
+    mkdirSync(join(DEV_WORKSPACE_HOST_DIR, name), { recursive: true });
+  }
+
   const boundaryRunning = await startContainer({
     image: "berth/boundary-app-a:dev",
     name: "berth-capability-enforcement-boundary",
     manifest: boundaryAManifest,
     bindMount: { hostPath: REPO_ROOT, containerPath: "/workspace" },
+    extraBinds: [`${DEV_WORKSPACE_HOST_DIR}:${DEV_WORKSPACE}`],
     workingDir: BOUNDARY_APP_A_CONTAINER_DIR,
+    env: { BERTH_WORKSPACE_ROOT: DEV_WORKSPACE },
     apps: boundaryApps,
     docker,
   });

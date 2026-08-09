@@ -3,8 +3,8 @@ version: 0.1.0
 description: "capability-enforcement.mjs's cross-app boundary fixture — scoped ONLY to its own subdirectory, sharing a container with boundary-app-a, whose subdirectory it must NOT be able to reach."
 
 capabilities:
-  - filesystem:read:/workspace/packages/docker-orchestrator/test/fixtures/boundary-app-b
-  - filesystem:write:/workspace/packages/docker-orchestrator/test/fixtures/boundary-app-b
+  - filesystem:read:/workspace/.berth/dev-workspace/boundary-app-b
+  - filesystem:write:/workspace/.berth/dev-workspace/boundary-app-b
 
 exports:
   - name: write_file
