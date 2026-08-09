@@ -3,7 +3,7 @@ export { type ContextBusClient } from "./context-bus/client.js";
 export { createLocalContextBus } from "./context-bus/local.js";
 export { type SemanticFsClient, type SemanticFsQueryResult } from "./semantic-fs/client.js";
 export { createLocalSemanticFs } from "./semantic-fs/local.js";
-export { requestCapability, verifyCapabilityToken, type CapabilityGrant } from "./capabilities.js";
+export { requestCapability, type CapabilityGrant } from "./capabilities.js";
 export { configureEgressProxy } from "./egress-proxy.js";
 export {
   defineConnectorApp,

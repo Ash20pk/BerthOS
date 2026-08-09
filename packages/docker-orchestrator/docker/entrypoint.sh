@@ -453,11 +453,11 @@ if [ -z "${BERTH_APPS:-}" ]; then
       || echo "[berth:entrypoint] WARNING: mesh-daemon's control socket never appeared — continuing without mesh" >&2
   fi
 
-  # One secret per container boot, inherited by the app process (agent-init
-  # execs into it, preserving the environment) — backs @berth/sdk's
-  # HMAC-signed capability tokens. Generated with Node rather than openssl/apk
-  # so no new Alpine package is needed.
-  export BERTH_TOKEN_SECRET="$(node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))")"
+  # No BERTH_TOKEN_SECRET any more. It backed @berth/sdk's HMAC-signed
+  # capability tokens, which REMEDIATION.md 1.10 removed: nothing ever
+  # verified one, and exporting the signing key into the environment of the
+  # very process the tokens were meant to constrain is what made them
+  # unverifiable in principle, not just in practice.
 
   echo "[berth:entrypoint] handing off to agent-init for kernel-level capability enforcement" >&2
   if [ "${BERTH_APP_RUNTIME:-node}" = "python" ]; then
@@ -580,7 +580,6 @@ run_app() {
   # the only thing this invocation still did was cost a Node startup per app.
   node "node_modules/@berth/sdk/dist/generate-capability-policy.js"
   secure_capability_policy "$BERTH_CAPABILITY_POLICY"
-  export BERTH_TOKEN_SECRET="$(node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))")"
 
   exec /usr/local/bin/agent-init "$@"
 }

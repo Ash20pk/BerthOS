@@ -66,7 +66,7 @@ README line 88 currently reads: *"a prompt-injected 'ignore previous instruction
 | 1.7 | ttyd / VNC / CDP unauthenticated on all host interfaces | High | 🟢 | 1d |
 | 1.8 | Egress broker: no port check, `*` → SSRF, DNS not pinned | High | 🔴 | 2d |
 | 1.9 | GitHub broker: `read:repos` also grants `/user/emails` etc. | High | 🔴 | 1d |
-| 1.10 | Capability tokens are never verified anywhere | High | 🔴 | 1d |
+| 1.10 | Capability tokens are never verified anywhere | High | 🟢 | 1d |
 | 1.11 | Signals unrestricted — any app can kill the governor | Medium | 🟢 | 1d |
 | 1.12 | `agent-init` mkdir's arbitrary manifest paths as root | Medium | 🟢 | 4h |
 | 1.13 | Governance gate bypasses (MCP, agent-as-tool, rpc, mcp, http-rpc) | High | 🟡 | 2d |
@@ -324,6 +324,24 @@ The HMAC/expiry/`timingSafeEqual` machinery is cryptographically correct and sem
 **Fix.** Decide which it is. Either (a) delete the token API and stop implying a capability-token model exists, or (b) make it real: mint tokens in a broker/daemon that holds the secret *outside* the app's environment, and check them at every enforcement point (RPC dispatch, both brokers, the governance gate). Option (a) is honest and cheap; option (b) is the foundation for cross-app authz and pairs naturally with 1.4's `SO_PEERCRED` work.
 
 **Verify.** If (b): a test asserting a forged token is rejected at an enforcement point. If (a): the export is gone and the docs no longer mention it.
+
+**Closed as (a) — the token API is deleted.**
+
+The machinery was cryptographically correct and semantically empty, and the reason it could not be fixed cheaply is worth stating plainly: `entrypoint.sh` exported `BERTH_TOKEN_SECRET` into the environment of the app the tokens were meant to constrain. The constrained process held the signing key, so it could mint any token for any capability — and in multi-app containers each app got a *different* secret, so cross-app verification was impossible by construction, not merely unimplemented. A token proves you can read your own environment.
+
+Option (b) would have meant a minting daemon holding the secret outside every app, a socket protocol to reach it, and verification at four call sites. That work would have bought an identity Berth **already has**: since 1.4, which socket a connection arrived on is a fact the kernel established at `connect(2)` and the caller cannot influence. A token signed with a secret the caller holds is strictly weaker than that. Building (b) on top would have been re-deriving, in userspace and worse, something the kernel already tells us.
+
+**What was removed:** `verifyCapabilityToken` (its only caller was its own unit test), `CapabilityGrant`'s `token`/`issuedAt`/`expiresAt` fields, `signToken`, `TOKEN_TTL_MS`, the `node:crypto` import, and both `BERTH_TOKEN_SECRET` exports from `entrypoint.sh` — single-app and multi-app.
+
+**What stayed, because it is real and used:** `requestCapability()`'s allow/deny answer, which reports the decision `agent-init` already compiled into a Landlock policy at boot, and its `pending` submission to the grants server, which is the live human-approval path (`grants-server-milestone.mjs` covers it end to end).
+
+`CapabilityTokenRequest` is renamed `CapabilityRequest`. It never carried a token — it is the log record of a request — and leaving "Token" in the name of the one surviving type would have implied the mechanism still exists.
+
+**This is a breaking change to a published SDK surface**, stated rather than buried: `@berth/sdk` no longer exports `verifyCapabilityToken`, `CapabilityGrant` loses three fields, and `@berth/manifest-schema` renames an exported type. Nothing in this repo consumed any of them outside tests.
+
+**Verify.** The unit test that asserted the HMAC verified correctly is *replaced*, not deleted — the HMAC was never the problem. The new test asserts the absence: a grant carries no `token`/`issuedAt`/`expiresAt`, and `@berth/sdk` does not export `verifyCapabilityToken`. That keeps the API from quietly growing a token back. Full suite 55/55.
+
+**One piece of drift accepted deliberately:** `docs/capability-tokens-reference.md` keeps its filename, because 34 links across 23 files point at it and renaming inside a security change is the wrong trade. Its title and opening now say what it actually documents — kernel enforcement and the grants flow — and why the name persists. Worth folding into 2.4's doc-drift pass.
 
 ### 1.11 — Signals unrestricted; any app can kill the governor
 

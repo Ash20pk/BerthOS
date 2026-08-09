@@ -2,7 +2,7 @@
  * Parses and matches "namespace:action:scope" capability strings.
  *
  * This module is pure data plumbing with zero enforcement: Phase 1 only logs
- * capability requests (see CapabilityTokenRequest below). Phase 3's
+ * capability requests (see CapabilityRequest below). Phase 3's
  * kernel-level capability-token issuer is expected to consume the exact same
  * ParsedCapability shape and matchesCapability() logic to decide grants —
  * building it now as a pure function means Phase 3 replaces the caller, not
@@ -127,11 +127,14 @@ export function matchesCapability(granted: string, requested: string): boolean {
 }
 
 /**
- * Inert scaffolding for Phase 3: a resident app's runtime records these as it
- * calls requestCapability(). Phase 1 only logs them (see @berth/sdk's
- * capabilities.ts); no policy engine reads this yet.
+ * What a resident app's runtime records as it calls requestCapability() —
+ * a log line, not an authorization artifact. Nothing reads it back.
+ *
+ * Named CapabilityTokenRequest until REMEDIATION.md 1.10 removed capability
+ * tokens; it never carried a token, and keeping "Token" in the name of the
+ * one surviving type would have implied the mechanism still exists.
  */
-export interface CapabilityTokenRequest {
+export interface CapabilityRequest {
   appName: string;
   capability: string;
   requestedAt: string;
