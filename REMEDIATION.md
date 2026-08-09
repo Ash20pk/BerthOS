@@ -70,7 +70,7 @@ README line 88 currently reads: *"a prompt-injected 'ignore previous instruction
 | 1.11 | Signals unrestricted — any app can kill the governor | Medium | 🔴 | 1d |
 | 1.12 | `agent-init` mkdir's arbitrary manifest paths as root | Medium | 🟢 | 4h |
 | 1.13 | Governance gate bypasses (MCP, agent-as-tool, rpc, mcp, http-rpc) | High | 🔴 | 2d |
-| 1.14 | semantic-fs / context-bus: unbounded frame allocation + spoofable identity | Medium | 🟡 | 1d |
+| 1.14 | semantic-fs / context-bus: unbounded frame allocation + spoofable identity | Medium | 🟢 | 1d |
 | 1.15 | `apps/terminal` is non-functional on any Landlock-enforcing kernel | High | 🟡 | 2d |
 
 ### 1.1 — `truncate(2)` is not a handled Landlock access right
@@ -433,7 +433,7 @@ Killing semantic-fs is worse than a crash: `runtime.ts:44-46` silently falls bac
 
 > The frame cap is independent and can land any time. The identity half cannot: `SO_PEERCRED` returns uid 0 for every caller today, so it carries no information until [docs/per-app-uid-design.md](./docs/per-app-uid-design.md) Step 2 lands. Sequenced there as Step 4.
 
-**🟡 Frame cap and identity closed; the semantic-fs stub fallback is not.**
+**Closed.**
 
 **Frame cap.** Both daemons refuse a length header above 8 MiB *before* allocating, and drop the connection — a client that framed one message this badly has no credible next frame on the same stream. 8 MiB is orders of magnitude above what either daemon actually carries (small JSON-ish events on the bus; register/tag/query with an embedding vector as the largest payload on semantic-fs) and refuses the 4 GiB a `0xFFFFFFFF` header used to reserve.
 
@@ -445,7 +445,19 @@ Killing semantic-fs is worse than a crash: `runtime.ts:44-46` silently falls bac
 
 Two details worth naming. The failure path — credentials unreadable — resolves to the *most restrictive* answer, not to root; a connection whose credentials cannot be read is one whose claims are worth less, not more. And for semantic-fs the forged **pid** mattered as much as the forged name: the FUSE layer attributes a write by looking the writing pid up in this registry, so a caller able to register another process's pid could attribute its own writes elsewhere. Both now come from the kernel.
 
-**Not closed by this.** The third part of the fix above — `runtime.ts:44-46`'s silent fallback to a stub returning empty query results when semantic-fs is unreachable — is untouched. That is the one that turns a dead daemon into silent data loss rather than an error, and it is independent of everything here.
+**The stub fallback is closed too, and the fix is conditional on where the app is running.** `runtime.ts` used to fall back to `createLocalSemanticFs()` whenever the daemon wasn't reachable, and that stub returns an empty result set from `query()`. Outside a sandbox — a bare `node dist/index.js` in a unit test — that is a truthful answer: there is no index. Inside one the index exists and the daemon is meant to be serving it, so the same empty array is a *wrong* answer, indistinguishable from "nothing matched", on the path every checkpoint, session, trace and retrieval read goes through.
+
+So the fallback now splits. Outside a sandbox, the local stub is unchanged. Inside one, apps get `createUnavailableSemanticFs()`, which throws on `query()` and on `tag()` — a tag that stored nothing is a lost write, not a successful one. `register()` deliberately does *not* throw: it runs at boot, and taking the whole app down because attribution is unavailable is worse than running with `/context` writes unattributed, which it says once, loudly. Every later call still throws.
+
+`BERTH_BOOT_ID` is the discriminator, because `entrypoint.sh` exports it before anything else in the container starts — so it is present for every process in a sandbox and for nothing outside one. The socket path would not do: it has a default whether or not a daemon was ever launched.
+
+**A second silent path, found while fixing the first.** The client above only covers a daemon that is already gone at boot. For one that dies *later*, `unix-socket.ts` rejected in-flight calls on `close` but had no `error` handler at all — so a `socket.write()` to a destroyed socket raised an `error` event nothing was listening for, which in Node is an uncaught exception that takes the app down. And every subsequent call sat for the full 5s call timeout before failing with a message naming nothing useful. Both are fixed: the connection records why it went away, later calls reject immediately and by name, and the `error` event is handled.
+
+**Verification.** Four unit tests in `packages/sdk/src/semantic-fs/semantic-fs.test.ts` — `query()` and `tag()` throw and name the daemon, `register()` warns exactly once and resolves, and a real Unix socket server is stood up, connected to, and then destroyed to prove a call afterwards rejects promptly rather than after the 5s timeout.
+
+Adding that file exposed a packaging bug worth naming, because it was silently deleting test coverage: `@berth/sdk`'s test script was `node --test dist/**/*.test.js`, and in the shell pnpm runs scripts through, `**` matched exactly one directory level. The moment a test file existed in a subdirectory, the glob matched *only* it — the run went from 39 tests to 4 and still exited 0. It is now an explicit two-pattern list, and the suite reports 43.
+
+**Not verified end to end, and the reason is a finding of its own.** The obvious integration test — kill `semantic-fs-daemon` in a running container, re-run the query that just worked, assert an error rather than `[]` — does not work, because after the daemon is `SIGKILL`ed the app stops answering on its stdio RPC channel entirely. It is not dead and not blocked: `/proc` shows the Node process alive in state `S` with a null `wchan`, i.e. idle in its event loop. A `list_files` call, which never touches semantic-fs at all, hangs identically, so this is not the client change. Cause not established; recorded here rather than worked around, since "killing semantic-fs wedges the app's control channel" is a worse failure than the one this item set out to fix and deserves its own investigation.
 
 **Verification.** `capability-enforcement.mjs` Test 9's daemon half, asserted on the daemons' own log lines rather than on a response, because both daemons ack a register either way — the point is not that the call fails, it is that the name recorded is not the one sent. App A registers with both daemons as `boundary-app-b` (and, on semantic-fs, as pid 1); both log the override and record `boundary-app-a`. Then app A sends a `0xFFFFFFFF` length header to each, and the bus is asserted to still serve a fresh registration afterwards — a daemon that had died would fail that, and one that had allocated 4 GiB would likely have taken the container with it. Unit tests in both daemons cover the three rules and the zero-value failure path directly.
 

@@ -9,6 +9,7 @@ import { createUnixSocketContextBus } from "./context-bus/unix-socket.js";
 import type { SemanticFsClient } from "./semantic-fs/client.js";
 import { createLocalSemanticFs } from "./semantic-fs/local.js";
 import { createUnixSocketSemanticFs } from "./semantic-fs/unix-socket.js";
+import { createUnavailableSemanticFs } from "./semantic-fs/unavailable.js";
 import { startRpcServer } from "./rpc.js";
 import { startHttpRpcServer } from "./http-rpc.js";
 
@@ -36,14 +37,34 @@ async function createContextBus(): Promise<ContextBusClient> {
   }
 }
 
-/** Same fallback reasoning as createContextBus(), for Phase 4's semantic-fs-daemon. */
+/**
+ * Similar to createContextBus(), with one deliberate difference: the fallback
+ * depends on whether this app is running inside a sandbox.
+ *
+ * Outside one — a bare `node dist/index.js` in a unit test — there is no index
+ * to search and the local stub's empty result set is a truthful answer.
+ *
+ * Inside one, the daemon is meant to be serving a real index, so an empty
+ * result set is not an answer but a wrong one, and every checkpoint, session
+ * and trace read goes through here. That path used to fall back to the same
+ * stub and report success while losing data (REMEDIATION.md 1.14); it now gets
+ * a client that throws. See ./semantic-fs/unavailable.ts.
+ *
+ * BERTH_BOOT_ID is the discriminator because entrypoint.sh exports it before
+ * anything else in the container starts, so it is present for every process in
+ * a sandbox and for nothing outside one — unlike, say, the socket path, which
+ * has a default whether or not a daemon was ever launched.
+ */
 async function createSemanticFs(): Promise<SemanticFsClient> {
   try {
     return await createUnixSocketSemanticFs(SEMANTIC_FS_SOCKET);
   } catch (err) {
-    console.error(
-      `[berth:runtime] semantic-fs daemon not reachable at ${SEMANTIC_FS_SOCKET} (${err instanceof Error ? err.message : String(err)}) — falling back to local no-op`,
-    );
+    const reason = err instanceof Error ? err.message : String(err);
+    if (process.env.BERTH_BOOT_ID) {
+      console.error(`[berth:runtime] semantic-fs daemon not reachable at ${SEMANTIC_FS_SOCKET} (${reason}) — /context queries and tags will throw rather than silently return nothing`);
+      return createUnavailableSemanticFs(SEMANTIC_FS_SOCKET, reason);
+    }
+    console.error(`[berth:runtime] semantic-fs daemon not reachable at ${SEMANTIC_FS_SOCKET} (${reason}) — falling back to local no-op (not running inside a sandbox)`);
     return createLocalSemanticFs();
   }
 }
