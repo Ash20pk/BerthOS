@@ -452,14 +452,85 @@ test("Crew.sequential threads runId into every agent's run(), correlating all th
   assert.ok(tracer.events.every((e) => e.runId === "corr-1"));
 });
 
-test("Crew.parallel threads runId into every agent's run(), correlating all their trace events", async () => {
+/**
+ * This test previously asserted every parallel agent traced under the *same*
+ * runId — which was the bug (REMEDIATION 3.3), not the contract: one runId
+ * across N concurrent agents meant N writers to one checkpoint key and one
+ * trace blob. Correlation is still available, as a prefix rather than an
+ * exact match, which is what this now asserts.
+ */
+test("Crew.parallel gives each agent a distinct runId that still correlates by prefix", async () => {
   const tracer = memoryStepTracer();
   const agents = [tracedAgent("a", "a-out", tracer), tracedAgent("b", "b-out", tracer)];
 
   await Crew.parallel(agents, { runId: "corr-2" }).run("start");
 
   assert.equal(tracer.events.length, 2);
-  assert.ok(tracer.events.every((e) => e.runId === "corr-2"));
+  const runIds = tracer.events.map((e) => e.runId);
+  assert.equal(new Set(runIds).size, 2, `expected distinct runIds, got ${JSON.stringify(runIds)}`);
+  assert.ok(runIds.every((id) => id!.startsWith("corr-2:")));
+});
+
+/**
+ * The defect itself, at the level it actually bit: two concurrent agents each
+ * with their own checkpoint store. Before the fix both wrote the key
+ * "corr-3", so one run's messages silently replaced the other's and
+ * resume("corr-3") replayed a mixture.
+ */
+test("Crew.parallel agents do not overwrite each other's checkpoints", async () => {
+  const store = inMemoryCheckpointStore<any>();
+  const saved: string[] = [];
+  const recordingStore: CheckpointStore<any> = {
+    async save(checkpoint) {
+      saved.push(checkpoint.runId);
+      return store.save(checkpoint);
+    },
+    load: store.load,
+  };
+
+  const agentWith = (name: string, text: string) =>
+    new Agent({
+      name,
+      llm: { name: "fake", async chat() { return { text, toolCalls: [], stop: true }; } },
+      tools: [],
+      checkpoint: recordingStore,
+    });
+
+  await Crew.parallel([agentWith("alpha", "a-out"), agentWith("beta", "b-out")], { runId: "corr-3" }).run("go");
+
+  assert.equal(new Set(saved).size, 2, `both agents wrote the same checkpoint key: ${JSON.stringify(saved)}`);
+  const alpha = await recordingStore.load("corr-3:0:alpha");
+  const beta = await recordingStore.load("corr-3:1:beta");
+  assert.equal(alpha?.text, "a-out");
+  assert.equal(beta?.text, "b-out");
+});
+
+/**
+ * Agent's default name is "agent", so a crew of agents nobody named is the
+ * case where a name-keyed id would collide exactly as the bare runId did.
+ * The index is what makes this safe.
+ */
+test("Crew.parallel keeps runIds distinct even when every agent has the same name", async () => {
+  const tracer = memoryStepTracer();
+  const agents = [tracedAgent("agent", "1", tracer), tracedAgent("agent", "2", tracer), tracedAgent("agent", "3", tracer)];
+
+  await Crew.parallel(agents, { runId: "same-name" }).run("start");
+
+  assert.equal(new Set(tracer.events.map((e) => e.runId)).size, 3);
+});
+
+/**
+ * The positive control for the no-runId path: a crew run without one must not
+ * start fabricating ids, or agents that were deliberately untraced and
+ * uncheckpointed would begin writing.
+ */
+test("Crew.parallel passes no runId through when the crew was given none", async () => {
+  const tracer = memoryStepTracer();
+  const agents = [tracedAgent("a", "a-out", tracer), tracedAgent("b", "b-out", tracer)];
+
+  await Crew.parallel(agents).run("start");
+
+  assert.equal(tracer.events.length, 0);
 });
 
 test("Crew.loopUntil threads runId into every iteration's run()", async () => {

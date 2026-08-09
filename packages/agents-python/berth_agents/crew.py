@@ -9,6 +9,7 @@ have yet. See docs/agents-python-reference.md."""
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Generic, Literal, TypeVar
 
@@ -39,6 +40,27 @@ class CheckpointedCrewRun(Generic[S]):
     # Index of the next step to run — where a resumed run picks back up.
     completed_steps: int
     state: Any
+
+
+def fan_out_run_id_for(run_id: str, agent_name: str, index: int) -> str:
+    """Every agent in a fan-out shape gets its own derived run_id rather than
+    the crew's bare one. Handing N concurrently-running agents a single run_id
+    meant all N wrote the same checkpoint key: the surviving checkpoint was an
+    interleaved mixture of unrelated runs. See REMEDIATION 3.3.
+
+    The index comes first and is what guarantees uniqueness — Agent's default
+    name is "agent", so a crew of agents nobody named would otherwise collide
+    exactly as before. The name follows only so a stored key is recognizable,
+    sanitized because these ids become path segments in a file-backed store.
+    The parent run_id stays a prefix, so trace correlation across a fan-out is
+    a prefix match rather than an exact one.
+
+    Mirrors fanOutRunIdFor() in crew.ts field-for-field, including the key
+    format — a Python crew and a TypeScript crew pointed at the same store
+    must not disagree about where a checkpoint lives.
+    """
+    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", agent_name)
+    return f"{run_id}:{index}:{safe_name}"
 
 
 def checkpoint_key_for(run_id: str) -> str:
@@ -205,7 +227,18 @@ class Crew:
         merge_fn = merge or _default_parallel_merge
 
         async def run(input: str) -> str:
-            results = await asyncio.gather(*(agent.run(input, run_id=run_id) for agent in agents))
+            # Each concurrent agent gets its own derived run_id — see
+            # fan_out_run_id_for(). Passing one run_id to all N made them
+            # overwrite each other's checkpoints.
+            results = await asyncio.gather(
+                *(
+                    agent.run(
+                        input,
+                        run_id=None if run_id is None else fan_out_run_id_for(run_id, agent.name, index),
+                    )
+                    for index, agent in enumerate(agents)
+                )
+            )
             return merge_fn([(agent.name, result.text) for agent, result in zip(agents, results)])
 
         return CrewRun(_run=run)

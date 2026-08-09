@@ -31,6 +31,34 @@ export interface CheckpointStore<T extends { runId: string } = CheckpointedRun> 
 const CONTEXT_DIR = "agent-runs";
 
 /**
+ * Thrown when a checkpoint exists but could not be read or parsed —
+ * deliberately distinct from load() returning null, which means "there is no
+ * checkpoint for this runId". Conflating the two is what let a transient read
+ * failure masquerade as a fresh run. See REMEDIATION 3.5.
+ */
+export class CheckpointReadError extends Error {
+  constructor(
+    readonly runId: string,
+    readonly cause: unknown,
+  ) {
+    super(`checkpoint for run "${runId}" exists but could not be read: ${cause instanceof Error ? cause.message : String(cause)}`);
+    this.name = "CheckpointReadError";
+  }
+}
+
+/**
+ * Whether a resident-app read error means the file simply isn't there.
+ * apps/filesystem's read_context_file is a thin wrapper over fs.readFile, so
+ * the underlying ENOENT text is what reaches us — matched on both the errno
+ * code and the human-readable phrasing, since a different app implementing
+ * the same export contract may word it differently.
+ */
+function isNotFound(err: unknown): boolean {
+  const message = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return message.includes("enoent") || message.includes("no such file");
+}
+
+/**
  * Tool names are bare (`write_context_file`) for a single-app Computer,
  * `<appName>__write_context_file` once a Computer has more than one app (see
  * tools.ts's toolNameFor) — match either shape rather than assuming which.
@@ -58,13 +86,16 @@ export function findExportTool(tools: Tool[], exportName: string, calledBy = "cr
  * Computer missing them fails fast with a clear error instead of on the
  * first save() call deep inside a run.
  *
- * load()'s "not found" and "a real error happened" cases are indistinguishable
- * here: resident-app export errors cross the RPC wire as a plain message
- * string (see Computer's dispatch()), not a typed error code, so there's no
- * reliable way to tell ENOENT apart from anything else without parsing error
- * text. Any read failure is treated as "no prior checkpoint" — acceptable for
- * resume (worst case, you restart the run instead of resuming it), but worth
- * knowing if you're debugging why a resume() didn't pick up where you expected.
+ * **On atomicity, stated rather than implied.** save() is a write followed by
+ * a tag — two RPCs, and there is no rename primitive in this contract, so a
+ * torn write cannot be *prevented* here the way a temp-file-plus-rename would
+ * prevent it on a local filesystem. Adding one would mean a new resident-app
+ * export and FUSE-level rename support, which is a larger change than this
+ * seam. What is done instead is to make a torn write *loud*: load() below
+ * refuses to silently treat unparseable content as "no checkpoint". A tag
+ * failure is separately harmless for resume — load() reads by exact path, so
+ * an untagged checkpoint still loads; the tag only affects discoverability.
+ * See REMEDIATION 3.5.
  */
 export function createSemanticFsCheckpointStore<T extends { runId: string } = CheckpointedRun>(
   computer: ComputerHandle,
@@ -84,11 +115,35 @@ export function createSemanticFsCheckpointStore<T extends { runId: string } = Ch
       await tagTool.invoke({ path, task, relatedApps: [] });
     },
     async load(runId) {
+      let content: string;
       try {
         const result = (await readTool.invoke({ path: pathFor(runId) })) as { content: string };
-        return JSON.parse(result.content) as T;
-      } catch {
-        return null;
+        content = result.content;
+      } catch (err) {
+        // Only a genuinely absent file means "no prior checkpoint". Every
+        // other read failure — a broken RPC, a permission error, a daemon
+        // that went away — used to be swallowed into null, so a transient
+        // fault looked exactly like a fresh run and resume() silently
+        // restarted from scratch, re-executing everything the checkpoint
+        // existed to avoid re-executing.
+        //
+        // Resident-app errors cross the wire as plain strings rather than
+        // typed codes (see Computer's dispatch()), so this matches on the
+        // message. That is not pretty, and it is why the test asserts both
+        // directions: guessing wrong in the "absent" direction resurrects the
+        // original bug, and guessing wrong the other way makes every first
+        // run throw.
+        if (isNotFound(err)) return null;
+        throw new CheckpointReadError(runId, err);
+      }
+
+      try {
+        return JSON.parse(content) as T;
+      } catch (err) {
+        // Unparseable content is not an absent checkpoint — it is a torn or
+        // corrupted one, the failure mode save()'s lack of a rename primitive
+        // can't rule out. Returning null here would quietly restart the run.
+        throw new CheckpointReadError(runId, err);
       }
     },
   };

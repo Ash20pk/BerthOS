@@ -304,3 +304,76 @@ async def test_pipeline_resumes_past_a_step_that_would_otherwise_explode(tmp_pat
     result = await crew.run({"first": "a"})
 
     assert result == {"first": "a", "second": "ab"}
+
+
+# --- REMEDIATION 3.3: fan-out shapes must not share one run_id ---
+
+
+@pytest.mark.asyncio
+async def test_parallel_agents_do_not_overwrite_each_others_checkpoints(tmp_path):
+    """The defect at the level it actually bit: two concurrent agents each
+    with their own checkpoint store. Before the fix both wrote the key
+    "corr-1", so one run's messages silently replaced the other's."""
+    store = FileCheckpointStore(tmp_path)
+
+    def agent_with(name: str, output: str) -> Agent:
+        return Agent(
+            llm=ScriptedLLM([LLMTurn(text=output, tool_calls=[], stop=True)]),
+            tools=[],
+            name=name,
+            checkpoint=store,
+        )
+
+    await Crew.parallel([agent_with("alpha", "a-out"), agent_with("beta", "b-out")], run_id="corr-1").run("go")
+
+    alpha = await store.load("corr-1:0:alpha")
+    beta = await store.load("corr-1:1:beta")
+    assert alpha is not None and alpha.text == "a-out"
+    assert beta is not None and beta.text == "b-out"
+    # The bare run_id must not itself be a checkpoint any more.
+    assert await store.load("corr-1") is None
+
+
+@pytest.mark.asyncio
+async def test_parallel_keeps_run_ids_distinct_when_agents_share_a_name(tmp_path):
+    """Agent's default name is "agent", so a crew of unnamed agents is exactly
+    where a name-keyed id would collide as the bare run_id did. The index is
+    what makes this safe."""
+    store = FileCheckpointStore(tmp_path)
+    agents = [
+        Agent(llm=ScriptedLLM([LLMTurn(text=str(i), tool_calls=[], stop=True)]), tools=[], checkpoint=store)
+        for i in range(3)
+    ]
+
+    await Crew.parallel(agents, run_id="same-name").run("go")
+
+    for i in range(3):
+        assert await store.load(f"same-name:{i}:agent") is not None
+
+
+@pytest.mark.asyncio
+async def test_parallel_passes_no_run_id_through_when_the_crew_was_given_none(tmp_path):
+    """The positive control: a crew run without a run_id must not start
+    fabricating them, or agents deliberately left uncheckpointed would begin
+    writing."""
+    store = FileCheckpointStore(tmp_path)
+    agents = [
+        Agent(llm=ScriptedLLM([LLMTurn(text="a", tool_calls=[], stop=True)]), tools=[], name="a", checkpoint=store),
+        Agent(llm=ScriptedLLM([LLMTurn(text="b", tool_calls=[], stop=True)]), tools=[], name="b", checkpoint=store),
+    ]
+
+    result = await Crew.parallel(agents).run("go")
+
+    assert "a" in result and "b" in result
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_fan_out_run_id_matches_the_typescript_key_format():
+    """A Python crew and a TypeScript crew pointed at the same store must not
+    disagree about where a checkpoint lives, so the format is asserted
+    literally rather than round-tripped."""
+    from berth_agents.crew import fan_out_run_id_for
+
+    assert fan_out_run_id_for("run-1", "researcher", 0) == "run-1:0:researcher"
+    # Sanitized: these ids become path segments in a file-backed store.
+    assert fan_out_run_id_for("run-1", "my agent/x", 2) == "run-1:2:my_agent_x"

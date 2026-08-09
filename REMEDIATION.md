@@ -676,13 +676,13 @@ Real defects in shipped code, independent of security.
 
 | # | Item | Status | Effort |
 |---|------|--------|--------|
-| 3.1 | `tools: []` breaks every OpenAI-family LLM judge | 🔴 | 2h |
-| 3.2 | Truncated responses returned as final answers | 🔴 | 4h |
-| 3.3 | `Crew.parallel` shares one `runId` across concurrent agents | 🔴 | 4h |
-| 3.4 | Denied human approval doesn't stop the run | 🔴 | 4h |
-| 3.5 | Checkpoints written per turn, not per tool call | 🔴 | 1d |
-| 3.6 | Anthropic empty-content messages rejected by the API | 🔴 | 2h |
-| 3.7 | No provider adapter has a unit test | 🔴 | 2d |
+| 3.1 | `tools: []` breaks every OpenAI-family LLM judge | 🟢 | 2h |
+| 3.2 | Truncated responses returned as final answers | 🟢 | 4h |
+| 3.3 | `Crew.parallel` shares one `runId` across concurrent agents | 🟢 | 4h |
+| 3.4 | Denied human approval doesn't stop the run | 🟢 | 4h |
+| 3.5 | Checkpoints written per turn, not per tool call | 🟡 | 1d |
+| 3.6 | Anthropic empty-content messages rejected by the API | 🟢 | 2h |
+| 3.7 | No provider adapter has a unit test | 🟡 | 2d |
 
 ### 3.1 — `tools: []` breaks every OpenAI-family LLM judge
 
@@ -690,11 +690,31 @@ Real defects in shipped code, independent of security.
 
 **Fix.** Omit the `tools` key when the array is empty, in `openai.ts` and every provider derived from it. **Verify.** Covered by 3.7.
 
+**Closed.** The key is now absent rather than empty — spread in from a `toolsParam()` helper, so it doesn't exist at all instead of being set to `undefined`. One fix covers four providers: Azure, Bedrock and Ollama differ from OpenAI only in how the client is constructed and all hand it to the same `createOpenAICompatibleProvider()`. Asserted through Ollama rather than inferred from the import, because "they share the implementation" is exactly the kind of thing that stops being true quietly.
+
+**The verification is on the request body, and that is deliberate.** The two features this broke — `createLlmGuardrail()` and `llmJudge()` — are also driven end to end, but running those against the *unfixed* adapter showed the feature-level assertions passing: the mock server accepts `tools: []` happily, and OpenAI's API is what rejects it. So a test that only checks the verdict parses cannot reproduce this bug. Encoding a vendor's validation rules in a fixture would go stale silently; asserting the wire shape does not.
+
+**A packaging bug had to be fixed first, and it was one commit away from deleting the suite.** `packages/agents`' test script was `node --test dist/**/*.test.js`. In the shell pnpm runs scripts through, `**` matches one directory level — the identical bug 1.14 found in `@berth/sdk`. It works today only because nothing lives in a `dist` subdirectory, so the glob matches nothing, stays literal, and reaches Node, which expands it correctly. The moment the first test landed under `dist/providers/`, the shell would have matched *only* that file and the run would have gone from 222 tests to 5 while still exiting 0. Now an explicit two-pattern list, same as the SDK's.
+
 ### 3.2 — Truncated responses returned as final answers
 
 No provider reads `stop_reason`/`finish_reason` (zero grep hits in `providers/`). Anthropic's `maxTokens` defaults to 4096 (`anthropic.ts:23`); the OpenAI provider has no max-tokens control at all. A response cut off at the limit returns `toolCalls: []`, and `agent.ts:224` treats that as the final answer — silent truncation presented as success. With a `responseSchema` it burns every repair attempt on unparseable half-JSON. OpenAI's `content_filter` and `message.refusal` are equally unread.
 
 **Fix.** Surface `stopReason` on `LLMTurn`; throw a typed `TruncatedResponseError` when it indicates a length cutoff or content filter.
+
+**Closed.** `LLMTurn.stopReason` is a normalized union (`end`/`tool_calls`/`length`/`content_filter`/`refusal`/`other`) mapped from three vendor vocabularies that don't line up, and `Agent.run()` throws `TruncatedResponseError` on the three that make output untrustworthy.
+
+Five things worth naming:
+
+1. **Absent means "unknown", never "fine".** Plenty of OpenAI-compatible servers omit `finish_reason` entirely; defaulting those to `"end"` would assert a completion nobody reported, and treating them as suspect would break every one of them. The loop only acts on a reason it was actually given.
+2. **The check runs before the turn's tool calls are looked at**, not just on the no-tool-calls path where the bug was reported. A response cut off at the cap can end mid-arguments, so a tool call recovered from one may carry truncated JSON — there's a test asserting such a call never executes.
+3. **`refusal` is a message field, not a finish reason.** OpenAI reports it separately, so reading `finish_reason` alone would have missed it.
+4. **Anthropic's `pause_turn` maps to `"other"`, not `"end"`.** It's a long-running server-tool turn the caller is meant to continue; calling it an ending would assert a completion the model never signalled. Gemini's several suppression modes (`SAFETY`, `RECITATION`, `PROHIBITED_CONTENT`, `SPII`, `BLOCKLIST`) all collapse to `content_filter`, since they mean the same thing to a caller.
+5. **Gemini reports `STOP` even for a turn that called a function**, so `tool_calls` has to take precedence over the mapped reason or a tool-use turn would be labelled finished.
+
+The `responseSchema` interaction was the expensive half: half-JSON can never parse, so the repair loop burned every attempt re-asking a model that would be cut off at the same place. A test counts LLM calls to prove it now gives up after one.
+
+**Also added: `maxTokens` on the OpenAI family**, which had no max-tokens control at all. A cutoff you're told about but can't raise isn't actionable.
 
 ### 3.3 — `Crew.parallel` shares one `runId` across concurrent agents
 
@@ -702,17 +722,43 @@ No provider reads `stop_reason`/`finish_reason` (zero grep hits in `providers/`)
 
 **Fix.** Derive a per-agent key (`${runId}:${agent.name}:${index}`) for checkpoints and traces in every fan-out shape. **Verify.** A test asserting N parallel agents produce N distinct checkpoints.
 
+**Closed** in both languages, with the same key format — a Python crew and a TypeScript crew can be pointed at one store, and disagreeing about where a checkpoint lives would be a new bug.
+
+**The index leads the key, and that ordering is the fix rather than a detail.** The shape suggested above puts the name first, but `Agent`'s default name is `"agent"`: a crew built from agents nobody named would collide exactly as the bare `runId` did. The index is what guarantees uniqueness; the name follows only so a stored key is recognizable, and is sanitized because these ids become path segments in the Semantic FS-backed store. The parent `runId` stays a prefix, so trace correlation across a fan-out is a prefix match rather than an exact one.
+
+**Scoped to the shape that actually fans out.** `sequential`, `loopUntil`, `route`, `withManager` and `networked` run their agents one at a time; they overwrite rather than interleave, and each already has a crew-level checkpoint tracking step progress. `crew.ts`'s doc comment claimed every step shares one `runId` unchanged — true before this, so it's corrected rather than left to mislead.
+
+**An existing test asserted the bug as the contract**: `Crew.parallel threads runId into every agent's run(), correlating all their trace events` checked that all N agents traced under one id. That's the defect. It now asserts distinctness plus prefix correlation. Confirmed against the unfixed code in both languages (3 TS failures, 2 Python).
+
 ### 3.4 — Denied human approval doesn't stop the run
 
 `approval.ts:120-124` throws `HumanApprovalDeniedError` from inside `tool.invoke`, so `agent.ts:270-284`'s tool-error handling catches it and feeds it back as an `{error}` result. The model can immediately re-issue the identical call and open a fresh grant request. Documented as fail-closed; behaves as advisory.
 
 **Fix.** Let a denial (and a guardrail trip) propagate out of the loop instead of being caught — check the error type before converting it to a tool result.
 
+**Closed.** `HumanApprovalDeniedError` and `GuardrailTripwireError` now propagate and checkpoint the run as `"error"`, the same treatment a tripped output guardrail already got. Without the checkpoint, a resumed run would restart from a stale `"running"` state and re-request the denied action.
+
+**`GovernanceDeniedError` is deliberately excluded, and that line is the whole design question here.** A governance gate is a policy engine shaping which actions an agent may take — an agent denied one action and trying a different one is the intended behaviour, and `governance.ts` is advisory by construction (it fails *open*). A human denying a specific request is a stop, and feeding it back let the model re-issue the identical call and open a fresh grant, spamming the person who just said no. Both directions are asserted, so neither can drift into the other.
+
+**`approval.ts`'s own doc comment described the old behaviour as intended** — "Surfaces to Agent.run()'s tool loop as a normal tool-call failure... the LLM sees `.message` and can retry" — sitting a few lines above an option documented as fail-**closed**. Corrected at the source.
+
+The positive control matters more than usual: an ordinary tool failure must still be recoverable, or this change would have converted every transient error into a dead run.
+
 ### 3.5 — Checkpoints written per turn, not per tool call
 
 `agent.ts:291` checkpoints after the whole `for` loop at `:261-289`. A crash after tool call 3 of 4 loses all four and re-executes them on resume, including side-effecting ones. Also: `checkpoint.ts:83-84` is write-then-tag as two RPCs with no atomicity, and `load()` swallows every error into `null` (`:86-93`) so a transient read failure silently restarts from scratch.
 
 **Fix.** Checkpoint after each tool call. Make `save()` atomic (temp file + rename). Distinguish "no checkpoint" from "read failed" in `load()`.
+
+**Two of three closed; `save()` atomicity is not, which is why this is 🟡.**
+
+**Per-tool-call checkpointing needed a second half nobody asked for.** Writing a checkpoint mid-turn is easy; it's worthless unless resume can *use* one. A partial turn is an assistant message whose later tool calls have no results, and every vendor rejects that outright — so a naive fix would have turned "loses work on resume" into "cannot resume at all". `Agent.loop()` now completes the outstanding calls first and only then asks the model, with a test asserting no unanswered tool call ever reaches a provider. The last call of a turn skips its own save, since the turn-end checkpoint records the same state one line later.
+
+**`load()` no longer swallows failures.** Only a genuine `ENOENT` returns null; a timed-out RPC, a permission error, or unparseable content throws the new `CheckpointReadError`. Before this a transient read failure was indistinguishable from a fresh run, so `resume()` silently restarted and re-executed everything the checkpoint existed to avoid. Resident-app errors cross the wire as plain strings rather than typed codes, so this matches on message text — not pretty, and the reason the test asserts both directions: guessing wrong toward "absent" resurrects the original bug, and guessing wrong the other way makes every first run throw.
+
+**`save()` is still not atomic, and can't be at this seam.** It's a write followed by a tag, and there is no rename primitive in the `write_context_file`/`read_context_file`/`tag_context_file` contract a store reaches Semantic FS through — a temp-file-plus-rename would need a new resident-app export *and* FUSE-level rename support in `semantic-fs-daemon`. What's done instead is to make a torn write loud rather than silent: `load()`'s parse failure is now an error instead of a null that quietly restarts the run. The tag half is separately harmless — `load()` reads by exact path, so an untagged checkpoint still loads and only discoverability suffers. Stated in `checkpoint.ts` rather than implied.
+
+**Verify.** `packages/agents/src/checkpoint-durability.test.ts`, 8 tests, 5 of which fail against the unfixed code. The one that matters asserts a resumed run re-executes *only* the outstanding calls, not the side-effecting ones that already completed; the positive control asserts a fully-complete history re-runs nothing, since getting that wrong would double-run every ordinary resume.
 
 ### 3.6 — Anthropic empty-content messages
 
@@ -721,6 +767,18 @@ No provider reads `stop_reason`/`finish_reason` (zero grep hits in `providers/`)
 ### 3.7 — No provider adapter has a unit test
 
 `packages/agents/src/providers/` contains eight implementation files and no test files; the only provider test is `fallback.test.ts`, which uses stubs. That absence is why 3.1, 3.2, and 3.6 are all live. Same on the Python side (618 lines, no tests). Add mock-server-backed tests per provider covering message mapping, tool-call round trips, empty tool lists, streaming deltas, and finish reasons.
+
+**TypeScript closed; Python not yet, which is why this is 🟡.**
+
+`packages/agents/src/providers/mock-server.ts` stands up a real HTTP server on an ephemeral port and records what arrived. **A real server rather than a stubbed vendor client, deliberately**: all three bugs this was meant to catch were about the request body an adapter *builds* or the response field it fails to *read*. A stub of `client.chat.completions.create` asserts the arguments this repo passes to the SDK — the half that was never wrong. Every provider already takes a base URL for production reasons, so this needs no seam that didn't exist.
+
+**That distinction paid for itself immediately.** The `@google/genai` SDK flattens the `config` object `google.ts` builds into top-level request keys, so `tools` lands at the root and `config` never appears on the wire at all. The first draft of the empty-tools test asserted `body.config.tools === undefined` — which passes no matter what the adapter does. A client stub would have cemented that mistake.
+
+Coverage: `openai.test.ts` (14) — empty tool lists, message mapping including the JSON-string encoding of tool-call arguments and `tool_call_id` correlation, a tool-call round trip, streaming text deltas, reassembly of a tool call fragmented across frames, and the usage-only final frame that makes "read finish_reason off the last chunk" wrong. `anthropic.test.ts` (6), `google.test.ts` (9), `azure-bedrock.test.ts` (5) — for those last two, only what's unique to them: Azure's deployment-in-path URL and `api-key` header, Bedrock's bearer token. `truncation.test.ts` (12) covers the stop-reason mapping across vendors.
+
+**Also added: a `baseUrl` option on the Google provider.** Its absence was why that adapter was the one nothing could be stood in front of — and it's plain parity with the `baseURL` the other two already took.
+
+**Still open:** the Python provider adapters, which remain untested at the unit level. `docs/agents-python-reference.md` justified that with a claim about the TypeScript side that 2.4 corrected and this item now makes obsolete — the convention it appealed to no longer exists.
 
 ---
 

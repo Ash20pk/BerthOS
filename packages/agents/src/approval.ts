@@ -3,11 +3,16 @@ import type { Tool } from "./types.js";
 
 /**
  * Thrown when a gated tool call is denied by a human, or times out waiting
- * for one to decide (fail-closed — see timeoutMs below). Surfaces to
- * Agent.run()'s tool loop as a normal tool-call failure, exactly like
- * GovernanceDeniedError (governance.ts): the LLM sees `.message` and can
- * retry, try something else, or explain why it didn't. No Agent changes
- * needed for this to work.
+ * for one to decide (fail-closed — see timeoutMs below).
+ *
+ * **Ends the run.** Agent.run()'s tool loop lets this propagate rather than
+ * converting it to an `{error}` tool result, unlike GovernanceDeniedError
+ * (governance.ts) and unlike ordinary tool failures. That difference is the
+ * point: a policy engine denying one action is shaping which action an agent
+ * takes, and letting the model try something else is intended. A human
+ * denying a specific request is a stop — and feeding it back as a result let
+ * the model re-issue the identical call, opening a fresh grant and spamming
+ * the person who just said no. See REMEDIATION 3.4 and refusal.test.ts.
  */
 export class HumanApprovalDeniedError extends Error {
   constructor(
