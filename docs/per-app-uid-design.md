@@ -151,7 +151,7 @@ Each step is independently shippable and independently revertable. The ordering 
 | 0 | ~~`on_install` moves to build time (Blocker 4)~~, ~~Blocker 1's open decision~~, ~~`allow_other` + backing-file group on semantic-FS (Blockers 2, 3)~~ — **done**. | 1.5 ✅ 1.6 ✅ |
 | 1 | ~~Create uids, groups, and `/run/berth/<app>`; `chown` `.berth` and the install-marker volume~~ — **done**. No process changes uid yet. | — |
 | 2 | ~~`setgroups`/`setresgid`/`setresuid` in `agent-init` before `exec`~~ — **done**. Sockets stay where they are. **The whole risk lives here** — full regression matrix before anything is built on top. | — |
-| 3 | Sockets move to `/run/berth/<app>/rpc.sock`, mode `0700`; `/tmp` out of `BASELINE_WRITE_PATHS`, replaced by `/tmp/<app>`. | 1.4 (parts 1, 2) |
+| 3 | ~~Sockets move to `/run/berth/<app>/rpc.sock`; `/tmp` out of the baseline write set, replaced by `/tmp/<app>`~~ — **done**, at mode `0710` rather than `0700`, plus a new `app:invoke:<name>` capability (see below). | 1.4 (parts 1, 2) |
 | 4 | `SO_PEERCRED` in `rpc.ts`'s `connectionHandler` (`rpc.ts:58`), and in the context-bus (`main.rs:125`) and semantic-FS (`control.go:136`) control paths, replacing self-asserted identity. | 1.4 (part 3), 1.14 identity half |
 | 5 | Assert and test signal isolation; make `fail-closed` the governance default. | 1.11 |
 
@@ -163,13 +163,16 @@ Step 2 is the one that can break everything quietly, so its evidence has to be a
 
 New assertions, per step:
 
-- **Before Step 3 is designed on top of it** — confirm the premise in [the section above](#the-premise-correction-that-motivates-the-design) directly on an enforcing kernel: an app whose Landlock policy excludes `/tmp` can still `connect()` to a socket there. If that turns out to be wrong, Step 3 gets much simpler and this document needs revising, so it is worth ten minutes before it is worth three days.
+- **Before Step 3 is designed on top of it** — confirm the premise in [the section above](#the-premise-correction-that-motivates-the-design) directly on an enforcing kernel: an app whose Landlock policy excludes `/tmp` can still `connect()` to a socket there. **Not separately run**, and Step 3 shipped without it: the premise is now load-bearing in a different way than expected, because `/tmp` came out of the baseline write set while the three daemon control sockets stayed at `/tmp/berth-*.sock`. If the premise is wrong, every app fails to reach the context bus on an enforcing kernel — loudly, on the first CI run, which is the same evidence a ten-minute probe would have produced and is what this now rests on. Nothing about it is silent.
 - **Step 2** — every app process reports a non-zero, distinct uid; `setuid(0)` from inside an app fails.
-- **Step 3** — the 1.4 exploit verbatim: `code-interpreter` runs `nc -U /run/berth/filesystem/rpc.sock` and gets `EACCES`, where today it gets `filesystem`'s capabilities. This extends Test 9, the existing cross-app boundary test.
+- **Step 3** — ~~the 1.4 exploit verbatim~~ **done**, as `capability-enforcement.mjs` Test 9's socket half. Two corrections to what this line assumed, both established by running it:
+  - **`0700` on the socket directory was wrong**, because it leaves no way to authorize the one caller that legitimately exists: `@berth/agents`' generated agent app calls its sibling apps' exports directly (`network.ts`'s `callSibling`), which is the agent-as-tool feature. The directory is `0710` and the socket `0660`, both owned by the serving app, and a new `app:invoke:<name>` capability is what puts a caller in the target's group at boot. Denying every cross-app call would have deleted a shipped feature rather than secured it.
+  - **The negative control did not reproduce the exploit as written**, and this is the more important correction. Against the pre-Step-3 code, `boundary-app-a` connecting to `boundary-app-b`'s socket already got `EACCES` — not because of the `1777` directory, but because the socket *file* was `srwxr-xr-x` (the default umask) and owned by app B's uid, so `other` had no write bit and `connect(2)` was refused. Step 2 closed the connect path by accident. What the `1777` directory still allowed was **squatting**: any app could `bind()` a not-yet-started sibling's socket path and serve in its place, which the sticky bit does not prevent. So the exploit as written in 1.4 stopped working at Step 2, silently, and the boundary only becomes a designed one here.
+
 - **Step 4** — a forged `app` field in a context-bus register frame is rejected in favour of the uid the kernel reports.
 - **Step 5** — app B cannot `kill` app A's pid.
 
-The Step 3 assertion is the one that matters. It should be confirmed to *fail* against the current code before it is claimed to pass against the new — the same discipline 1.7's closure used for the loopback binding and the VNC security types.
+The Step 3 assertion is the one that matters, and it was confirmed against the pre-Step-3 code before being claimed against the new — the same discipline 1.7's closure used. That is exactly how the second correction above was found: the control did not reproduce what 1.4 describes, and saying so is more useful than a green run.
 
 ## The alternative, if this proves too expensive
 
