@@ -60,6 +60,7 @@ async function main() {
   await runPartA();
   await runPartA1();
   await runPartA2();
+  await runPartA3();
   await runPartB();
   await runPartC();
 }
@@ -262,6 +263,125 @@ async function startFakeUpstreamProxy() {
     connects,
     stop: () => new Promise((resolve) => server.close(resolve)),
   };
+}
+
+// Part A3: REMEDIATION.md 1.8 — the three holes that a host-only check left
+// open. Run directly against the broker script, no Docker, because every one
+// of them is a decision the broker makes before a byte leaves it.
+async function runPartA3() {
+  console.log("\n=== Part A3: port scoping, internal addresses, and pinned DNS (REMEDIATION.md 1.8) ===");
+  const dataDir = await mkdtemp(join(tmpdir(), "berth-egress-broker-milestone-ssrf-"));
+
+  async function withBroker(capabilities, port, fn) {
+    const policyPath = join(dataDir, `policy-${port}.json`);
+    await writeFile(
+      policyPath,
+      JSON.stringify({ appName: "ssrf-test-app", declaredCapabilities: capabilities, writePaths: [], readPaths: [], networkPorts: [], networkUnrestricted: false }),
+    );
+    const broker = spawn(process.execPath, [BROKER_SCRIPT], {
+      env: { ...process.env, BERTH_EGRESS_BROKER_PORT: String(port), BERTH_CAPABILITY_POLICY: policyPath },
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    broker.stderr.on("data", (chunk) => (stderr += chunk.toString("utf-8")));
+    try {
+      await waitFor(() => stderr.includes("listening on"), 5000, "broker to start listening");
+      await fn(() => stderr);
+    } finally {
+      broker.kill();
+    }
+  }
+
+  try {
+    // 1. The port. `browser:navigate:example.com` reads as "this site", not
+    //    "every service on this host" — CONNECT example.com:5432 used to be
+    //    tunnelled because the port was parsed and then never checked.
+    await withBroker(["browser:navigate:example.com"], 58094, async (stderrOf) => {
+      console.log("\n--- CONNECT to a declared host on an UNDECLARED port (example.com:5432) ---");
+      // The response is caught rather than awaited for a status, because the
+      // interesting failure is what a broker WITHOUT the port check does: it
+      // allows the CONNECT and dials 5432, nothing is listening, and the
+      // client times out. Asserting on the decision means the negative
+      // control reports "it was allowed" instead of an opaque timeout.
+      const denied = await connectThroughProxy(58094, "example.com", 5432).catch(() => undefined);
+      console.log(`status: ${denied?.statusCode ?? "(no response — the broker dialled it)"}`);
+      assert(
+        /"event":"navigate_denied","host":"example.com","port":5432/.test(stderrOf()),
+        `expected the undeclared port to be denied, got: ${stderrOf().slice(-400)}`,
+      );
+      assert(denied?.statusCode === 403, `expected 403 for an undeclared port, got ${denied?.statusCode}`);
+
+      console.log("\n--- ...while the default ports still work (example.com:443) ---");
+      const allowed = await connectThroughProxy(58094, "example.com", 443);
+      assert(allowed.statusCode === 200, `expected 200 for the default port, got ${allowed.statusCode}`);
+    });
+
+    // 2. A port named explicitly in the scope is honoured — otherwise the
+    //    check above would just be "443 or nothing", which is a different
+    //    (and much less useful) product.
+    await withBroker(["network:host:example.com:5432"], 58095, async (stderrOf) => {
+      console.log("\n--- a scope naming its own port (network:host:example.com:5432) permits exactly that ---");
+      // Asserted on the broker's own decision, not on a completed tunnel:
+      // nothing is listening on example.com:5432, so an allowed CONNECT
+      // legitimately fails to establish. What is under test is which side of
+      // the policy the request landed on, and the log line is where that
+      // lives — the same reason Test 9's daemon half in
+      // capability-enforcement.mjs asserts on logs rather than responses.
+      await connectThroughProxy(58095, "example.com", 5432).catch(() => undefined);
+      assert(
+        /"event":"navigate_allowed","host":"example.com","port":5432/.test(stderrOf()),
+        `expected the explicitly declared port to be allowed, got: ${stderrOf().slice(-400)}`,
+      );
+
+      const denied = await connectThroughProxy(58095, "example.com", 443);
+      assert(denied.statusCode === 403, `expected 403 for a port that scope didn't name, got ${denied.statusCode}`);
+    });
+
+    // 3. The SSRF cases, all under `*` — the pattern that reads as "any site
+    //    on the internet" and used to mean "and the cloud metadata service,
+    //    and the Docker bridge, and the host itself".
+    await withBroker(["browser:navigate:*"], 58096, async (stderrOf) => {
+      console.log("\n--- IMDS (169.254.169.254) under browser:navigate:* ---");
+      const imds = await connectThroughProxy(58096, "169.254.169.254", 80);
+      console.log(`status: ${imds.statusCode}`);
+      assert(imds.statusCode === 403, `expected 403 for the cloud metadata address, got ${imds.statusCode}`);
+
+      console.log("\n--- loopback and RFC1918 under browser:navigate:* ---");
+      for (const [host, port] of [
+        ["127.0.0.1", 8090],
+        ["10.0.0.1", 80],
+        ["192.168.1.1", 80],
+        ["172.17.0.1", 80],
+      ]) {
+        const res = await connectThroughProxy(58096, host, port);
+        assert(res.statusCode === 403, `expected 403 for ${host}:${port}, got ${res.statusCode}`);
+      }
+
+      // 4. Pinned resolution: the name is allowed by the glob, and the
+      //    address it resolves to is not. This is the shape of a DNS
+      //    rebinding attack, and localtest.me is a real public record that
+      //    resolves to 127.0.0.1 — so it exercises the resolve-then-validate
+      //    path rather than the IP-literal shortcut above.
+      console.log("\n--- a public NAME that resolves to loopback (localtest.me -> 127.0.0.1) ---");
+      const rebind = await connectThroughProxy(58096, "localtest.me", 80);
+      console.log(`status: ${rebind.statusCode}`);
+      assert(rebind.statusCode === 403, `expected 403 for a name resolving to loopback, got ${rebind.statusCode}`);
+      assert(
+        /blocked_address/.test(stderrOf()),
+        `expected the broker to log why it refused the resolved address, got: ${stderrOf().slice(-400)}`,
+      );
+
+      // The positive control. Every denial above would also "pass" against a
+      // broker that had simply stopped tunnelling anything at all.
+      console.log("\n--- ...while a real public host still works under the same * pattern ---");
+      const allowed = await connectThroughProxy(58096, "example.com", 443);
+      assert(allowed.statusCode === 200, `expected 200 for a real public host, got ${allowed.statusCode}`);
+    });
+
+    console.log("\nPASS — ports are scoped, internal addresses are refused even under *, and the address dialled is the one that was validated.");
+  } finally {
+    await rm(dataDir, { recursive: true, force: true });
+  }
 }
 
 async function runPartB() {
