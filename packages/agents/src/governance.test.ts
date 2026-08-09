@@ -80,7 +80,7 @@ test("lets the call through once the out-of-scope governor approves it", async (
   assert.equal(await gated[0]!.invoke({}), "raw-result");
 });
 
-test("fails open (lets the call through) if the out-of-scope governor call errors", async () => {
+test("an out-of-scope governor is still consulted — an unreachable one now refuses the call (fail-closed default)", async () => {
   const governor = appSpec("gatekeeper", { governs: true, exports: ["evaluate_action"] });
   const filesystem = appSpec("filesystem", { exports: ["write_file"] });
   const allApps = [governor, filesystem];
@@ -94,7 +94,9 @@ test("fails open (lets the call through) if the out-of-scope governor call error
   const tools = [toolFor("write_file", (input) => call("filesystem", "write_file", input))];
   const gated = applyGovernanceGate(allApps, scopedApps, tools, call);
 
-  assert.equal(await gated[0]!.invoke({}), "raw-result");
+  // The rejection is itself the proof the governor was consulted: an ungated
+  // tool would simply have returned "raw-result".
+  await assert.rejects(() => gated[0]!.invoke({}), GovernanceUnavailableError);
 });
 
 test("never gates the governor's own tools, in or out of scope", async () => {
@@ -164,7 +166,7 @@ test("fail-closed mode still denies an explicitly-denied call the normal way, no
   await assert.rejects(() => gated[0]!.invoke({}), GovernanceDeniedError);
 });
 
-test("mode defaults to fail-open when omitted, unchanged from before this option existed", async () => {
+test("mode defaults to fail-closed when omitted (REMEDIATION.md 1.11 inverted this)", async () => {
   const governor = appSpec("gatekeeper", { governs: true, exports: ["evaluate_action"] });
   const filesystem = appSpec("filesystem", { exports: ["write_file"] });
   const allApps = [governor, filesystem];
@@ -177,6 +179,23 @@ test("mode defaults to fail-open when omitted, unchanged from before this option
 
   const tools = [toolFor("write_file", (input) => call("filesystem", "write_file", input))];
   const gated = applyGovernanceGate(allApps, scopedApps, tools, call);
+
+  await assert.rejects(() => gated[0]!.invoke({}), GovernanceUnavailableError);
+});
+
+test("fail-open is still available for callers who ask for it by name", async () => {
+  const governor = appSpec("gatekeeper", { governs: true, exports: ["evaluate_action"] });
+  const filesystem = appSpec("filesystem", { exports: ["write_file"] });
+  const allApps = [governor, filesystem];
+  const scopedApps = [filesystem];
+
+  const call = async (appName: string, exportName: string, _input: unknown) => {
+    if (appName === "gatekeeper" && exportName === "evaluate_action") throw new Error("governor unreachable");
+    return "raw-result";
+  };
+
+  const tools = [toolFor("write_file", (input) => call("filesystem", "write_file", input))];
+  const gated = applyGovernanceGate(allApps, scopedApps, tools, call, { mode: "fail-open" });
 
   assert.equal(await gated[0]!.invoke({}), "raw-result");
 });

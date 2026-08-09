@@ -1,6 +1,6 @@
 """`agent.py`'s governance-equivalent for the model's own input/output, not
-tool calls (that's governance.ts, TypeScript-only, fail-open by design — see
-gaps.md gap #26). A direct port of @berth/agents' guardrails.ts: a
+tool calls (that's governance.ts, TypeScript-only, fail-closed by default
+since REMEDIATION.md 1.11). A direct port of @berth/agents' guardrails.ts: a
 `GuardrailResult.tripwire_triggered` of True halts the run via
 GuardrailTripwireError — "tripwire" is the same term OpenAI's Agents SDK
 guardrails use for the same concept, kept rather than inventing a different

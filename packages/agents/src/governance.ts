@@ -43,17 +43,29 @@ interface EvaluateActionResult {
 
 export interface GovernanceGateOptions {
   /**
-   * "fail-open" (default): a governor that's slow, crashed, or unreachable
-   * doesn't wedge every other app's tool calls — a v1 default, not a
-   * security guarantee, and the reason gap #26 named this file as a real
-   * credibility gap in Berth's own security pitch. "fail-closed": the same
-   * unreachable-governor case throws GovernanceUnavailableError instead of
-   * letting the call through — the tradeoff moves from "an outage takes
-   * down every gated app's tool calls" to "an outage never silently grants
-   * access nothing actually approved." Pick fail-closed for anything where
-   * an unreachable policy check should read as "denied," not "allowed";
-   * fail-open for anything where availability matters more than that
-   * specific guarantee. See docs/governance-reference.md.
+   * "fail-closed" (default): a governor that's slow, crashed, or unreachable
+   * makes the call throw GovernanceUnavailableError rather than run — "the
+   * policy check didn't happen" never quietly becomes "the policy check
+   * passed."
+   *
+   * This default was inverted for REMEDIATION.md 1.11, and the reason is the
+   * other half of that item: any app in the container can `kill -9` the
+   * governance app. Under the old fail-open default that was a complete
+   * bypass of the gate — one signal and every subsequent call executed with
+   * a `console.warn` — which made the governor's authority contingent on
+   * nothing more than its own uptime. Per-app uids now make that specific
+   * kill impossible (the kernel refuses cross-uid signals), but a governor
+   * can still crash, hang, or be slow, and a gate that opens under those
+   * conditions is not a gate.
+   *
+   * "fail-open" is still available and is a legitimate choice where
+   * availability genuinely matters more than the guarantee — a governor
+   * outage then takes down every gated app's tool calls instead. It is no
+   * longer what you get by not deciding.
+   *
+   * An explicitly-denied call throws GovernanceDeniedError either way; `mode`
+   * only decides what happens when the governor can't be consulted at all.
+   * See docs/governance-reference.md.
    */
   mode?: "fail-open" | "fail-closed";
 }
@@ -113,7 +125,7 @@ export function applyGovernanceGate(
   call: (appName: string, exportName: string, input: unknown) => Promise<unknown>,
   options: GovernanceGateOptions = {},
 ): Tool[] {
-  const mode = options.mode ?? "fail-open";
+  const mode = options.mode ?? "fail-closed";
   const governors = allApps.filter((app) => app.manifest.governs);
   if (governors.length === 0) return tools;
   if (governors.length > 1) {

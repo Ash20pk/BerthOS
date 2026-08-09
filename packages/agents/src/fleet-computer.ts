@@ -19,7 +19,7 @@ export interface DeployComputerOptions {
   env?: Record<string, string>;
   /** How long to keep retrying "is the instance running yet / does rpcUrl() have an answer / is the bridge healthy" before giving up. Defaults to computer.ts's own READY_RETRY_CEILING_MS; mainly useful for tests. */
   readyTimeoutMs?: number;
-  /** Same as BootComputerOptions.governance — see GovernanceGateOptions and gaps.md gap #26. */
+  /** Same as BootComputerOptions.governance — see GovernanceGateOptions. Defaults to "fail-closed". */
   governance?: GovernanceGateOptions;
 }
 
