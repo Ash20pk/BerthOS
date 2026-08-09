@@ -32,6 +32,12 @@ def _baseline_write_paths(app_name: str) -> list[str]:
 # pty on a Landlock-enforcing kernel.
 TERMINAL_WRITE_PATHS = ["/dev/pts", "/dev/ptmx"]
 
+# Where github-api-broker.cjs writes the CA an app declaring github:* is told
+# to trust. Read-granted only for such an app, and only because that CA moved
+# out of /tmp (which the read baseline covers in full) into /run/berth —
+# REMEDIATION.md 1.9. Kept in step with that script's own default.
+GITHUB_BROKER_CERT_DIR = "/run/berth/github-api-broker"
+
 
 # /tmp stays fully readable even though it is no longer fully writable: reads
 # are not what 1.4 was about, and statting a daemon control socket before
@@ -72,6 +78,7 @@ def main() -> None:
     declared_read_paths: set[str] = set()
     network_ports: set[int] = set()
     network_unrestricted = False
+    needs_github_broker_ca = False
 
     for capability in effective_capabilities:
         parsed = parse_capability(capability)
@@ -93,8 +100,13 @@ def main() -> None:
                 print(f'[berth:capability-policy] WARNING: ignoring invalid network:connect scope "{parsed.scope}" (expected a port 1-65535, or "*")')
         elif parsed.namespace == "terminal":
             write_paths.update(TERMINAL_WRITE_PATHS)
+        elif parsed.namespace == "github":
+            needs_github_broker_ca = True
 
-    read_paths = sorted(set(_baseline_read_paths(manifest.name)) | declared_read_paths) if declared_read_paths else []
+    baseline_reads = set(_baseline_read_paths(manifest.name))
+    if needs_github_broker_ca:
+        baseline_reads.add(GITHUB_BROKER_CERT_DIR)
+    read_paths = sorted(baseline_reads | declared_read_paths) if declared_read_paths else []
 
     policy = {
         "appName": manifest.name,

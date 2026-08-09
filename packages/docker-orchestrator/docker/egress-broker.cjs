@@ -95,20 +95,46 @@ function parseScope(scope) {
 // capability names (see the file header) — a resident app declares
 // whichever reads better for what it's doing; the broker treats them
 // identically.
-function loadAllowedHostPatterns() {
-  let policy;
+function loadPolicy() {
   try {
-    policy = JSON.parse(fs.readFileSync(POLICY_PATH, "utf-8"));
+    return JSON.parse(fs.readFileSync(POLICY_PATH, "utf-8"));
   } catch (err) {
     console.error(`[egress-broker] WARNING: couldn't read capability policy at ${POLICY_PATH} (${err.message}) — denying all navigation`);
-    return [];
+    return null;
   }
+}
+
+const POLICY = loadPolicy();
+
+function loadAllowedHostPatterns() {
+  const policy = POLICY;
+  if (!policy) return [];
   return (policy.declaredCapabilities || [])
     .map(parseCapability)
     .filter((c) => c && ((c.namespace === "browser" && c.action === "navigate") || (c.namespace === "network" && c.action === "host")))
     .map((c) => parseScope(c.scope));
 }
 
+// Hosts another broker in this container enforces at a finer grain than a
+// host name — REMEDIATION.md 1.9. github-api-broker.cjs terminates TLS for
+// api.github.com so it can tell `GET /repos/o/r` from `GET /user/emails`;
+// an app declaring `github:read:repos` AND `network:host:*` used to get a raw
+// CONNECT api.github.com:443 through this broker as well, with no path or
+// verb inspection at all — the coarse capability silently undoing the fine
+// one. Where a dedicated broker exists, it is the only way to that host.
+//
+// Conditional on the app having declared a github:* capability, because that
+// is exactly when entrypoint.sh starts that broker. An app that declared no
+// github:* capability has no dedicated broker running and no path-level
+// policy to bypass; refusing it would just be a host this product cannot
+// reach.
+function loadDedicatedBrokerHosts() {
+  const declared = POLICY?.declaredCapabilities || [];
+  const hasGithubCapability = declared.some((c) => parseCapability(c)?.namespace === "github");
+  return hasGithubCapability ? new Set(["api.github.com"]) : new Set();
+}
+
+const DEDICATED_BROKER_HOSTS = loadDedicatedBrokerHosts();
 const ALLOWED_HOST_PATTERNS = loadAllowedHostPatterns();
 console.error(
   `[egress-broker] allowed host patterns (browser:navigate:*/network:host:*): ${
@@ -116,6 +142,9 @@ console.error(
     "(none)"
   }`,
 );
+if (DEDICATED_BROKER_HOSTS.size > 0) {
+  console.error(`[egress-broker] refusing hosts owned by a dedicated broker: ${[...DEDICATED_BROKER_HOSTS].join(", ")}`);
+}
 if (UPSTREAM_PROXY_URL) {
   console.error(`[egress-broker] chaining allowed CONNECTs through upstream proxy ${UPSTREAM_PROXY_URL.hostname}:${UPSTREAM_PROXY_URL.port || 80}`);
 }
@@ -276,6 +305,14 @@ const server = http.createServer(
   }
 
   const targetPort = Number(target.port) || (target.protocol === "https:" ? 443 : 80);
+  if (DEDICATED_BROKER_HOSTS.has(target.hostname)) {
+    logDecision("denied", target.hostname, targetPort);
+    console.error(`[egress-broker] {"event":"dedicated_broker_host","host":${JSON.stringify(target.hostname)},"port":${targetPort}}`);
+    res
+      .writeHead(403, { "content-type": "text/plain" })
+      .end(`egress denied: "${target.hostname}" is enforced by a dedicated broker in this container, which is the only route to it`);
+    return;
+  }
   if (!isHostAllowed(target.hostname, targetPort)) {
     logDecision("denied", target.hostname, targetPort);
     res
@@ -364,6 +401,13 @@ server.on(
     async (req, clientSocket, head) => {
   const [host, portStr] = (req.url || "").split(":");
   const port = Number(portStr) || 443;
+
+  if (DEDICATED_BROKER_HOSTS.has(host)) {
+    logDecision("denied", host, port);
+    console.error(`[egress-broker] {"event":"dedicated_broker_host","host":${JSON.stringify(host)},"port":${port}}`);
+    clientSocket.end("HTTP/1.1 403 Forbidden\r\n\r\n");
+    return;
+  }
 
   if (!host || !isHostAllowed(host, port)) {
     logDecision("denied", host, port);
