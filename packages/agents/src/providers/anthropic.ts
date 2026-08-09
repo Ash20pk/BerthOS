@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { AgentMessage, LLMProvider, LLMTurn, Tool } from "../types.js";
+import type { AgentMessage, LLMProvider, LLMStopReason, LLMTurn, Tool } from "../types.js";
 
 export interface AnthropicProviderOptions {
   apiKey?: string;
@@ -66,6 +66,34 @@ function toAnthropicMessages(messages: AgentMessage[]): Anthropic.MessageParam[]
 }
 
 /**
+ * `max_tokens` is required by this API and defaults to 4096 above, so hitting
+ * the cap is routine rather than exotic — and until REMEDIATION 3.2 nothing
+ * read the field that says it happened. "pause_turn" is a long-running
+ * server-tool turn the caller is meant to continue, not an ending, so it maps
+ * to "other" rather than "end": Agent treats it as a normal turn, which is
+ * the existing behaviour, instead of asserting a completion the model never
+ * signalled.
+ */
+function toStopReason(stopReason: string | null | undefined): LLMStopReason | undefined {
+  switch (stopReason) {
+    case "end_turn":
+    case "stop_sequence":
+      return "end";
+    case "tool_use":
+      return "tool_calls";
+    case "max_tokens":
+      return "length";
+    case "refusal":
+      return "refusal";
+    case null:
+    case undefined:
+      return undefined;
+    default:
+      return "other";
+  }
+}
+
+/**
  * Thin adapter over @anthropic-ai/sdk's Messages API tool-use loop. One of
  * two built-in LLMProvider implementations proving the interface isn't
  * secretly hardcoded to one vendor — Agent/Crew never reference this module.
@@ -101,6 +129,7 @@ export function createAnthropicProvider(options: AnthropicProviderOptions = {}):
         text: textBlocks.map((b) => b.text).join("\n") || undefined,
         toolCalls: toolUseBlocks.map((b) => ({ id: b.id, name: b.name, input: b.input })),
         stop: toolUseBlocks.length === 0,
+        stopReason: toStopReason(response.stop_reason),
         usage: { inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens },
       };
     },
@@ -130,6 +159,7 @@ export function createAnthropicProvider(options: AnthropicProviderOptions = {}):
         text: textBlocks.map((b) => b.text).join("\n") || undefined,
         toolCalls: toolUseBlocks.map((b) => ({ id: b.id, name: b.name, input: b.input })),
         stop: toolUseBlocks.length === 0,
+        stopReason: toStopReason(response.stop_reason),
         usage: { inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens },
       };
     },

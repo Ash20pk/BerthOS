@@ -1,5 +1,5 @@
 import { GoogleGenAI, type Content, type FunctionDeclaration, type Part } from "@google/genai";
-import type { AgentMessage, LLMProvider, LLMTurn, Tool } from "../types.js";
+import type { AgentMessage, LLMProvider, LLMStopReason, LLMTurn, Tool } from "../types.js";
 
 export interface GoogleProviderOptions {
   apiKey?: string;
@@ -65,6 +65,37 @@ function toFunctionDeclarations(tools: Tool[]): FunctionDeclaration[] {
 }
 
 /**
+ * Gemini reports why generation stopped on the *candidate*, not the response,
+ * and has more ways to suppress output than either other vendor — SAFETY,
+ * RECITATION (verbatim training data), PROHIBITED_CONTENT, SPII, and a
+ * blocklist all mean "we stopped this", so they collapse to
+ * "content_filter" rather than each becoming "other". MALFORMED_FUNCTION_CALL
+ * is the model failing to emit a usable call, which is closer to a truncation
+ * than to a refusal, but it is neither — "other" is the honest answer, and
+ * Agent leaves it alone. See REMEDIATION 3.2.
+ */
+function toStopReason(finishReason: string | null | undefined): LLMStopReason | undefined {
+  switch (finishReason) {
+    case "STOP":
+      return "end";
+    case "MAX_TOKENS":
+      return "length";
+    case "SAFETY":
+    case "RECITATION":
+    case "PROHIBITED_CONTENT":
+    case "SPII":
+    case "BLOCKLIST":
+    case "IMAGE_SAFETY":
+      return "content_filter";
+    case null:
+    case undefined:
+      return undefined;
+    default:
+      return "other";
+  }
+}
+
+/**
  * Thin adapter over `@google/genai`'s `generateContent`/`generateContentStream`
  * — the third built-in LLMProvider, and the first non-Anthropic-shaped,
  * non-OpenAI-shaped one: Gemini's own Content/Part/FunctionCall/
@@ -104,6 +135,10 @@ export function createGoogleProvider(options: GoogleProviderOptions = {}): LLMPr
         text: response.text,
         toolCalls: functionCalls.map((call, i) => ({ id: call.id ?? `call_${i}`, name: call.name ?? "", input: call.args ?? {} })),
         stop: functionCalls.length === 0,
+        // A tool call is signalled by the call being present, not by a
+        // distinct finishReason — Gemini reports STOP either way — so
+        // "tool_calls" takes precedence over the mapped reason here.
+        stopReason: functionCalls.length > 0 ? "tool_calls" : toStopReason(response.candidates?.[0]?.finishReason),
         usage: usageFrom(response.usageMetadata),
       };
     },
@@ -129,6 +164,7 @@ export function createGoogleProvider(options: GoogleProviderOptions = {}): LLMPr
       // (usage in particular is typically only present on the final chunk).
       let lastFunctionCalls: LLMTurn["toolCalls"] | undefined;
       let usage: LLMTurn["usage"];
+      let finishReason: string | null | undefined;
 
       for await (const chunk of stream) {
         if (chunk.text) {
@@ -142,6 +178,7 @@ export function createGoogleProvider(options: GoogleProviderOptions = {}): LLMPr
         if (chunk.usageMetadata) {
           usage = usageFrom(chunk.usageMetadata);
         }
+        if (chunk.candidates?.[0]?.finishReason) finishReason = chunk.candidates[0].finishReason;
       }
 
       const toolCalls = lastFunctionCalls ?? [];
@@ -149,6 +186,7 @@ export function createGoogleProvider(options: GoogleProviderOptions = {}): LLMPr
         text: text || undefined,
         toolCalls,
         stop: toolCalls.length === 0,
+        stopReason: toolCalls.length > 0 ? "tool_calls" : toStopReason(finishReason),
         usage,
       };
     },
