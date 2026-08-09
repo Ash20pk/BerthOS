@@ -112,12 +112,116 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
  * `call(governorName, "evaluate_action", ...)` can reach that resident app,
  * which is always true within one Computer/OS instance.
  *
- * This is @berth/agents' own choke point, not a kernel mechanism: it only
- * gates tool calls made through Computer/Agent, not `berth rpc` or direct
- * multi-app `invokeAppExport()` calls. Landlock has no per-syscall callback
+ * This is @berth/agents' own choke point, not a kernel mechanism: it gates
+ * what goes through Computer/Agent, not `berth rpc`, `berth mcp`, the HTTP
+ * RPC bridge, or direct multi-app `invokeAppExport()` calls — separate
+ * transports into the same container, with no governance app on their path
+ * (REMEDIATION.md 1.13 closes the in-process bypasses; those transports are
+ * recorded there as still open). Landlock has no per-syscall callback
  * to build a kernel-level version of this on — see
  * docs/capability-tokens-reference.md's "what's deliberately deferred".
  */
+/**
+ * The identity a gated action is announced to the governor under. For a
+ * resident app it is simply the app and export names. For the two paths that
+ * have no resident app behind them at all, it is synthetic and namespaced —
+ * see gateExternalTool().
+ */
+export interface GovernedAction {
+  app: string;
+  export: string;
+}
+
+/**
+ * The one place a verdict is obtained and enforced. Everything else in this
+ * file is about deciding *what* to route through here.
+ */
+async function enforce<T>(
+  action: GovernedAction,
+  input: unknown,
+  proceed: () => Promise<T>,
+  askGovernor: (input: unknown) => Promise<unknown>,
+  mode: "fail-open" | "fail-closed",
+): Promise<T> {
+  let verdict: EvaluateActionResult;
+  try {
+    verdict = (await withTimeout(
+      askGovernor({ app: action.app, export: action.export, input }),
+      GOVERNANCE_CALL_TIMEOUT_MS,
+    )) as EvaluateActionResult;
+  } catch (err) {
+    const cause = (err as Error).message;
+    if (mode === "fail-closed") throw new GovernanceUnavailableError(action.app, action.export, cause);
+    console.warn(`[governance] evaluate_action call failed (${cause}) — failing open for ${action.app}.${action.export}`);
+    return proceed();
+  }
+  if (!verdict.allowed) throw new GovernanceDeniedError(action.app, action.export, verdict.reason ?? "denied");
+  return proceed();
+}
+
+/**
+ * A Computer's governance authority, resolved once, in a form every caller
+ * can route through — REMEDIATION.md 1.13.
+ *
+ * The gate used to be applied by mapping over one particular `Tool[]`, which
+ * meant it protected exactly the tools that happened to be in that array at
+ * that moment and nothing else. Anything assembled afterwards (MCP servers,
+ * a delegated agent) or dispatched by another route (`computer.call`) simply
+ * wasn't in the array and so was never gated. `gateDispatch()` moves the
+ * check onto the dispatch function itself, so it covers every call that
+ * reaches a resident app through this Computer rather than one snapshot of a
+ * list; `gateExternalTool()` covers the paths that never touch that dispatch.
+ *
+ * Returns undefined when no app declares `governs: true` — callers then use
+ * their unwrapped dispatch, and nothing here has any cost.
+ */
+export interface GovernanceGate {
+  governorName: string;
+  /** Wraps a dispatch function so every resident-app call through it is gated. */
+  gateDispatch(
+    dispatch: (appName: string, exportName: string, input: unknown) => Promise<unknown>,
+  ): (appName: string, exportName: string, input: unknown) => Promise<unknown>;
+  /** Wraps a Tool that has no resident app behind it (MCP, agent-as-tool). */
+  gateExternalTool(tool: Tool, action: GovernedAction): Tool;
+}
+
+export function resolveGovernanceGate(
+  allApps: ComputerAppSpec[],
+  call: (appName: string, exportName: string, input: unknown) => Promise<unknown>,
+  options: GovernanceGateOptions = {},
+): GovernanceGate | undefined {
+  const mode = options.mode ?? "fail-closed";
+  const governors = allApps.filter((app) => app.manifest.governs);
+  if (governors.length === 0) return undefined;
+  if (governors.length > 1) {
+    throw new Error(
+      `multiple governance apps declared (${governors.map((app) => app.name).join(", ")}) — only one governance authority per Computer is supported`,
+    );
+  }
+  const governorName = governors[0]!.name;
+  const exemptApps = new Set(allApps.filter((app) => app.manifest.governance.exempt).map((app) => app.name));
+  const askGovernor = (input: unknown) => call(governorName, "evaluate_action", input);
+
+  return {
+    governorName,
+    gateDispatch(dispatch) {
+      return async (appName, exportName, input) => {
+        // The governor's own exports are never gated — routing
+        // evaluate_action through the gate would recurse forever, and this
+        // is the dispatch the gate itself calls.
+        if (appName === governorName || exemptApps.has(appName)) return dispatch(appName, exportName, input);
+        return enforce({ app: appName, export: exportName }, input, () => dispatch(appName, exportName, input), askGovernor, mode);
+      };
+    },
+    gateExternalTool(tool, action) {
+      return {
+        ...tool,
+        invoke: (input: unknown) => enforce(action, input, () => tool.invoke(input), askGovernor, mode),
+      };
+    },
+  };
+}
+
 export function applyGovernanceGate(
   allApps: ComputerAppSpec[],
   scopedApps: ComputerAppSpec[],

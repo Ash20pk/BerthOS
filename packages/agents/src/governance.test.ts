@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import type { BerthManifest } from "@berth/manifest-schema";
 import type { ComputerAppSpec } from "./resolve-apps.js";
 import type { Tool } from "./types.js";
-import { applyGovernanceGate, GovernanceDeniedError, GovernanceUnavailableError } from "./governance.js";
+import { applyGovernanceGate, resolveGovernanceGate, GovernanceDeniedError, GovernanceUnavailableError } from "./governance.js";
 
 function appSpec(name: string, opts: { governs?: boolean; exempt?: boolean; exports?: string[] } = {}): ComputerAppSpec {
   const exportNames = opts.exports ?? [`${name}_export`];
@@ -215,4 +215,108 @@ test("an app can opt out via governance.exempt even when in scope", async () => 
   const gated = applyGovernanceGate(allApps, [trusted], tools, call);
   assert.equal(await gated[0]!.invoke({}), "raw-result");
   assert.equal(evaluateCalls, 0, "exempt app's calls must never be routed through evaluate_action");
+});
+
+// --- REMEDIATION.md 1.13 -----------------------------------------------------
+// The gate used to be applied by mapping over one Tool[], so it protected
+// exactly what was in that array and nothing else. These cover the two shapes
+// that replaced it.
+
+test("gateDispatch gates a call made through the dispatch itself, not just one made through a tool", async () => {
+  const governor = appSpec("gatekeeper", { governs: true, exports: ["evaluate_action"] });
+  const filesystem = appSpec("filesystem", { exports: ["write_file"] });
+
+  const call = async (appName: string, exportName: string, _input: unknown) => {
+    if (appName === "gatekeeper" && exportName === "evaluate_action") return { allowed: false, reason: "no writes" };
+    return "raw-result";
+  };
+  const gate = resolveGovernanceGate([governor, filesystem], call)!;
+  const dispatch = gate.gateDispatch(async () => "raw-result");
+
+  await assert.rejects(() => dispatch("filesystem", "write_file", {}), GovernanceDeniedError);
+});
+
+test("gateDispatch never gates the governor's own exports — evaluate_action would otherwise recurse forever", async () => {
+  const governor = appSpec("gatekeeper", { governs: true, exports: ["evaluate_action"] });
+  let evaluateCalls = 0;
+  const call = async (_appName: string, exportName: string, _input: unknown) => {
+    if (exportName === "evaluate_action") evaluateCalls++;
+    return { allowed: true };
+  };
+  const gate = resolveGovernanceGate([governor], call)!;
+  const dispatch = gate.gateDispatch(async () => "raw-result");
+
+  assert.equal(await dispatch("gatekeeper", "evaluate_action", {}), "raw-result");
+  assert.equal(evaluateCalls, 0, "the governor's own export must not be routed back through the gate");
+});
+
+test("gateDispatch respects governance.exempt", async () => {
+  const governor = appSpec("gatekeeper", { governs: true, exports: ["evaluate_action"] });
+  const trusted = appSpec("trusted-app", { exempt: true, exports: ["do_thing"] });
+  let evaluateCalls = 0;
+  const call = async (_appName: string, exportName: string, _input: unknown) => {
+    if (exportName === "evaluate_action") evaluateCalls++;
+    return { allowed: false, reason: "would deny if asked" };
+  };
+  const gate = resolveGovernanceGate([governor, trusted], call)!;
+  const dispatch = gate.gateDispatch(async () => "raw-result");
+
+  assert.equal(await dispatch("trusted-app", "do_thing", {}), "raw-result");
+  assert.equal(evaluateCalls, 0);
+});
+
+test("gateExternalTool gates an MCP tool under mcp:<server>, which used to bypass the gate entirely", async () => {
+  const governor = appSpec("gatekeeper", { governs: true, exports: ["evaluate_action"] });
+  const seen: unknown[] = [];
+  const call = async (_appName: string, exportName: string, input: unknown) => {
+    if (exportName === "evaluate_action") {
+      seen.push(input);
+      return { allowed: false, reason: "not that one" };
+    }
+    return "raw-result";
+  };
+  const gate = resolveGovernanceGate([governor], call)!;
+  const gated = gate.gateExternalTool(toolFor("create_issue"), { app: "mcp:github", export: "create_issue" });
+
+  await assert.rejects(() => gated.invoke({ title: "x" }), GovernanceDeniedError);
+  assert.deepEqual(seen[0], { app: "mcp:github", export: "create_issue", input: { title: "x" } });
+});
+
+test("gateExternalTool gates agent-as-tool delegation under agent:<name>", async () => {
+  const governor = appSpec("gatekeeper", { governs: true, exports: ["evaluate_action"] });
+  const seen: unknown[] = [];
+  const call = async (_appName: string, exportName: string, input: unknown) => {
+    if (exportName === "evaluate_action") {
+      seen.push(input);
+      return { allowed: true };
+    }
+    return "raw-result";
+  };
+  const gate = resolveGovernanceGate([governor], call)!;
+  const gated = gate.gateExternalTool(toolFor("researcher"), { app: "agent:researcher", export: "invoke" });
+
+  assert.equal(await gated.invoke({ task: "find things" }), "raw-result");
+  assert.deepEqual(seen[0], { app: "agent:researcher", export: "invoke", input: { task: "find things" } });
+});
+
+test("an unreachable governor blocks an MCP tool too, not only resident-app calls (fail-closed default)", async () => {
+  const governor = appSpec("gatekeeper", { governs: true, exports: ["evaluate_action"] });
+  const call = async (_appName: string, exportName: string, _input: unknown) => {
+    if (exportName === "evaluate_action") throw new Error("governor unreachable");
+    return "raw-result";
+  };
+  const gate = resolveGovernanceGate([governor], call)!;
+  const gated = gate.gateExternalTool(toolFor("create_issue"), { app: "mcp:github", export: "create_issue" });
+
+  await assert.rejects(() => gated.invoke({}), GovernanceUnavailableError);
+});
+
+test("resolveGovernanceGate is undefined when no app governs — callers then pay nothing", () => {
+  const filesystem = appSpec("filesystem", { exports: ["write_file"] });
+  assert.equal(
+    resolveGovernanceGate([filesystem], async () => {
+      throw new Error("should not be called");
+    }),
+    undefined,
+  );
 });
