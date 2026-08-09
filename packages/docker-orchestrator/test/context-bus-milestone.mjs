@@ -131,6 +131,11 @@ async function startCodeEditorExec(container) {
 
 async function invokeExportViaAttach(container, request) {
   const stream = await container.attach({ stream: true, stdin: true, stdout: true, stderr: true, hijack: true });
+  // Terminates the attach options object docker-modem sends as this POST's
+  // body straight into the container's stdin, so it can't concatenate onto the
+  // first real request — see @berth/docker-orchestrator's stdio-rpc.ts for the
+  // full explanation.
+  stream.write("\n");
   const stdout = new PassThrough();
   const stderr = new PassThrough();
   docker.modem.demuxStream(stream, stdout, stderr);
