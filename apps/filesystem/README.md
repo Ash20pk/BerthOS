@@ -10,8 +10,8 @@ A resident app that reads and writes `/workspace`, and bridges files into the sh
 | `read_file` | `{ path: string }` | `{ content: string }` | Reads a file under `/workspace` |
 | `list_files` | — | `{ files: string[] }` | Lists `/workspace`'s contents |
 | `write_context_file` | `{ path: string, content: string }` | — | Writes a file under the semantic-fs mount (`/context`) |
-| `tag_context_file` | `{ path: string, task: string, relatedApps: string[] }` | — | Tags a context file so it's queryable by intent |
-| `query_context` | `{ text: string }` | `{ results: any[] }` | Queries the semantic FS by natural-language description |
+| `tag_context_file` | `{ path: string, task: string, relatedApps: string[] }` | — | Tags a context file, which is also what makes it findable by `query_context` |
+| `query_context` | `{ text: string }` | `{ results: any[] }` | Searches the semantic FS over tag text (not file content); returns metadata only |
 | `probe_network_connect` | `{ host: string, port: number }` | `{ connected: boolean }` | Diagnostic: tries a raw TCP connect, used to verify deny-by-default network enforcement in CI |
 | `probe_network_udp` | `{ host: string, port: number }` | `{ sent: boolean }` | Diagnostic: tries a UDP `send()`, which Landlock cannot restrict — verifies agent-init's seccomp filter |
 | `probe_raw_socket` | `{ host: string }` | `{ opened: boolean }` | Diagnostic: shells out to `ping`, verifying that raw/ICMP sockets are refused (`CAP_NET_RAW` dropped) |
@@ -34,7 +34,7 @@ That takes two mechanisms, not one. Landlock stops the TCP connect; it has no ac
 
 `write_file` publishes `fs.file_created` with `{ path, createdBy: "filesystem" }` after every write. [`apps/code-editor`](../code-editor/README.md) subscribes to that topic and reacts — no orchestration wires the two apps together; one just publishes and the other listens. This is the working example referenced from the root README's ["Talking to other apps"](../../README.md#talking-to-other-apps) section.
 
-`write_context_file` / `tag_context_file` / `query_context` are the semantic-fs half: write something to `/context`, tag it with a task and related apps, and any app in the sandbox can later find it by describing what it needs rather than knowing the exact path. See [docs/semantic-fs-reference.md](../../docs/semantic-fs-reference.md).
+`write_context_file` / `tag_context_file` / `query_context` are the semantic-fs half: write something to `/context`, tag it with a task and related apps, and any app in the sandbox can later find it by describing what it needs rather than knowing the exact path. The tag is load-bearing, not optional decoration — the search ranks over that tag text (plus the path and `created_by`), never over file content, so an untagged file is only findable by words that happen to appear in its path. `query_context` also returns metadata only; getting content still needs a `read_context_file` per hit. See [docs/semantic-fs-reference.md](../../docs/semantic-fs-reference.md#query-semantics--hybrid-keyword--embedding-similarity).
 
 ## Running it
 
