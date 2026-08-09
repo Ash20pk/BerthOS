@@ -12,6 +12,13 @@ export interface GoogleProviderOptions {
   project?: string;
   location?: string;
   model?: string;
+  /**
+   * Point at a custom endpoint (a gateway, a proxy, a local emulator)
+   * instead of Gemini's default. Parity with the `baseURL` the Anthropic and
+   * OpenAI adapters already take — its absence was also why this was the one
+   * provider with no way to stand a test double in front of it.
+   */
+  baseUrl?: string;
 }
 
 const DEFAULT_MODEL = "gemini-2.5-flash";
@@ -110,6 +117,7 @@ export function createGoogleProvider(options: GoogleProviderOptions = {}): LLMPr
     vertexai: options.vertexai,
     project: options.project,
     location: options.location,
+    httpOptions: options.baseUrl ? { baseUrl: options.baseUrl } : undefined,
   });
   const model = options.model ?? DEFAULT_MODEL;
 

@@ -194,3 +194,168 @@ test("an LLM-judge-shaped call round-trips end to end", async () => {
     await server.close();
   }
 });
+
+// --- REMEDIATION 3.7: message mapping, tool round trips, streaming deltas ---
+
+test("maps system prompt, roles, and tool results onto the Chat Completions shape", async () => {
+  const server = await startMockLLMServer();
+  try {
+    server.respondWith(openAICompletion());
+    await provider(server.url).chat({
+      system: "be terse",
+      messages: [
+        { role: "user", text: "go" },
+        { role: "assistant", text: undefined, toolCalls: [{ id: "call_1", name: "echo", input: { text: "hi" } }] },
+        { role: "tool", toolResult: { id: "call_1", name: "echo", output: { text: "hi" } } },
+      ],
+      tools: [echoTool],
+    });
+
+    const messages = server.onlyRequest().body.messages;
+    assert.deepEqual(
+      messages.map((m: any) => m.role),
+      ["system", "user", "assistant", "tool"],
+    );
+    assert.equal(messages[0].content, "be terse");
+    // Tool call arguments cross the wire as a JSON *string*, not an object —
+    // getting this wrong is a 400 from the API, not a type error here.
+    assert.equal(messages[2].tool_calls[0].function.arguments, '{"text":"hi"}');
+    assert.equal(messages[2].tool_calls[0].id, "call_1");
+    // A tool result is correlated by tool_call_id; a mismatch here is what
+    // produces "tool_call_id did not have response messages".
+    assert.equal(messages[3].tool_call_id, "call_1");
+    assert.equal(messages[3].content, '{"text":"hi"}');
+  } finally {
+    await server.close();
+  }
+});
+
+test("a tool result with no output is sent as JSON null, not the token undefined", async () => {
+  const server = await startMockLLMServer();
+  try {
+    server.respondWith(openAICompletion());
+    await provider(server.url).chat({
+      messages: [{ role: "tool", toolResult: { id: "call_1", name: "noop", output: undefined } }],
+      tools: [],
+    });
+
+    const content = server.onlyRequest().body.messages[0].content;
+    assert.equal(content, "null");
+    assert.equal(JSON.parse(content), null);
+  } finally {
+    await server.close();
+  }
+});
+
+test("reads a tool call back out of a response", async () => {
+  const server = await startMockLLMServer();
+  try {
+    server.respondWith(
+      openAICompletion({
+        choices: [
+          {
+            index: 0,
+            message: {
+              role: "assistant",
+              content: null,
+              tool_calls: [{ id: "call_9", type: "function", function: { name: "echo", arguments: '{"text":"hi"}' } }],
+            },
+            finish_reason: "tool_calls",
+          },
+        ],
+      }),
+    );
+
+    const turn = await provider(server.url).chat({ messages: [{ role: "user", text: "go" }], tools: [echoTool] });
+
+    assert.deepEqual(turn.toolCalls, [{ id: "call_9", name: "echo", input: { text: "hi" } }]);
+    assert.equal(turn.stop, false);
+    assert.equal(turn.stopReason, "tool_calls");
+    assert.equal(turn.text, undefined);
+  } finally {
+    await server.close();
+  }
+});
+
+/**
+ * Streaming tool calls arrive fragmented: the id and name land on the first
+ * frame, and the JSON arguments are split across arbitrarily many later ones,
+ * keyed only by index. Reassembling that is the single most intricate piece
+ * of logic in these adapters and had no test at all.
+ */
+test("chatStream() reassembles a tool call fragmented across frames", async () => {
+  const server = await startMockLLMServer();
+  try {
+    const frame = (delta: unknown, finish: string | null = null) => ({
+      id: "1",
+      object: "chat.completion.chunk",
+      choices: [{ index: 0, delta, finish_reason: finish }],
+    });
+    server.respondWithStream([
+      frame({ role: "assistant", tool_calls: [{ index: 0, id: "call_7", type: "function", function: { name: "ec" } }] }),
+      frame({ tool_calls: [{ index: 0, function: { name: "ho" } }] }),
+      frame({ tool_calls: [{ index: 0, function: { arguments: '{"te' } }] }),
+      frame({ tool_calls: [{ index: 0, function: { arguments: 'xt":"hi"}' } }] }),
+      frame({}, "tool_calls"),
+    ]);
+
+    const turn = await provider(server.url).chatStream!({ messages: [{ role: "user", text: "go" }], tools: [echoTool] }, () => {});
+
+    assert.deepEqual(turn.toolCalls, [{ id: "call_7", name: "echo", input: { text: "hi" } }]);
+    assert.equal(turn.stopReason, "tool_calls");
+  } finally {
+    await server.close();
+  }
+});
+
+test("chatStream() delivers text deltas in order and returns the joined text", async () => {
+  const server = await startMockLLMServer();
+  try {
+    const frame = (delta: unknown, finish: string | null = null) => ({
+      id: "1",
+      object: "chat.completion.chunk",
+      choices: [{ index: 0, delta, finish_reason: finish }],
+    });
+    server.respondWithStream([
+      frame({ role: "assistant", content: "Hel" }),
+      frame({ content: "lo " }),
+      frame({ content: "there" }),
+      frame({}, "stop"),
+    ]);
+
+    const deltas: string[] = [];
+    const turn = await provider(server.url).chatStream!(
+      { messages: [{ role: "user", text: "hi" }], tools: [] },
+      (d) => deltas.push(d),
+    );
+
+    assert.deepEqual(deltas, ["Hel", "lo ", "there"]);
+    assert.equal(turn.text, "Hello there");
+    assert.equal(turn.stopReason, "end");
+  } finally {
+    await server.close();
+  }
+});
+
+/**
+ * With include_usage the last frame is a usage-only one whose choices array
+ * is empty — so reading finish_reason off "the final chunk" yields nothing.
+ * This asserts the adapter keeps the last non-null it saw instead.
+ */
+test("chatStream() still reports the stop reason when a usage-only frame comes last", async () => {
+  const server = await startMockLLMServer();
+  try {
+    server.respondWithStream([
+      { id: "1", object: "chat.completion.chunk", choices: [{ index: 0, delta: { content: "cut" }, finish_reason: null }] },
+      { id: "1", object: "chat.completion.chunk", choices: [{ index: 0, delta: {}, finish_reason: "length" }] },
+      { id: "1", object: "chat.completion.chunk", choices: [], usage: { prompt_tokens: 5, completion_tokens: 6 } },
+    ]);
+
+    const turn = await provider(server.url).chatStream!({ messages: [{ role: "user", text: "hi" }], tools: [] }, () => {});
+
+    assert.equal(turn.stopReason, "length");
+    assert.deepEqual(turn.usage, { inputTokens: 5, outputTokens: 6 });
+  } finally {
+    await server.close();
+  }
+});
