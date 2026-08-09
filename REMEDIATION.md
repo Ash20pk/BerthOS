@@ -587,7 +587,7 @@ The gap between what the README claims and what the code does is the fastest way
 |---|------|--------|--------|
 | 2.1 | Write an actual threat model | 🟢 | 1d |
 | 2.2 | Soften README claims to match current enforcement | 🟢 | 4h |
-| 2.3 | Correct "query by intent" to describe what Semantic FS does | 🔴 | 2h |
+| 2.3 | Correct "query by intent" to describe what Semantic FS does | 🟢 | 2h |
 | 2.4 | Fix doc drift (Crew shape counts, provider tests, YAML count) | 🟢 | 2h |
 
 ### 2.1 — Write an actual threat model
@@ -636,6 +636,18 @@ Not attempted here: 2.1's `docs/threat-model.md`, which is where the scattered d
 The code comments are honest. `packages/sdk/src/semantic-fs/client.ts:9` and the README say "query by intent" with no caveat.
 
 **Fix.** Describe it as what it is — a hybrid keyword-and-tag index with optional embedding assist over tag text — and note the scaling limit. Optionally add a real content-embedding path later, but don't claim it until then.
+
+**Closed.** The phrase "query by intent" is gone from every user-facing surface — README (three places), `docs/berth-os.md`, `docs/semantic-fs-reference.md`, `ROADMAP.md`, `apps/filesystem/README.md`, and `@berth/sdk`'s `client.ts`, which is the one that lands in a published `.d.ts` and so travels furthest.
+
+The replacement is not a softer adjective. Each of the three limits is named where a reader would otherwise form the wrong belief, because they fail in different ways:
+
+1. **It searches tag text, not file content.** This is the one "semantic filesystem" most invites a reader to get wrong, and the consequence is concrete rather than aesthetic: a file written but never `tag()`d has no embedding row at all, so it is reachable only by words that happen to appear in its path. `tag()` is load-bearing, which `apps/filesystem`'s README now says in those words — it reads as optional decoration next to `write_context_file` otherwise.
+2. **A single substring hit outranks a perfect semantic match.** `keywordScore` is a whole integer and `cosineSim` is in [0,1], so the sum can't be read as a similarity. That was already correct and well-argued in `semantic-fs-reference.md`'s ranking section; what it lacked was any statement of it *outside* that section, where someone reading a result order would be.
+3. **Every query is a full table scan, and the sort is quadratic** — a new paragraph, since this limit was documented nowhere. `Query()` issues a bare `SELECT` with no `WHERE` and no `LIMIT`, then ranks candidates with an insertion sort before `limit` is applied at the end, so `limit` bounds the response and not the search. The existing "brute-force is fine at this table's scale" aside stated the conclusion without the fact, and stated it in a parenthetical about the *embedding* table specifically. The new text keeps the justification (pure-Go `modernc.org/sqlite` has no C extension support, so `sqlite-vec` isn't an option, and one sandbox's `/context` is hundreds of files) while being explicit that nothing degrades gracefully if it's used as a general document store: no pagination, no index on a scored column, no early termination.
+
+`docs/semantic-fs-reference.md` gains all three as a stated-up-front paragraph under its opening line, in addition to where each already lived — the body was already the most honest file in this set, and the problem was that a reader who stopped at the summary got a different product than one who read to the ranking section.
+
+**Verify.** `grep -rn "by intent"` across `*.md`/`*.ts`/`*.py`/`*.go` returns nothing outside this file. `pnpm -C packages/sdk exec tsc --noEmit` passes (the `client.ts` change is comments, but they sit in the published type surface). All new anchors resolve.
 
 ### 2.4 — Fix doc drift
 
