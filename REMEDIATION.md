@@ -588,7 +588,7 @@ The gap between what the README claims and what the code does is the fastest way
 | 2.1 | Write an actual threat model | 🟢 | 1d |
 | 2.2 | Soften README claims to match current enforcement | 🟢 | 4h |
 | 2.3 | Correct "query by intent" to describe what Semantic FS does | 🔴 | 2h |
-| 2.4 | Fix doc drift (Crew shape counts, provider tests, YAML count) | 🔴 | 2h |
+| 2.4 | Fix doc drift (Crew shape counts, provider tests, YAML count) | 🟢 | 2h |
 
 ### 2.1 — Write an actual threat model
 
@@ -643,6 +643,18 @@ The code comments are honest. `packages/sdk/src/semantic-fs/client.ts:9` and the
 - `docs/agents-python-reference.md:66` claims no TypeScript provider has a unit test, used to justify leaving Python providers untested. `packages/agents/src/fallback.test.ts` exists with 9 tests, and there are eight provider files, not six.
 - `docs/agents-reference.md:723` says "those three shapes stay code-only" and lists four.
 - `packages/agents/src/types.ts:31-36` names 2 of 7 shipped providers; this lands in the published `.d.ts`.
+
+**Closed.** All four, plus two more instances found while checking each claim against the code rather than against the line numbers above.
+
+**Crew shape counts.** TypeScript ships seven (`crew.ts`: sequential, withManager, networked, parallel, loopUntil, route, pipeline); Python ships six of them, all but `networked`. Every count now says *six of seven*, which is the fact that matters — "six" alone was ambiguous between "Python has six" and "there are six", and the two readings were both in circulation. Fixed in `README.md`, `packages/agents-python/pyproject.toml` (this one ships to PyPI), `docs/agents-python-reference.md` in both places, and `packages/agents-python/README.md`, which wasn't on the list: it said "six `Crew` composition shapes, mirroring `@berth/agents` field-for-field", where the count and the "field-for-field" together assert parity that doesn't exist.
+
+**The YAML shape count was wrong in a way that hid a second error.** `docs/agents-reference.md` said "those three shapes stay code-only" after listing four. Correcting the number to four would have made the sentence self-consistent and still wrong, because it justifies all four with "each takes a real function as configuration" — true of `route`/`loopUntil`/`pipeline`, false of `networked`, whose peers are independent agent-computers from `bootNetworkedAgent()`. That's a fleet topology to declare, not a function to serialize. The two reasons are now given separately, and the sentence states what `kind:` actually accepts (`sequential`, `parallel`, `withManager` — verified against `declarative.ts:53`'s enum) rather than leaving a reader to subtract four from seven.
+
+**The provider-test claim was load-bearing and false.** `docs/agents-python-reference.md:66` justified leaving Python's providers untested with "none of the six `*.ts` provider files have unit tests in the TypeScript package either". There are eight files in `packages/agents/src/providers/`, and `fallback.test.ts` covers one of them with 9 cases. The convention is real but narrower than stated: it applies to the six *vendor adapters*, which are thin SDK wrappers. `fallback.ts` is chain-walking logic, not an adapter, and is tested — as is `fallback.py`, in `tests/test_fallback.py`, which the sentence's own logic would have exempted. Both facts now stated, so the convention can't be read as covering more than it does.
+
+**`types.ts`.** Named two providers when six vendor adapters ship, plus `createOpenAICompatibleProvider()` and `createFallbackProvider()`. All eight named now — this is the one item here that lands in a published `.d.ts`, so it's the copy most consumers read.
+
+**Verify.** `pnpm -C packages/agents exec tsc --noEmit` passes; `pyproject.toml` still parses under `tomllib`. Each count re-derived from source (`crew.ts`'s seven method definitions, `crew.py`'s six, `declarative.ts:53`'s three-value enum, `ls providers/`) rather than from the line references above, which is what turned up the two extra instances.
 
 ---
 

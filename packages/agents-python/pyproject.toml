@@ -1,7 +1,7 @@
 [project]
 name = "berth-agents"
 version = "0.1.0"
-description = "computer -> agent -> tool, in Python: the provider-agnostic Agent tool-use loop, all six Crew composition shapes but networked, checkpointing, streaming, structured-output repair, and OpenTelemetry tracing, mirroring @berth/agents (no port of its Docker/Computer-creation/retrieval/human-approval glue — see docs/agents-python-reference.md for scope)."
+description = "computer -> agent -> tool, in Python: the provider-agnostic Agent tool-use loop, six of Crew's seven composition shapes (all but networked), checkpointing, streaming, structured-output repair, and OpenTelemetry tracing, mirroring @berth/agents (no port of its Docker/Computer-creation/retrieval/human-approval glue — see docs/agents-python-reference.md for scope)."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]

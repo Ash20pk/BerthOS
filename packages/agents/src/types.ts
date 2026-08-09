@@ -30,9 +30,12 @@ export interface LLMTurn {
 
 /**
  * The "bring your own LLM" seam. Any provider implementing this can drive an
- * Agent — @berth/agents ships createAnthropicProvider() and
- * createOpenAIProvider(), but nothing in Computer/Agent/Crew references a
- * specific vendor.
+ * Agent. @berth/agents ships six vendor providers — createAnthropicProvider,
+ * createOpenAIProvider, createGoogleProvider, createAzureOpenAIProvider,
+ * createBedrockProvider, createOllamaProvider — plus
+ * createOpenAICompatibleProvider() for any OpenAI-shaped endpoint, and
+ * createFallbackProvider() for retry-through-a-chain. Nothing in
+ * Computer/Agent/Crew references a specific vendor.
  */
 export interface LLMProvider {
   readonly name: string;
