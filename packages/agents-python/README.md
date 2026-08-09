@@ -1,6 +1,6 @@
 # berth-agents
 
-The Python half of [Berth](https://github.com/Ash20pk/BerthOS)'s agent framework: a provider-agnostic `Agent` tool-use loop and six `Crew` composition shapes, mirroring `@berth/agents` (the TypeScript package) field-for-field.
+The Python half of [Berth](https://github.com/Ash20pk/BerthOS)'s agent framework: a provider-agnostic `Agent` tool-use loop and six of `@berth/agents`' seven `Crew` composition shapes (all but `networked`), mirroring the TypeScript package field-for-field where it covers the same ground.
 
 ```bash
 pip install berth-agents

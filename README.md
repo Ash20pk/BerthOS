@@ -365,7 +365,7 @@ The short version: **kernel-enforced filesystem and network scoping is real and 
 
 The full version — assets, adversaries, trust boundaries, and what's out of scope permanently versus not yet — is [docs/threat-model.md](./docs/threat-model.md).
 
-Full manifest schema lives in [docs/manifest-reference.md](./docs/manifest-reference.md). Full SDK surface (`defineApp`, `ContextBusClient`, `SemanticFsClient`, `requestCapability`) lives in [docs/sdk-reference.md](./docs/sdk-reference.md). Building in Python instead of TypeScript? See [docs/sdk-python-reference.md](./docs/sdk-python-reference.md) for resident apps, or [docs/agents-python-reference.md](./docs/agents-python-reference.md) for a Python `Agent`/`Crew` core (all six composition shapes but `networked`, checkpointing, streaming, structured-output repair, and `Computer.connect()` for a real sandbox's tools over `berth os up --http-rpc` — see that doc's scope notes).
+Full manifest schema lives in [docs/manifest-reference.md](./docs/manifest-reference.md). Full SDK surface (`defineApp`, `ContextBusClient`, `SemanticFsClient`, `requestCapability`) lives in [docs/sdk-reference.md](./docs/sdk-reference.md). Building in Python instead of TypeScript? See [docs/sdk-python-reference.md](./docs/sdk-python-reference.md) for resident apps, or [docs/agents-python-reference.md](./docs/agents-python-reference.md) for a Python `Agent`/`Crew` core (six of `Crew`'s seven composition shapes — all but `networked` — checkpointing, streaming, structured-output repair, and `Computer.connect()` for a real sandbox's tools over `berth os up --http-rpc` — see that doc's scope notes).
 
 ### Talking to other apps
 
