@@ -15,9 +15,16 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Pinned rather than read back from `<dataDir>/operator.token`, so a test
+ * that forgot to send it fails as a 401 here rather than by minting its own
+ * copy of whatever the server happens to have persisted.
+ */
+const OPERATOR_TOKEN = "test-operator-token";
+
 async function withRunningGrantsServer(fn: (baseUrl: string) => Promise<void>): Promise<void> {
   const dataDir = await mkdtemp(join(tmpdir(), "berth-grants-test-"));
-  const app = await createGrantsServer({ dataDir });
+  const app = await createGrantsServer({ dataDir, operatorToken: OPERATOR_TOKEN });
   try {
     const address = await app.listen({ port: 0, host: "127.0.0.1" });
     await fn(address);
@@ -38,7 +45,7 @@ async function decideNextPendingGrant(baseUrl: string, decision: "approve" | "de
   }
   const res = await fetch(`${baseUrl}/grants/${id}/${decision}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", authorization: `Bearer ${OPERATOR_TOKEN}` },
     body: JSON.stringify({ decidedBy: "tester", ...body }),
   });
   assert.equal(res.status, 200, await res.text());
