@@ -43,7 +43,7 @@ What backs every one of those calls, in brief — full picture in [What is a Ber
 | | What you get |
 |---|---|
 | **Permissions that are enforced, not just requested** | Every resident app declares `namespace:action:scope` capabilities in its manifest, things like `filesystem:write:/workspace` or `browser:navigate:*.github.com`. A Landlock policy built from that manifest applies before your code even runs, on a kernel that provides Landlock ([which hosts do](#kernel-enforcement-by-platform)). An undeclared *write* isn't caught by a try/catch — the kernel refuses the syscall outright. Outbound network is denied the same way. Other capabilities are enforced by a broker, or only recorded: which is which is [spelled out per capability](#available-capabilities), along with [what isn't enforced yet](#what-isnt-enforced-yet). |
-| **State that survives the session** | A semantic filesystem you can query by intent, not just by path, plus `berth snapshot create/restore`, means an agent's work (files, tags, context) outlives any single run. |
+| **State that survives the session** | A filesystem whose files carry *why they exist* — `created_by`, `task`, `related_apps` — searchable by that metadata rather than only by path, plus `berth snapshot create/restore`, means an agent's work (files, tags, context) outlives any single run. It searches what you tagged, [not file contents](./docs/semantic-fs-reference.md#query-semantics--hybrid-keyword--embedding-similarity). |
 | **Apps that talk to each other without you wiring it** | The context bus is pub/sub between resident apps in the same Berth OS. A filesystem app writes a file, a code editor app reacts to it. Neither one imports or calls the other. |
 | **A workspace you can actually watch, and you decide how much** | In local `berth dev`, `apps/browser-native` opens a live noVNC view of the sandboxed Chromium instance, and `apps/terminal` opens a live, typeable `ttyd` session. You're watching the real thing, not a transcript of it. Set `expose: { browser: false }` or `{ terminal: false }` in `berth.yml` to keep the capability while running headless in CI. Deployed to E2B or Daytona? Opt in with `expose: { preview: true }` and `berth deploy`/`berth fleet status` print that same live view as a real, platform-hosted URL — off by default, since a deployed fleet is potentially public-facing. On Kubernetes, that same opt-in only gets you the in-cluster DNS name; a real public URL there still needs your own Ingress/LoadBalancer. See [Resident apps](#resident-apps). |
 
@@ -372,7 +372,7 @@ Full manifest schema lives in [docs/manifest-reference.md](./docs/manifest-refer
 Apps sharing a Berth OS get two things for free, both reachable from `AppContext` inside `onAgentReady`:
 
 - **Context bus** (`ctx.contextBus`): `register`, `publish(topic, payload)`, `subscribe(topic, handler)`. A Rust daemon gives you real pub/sub between apps with no explicit orchestration. One app writes a file, another reacts to `fs.file_created`, and neither one knows the other exists. See [docs/context-bus-reference.md](./docs/context-bus-reference.md).
-- **Semantic FS** (`ctx.semanticFs`): `register`, `tag(path, meta)`, `query(text, limit)`. A filesystem mounted at `$BERTH_CONTEXT_MOUNT` (`/context` by default) that you can query by intent instead of by path. Write a file, tag it with `task` and `relatedApps`, and any app can find it later just by describing what it needs.
+- **Semantic FS** (`ctx.semanticFs`): `register`, `tag(path, meta)`, `query(text, limit)`. A filesystem mounted at `$BERTH_CONTEXT_MOUNT` (`/context` by default) that carries metadata about *why* each file exists — `created_by` (attributed automatically), plus the `task` and `relatedApps` you tag it with — and lets any app search that metadata instead of needing the exact path. Be clear about what the search is: a hybrid keyword-and-embedding ranker over **tag text**, not file content, and only for files something explicitly tagged. See [docs/semantic-fs-reference.md](./docs/semantic-fs-reference.md#query-semantics--hybrid-keyword--embedding-similarity).
 
 `apps/filesystem` and `apps/code-editor` show this in action: the first publishes `fs.file_created`, the second reacts to it.
 
@@ -426,7 +426,7 @@ packages/
   docker-orchestrator/ Alpine-based container lifecycle for a Berth OS
   context-bus-daemon/  Rust daemon for shared semantic memory across apps in one Berth OS
   agent-init/          Rust binary that applies a kernel-enforced (Landlock) capability policy before exec-ing the runtime
-  semantic-fs-daemon/  Go/FUSE daemon, a filesystem queryable by intent, backed by a SQLite metadata index
+  semantic-fs-daemon/  Go/FUSE daemon, a filesystem searchable by its files' tags, backed by a SQLite metadata index
   registry-server/     local app registry for publish, discover, and install (Fastify + SQLite)
   grants-server/       human approval service for capability grants (Fastify + SQLite)
   mesh-coordinator/    coordination service for the WireGuard mesh: allocates IPs, exchanges keys, mutually matches peers
