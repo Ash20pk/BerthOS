@@ -41,14 +41,20 @@ jobs:
       # from its LSM stack, so capability-enforcement.mjs degrades every denial
       # check to informational there. This runner is Linux, so they run.
       #
-      # context-bus-daemon is deliberately not here: its build.rs needs protoc,
-      # which this runner doesn't have and which base.Dockerfile's builder
-      # stage installs for it. Adding it means adding a protoc install step —
-      # worth doing, but it isn't what this change is verifying.
+      # context-bus-daemon needs protoc for its build.rs (base.Dockerfile's
+      # builder stage installs it there). It used to be skipped here for that
+      # reason; it is in now because its peer-identity rules — which decide
+      # whether an app can publish under another app's name (REMEDIATION.md
+      # 1.14) — have unit tests, and a security rule whose tests never run
+      # anywhere is not tested.
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
       - name: Test the Rust crates
         run: |
           cargo test --manifest-path packages/agent-init/Cargo.toml
           cargo test --manifest-path packages/mesh-daemon/Cargo.toml
+          cargo test --manifest-path packages/context-bus-daemon/Cargo.toml
 
       # Same reasoning as the Rust crates above, and the same gap: semantic-fs
       # is Linux-only (bazil.org/fuse doesn't build on darwin at all), so its
