@@ -70,7 +70,7 @@ jobs:
         working-directory: packages/semantic-fs-daemon
         run: go test ./...
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
