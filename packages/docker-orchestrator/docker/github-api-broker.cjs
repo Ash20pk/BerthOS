@@ -35,7 +35,12 @@ const { execFileSync } = require("node:child_process");
 
 const PORT = Number(process.env.BERTH_GITHUB_API_BROKER_PORT || 8092);
 const POLICY_PATH = process.env.BERTH_CAPABILITY_POLICY || `${process.cwd()}/.berth/capability-policy.json`;
-const CERT_DIR = process.env.BERTH_GITHUB_API_BROKER_CERT_DIR || "/tmp/berth-github-api-broker";
+// Not /tmp: this directory holds the private key of a CA the app process is
+// told to trust for every TLS connection it makes (NODE_EXTRA_CA_CERTS is
+// process-wide), and /tmp is world-writable and shared with every other app
+// in a multi-app container — REMEDIATION.md 1.9. /run/berth is where this
+// image already keeps per-app runtime state that only root creates.
+const CERT_DIR = process.env.BERTH_GITHUB_API_BROKER_CERT_DIR || "/run/berth/github-api-broker";
 const CA_CERT_PATH = path.join(CERT_DIR, "ca.crt");
 
 // The identity being intercepted/impersonated — fixed, since this is what a
@@ -89,28 +94,114 @@ function loadGithubCapabilities() {
 const GITHUB_CAPABILITIES = loadGithubCapabilities();
 console.error(`[github-api-broker] declared github:* capabilities: ${GITHUB_CAPABILITIES.join(", ") || "(none)"}`);
 
-// v0 heuristic, not a full REST-API-aware grammar: GET/HEAD map to the
-// "read" action, everything else to "write" — and the requested "scope" is
-// the first path segment after /repos/<owner>/<repo>/ (e.g. "issues",
-// "pulls"), or "repos" itself for a bare /repos/<owner>/<repo> request. This
-// matches github-assistant's own two exports (get_repo_summary reads
-// /repos/<owner>/<repo>, create_issue writes /repos/<owner>/<repo>/issues)
-// for real, but is deliberately not a general GitHub API path grammar.
-function requestedCapabilityFor(method, urlPath) {
-  const action = method === "GET" || method === "HEAD" ? "read" : "write";
-  const segments = (urlPath || "").split("?")[0].split("/").filter(Boolean);
-  // segments[0] === "repos", segments[1] === owner, segments[2] === repo
-  const scope = segments.length > 3 ? segments[3] : "repos";
-  return `github:${action}:${scope}`;
+/**
+ * Resolves a request path to exactly what the policy check and the outbound
+ * request will both use — REMEDIATION.md 1.9.
+ *
+ * The path used to be checked and forwarded verbatim (`path: req.url`), so a
+ * `..` segment was resolved at GitHub's edge rather than here: the check saw
+ * `/repos/o/r/../../user/emails` and the API saw `/user/emails`. Resolving
+ * first removes that divergence, and the normalized path is what gets
+ * forwarded, so the two cannot disagree again.
+ *
+ * Returns null for anything that can't be resolved to a plain absolute path —
+ * a malformed escape, an encoded separator (`%2f` in a segment is a separator
+ * to some parsers and a literal to others; a broker that has to guess is a
+ * broker that can be fooled), or a `..` that climbs above the root. Null means
+ * deny, not "pass it through".
+ */
+function normalizeRequestPath(rawUrl) {
+  if (typeof rawUrl !== "string" || !rawUrl.startsWith("/")) return null;
+  const queryStart = rawUrl.search(/[?#]/);
+  const pathPart = queryStart === -1 ? rawUrl : rawUrl.slice(0, queryStart);
+  const suffix = queryStart === -1 ? "" : rawUrl.slice(queryStart);
+
+  // Segments are decoded only to decide what they *are* (a dot segment, a
+  // smuggled separator); what gets kept is the original encoded segment, so
+  // normalizing never re-encodes a path GitHub would have read differently.
+  const resolved = [];
+  for (const rawSegment of pathPart.split("/")) {
+    let segment;
+    try {
+      segment = decodeURIComponent(rawSegment);
+    } catch {
+      return null; // malformed percent-escape
+    }
+    if (segment.includes("/") || segment.includes("\\")) return null; // encoded separator
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") {
+      if (resolved.length === 0) return null; // climbs above the API root
+      resolved.pop();
+      continue;
+    }
+    resolved.push(rawSegment);
+  }
+  return { path: `/${resolved.join("/")}`, suffix };
 }
 
-function isAllowed(method, urlPath) {
-  const requested = requestedCapabilityFor(method, urlPath);
+// An explicit route table, default-deny — REMEDIATION.md 1.9. What was here
+// before took the fourth path segment (`segments.length > 3 ? segments[3] :
+// "repos"`), which classified every short path as `github:read:repos`: an app
+// declaring that capability to read a repo summary also got `/user`,
+// `/user/emails`, `/gists`, `/notifications` and `/orgs/<org>`, each forwarded
+// with the app's real Authorization header.
+//
+// Still GitHub-specific and still not a full REST grammar (see
+// docs/github-api-scoping-reference.md) — the difference is the direction it
+// fails in. A path no route matches is denied rather than assigned a scope,
+// so adding a route is how the surface grows, and forgetting one costs an
+// app a 403 rather than granting it something nobody declared.
+const ROUTES = [
+  // /repos/<owner>/<repo> — the repo itself, and the sub-resource under it
+  // (issues, pulls, contents, ...) as its own scope.
+  { pattern: /^\/repos\/[^/]+\/[^/]+$/, scope: () => "repos" },
+  { pattern: /^\/repos\/[^/]+\/[^/]+\/([^/]+)(\/|$)/, scope: (m) => m[1] },
+  // The authenticated user. `/user/emails` is a distinct scope from `/user`
+  // precisely because it is the one this table exists to stop being free.
+  { pattern: /^\/user$/, scope: () => "user" },
+  { pattern: /^\/user\/([^/]+)(\/|$)/, scope: (m) => `user:${m[1]}` },
+  { pattern: /^\/users\/[^/]+$/, scope: () => "users" },
+  { pattern: /^\/users\/[^/]+\/([^/]+)(\/|$)/, scope: (m) => `users:${m[1]}` },
+  { pattern: /^\/orgs\/[^/]+$/, scope: () => "orgs" },
+  { pattern: /^\/orgs\/[^/]+\/([^/]+)(\/|$)/, scope: (m) => `orgs:${m[1]}` },
+  { pattern: /^\/gists(\/|$)/, scope: () => "gists" },
+  { pattern: /^\/notifications(\/|$)/, scope: () => "notifications" },
+  { pattern: /^\/search\/([^/]+)$/, scope: (m) => `search:${m[1]}` },
+];
+
+// GET/HEAD map to the "read" action, everything else to "write" — unchanged,
+// and the part of the old heuristic that was never the problem.
+function actionFor(method) {
+  return method === "GET" || method === "HEAD" ? "read" : "write";
+}
+
+/**
+ * The capability a request asks for, or null if no route covers its path.
+ * `normalizedPath` is what the outbound leg must use.
+ */
+function routeFor(method, rawUrl) {
+  const normalized = normalizeRequestPath(rawUrl);
+  if (!normalized) return null;
+  for (const { pattern, scope } of ROUTES) {
+    const match = normalized.path.match(pattern);
+    if (match) return { requested: `github:${actionFor(method)}:${scope(match)}`, normalizedPath: `${normalized.path}${normalized.suffix}` };
+  }
+  return null;
+}
+
+function isAllowed(requested) {
   return GITHUB_CAPABILITIES.some((granted) => matchesCapability(granted, requested));
 }
 
 function generateCerts() {
-  fs.mkdirSync(CERT_DIR, { recursive: true });
+  // 0700, and re-applied with chmod because mkdir's mode is masked by umask
+  // and a pre-existing directory keeps whatever mode it already had. The app
+  // is given read access to ca.crt alone, and only after the fact —
+  // entrypoint.sh narrows this to 0750 root:<app-gid> (REMEDIATION.md 1.9).
+  // The CA *key* never leaves root: anyone holding it can mint a certificate
+  // for any host, and the app trusts this CA process-wide.
+  fs.mkdirSync(CERT_DIR, { recursive: true, mode: 0o700 });
+  fs.chmodSync(CERT_DIR, 0o700);
   const caKey = path.join(CERT_DIR, "ca.key");
   const leafKey = path.join(CERT_DIR, "leaf.key");
   const leafCsr = path.join(CERT_DIR, "leaf.csr");
@@ -135,6 +226,12 @@ function generateCerts() {
     { stdio: "ignore" },
   );
 
+  // Explicit rather than trusting openssl's own defaults: the keys are
+  // root-only, the CA certificate is readable to anyone who can traverse the
+  // directory — which, after entrypoint.sh narrows it, is root and this app.
+  for (const keyPath of [caKey, leafKey]) fs.chmodSync(keyPath, 0o600);
+  fs.chmodSync(CA_CERT_PATH, 0o644);
+
   return { cert: fs.readFileSync(leafCert, "utf-8"), key: fs.readFileSync(leafKey, "utf-8") };
 }
 
@@ -151,16 +248,30 @@ function upstreamAgentOptions() {
 }
 
 function handleRequest(req, res) {
-  const allowed = isAllowed(req.method, req.url);
-  const requested = requestedCapabilityFor(req.method, req.url);
+  const route = routeFor(req.method, req.url);
 
-  if (!allowed) {
-    console.error(`[github-api-broker] {"event":"denied","method":"${req.method}","path":"${req.url}","requested":"${requested}"}`);
+  // An unroutable path is refused before any capability is consulted: there
+  // is no scope to compare, which under the old positional heuristic was
+  // exactly the case that silently became `github:read:repos`.
+  if (!route) {
+    console.error(`[github-api-broker] {"event":"denied","method":${JSON.stringify(req.method)},"path":${JSON.stringify(req.url)},"requested":"(no route)"}`);
+    res.writeHead(403, { "content-type": "application/json" });
+    res.end(JSON.stringify({ message: `denied: no route covers ${req.method} ${req.url} — this broker maps paths to capabilities explicitly and denies by default` }));
+    return;
+  }
+
+  const { requested, normalizedPath } = route;
+  if (!isAllowed(requested)) {
+    console.error(
+      `[github-api-broker] {"event":"denied","method":${JSON.stringify(req.method)},"path":${JSON.stringify(normalizedPath)},"requested":${JSON.stringify(requested)}}`,
+    );
     res.writeHead(403, { "content-type": "application/json" });
     res.end(JSON.stringify({ message: `denied: no declared capability covers ${requested}` }));
     return;
   }
-  console.error(`[github-api-broker] {"event":"allowed","method":"${req.method}","path":"${req.url}","requested":"${requested}"}`);
+  console.error(
+    `[github-api-broker] {"event":"allowed","method":${JSON.stringify(req.method)},"path":${JSON.stringify(normalizedPath)},"requested":${JSON.stringify(requested)}}`,
+  );
 
   const upstreamReq = https.request(
     {
@@ -168,7 +279,9 @@ function handleRequest(req, res) {
       port: UPSTREAM_CONNECT_PORT,
       servername: GITHUB_API_HOST,
       method: req.method,
-      path: req.url,
+      // The normalized path, not req.url — forwarding the raw one is what let
+      // GitHub's edge resolve a `..` this broker had already checked past.
+      path: normalizedPath,
       headers: { ...req.headers, host: GITHUB_API_HOST },
       ...upstreamAgentOptions(),
     },

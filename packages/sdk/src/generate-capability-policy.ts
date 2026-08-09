@@ -144,6 +144,9 @@ const TERMINAL_WRITE_PATHS = ["/dev/pts", "/dev/ptmx"];
 // does. Read access to it is what lets an app stat the daemon control sockets
 // and /tmp/.X11-unix before connecting; none of that is a boundary, and
 // narrowing reads is not what 1.4 was about.
+/** Where github-api-broker.cjs writes the CA an app declaring github:* is told to trust — kept in step with that script's own default. */
+const GITHUB_BROKER_CERT_DIR = "/run/berth/github-api-broker";
+
 function baselineReadPaths(appName: string): string[] {
   return ["/usr", "/bin", "/sbin", "/lib", "/etc", "/proc", "/dev", "/tmp", appRunDir(appName), process.cwd()];
 }
@@ -207,6 +210,7 @@ export function compileCapabilityPolicy(appName: string, rawCapabilities: string
   const networkPorts = new Set<number>();
   const meshPeers = new Set<string>();
   let networkUnrestricted = false;
+  let needsGithubBrokerCa = false;
 
   for (const capability of rawCapabilities) {
     // CapabilityString mirrors the exact regex @berth/manifest-schema
@@ -265,13 +269,27 @@ export function compileCapabilityPolicy(appName: string, rawCapabilities: string
       // into the kernel policy, and without it apps/terminal cannot allocate a
       // pty at all on a kernel that enforces Landlock — REMEDIATION.md 1.15.
       for (const path of TERMINAL_WRITE_PATHS) writePaths.add(path);
+    } else if (parsed.namespace === "github") {
+      // Same shape as terminal:* above: github:* is otherwise recorded-only
+      // (it's what makes entrypoint.sh start the GitHub API broker), and this
+      // is the one thing it compiles into the kernel policy. The broker's CA
+      // moved out of /tmp — which baselineReadPaths covers in full — into
+      // /run/berth (REMEDIATION.md 1.9), and Node reads NODE_EXTRA_CA_CERTS at
+      // process start, i.e. after agent-init has enforced. Without this an app
+      // that declares any filesystem:read: capability (which is what turns
+      // read scoping on) can't read the CA it was told to trust, and every
+      // GitHub call fails the handshake.
+      needsGithubBrokerCa = true;
     }
   }
 
   // Opt-in: only restrict reads at all if the app declared at least one
   // filesystem:read:<path> capability — otherwise leave readPaths empty,
   // which agent-init treats as "don't touch read access."
-  const readPaths = declaredReadPaths.size > 0 ? [...new Set([...baselineReadPaths(appName), ...declaredReadPaths])] : [];
+  const readPaths =
+    declaredReadPaths.size > 0
+      ? [...new Set([...baselineReadPaths(appName), ...(needsGithubBrokerCa ? [GITHUB_BROKER_CERT_DIR] : []), ...declaredReadPaths])]
+      : [];
 
   return {
     appName,

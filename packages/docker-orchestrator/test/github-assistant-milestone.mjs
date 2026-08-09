@@ -26,26 +26,186 @@ import { spawn } from "node:child_process";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { loadManifest } from "@berth/manifest-schema";
 import { buildImage, startContainer, stopContainer } from "../dist/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");
+const BROKER_SCRIPT = join(__dirname, "..", "docker", "github-api-broker.cjs");
 const APP_DIR = join(REPO_ROOT, "apps", "github-assistant");
 const GRANTS_SERVER_ENTRY = join(REPO_ROOT, "packages", "grants-server", "dist", "server.js");
 const GRANTS_PORT = 56902;
 const MOCK_GITHUB_PORT = 56900;
 const GRANTED_CAPABILITY = `network:connect:${MOCK_GITHUB_PORT}`;
 const BROKER_UPSTREAM_MOCK_PORT = 56904;
+const ROUTE_TABLE_BROKER_PORT = 56906;
+const ROUTE_TABLE_UPSTREAM_PORT = 56908;
 const OPERATOR_TOKEN = "milestone-test-operator-token";
 
 const docker = new Docker();
 
 async function main() {
+  await runRouteTableScenario();
   await runBypassScenario();
   await runBrokerScenario();
+}
+
+// REMEDIATION.md 1.9 — what a github: capability actually covers. Run against
+// the shipped broker script directly (no Docker), because every decision here
+// is made before the request leaves the broker, and the two scenarios below
+// need an image build apiece to reach one code path.
+async function runRouteTableScenario() {
+  console.log("\n=== Route table, path normalization, and CA permissions (REMEDIATION.md 1.9) ===");
+  const dataDir = await mkdtemp(join(tmpdir(), "berth-github-broker-routes-"));
+  const certDir = join(dataDir, "certs"); // deliberately absent — the broker creates it, and its mode is under test
+  const upstreamCertDir = join(dataDir, "upstream");
+  await mkdir(upstreamCertDir);
+  const mockUpstream = await startMockUpstreamHttps(ROUTE_TABLE_UPSTREAM_PORT, upstreamCertDir);
+
+  const policyPath = join(dataDir, "capability-policy.json");
+  // github:read:issues, not github-assistant's own github:read:repos, because
+  // the traversal case below needs a path prefix the app IS allowed to read —
+  // a `..` under a denied prefix is refused either way and proves nothing.
+  await writeFile(
+    policyPath,
+    JSON.stringify({
+      appName: "route-table-test-app",
+      declaredCapabilities: ["github:read:repos", "github:read:issues"],
+      writePaths: [],
+      readPaths: [],
+      networkPorts: [],
+      networkUnrestricted: false,
+    }),
+  );
+
+  const broker = spawn(process.execPath, [BROKER_SCRIPT], {
+    env: {
+      ...process.env,
+      BERTH_GITHUB_API_BROKER_PORT: String(ROUTE_TABLE_BROKER_PORT),
+      BERTH_GITHUB_API_BROKER_CERT_DIR: certDir,
+      BERTH_CAPABILITY_POLICY: policyPath,
+      BERTH_GITHUB_API_UPSTREAM_HOST: "127.0.0.1",
+      BERTH_GITHUB_API_UPSTREAM_PORT: String(ROUTE_TABLE_UPSTREAM_PORT),
+      BERTH_GITHUB_API_UPSTREAM_CA_PATH: join(upstreamCertDir, "mock-ca.crt"),
+    },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  let stderr = "";
+  broker.stderr.on("data", (chunk) => (stderr += chunk.toString("utf-8")));
+
+  try {
+    await waitFor(() => stderr.includes("listening on"), 10000, "github-api-broker to start listening");
+    const request = (method, path) => brokerRequest(ROUTE_TABLE_BROKER_PORT, join(certDir, "ca.crt"), method, path);
+
+    // The positive control, first: every denial below would also "pass"
+    // against a broker that had simply stopped forwarding anything.
+    console.log("\n--- GET /repos/octocat/hello-world (declared: github:read:repos) ---");
+    const allowed = await request("GET", "/repos/octocat/hello-world");
+    console.log(`status: ${allowed.statusLine}`);
+    assert(allowed.statusCode === 200, `expected the declared repo read to be forwarded, got ${allowed.statusLine}`);
+    assert(
+      mockUpstream.requestsReceived.some((r) => r.method === "GET" && r.url === "/repos/octocat/hello-world"),
+      "expected the allowed request to actually reach the upstream",
+    );
+
+    // The bug 1.9 is named for. Under the old positional heuristic
+    // (`segments.length > 3 ? segments[3] : "repos"`) every path with three or
+    // fewer segments was classified github:read:repos, so this was forwarded
+    // with the app's real Authorization header.
+    console.log("\n--- GET /user/emails, for an app declaring only github:read:repos/issues ---");
+    const emails = await request("GET", "/user/emails");
+    console.log(`status: ${emails.statusLine}`);
+    assert(
+      emails.statusCode === 403,
+      `expected /user/emails to be denied, got ${emails.statusLine} — anything but a 403 is the upstream answering, i.e. the request was forwarded`,
+    );
+    assert(
+      /"requested":"github:read:user:emails"/.test(stderr),
+      `expected the denial to name the scope it asked for rather than github:read:repos: ${stderr.slice(-400)}`,
+    );
+    assert(
+      !mockUpstream.requestsReceived.some((r) => r.url.startsWith("/user")),
+      "expected the denied request to never reach the upstream at all",
+    );
+
+    // The same for the other endpoints that fell through to "repos": each is
+    // a real GitHub endpoint that reads something an app declaring
+    // github:read:repos never asked for.
+    for (const path of ["/user", "/gists", "/notifications", "/orgs/octo-org"]) {
+      const res = await request("GET", path);
+      assert(res.statusCode === 403, `expected ${path} to be denied, got ${res.statusLine}`);
+    }
+    console.log("PASS — /user, /user/emails, /gists, /notifications and /orgs/<org> are no longer free with github:read:repos.");
+
+    // Path normalization. The prefix is one the app may read, so the old code
+    // classified this github:read:issues and forwarded `path: req.url`
+    // verbatim — leaving GitHub's own edge to resolve the `..` into
+    // /user/emails after the policy check had already passed.
+    console.log("\n--- GET /repos/octocat/hello-world/issues/../../../../user/emails ---");
+    const traversal = await request("GET", "/repos/octocat/hello-world/issues/../../../../user/emails");
+    console.log(`status: ${traversal.statusLine}`);
+    assert(
+      traversal.statusCode === 403,
+      `expected the traversal to be denied after normalization, got ${traversal.statusLine} — anything but a 403 means the upstream, not this broker, resolved the ".."`,
+    );
+    assert(
+      !mockUpstream.requestsReceived.some((r) => r.url.includes("..")),
+      "expected no un-normalized path to reach the upstream — the check and the forward must agree",
+    );
+
+    // Default-deny: a real GitHub endpoint no route covers is refused rather
+    // than assigned a scope.
+    console.log("\n--- GET /emojis (a real endpoint no route covers) ---");
+    const unrouted = await request("GET", "/emojis");
+    console.log(`status: ${unrouted.statusLine}`);
+    assert(unrouted.statusCode === 403, `expected an unrouted path to be denied, got ${unrouted.statusLine}`);
+    assert(/"requested":"\(no route\)"/.test(stderr), `expected the broker to log the unrouted denial: ${stderr.slice(-400)}`);
+
+    // The CA directory. It holds the private key of a CA the app is told to
+    // trust process-wide, and used to be a 0755 directory in a world-writable
+    // /tmp shared with every other app in the container.
+    console.log("\n--- CA directory and key permissions ---");
+    const dirMode = (await stat(certDir)).mode & 0o777;
+    const caKeyMode = (await stat(join(certDir, "ca.key"))).mode & 0o777;
+    console.log(`cert dir: 0${dirMode.toString(8)}, ca.key: 0${caKeyMode.toString(8)}`);
+    assert(dirMode === 0o700, `expected the cert directory to be 0700, got 0${dirMode.toString(8)}`);
+    assert(caKeyMode === 0o600, `expected the CA key to be 0600, got 0${caKeyMode.toString(8)}`);
+
+    console.log("\nPASS — paths map to capabilities explicitly, unmatched paths deny, `..` is resolved before the check, and the CA key is root-only.");
+  } finally {
+    broker.kill();
+    mockUpstream.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+}
+
+/** Host-side twin of rawBrokerRequestScript(): raw CONNECT, then a real TLS session against the broker's own leaf cert, then one HTTP/1.1 request. */
+function brokerRequest(brokerPort, caCertPath, method, path) {
+  return new Promise((resolve, reject) => {
+    const raw = net.connect(brokerPort, "127.0.0.1", () => {
+      raw.write("CONNECT api.github.com:443 HTTP/1.1\r\nHost: api.github.com:443\r\n\r\n");
+    });
+    raw.on("error", reject);
+    let buf = "";
+    raw.on("data", function onData(chunk) {
+      buf += chunk.toString("utf-8");
+      if (!buf.includes("\r\n\r\n")) return;
+      raw.removeListener("data", onData);
+      const tlsSocket = tls.connect({ socket: raw, servername: "api.github.com", ca: [readFileSync(caCertPath)] }, () => {
+        tlsSocket.write(`${method} ${path} HTTP/1.1\r\nHost: api.github.com\r\nAuthorization: Bearer route-table-test-token\r\nConnection: close\r\n\r\n`);
+      });
+      let out = "";
+      tlsSocket.on("data", (c) => (out += c.toString("utf-8")));
+      tlsSocket.on("end", () => {
+        const statusLine = out.split("\r\n")[0] ?? "";
+        resolve({ statusLine, statusCode: Number(statusLine.split(" ")[1]), body: out });
+      });
+      tlsSocket.on("error", reject);
+    });
+  });
 }
 
 async function runBypassScenario() {
@@ -288,7 +448,7 @@ function rawBrokerRequestScript(method, path) {
     const net = require("node:net");
     const tls = require("node:tls");
     const fs = require("node:fs");
-    const caCert = fs.readFileSync("/tmp/berth-github-api-broker/ca.crt");
+    const caCert = fs.readFileSync("/run/berth/github-api-broker/ca.crt");
     const raw = net.connect(8092, "127.0.0.1", () => {
       raw.write("CONNECT api.github.com:443 HTTP/1.1\\r\\nHost: api.github.com:443\\r\\n\\r\\n");
     });

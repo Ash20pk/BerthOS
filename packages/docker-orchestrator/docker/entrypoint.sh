@@ -422,7 +422,11 @@ if [ -z "${BERTH_APPS:-}" ]; then
   # generated CA (BERTH_GITHUB_API_PROXY / NODE_EXTRA_CA_CERTS below).
   if grep -q "github:" "$MANIFEST_PATH" 2>/dev/null; then
     GITHUB_BROKER_PORT="${BERTH_GITHUB_API_BROKER_PORT:-8092}"
-    GITHUB_BROKER_CERT_DIR="${BERTH_GITHUB_API_BROKER_CERT_DIR:-/tmp/berth-github-api-broker}"
+    # /run/berth, not /tmp (REMEDIATION.md 1.9). The broker creates it 0700
+    # and its CA key 0600; what is narrowed below is who may traverse it to
+    # read ca.crt — exactly the one app whose process is about to be told to
+    # trust that CA, rather than every uid in the container.
+    GITHUB_BROKER_CERT_DIR="${BERTH_GITHUB_API_BROKER_CERT_DIR:-/run/berth/github-api-broker}"
     echo "[berth:entrypoint] github:* capability declared — starting GitHub API broker on 127.0.0.1:${GITHUB_BROKER_PORT}" >&2
     BERTH_CAPABILITY_POLICY="${BERTH_CAPABILITY_POLICY:-$PWD/.berth/capability-policy.json}" node /usr/local/bin/berth-github-api-broker.js &
 
@@ -430,6 +434,13 @@ if [ -z "${BERTH_APPS:-}" ]; then
       [ -f "${GITHUB_BROKER_CERT_DIR}/ca.crt" ] && break
       sleep 0.1
     done
+    if [ -n "${BERTH_APP_GID:-}" ] && [ -d "$GITHUB_BROKER_CERT_DIR" ]; then
+      # Same shape as secure_capability_policy: root owns it, the app's group
+      # may read. If this fails the app simply can't read the CA and its
+      # GitHub calls fail closed on a TLS error — a broken app, not an open one.
+      chown "0:${BERTH_APP_GID}" "$GITHUB_BROKER_CERT_DIR" 2>/dev/null || true
+      chmod 0750 "$GITHUB_BROKER_CERT_DIR" 2>/dev/null || true
+    fi
     export BERTH_GITHUB_API_PROXY="http://127.0.0.1:${GITHUB_BROKER_PORT}"
     export NODE_EXTRA_CA_CERTS="${GITHUB_BROKER_CERT_DIR}/ca.crt"
   fi

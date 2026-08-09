@@ -61,7 +61,7 @@ Ordering note: `setresuid()` away from 0 clears the permitted and effective capa
 
 The daemon sockets stay reachable by every app because `entrypoint.sh:103-107` already documents that as intentional ("only the control socket is unconditionally reachable"). Uid separation buys nothing there directly — its value is that `SO_PEERCRED` on those sockets finally distinguishes callers, which is 1.14's identity half.
 
-`/tmp` itself comes out of `BASELINE_WRITE_PATHS`, replaced by the per-app `/tmp/<app>`. Anything in the image that writes to a hardcoded `/tmp` path needs auditing first — `XDG_CONFIG_HOME=/tmp/.chromium` (`base.Dockerfile:127`) and `BERTH_GITHUB_API_BROKER_CERT_DIR=/tmp/berth-github-api-broker` (`entrypoint.sh:151`) are the two known ones.
+`/tmp` itself comes out of `BASELINE_WRITE_PATHS`, replaced by the per-app `/tmp/<app>`. Anything in the image that writes to a hardcoded `/tmp` path needs auditing first — `XDG_CONFIG_HOME=/tmp/.chromium` (`base.Dockerfile:127`) and `BERTH_GITHUB_API_BROKER_CERT_DIR` (`entrypoint.sh`) are the two known ones. The latter has since moved out of `/tmp` entirely — it holds a CA private key, so it is now `/run/berth/github-api-broker`, `0750 root:<app>` with the key `0600` (REMEDIATION.md 1.9).
 
 ## Blockers
 

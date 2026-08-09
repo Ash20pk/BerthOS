@@ -64,8 +64,8 @@ README line 88 currently reads: *"a prompt-injected 'ignore previous instruction
 | 1.5 | `on_install` is unsandboxed root shell run before enforcement | Critical | 🟢 | 2d |
 | 1.6 | `berth dev` bind-mounts the whole host repo read-write | Critical | 🟢 | 1d |
 | 1.7 | ttyd / VNC / CDP unauthenticated on all host interfaces | High | 🟢 | 1d |
-| 1.8 | Egress broker: no port check, `*` → SSRF, DNS not pinned | High | 🔴 | 2d |
-| 1.9 | GitHub broker: `read:repos` also grants `/user/emails` etc. | High | 🔴 | 1d |
+| 1.8 | Egress broker: no port check, `*` → SSRF, DNS not pinned | High | 🟢 | 2d |
+| 1.9 | GitHub broker: `read:repos` also grants `/user/emails` etc. | High | 🟢 | 1d |
 | 1.10 | Capability tokens are never verified anywhere | High | 🟢 | 1d |
 | 1.11 | Signals unrestricted — any app can kill the governor | Medium | 🟢 | 1d |
 | 1.12 | `agent-init` mkdir's arbitrary manifest paths as root | Medium | 🟢 | 4h |
@@ -303,6 +303,24 @@ Worth crediting: there is **no check-vs-dial divergence and no SNI-spoofing surf
 
 **Verify.** `egress-broker-milestone.mjs` gains cases for a disallowed port, an IMDS address under `*`, and a DNS-rebinding target.
 
+**Closed.** Five changes, and one of them changes what a capability means.
+
+**Ports are scoped, and that needed a decision.** The `port` was parsed and handed to `net.connect` without being compared to anything. The manifest has no port list to derive an allowlist from — `network:connect:<port>` is a *Landlock* grant about which ports the app itself may reach, and `browser-native` declares only `8090`, the broker's own port, so deriving from it would have denied 443 and broken every browser app. So the port comes from the host scope instead: a capability naming no port covers **80 and 443**, and a scope may name its own (`network:host:internal-db.corp:5432`, or `:*` for any). `CONNECT internal-db.corp:5432` under `browser:navigate:*` is now refused; the same app can still reach that port by saying so.
+
+**`?` was an unescaped regex quantifier.** `a?.example.com` meant "optional a", so it matched `.example.com` and anything ending in it.
+
+**Internal addresses are refused under every pattern, `*` included.** Loopback, RFC1918, link-local (169.254.169.254 is cloud IMDS and hands instance credentials to anything that can make a request), CGNAT, and multicast. `browser:navigate:*` reads as "any site on the internet"; nobody declaring it means "and the metadata service, and the Docker bridge, and the host". `host.docker.internal` is covered by the address check rather than by name, because `container.ts` wires it to `host-gateway` and the gateway is what matters.
+
+**DNS is pinned.** The check was on the name and `net.connect` resolved it again, so a record whose answer changed between the two — rebinding — turned an allowed name into an internal address. One resolution, validated, dialled.
+
+**Hop-by-hop headers and `Host` on the plain-HTTP path.** `proxy-authorization` is the broker's own credential to an upstream proxy and must never be supplied by a request; `Host` is normalized because the request line and the `Host` header can disagree, and many upstreams route by the latter while this broker checked the former.
+
+**Two bugs found by running it, not by reading it.** `dns.lookup()` goes through `getaddrinfo`, which on Alpine/musl races A and AAAA and stalls — the same bug the `family: 4` comments elsewhere in this file already exist to dodge, and which passing `family: 4` to `lookup()` does *not* dodge. In a real container every CONNECT logged nothing at all, because the await never settled and neither branch was reached; `resolve4()` (c-ares) fixes it. Separately, a throw inside either handler was an unhandled rejection, and Node exits on those — so one bad request took egress down for the whole container and surfaced to the browser as `ERR_PROXY_CONNECTION_FAILED`, which reads as a network fault rather than a refusal. Handler failures now deny that one request and leave the broker serving.
+
+**Verification — `egress-broker-milestone.mjs` Part A3**, against the broker script directly, since every one of these is decided before a byte leaves it. Undeclared port refused, default ports still working, an explicitly declared port permitted (asserted on the decision, not a completed tunnel — nothing listens on `example.com:5432`, so an allowed CONNECT legitimately fails to establish). IMDS, loopback, RFC1918 and the Docker bridge all refused under `*`. `localtest.me`, a real public record pointing at `127.0.0.1`, covers the rebinding shape where the name passes the glob and the resolved address does not. A real public host still tunnels, as the positive control — every denial above would also "pass" against a broker that had simply stopped working.
+
+**Confirmed against the old broker, and the assertion is written so the control names the vulnerability rather than timing out on it:** it reports that port 5432 was *allowed*, which is the bug. The naive version of that test just hung, because the old broker dials 5432 and nothing answers.
+
 ### 1.9 — GitHub broker: `read:repos` also grants `/user/emails`
 
 **Evidence.** `github-api-broker.cjs:99-105` — `const scope = segments.length > 3 ? segments[3] : "repos"`. Any GET with three or fewer path segments is classified `github:read:repos`. So an app declaring that capability also gets `/user`, `/user/emails`, `/user/repos`, `/gists`, `/notifications`, `/orgs/{org}` — all forwarded with the real `Authorization` header (`:172`). The path is forwarded verbatim (`path: req.url`) with no normalization, so `..` is resolved at GitHub's edge rather than by the policy check.
@@ -314,6 +332,26 @@ Worth crediting: the CONNECT gate is strict equality not a glob (`:200`), it for
 **Fix.** Replace the positional `segments[3]` heuristic with an explicit route table mapping path patterns to scopes, defaulting to *deny* rather than `repos`. Normalize the path before matching. Move the CA to a mode-`0700` directory outside `/tmp`. Refuse to start the egress broker for a host already covered by a dedicated broker.
 
 **Verify.** A test asserting `GET /user/emails` is denied for an app declaring only `github:read:repos`.
+
+**Closed.** Four changes: what a path maps to, what a path *is*, where the CA lives, and which broker owns a host.
+
+**The scope came from a position, and positions lie.** `segments.length > 3 ? segments[3] : "repos"` is not a heuristic that occasionally over-grants — every GET with three or fewer segments *was* `github:read:repos`. `/user/emails` has two. An explicit route table replaced it, consulted in order, and a path no route matches is refused with `"requested":"(no route)"` rather than assigned a scope. `/user/<sub>` maps to `user:<sub>` specifically so that `github:read:user` doesn't quietly cover `/user/emails` the same way `repos` did. The table is still GitHub-shaped and still doesn't cover the whole REST API — the difference is which way it fails: a missing route costs an app a 403, not a grant.
+
+**The path was checked here and resolved somewhere else.** `path: req.url` forwarded verbatim meant `/repos/o/r/issues/../../../../user/emails` was classified `github:read:issues` by this broker and read as `/user/emails` by GitHub's edge. Dot segments are now resolved before the check, and the normalized path is what gets forwarded — the same "no check-vs-dial divergence" property 1.8's pinned DNS was about. A `..` climbing above the root, an encoded separator (`%2f` is a separator to some parsers and a literal to others; a broker that has to guess is a broker that can be fooled), and a malformed escape are all denied rather than guessed at. Segments are decoded only to decide what they *are* — what gets forwarded is the original bytes, minus the dot segments, so normalizing can't itself change what GitHub reads.
+
+**The CA key was in world-writable /tmp, mode 0755.** `NODE_EXTRA_CA_CERTS` being process-wide is inherent to the mechanism — Node has no per-host trust knob — which is exactly why the key to that CA is worth protecting: whoever holds it can mint a certificate for any host the app will then trust. It moved to `/run/berth/github-api-broker`, created `0700` with the keys `0600`; `entrypoint.sh` then narrows the directory to `0750 root:<app-gid>`, so the one app that was told to trust the CA can read `ca.crt` and nothing else can. If that narrowing fails the app can't read the CA and its GitHub calls fail the handshake — broken, not open.
+
+**That move needed a policy change to stay working, which is the interesting part.** The read baseline covers `/tmp` in full, so nothing under it ever needed a grant; `/run/berth/<app>` is per-app and doesn't cover a broker's own directory. Node reads `NODE_EXTRA_CA_CERTS` at process start — after `agent-init` has enforced. So `generate-capability-policy` (both the TS and Python compilers) now adds that directory to `readPaths` for an app declaring any `github:*` capability, in the same one-line shape `terminal:*` already uses. Without it, an app that declares any `filesystem:read:` capability — which is what turns read scoping on at all, and `apps/github-assistant` does — would fail every GitHub call on a Landlock-enforcing kernel while working fine on Docker Desktop, which is the exact failure shape REMEDIATION.md 1.15's `/bin`+`/sbin` note describes.
+
+**The two brokers didn't compose, and `apps/github-assistant` is the live case.** It declares `browser:navigate:*.github.com` today; `api.github.com` matches. `egress-broker.cjs` now refuses `api.github.com` under every pattern *when the same policy declares a `github:*` capability* — which is exactly when `entrypoint.sh` has started the dedicated broker for it. Conditional rather than absolute, because an app with no `github:*` capability has no second broker running and no path-level policy to route around; refusing it would be a host this product can't reach for no security gain. What kept this from being exploitable in practice today is unrelated and thin: `github-assistant` declares `network:connect:8092` only, so Landlock refuses it the egress broker's own port. That's a backstop, not the fix.
+
+**Verification, in two places, each against the shipped script directly — every one of these decisions is made before a byte leaves the broker.** `github-assistant-milestone.mjs` gains a no-Docker `runRouteTableScenario()`: `/user/emails` refused with the denial naming `github:read:user:emails`; `/user`, `/gists`, `/notifications`, `/orgs/<org>` refused; the traversal refused with nothing containing `..` reaching the upstream; `/emojis` refused as unrouted; the cert dir `0700` and the CA key `0600`. A declared `/repos/<owner>/<repo>` read forwarded to a real mock upstream is the positive control — every denial above would also "pass" against a broker that had simply stopped forwarding. `egress-broker-milestone.mjs` Part A4 covers the composition half, with both directions asserted: refused for an app declaring `github:read:repos` + `browser:navigate:*`, still reachable for an app declaring neither.
+
+**Confirmed against the old broker, and the assertion says which bug it is:** `/user/emails` comes back `404` — from the mock upstream, not from the broker, which is the whole finding. The message names that explicitly rather than reporting an unexpected status code.
+
+**One thing that needed CI, now had.** The `readPaths` grant matters solely on a kernel that enforces Landlock: the full milestone passes locally on Docker Desktop, where the ruleset is `NotEnforced`, so a local pass shows the new CA path works end to end without showing that the grant is what makes it work. Both milestones are green on `ubuntu-latest` (`095f1ec`), and the run's own policy line carries the grant — `readPaths=... /run/berth/github-api-broker ...` — with the app going on to read that CA and complete a real handshake through the broker.
+
+Stated precisely, because the distinction is the whole point of the paragraph: what that run proves is that the grant is present and the path works on a Landlock-capable kernel. It does not isolate the grant as *necessary* — that would need the same run with the grant removed, which no test does.
 
 ### 1.10 — Capability tokens are never verified anywhere
 
