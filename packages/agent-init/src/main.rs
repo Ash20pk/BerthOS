@@ -562,9 +562,20 @@ const ALLOWED_WRITE_PATH_PREFIXES: [&str; 4] = ["/workspace", "/context", "/tmp"
 /// turn a four-entry convenience into a grant over all of them.
 const ALLOWED_WRITE_DEVICE_PATHS: [&str; 3] = ["/dev/null", "/dev/pts", "/dev/ptmx"];
 
+/// The app's own runtime directory, holding the RPC socket it binds in
+/// multi-app mode. Also compiler-injected rather than declarable, but unlike
+/// the device paths above it is checked against *this* app's name rather than
+/// as a shared prefix: `/run/berth` as a prefix would let a policy claiming to
+/// be one app grant write access to every other app's socket directory, which
+/// is precisely the boundary this directory exists to draw (REMEDIATION.md
+/// 1.4). `/run` itself, and `/run/berth`, stay rejected.
+fn app_run_dir(app_name: &str) -> String {
+    format!("/run/berth/{app_name}")
+}
+
 /// Split out of apply_policy() so the unit tests below can exercise it without
 /// a kernel that enforces Landlock or a real policy file.
-fn is_allowed_write_path(path: &str) -> bool {
+fn is_allowed_write_path(path: &str, app_name: &str) -> bool {
     if !path.starts_with('/') || path == "/" || path.contains('\0') {
         return false;
     }
@@ -573,6 +584,16 @@ fn is_allowed_write_path(path: &str) -> bool {
     }
     if ALLOWED_WRITE_DEVICE_PATHS.contains(&path) {
         return true;
+    }
+    // A name with a separator or a dot segment in it would make app_run_dir()
+    // name somewhere other than one directory under /run/berth. The segment
+    // check above already refuses any *path* like that, so this is belt and
+    // braces on a policy file this process deliberately does not trust.
+    if !app_name.is_empty() && !app_name.contains('/') && app_name != "." && app_name != ".." {
+        let own_run_dir = app_run_dir(app_name);
+        if path == own_run_dir || path.starts_with(&format!("{own_run_dir}/")) {
+            return true;
+        }
     }
     ALLOWED_WRITE_PATH_PREFIXES
         .iter()
@@ -658,10 +679,11 @@ fn apply_policy(policy_path: &str) -> Result<(CapabilityPolicy, RulesetStatus), 
         // whereas exiting would turn a bad capability line into a container
         // that won't start at all long after `berth test` should have caught
         // it (see ALLOWED_WRITE_PATH_PREFIXES).
-        if !is_allowed_write_path(path) {
+        if !is_allowed_write_path(path, &policy.app_name) {
             eprintln!(
-                "[agent-init] WARNING: refusing to create or grant write access to \"{path}\" — outside the allowed prefixes {}. Fix the filesystem:write capability in berth.yml.",
-                ALLOWED_WRITE_PATH_PREFIXES.join(", ")
+                "[agent-init] WARNING: refusing to create or grant write access to \"{path}\" — outside the allowed prefixes {} (plus {}). Fix the filesystem:write capability in berth.yml.",
+                ALLOWED_WRITE_PATH_PREFIXES.join(", "),
+                app_run_dir(&policy.app_name)
             );
             continue;
         }
@@ -965,10 +987,30 @@ mod tests {
     #[test]
     fn write_path_allowlist_permits_only_the_injected_device_paths() {
         for path in ["/dev/null", "/dev/pts", "/dev/ptmx"] {
-            assert!(is_allowed_write_path(path), "{path} is injected by generate-capability-policy.ts and must be grantable");
+            assert!(is_allowed_write_path(path, "my-app"), "{path} is injected by generate-capability-policy.ts and must be grantable");
         }
         for path in ["/dev", "/dev/sda", "/dev/mem", "/dev/pts/0", "/dev/null/x", "/dev/kmsg", "/dev/tty"] {
-            assert!(!is_allowed_write_path(path), "{path} must not be grantable — the device allowance is exact-match, not a prefix");
+            assert!(!is_allowed_write_path(path, "my-app"), "{path} must not be grantable — the device allowance is exact-match, not a prefix");
+        }
+    }
+
+    // The socket directory REMEDIATION.md 1.4 moves the app RPC socket into.
+    // Scoped to this app's own name rather than allowed as a /run/berth prefix:
+    // a prefix would let a policy file grant write access to every sibling's
+    // socket directory, which is the exact boundary the move exists to draw.
+    #[test]
+    fn write_path_allowlist_permits_only_this_apps_own_run_directory() {
+        for path in ["/run/berth/my-app", "/run/berth/my-app/rpc.sock"] {
+            assert!(is_allowed_write_path(path, "my-app"), "{path} is injected for this app and must be grantable");
+        }
+        for path in ["/run", "/run/berth", "/run/berth/other-app", "/run/berth/other-app/rpc.sock", "/run/berth/my-app-2", "/run/berthx/my-app"] {
+            assert!(!is_allowed_write_path(path, "my-app"), "{path} must not be grantable for app \"my-app\"");
+        }
+        // An app name that isn't a single path segment must not widen anything;
+        // the policy file this comes from is not trusted by this process.
+        for name in ["", "..", ".", "/", "a/../b", "berth/../.."] {
+            assert!(!is_allowed_write_path("/run/berth", name), "app name {name:?} must not make /run/berth grantable");
+            assert!(!is_allowed_write_path("/run/berth/other-app", name), "app name {name:?} must not make a sibling's directory grantable");
         }
     }
 
@@ -990,7 +1032,7 @@ mod tests {
     #[test]
     fn allowed_write_paths_are_the_four_app_visible_roots_and_paths_beneath_them() {
         for path in ["/workspace", "/workspace/pkg/app", "/context", "/context/agent-runs", "/tmp", "/tmp/my-app", "/app", "/app/.berth"] {
-            assert!(is_allowed_write_path(path), "{path} should be an allowed write path");
+            assert!(is_allowed_write_path(path, "my-app"), "{path} should be an allowed write path");
         }
     }
 
@@ -1015,7 +1057,7 @@ mod tests {
             "/appdata",
             "",
         ] {
-            assert!(!is_allowed_write_path(path), "{path:?} must not be an allowed write path");
+            assert!(!is_allowed_write_path(path, "my-app"), "{path:?} must not be an allowed write path");
         }
     }
 }

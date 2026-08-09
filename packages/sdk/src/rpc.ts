@@ -1,6 +1,6 @@
 import * as readline from "node:readline";
 import * as net from "node:net";
-import { unlinkSync } from "node:fs";
+import { chmodSync, unlinkSync } from "node:fs";
 import type { BerthApp } from "./app.js";
 
 export interface RpcRequest {
@@ -79,6 +79,25 @@ function startSocketServer(app: BerthApp, socketPath: string): void {
 
   const server = net.createServer(connectionHandler(app));
   server.listen(socketPath, () => {
+    // 0660, explicitly, rather than whatever the umask leaves behind (0755 by
+    // default here — group r-x, which is no use: connecting to a pathname
+    // socket needs *write* permission on it).
+    //
+    // The directory this sits in is 0710 owned by this app (entrypoint.sh's
+    // provision_app_identity), so group here means "an app that declared
+    // app:invoke:<this app>" and nothing else — see REMEDIATION.md 1.4. Other
+    // means nobody: a uid outside the group cannot traverse the directory to
+    // reach this inode at all, and this mode makes sure it would be refused
+    // even if it could.
+    //
+    // Failing to chmod is worth a loud warning and nothing more: the socket is
+    // already bound and the host relay (root) can use it either way, so the
+    // consequence is a sibling's authorized call failing, not the app dying.
+    try {
+      chmodSync(socketPath, 0o660);
+    } catch (err) {
+      console.error(`[berth:runtime] WARNING: could not chmod ${socketPath} to 0660 (${err}) — an app granted app:invoke: on this one may get EACCES`);
+    }
     console.error(`[berth:runtime] RPC server also listening on ${socketPath}`);
   });
 }

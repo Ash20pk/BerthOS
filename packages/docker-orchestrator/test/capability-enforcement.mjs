@@ -514,6 +514,66 @@ async function main() {
     } else {
       console.log("\nNOT VERIFIED (expected in this environment) — Landlock isn't enforced here.");
     }
+
+    // --- The RPC-socket half of the same boundary: REMEDIATION.md 1.4. ---
+    //
+    // Asserted UNCONDITIONALLY, unlike everything above it in this test, and
+    // that is the point. The filesystem assertions above are Landlock, so they
+    // degrade to informational on a kernel that doesn't enforce it (Docker
+    // Desktop's linuxkit). This one is DAC — a 0710 directory owned by the
+    // serving app's uid — which every kernel that runs a container enforces.
+    // If it starts passing conditionally, something has silently reverted to
+    // running apps as root.
+    //
+    // Deliberately not "can app A write into app B's socket directory": an app
+    // does not need write access to *connect* to a pathname socket (Landlock
+    // hooks neither, and the design doc works through why), so the only
+    // meaningful assertion is the connect itself.
+    console.log("\n--- App A attempting to CONNECT to app B's RPC socket (the 1.4 exploit) ---");
+    const ownSocket = await invokeAppExport(boundaryRunning.container, "boundary-app-a", {
+      id: "4",
+      export: "probe_unix_socket",
+      input: { path: "/run/berth/boundary-app-a/rpc.sock" },
+    });
+    console.log("app A -> its own socket:", ownSocket);
+    // The positive control, and it has to come first: every denial below would
+    // also "pass" if the sockets had simply moved somewhere nothing binds, or
+    // if probe_unix_socket were broken.
+    assert(
+      ownSocket.result?.connected === true,
+      `boundary-app-a could not reach its OWN RPC socket (${JSON.stringify(ownSocket)}) — the denial below would prove nothing`,
+    );
+
+    const siblingSocket = await invokeAppExport(boundaryRunning.container, "boundary-app-a", {
+      id: "5",
+      export: "probe_unix_socket",
+      input: { path: "/run/berth/boundary-app-b/rpc.sock" },
+    });
+    console.log("app A -> app B's socket:", siblingSocket);
+    assert(
+      siblingSocket.result?.connected === false,
+      `boundary-app-a reached boundary-app-b's RPC socket — REMEDIATION.md 1.4 has regressed and one app can invoke another's exports with its capabilities: ${JSON.stringify(siblingSocket)}`,
+    );
+    assert(
+      /^(EACCES|EPERM)$/.test(siblingSocket.result?.code ?? ""),
+      `boundary-app-a's connect to boundary-app-b's socket failed with "${siblingSocket.result?.code}" rather than EACCES/EPERM — that is not the kernel refusing it, which is what this test is for`,
+    );
+
+    // And the socket the old layout used must not be there at all: an app
+    // rebinding /tmp/berth-rpc/<name>.sock would restore the whole exploit,
+    // since /tmp itself is still traversable by everyone.
+    const oldPathSocket = await invokeAppExport(boundaryRunning.container, "boundary-app-a", {
+      id: "6",
+      export: "probe_unix_socket",
+      input: { path: "/tmp/berth-rpc/boundary-app-b.sock" },
+    });
+    console.log("app A -> app B's pre-1.4 socket path:", oldPathSocket);
+    assert(
+      oldPathSocket.result?.connected === false,
+      `something is still listening at the pre-1.4 world-writable socket path: ${JSON.stringify(oldPathSocket)}`,
+    );
+
+    console.log("\nPASS — app A can reach its own RPC socket and not app B's (REMEDIATION.md 1.4).");
   } finally {
     await boundaryLog.stop();
     await stopContainer(boundaryRunning.container).catch(() => {});

@@ -1,6 +1,6 @@
 """Mirrors @berth/sdk's generate-capability-policy.ts exactly (same policy
 shape, same deny-by-default network/opt-in read-path rules, same
-BASELINE_WRITE_PATHS/BASELINE_READ_PATHS) — agent-init (Rust) reads whichever
+per-app baseline write/read paths) — agent-init (Rust) reads whichever
 one ran, TypeScript or Python, without caring which wrote it. Invoked as
 `python3 -m berth_sdk.generate_capability_policy`.
 """
@@ -14,11 +14,18 @@ from pathlib import Path
 
 from .manifest import load_manifest, parse_capability
 
-# /dev/null is here, not just for terminal apps, because opening it read-write
-# is what any process does when it redirects a child's stdio to it — see the
-# TypeScript original for the strace this came from, and for why /dev/tty is
-# deliberately absent (REMEDIATION.md 1.15).
-BASELINE_WRITE_PATHS = ["/tmp", "/dev/null"]
+# Per-app, not container-wide: this used to be all of /tmp for every app, which
+# is REMEDIATION.md 1.4's finding. See the TypeScript original for why a
+# narrower Landlock policy is only half the fix (DAC is the other half) and for
+# the socket layout these two directories belong to.
+#
+# /dev/null is the one entry that stays shared, and it is here rather than in
+# TERMINAL_WRITE_PATHS because opening it read-write is what any process does
+# when it redirects a child's stdio to it — see the TypeScript original for the
+# strace this came from, and for why /dev/tty is deliberately absent
+# (REMEDIATION.md 1.15).
+def _baseline_write_paths(app_name: str) -> list[str]:
+    return ["/dev/null", f"/tmp/{app_name}", f"/run/berth/{app_name}"]
 
 # Added only for an app declaring terminal:* — the one thing that capability
 # compiles into the kernel policy. Without it a tmux server cannot allocate a
@@ -26,8 +33,11 @@ BASELINE_WRITE_PATHS = ["/tmp", "/dev/null"]
 TERMINAL_WRITE_PATHS = ["/dev/pts", "/dev/ptmx"]
 
 
-def _baseline_read_paths() -> list[str]:
-    return ["/usr", "/lib", "/etc", "/proc", "/dev", "/tmp", str(Path.cwd())]
+# /tmp stays fully readable even though it is no longer fully writable: reads
+# are not what 1.4 was about, and statting a daemon control socket before
+# connecting to it needs them.
+def _baseline_read_paths(app_name: str) -> list[str]:
+    return ["/usr", "/lib", "/etc", "/proc", "/dev", "/tmp", f"/run/berth/{app_name}", str(Path.cwd())]
 
 
 def _strip_trailing_glob(scope: str) -> str:
@@ -58,7 +68,7 @@ def main() -> None:
     approved = _fetch_approved_capabilities(manifest.name)
     effective_capabilities = [*manifest.capabilities, *approved]
 
-    write_paths = set(BASELINE_WRITE_PATHS)
+    write_paths = set(_baseline_write_paths(manifest.name))
     declared_read_paths: set[str] = set()
     network_ports: set[int] = set()
     network_unrestricted = False
@@ -84,7 +94,7 @@ def main() -> None:
         elif parsed.namespace == "terminal":
             write_paths.update(TERMINAL_WRITE_PATHS)
 
-    read_paths = sorted(set(_baseline_read_paths()) | declared_read_paths) if declared_read_paths else []
+    read_paths = sorted(set(_baseline_read_paths(manifest.name)) | declared_read_paths) if declared_read_paths else []
 
     policy = {
         "appName": manifest.name,

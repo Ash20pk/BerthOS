@@ -12,6 +12,11 @@ exports:
   - name: read_file
     input: { path: string }
     output: { content: string }
+  # Declares no app:invoke: capability on purpose — reaching a sibling's RPC
+  # socket is what this export probes, and what REMEDIATION.md 1.4 refuses.
+  - name: probe_unix_socket
+    input: { path: string }
+    output: { connected: boolean, code: string }
 
 on_install: []
 on_agent_ready: []
