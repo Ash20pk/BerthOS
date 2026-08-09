@@ -289,7 +289,20 @@ async function runPartB() {
 
     const rpc = await createRpcClient(running.container);
     console.log("\n--- Navigating to a real page through the broker ---");
-    const navigateResult = await rpc.call({ id: "1", export: "navigate", input: { url: "https://example.com" } });
+    // This call has timed out on every recorded CI run since 2026-08-04 while
+    // passing reliably here, and the failure reported only "timed out" — the
+    // container's own account of what Chromium was doing was captured and then
+    // discarded. Several plausible causes have already been ruled out from the
+    // outside (Playwright always drives Chromium over a pipe, not the TCP
+    // debugging port, so Landlock's port scoping is not in the path;
+    // waitForDisplay() returns immediately under BERTH_TEST_MODE), so the next
+    // step needs the log rather than another guess.
+    const navigateResult = await rpc.call({ id: "1", export: "navigate", input: { url: "https://example.com" } }).catch((err) => {
+      console.error("\n--- browser-native container log (navigate never returned) ---");
+      console.error(containerLog.text() || "(the container produced no output at all)");
+      console.error("--- end browser-native container log ---\n");
+      throw err;
+    });
     console.log("navigate response:", navigateResult);
     assert(!navigateResult.error, `expected navigate to succeed, got error: ${navigateResult.error}`);
 

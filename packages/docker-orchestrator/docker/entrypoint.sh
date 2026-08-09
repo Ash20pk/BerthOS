@@ -585,6 +585,84 @@ run_app() {
   exec /usr/local/bin/agent-init "$@"
 }
 
+# Compiles every app's policy and creates the directories those policies
+# declare, serially, before any app's agent-init runs. This is the boot
+# ordering REMEDIATION.md 1.12 named as the real fix and deferred.
+#
+# The race it removes: apps start concurrently (`run_app ... &`), and
+# agent-init deliberately does *not* create declared read paths — creating a
+# directory as a side effect of declaring a capability, as uid 0, on the
+# developer's host through a bind mount, is what 1.12 refused. So an app
+# declaring `filesystem:read:/workspace` binds its read grant against whatever
+# exists at that instant. If the app that declares `filesystem:write:/workspace`
+# hasn't created it yet, the reader's grant is skipped — permanently, because
+# the ruleset is sealed moments later — and every later read there is EACCES.
+#
+# Which app won that race decided whether the container worked, so it failed
+# intermittently and only where Landlock is enforced. That is the Agents
+# Milestone flake: `computer-multi-app-milestone.mjs` has apps/filesystem
+# writing /workspace and apps/code-editor reading it.
+#
+# Ownership is decided here rather than left to agent-init, which only chowns
+# paths it created itself — and after this pass, it never creates any:
+#
+#   declared writable by exactly one app  -> that app's uid, 0755
+#   declared writable by several          -> root:berth, 2775 (setgid, so
+#                                            files stay reachable by the next
+#                                            app, same as grant_dev_workspace)
+#
+# Anything that already exists is left completely alone — /tmp, /context, a
+# bind mount, and each app's own /run/berth/<app> and /tmp/<app> from
+# provision_app_identity. Taking ownership of a directory somebody else made
+# is Blocker 1's mistake and is not this pass's business.
+precreate_declared_paths() {
+  local tsv="$1"
+  local decls="/tmp/.berth-declared-write-paths"
+  : >"$decls"
+
+  local idx=0 name dir uid
+  while IFS=$'\t' read -r name dir; do
+    [ -z "$name" ] && continue
+    uid=$((10000 + idx))
+    idx=$((idx + 1))
+    # Same command run_app runs; running it twice is idempotent and costs one
+    # Node start per app, which buys a deterministic boot.
+    ( cd "$dir" \
+        && BERTH_MANIFEST_PATH="$dir/berth.yml" \
+           BERTH_CAPABILITY_POLICY="$dir/.berth/capability-policy.json" \
+           node "node_modules/@berth/sdk/dist/generate-capability-policy.js" >/dev/null ) \
+      || { echo "[berth:entrypoint] WARNING: could not pre-compile ${name}'s capability policy — its declared paths may not exist when a sibling binds a read grant on them" >&2; continue; }
+
+    node -e '
+      const fs = require("fs");
+      const policy = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+      for (const p of policy.writePaths ?? []) process.stdout.write(`${p}\t${process.argv[2]}\n`);
+    ' "$dir/.berth/capability-policy.json" "$uid" >>"$decls" 2>/dev/null || true
+  done <<<"$tsv"
+
+  local path owners owner
+  # cut/sort/uniq rather than an associative array: this is /bin/sh-adjacent
+  # busybox ash territory, and the list is a handful of lines.
+  for path in $(cut -f1 "$decls" | sort -u); do
+    [ -n "$path" ] || continue
+    [ -e "$path" ] && continue
+    owners="$(awk -F'\t' -v p="$path" '$1 == p { print $2 }' "$decls" | sort -u | wc -l)"
+    mkdir -p "$path" 2>/dev/null || { echo "[berth:entrypoint] WARNING: could not create declared path $path" >&2; continue; }
+    if [ "$owners" -eq 1 ]; then
+      owner="$(awk -F'\t' -v p="$path" '$1 == p { print $2; exit }' "$decls")"
+      chown "$owner:$owner" "$path" 2>/dev/null || true
+      chmod 0755 "$path" 2>/dev/null || true
+      echo "[berth:entrypoint] created declared path $path for uid $owner" >&2
+    else
+      chown "0:${BERTH_SHARED_GID:-9999}" "$path" 2>/dev/null || true
+      chmod 2775 "$path" 2>/dev/null || true
+      echo "[berth:entrypoint] created declared path $path shared by $owners apps (root:berth, setgid)" >&2
+    fi
+  done
+
+  rm -f "$decls"
+}
+
 # Three serial passes over the app list, not one, because each depends on the
 # previous having finished for *every* app:
 #
@@ -615,6 +693,11 @@ while IFS=$'\t' read -r APP_NAME APP_DIR; do
   [ -z "$APP_NAME" ] && continue
   grant_invoke_access "$APP_NAME" "$APP_DIR"
 done <<<"$APPS_TSV"
+
+# After grant_dev_workspace (so a declared path *inside* the dev workspace
+# inherits that directory's group before anything is created under it) and
+# before any app starts, which is the whole point.
+precreate_declared_paths "$APPS_TSV"
 
 PRIMARY_PID=""
 COMPANION_PIDS=()
