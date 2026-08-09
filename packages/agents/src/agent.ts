@@ -100,6 +100,20 @@ function isRefusal(err: unknown): boolean {
   return err instanceof HumanApprovalDeniedError || err instanceof GuardrailTripwireError;
 }
 
+/**
+ * Tool calls from the most recent assistant turn that have no matching tool
+ * result yet — what a crash partway through a multi-call turn leaves behind.
+ * Empty for any complete message history, so this costs a fresh run nothing.
+ */
+function pendingToolCalls(messages: AgentMessage[]): { id: string; name: string; input: unknown }[] {
+  const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant" && m.toolCalls?.length);
+  if (!lastAssistant?.toolCalls) return [];
+  const answered = new Set(
+    messages.filter((m) => m.role === "tool" && m.toolResult).map((m) => m.toolResult!.id),
+  );
+  return lastAssistant.toolCalls.filter((call) => !answered.has(call.id));
+}
+
 const DEFAULT_MAX_TURNS = 25;
 const DEFAULT_MAX_REPAIR_ATTEMPTS = 2;
 
@@ -212,6 +226,51 @@ export class Agent {
       await this.tracer.emit({ ...event, runId, agentName: this.name });
     };
 
+    const runToolCall = async (
+      call: { id: string; name: string; input: unknown },
+      turnCount: number,
+      turnText: string | undefined,
+    ) => {
+      const tool = this.tools.find((t) => t.name === call.name);
+      const callStart = Date.now();
+      let result: unknown;
+      let error: string | undefined;
+      if (!tool) {
+        error = `no such tool "${call.name}"`;
+        result = { error };
+      } else {
+        try {
+          result = await tool.invoke(call.input);
+        } catch (err) {
+          // A refusal is not a failure the model gets to route around.
+          // Feeding a human's "no" back as a tool result let the model
+          // re-issue the identical call and open a fresh grant request,
+          // which turns a denial into "ask again" and spams the human
+          // deciding it — documented as fail-closed, behaving as advisory.
+          // Same for a guardrail that tripped inside a nested
+          // agent-as-tool. See REMEDIATION 3.4.
+          if (isRefusal(err)) {
+            await checkpoint(turnCount, "error", turnText);
+            throw err;
+          }
+          // Every other failing tool call still feeds an {error} result back
+          // to the model, same as the "no such tool" case above, instead of
+          // throwing out of the whole loop — the model gets a chance to retry
+          // with different input, try another tool, or surface the failure
+          // itself, rather than one bad call silently killing the run.
+          // formatToolInputError() reformats a Zod input-validation failure's
+          // default JSON-array message into the same compact per-field shape
+          // responseSchema repair prompts already use — any other error
+          // message passes through unchanged.
+          error = formatToolInputError(err instanceof Error ? err.message : String(err));
+          result = { error };
+        }
+      }
+      await trace({ turn: turnCount, kind: "tool-call", toolName: call.name, durationMs: Date.now() - callStart, error });
+      executed.push({ name: call.name, input: call.input, result });
+      messages.push({ role: "tool", toolResult: { id: call.id, name: call.name, output: result } });
+    };
+
     // Only fires on a successful, un-guarded final answer — a run a tripped
     // output guardrail killed shouldn't add its (flagged) turn to a
     // session's history either, same reasoning checkpoint()'s "error" status
@@ -230,6 +289,22 @@ export class Agent {
         throw err;
       }
     };
+
+    // A checkpoint taken mid-turn (see runToolCall) can carry an assistant
+    // turn whose later tool calls have no results yet. Sending that to a
+    // provider is a hard error — every vendor rejects an assistant message
+    // with an unanswered tool_call — so the outstanding calls are finished
+    // first, and only then does the loop resume asking the model. Their
+    // already-executed siblings are not re-run, which is the entire point of
+    // checkpointing per call. See REMEDIATION 3.5.
+    const pending = pendingToolCalls(messages);
+    for (const call of pending) {
+      await runToolCall(call, startTurn, undefined);
+    }
+    // Unlike the main loop, nothing follows this to record the completed
+    // calls, so it checkpoints once here — otherwise a second crash would
+    // re-execute everything this resume just finished.
+    if (pending.length > 0) await checkpoint(startTurn, "running");
 
     for (let turnCount = startTurn; turnCount < this.maxTurns; turnCount++) {
       const turnStart = Date.now();
@@ -298,45 +373,16 @@ export class Agent {
 
       messages.push({ role: "assistant", text: turn.text, toolCalls: turn.toolCalls });
 
-      for (const call of turn.toolCalls) {
-        const tool = this.tools.find((t) => t.name === call.name);
-        const callStart = Date.now();
-        let result: unknown;
-        let error: string | undefined;
-        if (!tool) {
-          error = `no such tool "${call.name}"`;
-          result = { error };
-        } else {
-          try {
-            result = await tool.invoke(call.input);
-          } catch (err) {
-            // A refusal is not a failure the model gets to route around.
-            // Feeding a human's "no" back as a tool result let the model
-            // re-issue the identical call and open a fresh grant request,
-            // which turns a denial into "ask again" and spams the human
-            // deciding it — documented as fail-closed, behaving as advisory.
-            // Same for a guardrail that tripped inside a nested
-            // agent-as-tool. See REMEDIATION 3.4.
-            if (isRefusal(err)) {
-              await checkpoint(turnCount, "error", turn.text);
-              throw err;
-            }
-            // Every other failing tool call still feeds an {error} result
-            // back to the model, same as the "no such tool" case above,
-            // instead of throwing out of the whole loop — the model gets a
-            // chance to retry with different input, try another tool, or
-            // surface the failure itself, rather than one bad call silently
-            // killing the run. formatToolInputError() reformats a Zod
-            // input-validation failure's default JSON-array message into the
-            // same compact per-field shape responseSchema repair prompts
-            // already use — any other error message passes through unchanged.
-            error = formatToolInputError(err instanceof Error ? err.message : String(err));
-            result = { error };
-          }
-        }
-        await trace({ turn: turnCount, kind: "tool-call", toolName: call.name, durationMs: Date.now() - callStart, error });
-        executed.push({ name: call.name, input: call.input, result });
-        messages.push({ role: "tool", toolResult: { id: call.id, name: call.name, output: result } });
+      for (const [index, call] of turn.toolCalls.entries()) {
+        await runToolCall(call, turnCount, turn.text);
+        // Checkpoint after *each* call rather than once after the whole turn:
+        // a crash between call 3 and call 4 of 4 used to lose all four and
+        // re-execute every one on resume, side effects included. turnCount
+        // rather than turnCount + 1, because this turn hasn't finished — a
+        // resume re-enters at it and finishes only what's outstanding.
+        // Skipped for the last call, whose state the turn-end checkpoint
+        // below records anyway one line later. See REMEDIATION 3.5.
+        if (index < turn.toolCalls.length - 1) await checkpoint(turnCount, "running");
       }
 
       await checkpoint(turnCount + 1, "running");
@@ -345,6 +391,7 @@ export class Agent {
     await checkpoint(this.maxTurns, "error");
     throw new Error(`Agent "${this.name}" exceeded its maxTurns (${this.maxTurns}) without reaching a final answer`);
   }
+
 
   /**
    * Returns a new Agent with the same identity/llm/systemPrompt/checkpoint

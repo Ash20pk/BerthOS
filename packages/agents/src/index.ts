@@ -120,3 +120,4 @@ export { createFallbackProvider, type FallbackProviderOptions } from "./provider
 export { detectLLMProvider, resolveLLMProvider, type LLMProviderConfig } from "./providers/auto.js";
 export type { Tool, LLMProvider, LLMTurn, LLMStopReason, AgentMessage, AgentRole } from "./types.js";
 export { TruncatedResponseError } from "./types.js";
+export { CheckpointReadError } from "./checkpoint.js";
