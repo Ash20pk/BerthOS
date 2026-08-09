@@ -61,6 +61,7 @@ async function main() {
   await runPartA1();
   await runPartA2();
   await runPartA3();
+  await runPartA4();
   await runPartB();
   await runPartC();
 }
@@ -379,6 +380,68 @@ async function runPartA3() {
     });
 
     console.log("\nPASS — ports are scoped, internal addresses are refused even under *, and the address dialled is the one that was validated.");
+  } finally {
+    await rm(dataDir, { recursive: true, force: true });
+  }
+}
+
+// Part A4: REMEDIATION.md 1.9 — the two brokers didn't compose. An app
+// declaring a github:* capability gets github-api-broker.cjs, which decrypts
+// and checks method+path; declaring network:host:* (or browser:navigate:*)
+// as well used to also get it a raw CONNECT api.github.com:443 through this
+// broker, with no path or verb inspection at all. apps/github-assistant is
+// the real case: it declares github:read:repos and browser:navigate:*.github.com.
+async function runPartA4() {
+  console.log("\n=== Part A4: a host owned by a dedicated broker is refused here (REMEDIATION.md 1.9) ===");
+  const dataDir = await mkdtemp(join(tmpdir(), "berth-egress-broker-milestone-brokered-"));
+
+  async function withPolicy(capabilities, port, fn) {
+    const policyPath = join(dataDir, `policy-${port}.json`);
+    await writeFile(
+      policyPath,
+      JSON.stringify({ appName: "two-broker-app", declaredCapabilities: capabilities, writePaths: [], readPaths: [], networkPorts: [], networkUnrestricted: false }),
+    );
+    const broker = spawn(process.execPath, [BROKER_SCRIPT], {
+      env: { ...process.env, BERTH_EGRESS_BROKER_PORT: String(port), BERTH_CAPABILITY_POLICY: policyPath },
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    broker.stderr.on("data", (chunk) => (stderr += chunk.toString("utf-8")));
+    try {
+      await waitFor(() => stderr.includes("listening on"), 5000, "broker to start listening");
+      await fn(() => stderr);
+    } finally {
+      broker.kill();
+    }
+  }
+
+  try {
+    await withPolicy(["github:read:repos", "browser:navigate:*.github.com", "browser:navigate:*"], 58097, async (stderrOf) => {
+      console.log("\n--- CONNECT api.github.com:443, for an app declaring github:read:repos AND browser:navigate:* ---");
+      const denied = await connectThroughProxy(58097, "api.github.com", 443);
+      console.log(`status: ${denied.statusCode}`);
+      assert(denied.statusCode === 403, `expected 403 for a host the GitHub broker owns, got ${denied.statusCode}`);
+      assert(/"event":"dedicated_broker_host"/.test(stderrOf()), `expected the broker to log why, got: ${stderrOf().slice(-400)}`);
+
+      // The rest of `*` is untouched — this narrows one host, not the capability.
+      console.log("\n--- ...while every other host under the same * pattern still works ---");
+      const allowed = await connectThroughProxy(58097, "example.com", 443);
+      assert(allowed.statusCode === 200, `expected 200 for an unrelated host, got ${allowed.statusCode}`);
+      const stillFine = await connectThroughProxy(58097, "github.com", 443);
+      assert(stillFine.statusCode === 200, `expected 200 for github.com itself (no dedicated broker owns it), got ${stillFine.statusCode}`);
+    });
+
+    // The condition matters: with no github:* capability declared there is no
+    // second broker running, so refusing api.github.com would just be a host
+    // this product cannot reach.
+    await withPolicy(["network:host:api.github.com"], 58098, async () => {
+      console.log("\n--- ...and an app with NO github:* capability still reaches api.github.com the coarse way ---");
+      const allowed = await connectThroughProxy(58098, "api.github.com", 443);
+      console.log(`status: ${allowed.statusCode}`);
+      assert(allowed.statusCode === 200, `expected 200 when no dedicated broker is running for this app, got ${allowed.statusCode}`);
+    });
+
+    console.log("\nPASS — where a dedicated broker enforces a host, the coarse host capability no longer routes around it.");
   } finally {
     await rm(dataDir, { recursive: true, force: true });
   }
