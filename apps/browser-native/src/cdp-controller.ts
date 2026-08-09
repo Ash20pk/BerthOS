@@ -4,6 +4,8 @@ import { waitForDisplay } from "./vnc.js";
 let browserPromise: Promise<Browser> | undefined;
 let pagePromise: Promise<Page> | undefined;
 
+const LAUNCH_TIMEOUT_MS = 20_000;
+
 /**
  * Launches the system Chromium (via CHROME_BIN, not Playwright's bundled
  * download — the base image already ships chromium/chromium-chromedriver).
@@ -22,24 +24,47 @@ export function launchChromium(): Promise<Browser> {
   if (!browserPromise) {
     browserPromise = (async () => {
       await waitForDisplay();
-      return chromium.launch({
+      // Stage logging, because the failure this app actually has in CI is a
+      // *stall* rather than an error: chromium.launch() and page.goto() both
+      // carry their own 30s timeouts, so a caller that times out at 45s
+      // without either firing has learned nothing about which stage it was
+      // in. One line per stage costs nothing and turns that into evidence.
+      console.error("[browser-native] launching Chromium...");
+      const browser = await chromium.launch({
+        // Explicit, and shorter than Playwright's 30s default, because the
+        // failure this app actually has on CI is a *hang*: Chromium starts,
+        // spawns its zygote and renderer, goes silent after ~0.7s, and
+        // launch() never settles — Playwright's own default timeout does not
+        // fire either, which is why every caller sat out its full ceiling and
+        // reported nothing more useful than "timed out". A launch that cannot
+        // complete should say so, and say it before the caller gives up.
+        timeout: LAUNCH_TIMEOUT_MS,
         executablePath: process.env.CHROME_BIN,
         headless: process.env.BERTH_TEST_MODE === "1",
         proxy: { server: `http://127.0.0.1:${process.env.BERTH_EGRESS_BROKER_PORT ?? "8090"}` },
         args: [
-          // No --remote-debugging-address: Chromium's default is the
-          // container's loopback interface, and that is the point. An
-          // unauthenticated CDP endpoint is not a debugging convenience, it's
-          // arbitrary local-file read (Page.navigate("file:///etc/passwd"))
-          // and a total bypass of the egress broker
-          // (Browser.setDownloadBehavior, Fetch.continueRequest) — every
-          // capability this app's berth.yml carefully scopes. Binding it to
-          // 0.0.0.0 handed that to anything that could open a TCP connection
-          // to the container: the LAN (Docker published it on every host
-          // interface), any sibling container on the same Docker network, and
-          // any other app in this one. Playwright connects over loopback from
-          // inside the container, so nothing legitimate needed the wider bind.
-          "--remote-debugging-port=9222",
+          // No --remote-debugging-port, and no --remote-debugging-address
+          // either. Both are gone, and the port is what broke this app under
+          // real enforcement.
+          //
+          // Playwright drives Chromium over --remote-debugging-pipe (it adds
+          // that itself), so the TCP port was never its transport. What the
+          // port *did* do was make Chromium bind a listening socket — and
+          // this app's compiled policy is `networkPorts=8090, bindPorts=[]`,
+          // so Landlock denies every bind. On a kernel with Landlock active
+          // Chromium then wedged during startup and launch() never settled;
+          // on Docker Desktop, where Landlock is inactive, the bind succeeded
+          // and everything worked. That is why egress-broker-milestone.mjs
+          // passed locally and had never once passed in CI.
+          //
+          // Removing it is also the rest of the job REMEDIATION.md 1.7
+          // started. That entry took away the 0.0.0.0 bind because an
+          // unauthenticated CDP endpoint is arbitrary local-file read
+          // (Page.navigate("file:///etc/passwd")) and a total bypass of the
+          // egress broker (Browser.setDownloadBehavior) — every capability
+          // this app's berth.yml carefully scopes. It left the port bound to
+          // container loopback, still reachable by any other app in the same
+          // container. Now there is no CDP listener at all.
           // Chromium refuses its own sandbox as uid 0, and every process in a
           // Berth container is uid 0 today. A distinct per-app uid (REMEDIATION
           // 1.4/1.11) is necessary to lift this but is not sufficient, and an
@@ -74,14 +99,33 @@ export function launchChromium(): Promise<Browser> {
           "--no-first-run",
         ],
       });
+      console.error("[browser-native] Chromium launched");
+      return browser;
     })();
+    // A rejected launch must not be memoized: every later call would replay
+    // the same failure without ever retrying, so one bad start would take the
+    // app down for its whole lifetime.
+    browserPromise = browserPromise.catch((err) => {
+      browserPromise = undefined;
+      console.error(`[browser-native] Chromium failed to launch: ${(err as Error).message}`);
+      throw err;
+    });
   }
   return browserPromise;
 }
 
 export async function getPage(): Promise<Page> {
   if (!pagePromise) {
-    pagePromise = launchChromium().then((browser) => browser.newPage());
+    pagePromise = launchChromium().then(async (browser) => {
+      console.error("[browser-native] opening a page...");
+      const page = await browser.newPage();
+      console.error("[browser-native] page ready");
+      return page;
+    });
+    pagePromise = pagePromise.catch((err) => {
+      pagePromise = undefined;
+      throw err;
+    });
   }
   return pagePromise;
 }
