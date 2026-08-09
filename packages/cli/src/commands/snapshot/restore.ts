@@ -46,7 +46,6 @@ export default class SnapshotRestore extends Command {
     });
 
     this.log(`Restored container "${containerName}" started (id ${running.container.id.slice(0, 12)}).`);
-    this.log(`Note: BERTH_TOKEN_SECRET is regenerated fresh on this boot, by design — see docs/computer-snapshots-reference.md.`);
   }
 
   private async runRemote(instanceId: string, fleetName: string): Promise<void> {

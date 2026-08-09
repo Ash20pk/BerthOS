@@ -19,22 +19,17 @@ test("requestCapability grants declared capabilities and denies undeclared ones"
   );
 
   process.env.BERTH_MANIFEST_PATH = manifestPath;
-  process.env.BERTH_TOKEN_SECRET = "test-secret";
   // Fresh import per test run so the module-level manifest cache doesn't leak across assertions.
-  const { requestCapability, verifyCapabilityToken } = await import(`./capabilities.js?t=${Date.now()}`);
+  const { requestCapability } = await import(`./capabilities.js?t=${Date.now()}`);
 
   const granted = await requestCapability("test-app", "filesystem:write:/workspace");
   assert.equal(granted.granted, true);
-  assert.ok(granted.token);
-  assert.ok(granted.expiresAt);
 
   const grantedGlob = await requestCapability("test-app", "browser:navigate:api.github.com");
   assert.equal(grantedGlob.granted, true);
 
   const denied = await requestCapability("test-app", "filesystem:write:/etc");
   assert.equal(denied.granted, false);
-  assert.equal(denied.token, null);
-  assert.equal(denied.expiresAt, null);
 });
 
 /**
@@ -72,7 +67,6 @@ test("requestCapability sees a capability approved via the grants-server policy 
 
   process.env.BERTH_MANIFEST_PATH = manifestPath;
   process.env.BERTH_CAPABILITY_POLICY = policyPath;
-  process.env.BERTH_TOKEN_SECRET = "test-secret";
   const { requestCapability } = await import(`./capabilities.js?t=${Date.now()}`);
 
   const approvedViaGrant = await requestCapability("test-app", "github:read:repos");
@@ -91,7 +85,6 @@ test("requestCapability falls back to berth.yml when no policy file exists (e.g.
 
   process.env.BERTH_MANIFEST_PATH = manifestPath;
   process.env.BERTH_CAPABILITY_POLICY = join(dir, "does-not-exist.json");
-  process.env.BERTH_TOKEN_SECRET = "test-secret";
   const { requestCapability } = await import(`./capabilities.js?t=${Date.now()}`);
 
   const granted = await requestCapability("test-app", "filesystem:write:/workspace");
@@ -100,25 +93,25 @@ test("requestCapability falls back to berth.yml when no policy file exists (e.g.
   delete process.env.BERTH_CAPABILITY_POLICY;
 });
 
-test("verifyCapabilityToken accepts a real token and rejects tampering/expiry", async () => {
+test("a grant carries no token — REMEDIATION.md 1.10 removed them", async () => {
   const dir = await mkdtemp(join(tmpdir(), "berth-capabilities-test-"));
   const manifestPath = join(dir, "berth.yml");
   await writeFile(manifestPath, ["name: test-app", "version: 1.0.0", "capabilities:", "  - filesystem:write:/workspace"].join("\n"));
 
   process.env.BERTH_MANIFEST_PATH = manifestPath;
-  process.env.BERTH_TOKEN_SECRET = "test-secret";
-  const { requestCapability, verifyCapabilityToken } = await import(`./capabilities.js?t=${Date.now()}`);
+  const { requestCapability } = await import(`./capabilities.js?t=${Date.now()}`);
 
-  const grant = await requestCapability("test-app", "filesystem:write:/workspace");
-  assert.ok(grant.token && grant.issuedAt && grant.expiresAt);
+  // This test replaces one that asserted the HMAC verified correctly. It did
+  // — that was never the problem. The problem was that the signing secret sat
+  // in the environment of the app the token was meant to constrain, and that
+  // nothing anywhere called the verifier. Asserting the absence keeps the API
+  // from quietly growing a token back.
+  const grant = (await requestCapability("test-app", "filesystem:write:/workspace")) as Record<string, unknown>;
+  assert.equal(grant.granted, true);
+  for (const gone of ["token", "issuedAt", "expiresAt"]) {
+    assert.equal(gone in grant, false, `CapabilityGrant should no longer carry "${gone}"`);
+  }
 
-  assert.equal(verifyCapabilityToken("test-app", "filesystem:write:/workspace", grant.issuedAt, grant.expiresAt, grant.token), true);
-  assert.equal(verifyCapabilityToken("test-app", "filesystem:write:/other", grant.issuedAt, grant.expiresAt, grant.token), false);
-  assert.equal(verifyCapabilityToken("test-app", "filesystem:write:/workspace", grant.issuedAt, grant.expiresAt, "0".repeat(64)), false);
-
-  const alreadyExpired = new Date(Date.now() - 60_000).toISOString();
-  assert.equal(
-    verifyCapabilityToken("test-app", "filesystem:write:/workspace", grant.issuedAt, alreadyExpired, grant.token),
-    false,
-  );
+  const sdk = (await import(`./index.js?t=${Date.now()}`)) as Record<string, unknown>;
+  assert.equal("verifyCapabilityToken" in sdk, false, "@berth/sdk should no longer export verifyCapabilityToken");
 });

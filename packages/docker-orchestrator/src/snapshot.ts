@@ -74,11 +74,11 @@ export interface CreateSnapshotOptions {
  * sibling path, not nested under BERTH_CONTEXT_DATA, so it needs its own
  * archive rather than riding along with the context-data one.
  *
- * Deliberately NOT captured (see docs/computer-snapshots-reference.md):
- * BERTH_TOKEN_SECRET (regenerated fresh per boot by design — capturing it
- * would be a real security regression, not a missing feature), and any
+ * Deliberately NOT captured (see docs/computer-snapshots-reference.md): any
  * context-bus daemon in-flight subscriber state (process memory, not disk;
  * apps re-subscribe via on_agent_ready on any boot, restored or not).
+ * BERTH_TOKEN_SECRET used to be named here too; it no longer exists
+ * (REMEDIATION.md 1.10 removed capability tokens).
  */
 export async function createSnapshot(options: CreateSnapshotOptions): Promise<{ id: string; dir: string }> {
   const docker = options.docker ?? new Docker();
