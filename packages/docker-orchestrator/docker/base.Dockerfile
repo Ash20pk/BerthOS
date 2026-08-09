@@ -154,10 +154,12 @@ COPY docker/rpc-relay.js /usr/local/bin/berth-rpc-relay.js
 COPY docker/egress-broker.cjs /usr/local/bin/berth-egress-broker.js
 COPY docker/github-api-broker.cjs /usr/local/bin/berth-github-api-broker.js
 
-# 9222 (CDP) is deliberately not here: Chromium binds it to the container's
-# own loopback interface, and container.ts never publishes it. Documenting a
-# port as exposed that nothing should ever connect to from outside is how it
-# ends up published again by someone's `docker run -P`.
+# 9222 (CDP) is deliberately not here, and as of the egress-milestone fix
+# Chromium no longer binds it at all: --remote-debugging-port is gone, so
+# Playwright's --remote-debugging-pipe is the only control channel and there
+# is no CDP listener in the container. Documenting a port as exposed that
+# nothing should ever connect to is how it ends up published again by
+# someone's `docker run -P`.
 EXPOSE 5900 6080 7681
 
 ENTRYPOINT ["/sbin/tini", "--", "/entrypoint.sh"]
