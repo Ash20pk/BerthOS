@@ -4,6 +4,8 @@ import { waitForDisplay } from "./vnc.js";
 let browserPromise: Promise<Browser> | undefined;
 let pagePromise: Promise<Page> | undefined;
 
+const LAUNCH_TIMEOUT_MS = 20_000;
+
 /**
  * Launches the system Chromium (via CHROME_BIN, not Playwright's bundled
  * download — the base image already ships chromium/chromium-chromedriver).
@@ -29,6 +31,14 @@ export function launchChromium(): Promise<Browser> {
       // in. One line per stage costs nothing and turns that into evidence.
       console.error("[browser-native] launching Chromium...");
       const browser = await chromium.launch({
+        // Explicit, and shorter than Playwright's 30s default, because the
+        // failure this app actually has on CI is a *hang*: Chromium starts,
+        // spawns its zygote and renderer, goes silent after ~0.7s, and
+        // launch() never settles — Playwright's own default timeout does not
+        // fire either, which is why every caller sat out its full ceiling and
+        // reported nothing more useful than "timed out". A launch that cannot
+        // complete should say so, and say it before the caller gives up.
+        timeout: LAUNCH_TIMEOUT_MS,
         executablePath: process.env.CHROME_BIN,
         headless: process.env.BERTH_TEST_MODE === "1",
         proxy: { server: `http://127.0.0.1:${process.env.BERTH_EGRESS_BROKER_PORT ?? "8090"}` },
@@ -83,6 +93,14 @@ export function launchChromium(): Promise<Browser> {
       console.error("[browser-native] Chromium launched");
       return browser;
     })();
+    // A rejected launch must not be memoized: every later call would replay
+    // the same failure without ever retrying, so one bad start would take the
+    // app down for its whole lifetime.
+    browserPromise = browserPromise.catch((err) => {
+      browserPromise = undefined;
+      console.error(`[browser-native] Chromium failed to launch: ${(err as Error).message}`);
+      throw err;
+    });
   }
   return browserPromise;
 }
@@ -94,6 +112,10 @@ export async function getPage(): Promise<Page> {
       const page = await browser.newPage();
       console.error("[browser-native] page ready");
       return page;
+    });
+    pagePromise = pagePromise.catch((err) => {
+      pagePromise = undefined;
+      throw err;
     });
   }
   return pagePromise;

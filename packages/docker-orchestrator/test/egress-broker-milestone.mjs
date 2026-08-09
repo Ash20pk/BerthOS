@@ -308,10 +308,21 @@ async function runPartB() {
     // debugging port, so Landlock's port scoping is not in the path;
     // waitForDisplay() returns immediately under BERTH_TEST_MODE), so the next
     // step needs the log rather than another guess.
-    const navigateResult = await rpc.call({ id: "1", export: "navigate", input: { url: "https://example.com" } }).catch((err) => {
+    const navigateResult = await rpc.call({ id: "1", export: "navigate", input: { url: "https://example.com" } }).catch(async (err) => {
       console.error("\n--- browser-native container log (navigate never returned) ---");
       console.error(containerLog.text() || "(the container produced no output at all)");
       console.error("--- end browser-native container log ---\n");
+      // Which processes are actually alive decides between the two remaining
+      // explanations, and the log alone cannot: a Chromium that has exited
+      // means launch() is waiting on a corpse, while a Chromium still running
+      // alongside a live app process means the two are both up and simply
+      // never completed their handshake.
+      const ps = await execInContainer(running.container, ["sh", "-c", "ps -o pid,ppid,stat,args 2>/dev/null || ps aux"]).catch(
+        (psErr) => `(ps failed: ${psErr})`,
+      );
+      console.error("--- processes in the container at failure ---");
+      console.error(ps);
+      console.error("--- end processes ---\n");
       throw err;
     });
     console.log("navigate response:", navigateResult);
@@ -488,6 +499,20 @@ async function createRpcClient(container) {
       stream.end();
     },
   };
+}
+
+/** Same shape as capability-enforcement.mjs's — a one-shot exec whose stdout is returned as a string. */
+async function execInContainer(container, cmd) {
+  const exec = await container.exec({ Cmd: cmd, AttachStdout: true, AttachStderr: true });
+  const stream = await exec.start({ hijack: true });
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  docker.modem.demuxStream(stream, stdout, stderr);
+  let out = "";
+  stdout.on("data", (chunk) => (out += chunk.toString("utf-8")));
+  stderr.on("data", (chunk) => process.stderr.write(`[exec stderr] ${chunk}`));
+  await new Promise((resolve) => stream.on("end", resolve));
+  return out;
 }
 
 async function waitFor(predicate, timeoutMs, description) {
