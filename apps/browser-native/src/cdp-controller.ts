@@ -22,7 +22,13 @@ export function launchChromium(): Promise<Browser> {
   if (!browserPromise) {
     browserPromise = (async () => {
       await waitForDisplay();
-      return chromium.launch({
+      // Stage logging, because the failure this app actually has in CI is a
+      // *stall* rather than an error: chromium.launch() and page.goto() both
+      // carry their own 30s timeouts, so a caller that times out at 45s
+      // without either firing has learned nothing about which stage it was
+      // in. One line per stage costs nothing and turns that into evidence.
+      console.error("[browser-native] launching Chromium...");
+      const browser = await chromium.launch({
         executablePath: process.env.CHROME_BIN,
         headless: process.env.BERTH_TEST_MODE === "1",
         proxy: { server: `http://127.0.0.1:${process.env.BERTH_EGRESS_BROKER_PORT ?? "8090"}` },
@@ -74,6 +80,8 @@ export function launchChromium(): Promise<Browser> {
           "--no-first-run",
         ],
       });
+      console.error("[browser-native] Chromium launched");
+      return browser;
     })();
   }
   return browserPromise;
@@ -81,7 +89,12 @@ export function launchChromium(): Promise<Browser> {
 
 export async function getPage(): Promise<Page> {
   if (!pagePromise) {
-    pagePromise = launchChromium().then((browser) => browser.newPage());
+    pagePromise = launchChromium().then(async (browser) => {
+      console.error("[browser-native] opening a page...");
+      const page = await browser.newPage();
+      console.error("[browser-native] page ready");
+      return page;
+    });
   }
   return pagePromise;
 }

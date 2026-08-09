@@ -278,7 +278,18 @@ async function runPartB() {
     manifest,
     bindMount: { hostPath: REPO_ROOT, containerPath: "/workspace" },
     workingDir: "/workspace/apps/browser-native",
-    env: { BERTH_TEST_MODE: "1" },
+    // DEBUG=pw:browser* makes Playwright log Chromium's own stdout/stderr and
+    // its launch/protocol handshake to this container's stderr, which the log
+    // capture below picks up and the failure path dumps.
+    //
+    // This call has timed out on every recorded CI run since 2026-08-04 while
+    // passing reliably on Docker Desktop, and the log so far only proves
+    // Chromium *starts* (its startup traffic reaches the broker) and then
+    // nothing — no CONNECT for the target host, and no Playwright error
+    // inside our 45s, despite Playwright's own launch and navigation timeouts
+    // both being 30s. That pattern says the stall is between launch and
+    // goto(), which is exactly what this tracing shows and inspection cannot.
+    env: { BERTH_TEST_MODE: "1", DEBUG: "pw:browser*" },
     docker,
   });
 
