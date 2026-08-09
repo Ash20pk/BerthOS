@@ -513,9 +513,20 @@ async function main() {
   });
   const boundaryLog = await startLogCapture(boundaryRunning.container);
   try {
-    await waitFor(() => /"boundary-app-a" ready/.test(boundaryLog.text()), 20000, "boundary-app-a runtime ready");
-    await waitFor(() => /"boundary-app-b" ready/.test(boundaryLog.text()), 20000, "boundary-app-b runtime ready");
-    await waitFor(() => /"boundary-app-c" ready/.test(boundaryLog.text()), 20000, "boundary-app-c runtime ready");
+    // Dumped on timeout, because without it this failure says only "not ready"
+    // and the container's own account of why is thrown away — which is exactly
+    // how this spent a CI round undiagnosable. Same lesson as 1.15's
+    // !listening path.
+    try {
+      await waitFor(() => /"boundary-app-a" ready/.test(boundaryLog.text()), 20000, "boundary-app-a runtime ready");
+      await waitFor(() => /"boundary-app-b" ready/.test(boundaryLog.text()), 20000, "boundary-app-b runtime ready");
+      await waitFor(() => /"boundary-app-c" ready/.test(boundaryLog.text()), 20000, "boundary-app-c runtime ready");
+    } catch (err) {
+      console.error("\n--- boundary container log (none of the three apps reported ready) ---");
+      console.error(boundaryLog.text() || "(the container produced no output at all)");
+      console.error("--- end boundary container log ---\n");
+      throw err;
+    }
 
     // Seed a file only boundary-app-b is allowed to touch, via app B itself
     // (not a raw docker exec) so it's a real write through B's own ruleset.
