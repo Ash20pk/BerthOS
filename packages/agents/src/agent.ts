@@ -4,7 +4,7 @@ import { resolveLLMProvider, type LLMProviderConfig } from "./providers/auto.js"
 import { createSemanticFsCheckpointStore, type CheckpointedRun, type CheckpointStore } from "./checkpoint.js";
 import { createAgentTracer, type StepTracer } from "./tracing.js";
 import { createOtelStepTracer } from "./otel-tracer.js";
-import { applyHumanApprovalGate, type HumanApprovalGateOptions } from "./approval.js";
+import { applyHumanApprovalGate, HumanApprovalDeniedError, type HumanApprovalGateOptions } from "./approval.js";
 import {
   parseStructuredOutput,
   structuredOutputRepairPrompt,
@@ -13,7 +13,7 @@ import {
 } from "./structured-output.js";
 import { createSemanticFsRetriever, type Retriever } from "./retrieval.js";
 import { createMcpClientTools, type McpClientHandle, type McpClientToolsOptions } from "./mcp-client.js";
-import { runGuardrails, type Guardrail } from "./guardrails.js";
+import { runGuardrails, GuardrailTripwireError, type Guardrail } from "./guardrails.js";
 import type { GovernanceGate } from "./governance.js";
 import type { Session } from "./session.js";
 import { TruncatedResponseError, type AgentMessage, type LLMProvider, type Tool } from "./types.js";
@@ -85,6 +85,19 @@ export interface StructuredOutputRunOptions<T> {
    */
   responseSchema?: z.ZodType<T>;
   maxRepairAttempts?: number;
+}
+
+/**
+ * Errors that end the run rather than becoming a tool result the model can
+ * work around. Deliberately narrow, and deliberately excluding
+ * GovernanceDeniedError: a governance gate is a policy engine shaping which
+ * actions an agent may take, and an agent denied one action trying a
+ * different one is the intended behaviour. A *human* denying a specific
+ * request, or a guardrail tripping, is a stop — not a hint. See
+ * REMEDIATION 3.4, and governance.ts for why that gate is advisory by design.
+ */
+function isRefusal(err: unknown): boolean {
+  return err instanceof HumanApprovalDeniedError || err instanceof GuardrailTripwireError;
 }
 
 const DEFAULT_MAX_TURNS = 25;
@@ -297,15 +310,26 @@ export class Agent {
           try {
             result = await tool.invoke(call.input);
           } catch (err) {
-            // A failing tool call feeds an {error} result back to the model,
-            // same as the "no such tool" case above, instead of throwing out
-            // of the whole loop — the model gets a chance to retry with
-            // different input, try another tool, or surface the failure
-            // itself, rather than one bad call silently killing the run.
-            // formatToolInputError() reformats a Zod input-validation
-            // failure's default JSON-array message into the same compact
-            // per-field shape responseSchema repair prompts already use —
-            // any other error message passes through unchanged.
+            // A refusal is not a failure the model gets to route around.
+            // Feeding a human's "no" back as a tool result let the model
+            // re-issue the identical call and open a fresh grant request,
+            // which turns a denial into "ask again" and spams the human
+            // deciding it — documented as fail-closed, behaving as advisory.
+            // Same for a guardrail that tripped inside a nested
+            // agent-as-tool. See REMEDIATION 3.4.
+            if (isRefusal(err)) {
+              await checkpoint(turnCount, "error", turn.text);
+              throw err;
+            }
+            // Every other failing tool call still feeds an {error} result
+            // back to the model, same as the "no such tool" case above,
+            // instead of throwing out of the whole loop — the model gets a
+            // chance to retry with different input, try another tool, or
+            // surface the failure itself, rather than one bad call silently
+            // killing the run. formatToolInputError() reformats a Zod
+            // input-validation failure's default JSON-array message into the
+            // same compact per-field shape responseSchema repair prompts
+            // already use — any other error message passes through unchanged.
             error = formatToolInputError(err instanceof Error ? err.message : String(err));
             result = { error };
           }
