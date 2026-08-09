@@ -141,7 +141,7 @@ Worth stating explicitly because it is the same property as the documented `dock
 - The app directory itself, and `.berth/capability-policy.json` written into it by `generate-capability-policy.js` — the policy must be written before the uid switch, and must not be writable by the app afterward (`0640 root:<app>`), or an app can rewrite its own policy for the next boot.
 - No privileged ports are involved: ttyd, websockify, VNC, and both brokers all bind above 1024, so nothing needs `CAP_NET_BIND_SERVICE`.
 - `/root/.berth/vncpasswd` (`entrypoint.sh:44-48`) is already correctly out of app reach and stays root-owned.
-- `BERTH_TOKEN_SECRET` is still exported into each app's environment (`entrypoint.sh:186`). The uid split does not touch that; it remains [1.10](../REMEDIATION.md#110--capability-tokens-are-never-verified-anywhere).
+- ~~`BERTH_TOKEN_SECRET` is still exported into each app's environment.~~ **Resolved by [1.10](../REMEDIATION.md#110--capability-tokens-are-never-verified-anywhere), by deletion:** capability tokens are gone and `entrypoint.sh` generates no such secret. Exporting a signing key into the environment of the process it was meant to constrain is precisely why the tokens meant nothing — and the identity work in this document is what replaced them.
 
 ## Migration order
 

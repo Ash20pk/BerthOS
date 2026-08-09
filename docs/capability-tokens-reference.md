@@ -1,4 +1,6 @@
-# Capability Tokens Reference (Phase 3)
+# Capability Enforcement Reference (Phase 3)
+
+> **The filename is a fossil.** Capability *tokens* were removed in [REMEDIATION.md 1.10](../REMEDIATION.md#110--capability-tokens-are-never-verified-anywhere) — nothing verified them, and the signing secret lived in the environment of the app they were meant to constrain. The file keeps its name only because 20-odd docs and source comments link to it; the subject was always kernel enforcement plus the grants flow, both of which are real.
 
 Phase 3 is the one kernel-level bet here: turning `berth.yml`'s declared `capabilities:` into something the kernel actually enforces, not something an SDK politely checks before making a call on the agent's behalf.
 
@@ -16,7 +18,7 @@ Phase 3 is the one kernel-level bet here: turning `berth.yml`'s declared `capabi
 
 Landlock restrictions are inherited across `execve()` and can never be lifted — once applied, the resident app's runtime *and every process it spawns* are bound by them, enforced by the kernel at the syscall boundary. This is the actual differentiating claim here: a compromised or misbehaving resident app can't write outside its granted paths because the kernel refuses the syscall, not because some SDK code declined to make the call.
 
-**`requestCapability()`** (`@berth/sdk`) checks whether a requested capability matches something declared in `berth.yml` (via `@berth/manifest-schema`'s `matchesCapability()`) and reports `{ granted, token, issuedAt, expiresAt }` honestly — it doesn't *decide* anything the kernel hasn't already decided at process boot. The token is a real HMAC-SHA256 signature (keyed by `BERTH_TOKEN_SECRET`, generated once per container boot in `entrypoint.sh`) over `appName:capability:issuedAt:expiresAt`, with a 5-minute expiry — `verifyCapabilityToken()` recomputes and checks it. See "What's deliberately deferred" below for what this doesn't cover yet.
+**`requestCapability()`** (`@berth/sdk`) checks whether a requested capability matches something declared in `berth.yml` (via `@berth/manifest-schema`'s `matchesCapability()`) and reports `{ granted }`, plus `pending` when the denial was submitted to a grants server for human approval. It reports the decision the kernel already made at boot; it does not grant anything itself, and it no longer returns a token (1.10).
 
 ## Read scoping (opt-in) and network scoping (deny-by-default)
 
