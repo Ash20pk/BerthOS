@@ -69,7 +69,7 @@ README line 88 currently reads: *"a prompt-injected 'ignore previous instruction
 | 1.10 | Capability tokens are never verified anywhere | High | 🟢 | 1d |
 | 1.11 | Signals unrestricted — any app can kill the governor | Medium | 🟢 | 1d |
 | 1.12 | `agent-init` mkdir's arbitrary manifest paths as root | Medium | 🟢 | 4h |
-| 1.13 | Governance gate bypasses (MCP, agent-as-tool, rpc, mcp, http-rpc) | High | 🟡 | 2d |
+| 1.13 | Governance gate bypasses (MCP, agent-as-tool, rpc, mcp, http-rpc) | High | 🟢 | 2d |
 | 1.14 | semantic-fs / context-bus: unbounded frame allocation + spoofable identity | Medium | 🟢 | 1d |
 | 1.15 | `apps/terminal` is non-functional on any Landlock-enforcing kernel | High | 🟢 | 2d |
 
@@ -510,7 +510,23 @@ The prefixes carry information a governor can act on without recognising every n
 
 **This is a behaviour change for anyone already running a governor**, stated here rather than discovered: a governance app that denies apps it does not recognise will now deny MCP and delegation calls that previously ran ungated. That is the bypass closing, but combined with 1.11's fail-closed default it is worth checking before upgrading. Called out in `docs/governance-reference.md` too.
 
-**Still open, and now the whole of what this entry tracks:** `berth rpc`, `berth mcp`, the HTTP RPC bridge, the TCP RPC listener, and direct `invokeAppExport()`. These are separate transports into the same container, and no governance app sits on their path — closing them means either routing them through a Computer or giving the governor a presence at the SDK's own RPC dispatch, which is a larger design question than moving a wrapper. 1.4's per-caller sockets now give that dispatch a caller identity to hang per-export policy off, which is the natural foundation for it.
+**🟢 The transports are closed too, at the SDK's own RPC dispatch.** Of the two options this entry named, the second is the one that works: routing the host-side entry points through a Computer would have covered `berth rpc`, `berth mcp` and the HTTP bridge while leaving a sibling's direct socket call and the TCP listener open — which is the half an app would actually reach for. They all converge on `invokeExport()` (`packages/sdk/src/rpc.ts`), so that is where the check went.
+
+**It needs nothing from @berth/agents.** A governor is a *resident app* — `governs: true`, exporting `evaluate_action`, both already enforced by the manifest schema — so asking it for a verdict is an ordinary app-to-app RPC over the peer socket `entrypoint.sh` provisions. The SDK gate speaks the same line-JSON as everything else it serves and imports nothing from the agents package.
+
+**The caller is a fact, not a claim.** A sibling is identified by which peer socket accepted the connection — 1.4's mechanism, reused rather than reinvented — and the three non-sibling channels name themselves by which listener took the connection: `host` (the relay, i.e. `berth rpc`/`berth mcp`), `http` (the bridge), `tcp` (the cross-container listener). A request cannot set any of them. Governors that don't declare `caller` in their input schema are unaffected, since a Zod object strips unknown keys.
+
+**The route to the governor is provided, not requested.** Deliberately unlike `app:invoke:<name>`: a gate an app can decline to wire up is not a gate, and under fail-closed an app that omitted the capability would simply be unable to serve anything. `entrypoint.sh` creates the peers directory for every governed app; the visible opt-out stays `governance: { exempt: true }` in a manifest.
+
+**Fail-closed, and the blast radius is bigger here — stated rather than discovered.** At the Computer gate a down governor fails an agent's *tool calls*. At this one it fails *every app-to-app RPC in the container*. What bounds it is that the gate only exists when a governor is loaded at all: no `BERTH_GOVERNANCE_APP`, no check, and that is every single-app container. There is deliberately no fail-open switch at this layer — the per-app `exempt` declaration is the lever, because it is visible in the manifest rather than a container-wide flag.
+
+**One cost worth naming: an agent tool call now passes both gates**, so a governor sees two `evaluate_action` calls for it. Removing either is worse — the Computer gate is what produces the typed `GovernanceDeniedError` the agent loop shows the LLM, and exempting the relay at the SDK gate would reopen `berth rpc`. A caller-supplied "already evaluated" marker would have to be trusted from the caller, which is the one thing this gate does not do. Documented in `docs/governance-reference.md` rather than smoothed over.
+
+**Verification.** Eight unit tests in `packages/sdk/src/governance-gate.test.ts`, against a real Unix socket speaking the real framing (a stub governor, not a stubbed transport): a denial through all four caller shapes, an allowed call returning the handler's real result, the exact payload including `caller`, an unreachable governor denying, a governor whose answer carries no verdict treated as unavailable rather than consent, the governor's own exports never gated (which would not terminate), `exempt` costing no round trip, and no governor loaded costing nothing.
+
+Then the real thing: `governance-gate-milestone.mjs` drives the same fixture policy's denied export over the relay and over the HTTP bridge in a real container, each with its own allowed-call control, and reads the filesystem back afterwards — a denial that still wrote would be a denial in the logs only. **Confirmed against the pre-gate SDK, where the relay call returns `{id}` with no error:** the write ran, which is the finding stated exactly — the action the Computer had just refused succeeded over `berth rpc`.
+
+**What remains outside this, and always did:** root on the host. `berth rpc` reaches the container as root via `docker exec`, so for that channel the gate is policy and audit rather than a boundary; for the peer socket, the TCP listener and the HTTP bridge — callers that are not root — it is a real one. And the governor is still a resident app alongside daemons that run outside every Landlock domain (threat model B4).
 
 **Verification.** Seven unit tests in `packages/agents/src/governance.test.ts`: a denial through the raw dispatch (not merely through a tool), the governor's own exports bypassing without recursion, `governance.exempt` honoured at dispatch level, the exact `{app, export, input}` payload for both synthetic identities, an unreachable governor blocking an MCP tool under the fail-closed default, and the no-governor case returning `undefined` so ungoverned Computers pay nothing.
 
