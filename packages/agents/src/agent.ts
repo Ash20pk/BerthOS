@@ -16,7 +16,7 @@ import { createMcpClientTools, type McpClientHandle, type McpClientToolsOptions 
 import { runGuardrails, type Guardrail } from "./guardrails.js";
 import type { GovernanceGate } from "./governance.js";
 import type { Session } from "./session.js";
-import type { AgentMessage, LLMProvider, Tool } from "./types.js";
+import { TruncatedResponseError, type AgentMessage, type LLMProvider, type Tool } from "./types.js";
 
 export interface AgentOptions {
   name?: string;
@@ -236,6 +236,17 @@ export class Agent {
         throw err;
       }
       await trace({ turn: turnCount, kind: "llm-turn", durationMs: Date.now() - turnStart, usage: turn.usage });
+
+      // Checked before anything in the turn is used, including its tool
+      // calls: a response cut off at the token cap can end mid-arguments, so
+      // a tool call recovered from one may carry truncated JSON. Only acts
+      // on a reason a provider actually reported — an absent stopReason means
+      // "unknown", and treating that as suspect would break every
+      // OpenAI-compatible server that omits the field. See REMEDIATION 3.2.
+      if (turn.stopReason === "length" || turn.stopReason === "content_filter" || turn.stopReason === "refusal") {
+        await checkpoint(turnCount, "error", turn.text);
+        throw new TruncatedResponseError(this.name, turn.stopReason, turn.text ?? "");
+      }
 
       if (turn.toolCalls.length === 0) {
         const text = turn.text ?? "";

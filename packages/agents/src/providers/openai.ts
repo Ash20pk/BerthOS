@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
-import type { AgentMessage, LLMProvider, LLMTurn, Tool } from "../types.js";
+import type { AgentMessage, LLMProvider, LLMStopReason, LLMTurn, Tool } from "../types.js";
 
 export interface OpenAIProviderOptions {
   apiKey?: string;
@@ -17,6 +17,14 @@ export interface OpenAIProviderOptions {
    * createFallbackProvider().
    */
   maxRetries?: number;
+  /**
+   * Cap on tokens generated per turn. Unset means no cap is sent and the
+   * model's own default applies — unlike Anthropic's API, which requires one
+   * (see anthropic.ts's DEFAULT_MAX_TOKENS). Exposed because REMEDIATION 3.2
+   * made a length cutoff visible as a TruncatedResponseError, and raising the
+   * cap is the fix a caller hitting one needs to be able to reach for.
+   */
+  maxTokens?: number;
 }
 
 const DEFAULT_MODEL = "gpt-4o";
@@ -56,7 +64,57 @@ export function createOpenAIProvider(options: OpenAIProviderOptions = {}): LLMPr
     baseURL: options.baseURL,
     maxRetries: options.maxRetries,
   });
-  return createOpenAICompatibleProvider(client, options.model ?? DEFAULT_MODEL, "openai");
+  return createOpenAICompatibleProvider(client, options.model ?? DEFAULT_MODEL, "openai", options.maxTokens);
+}
+
+/**
+ * The OpenAI API rejects `tools: []` outright — the key has to be absent, not
+ * empty. That matters beyond tidiness: createLlmGuardrail() and llmJudge()
+ * both call chat() with no tools at all, so every LLM-judge feature was
+ * broken against OpenAI, Azure, Bedrock, and Ollama (all four share the
+ * implementation below). Anthropic tolerates the empty array and google.ts
+ * already guarded it, which is why this went unnoticed. Spread into the
+ * request so the key simply doesn't exist rather than being set to
+ * undefined. See REMEDIATION 3.1.
+ */
+function toolsParam(tools: Tool[]) {
+  if (tools.length === 0) return {};
+  return {
+    tools: tools.map((t) => ({
+      type: "function" as const,
+      function: { name: t.name, description: t.description, parameters: t.inputSchema as Record<string, unknown> },
+    })),
+  };
+}
+
+/**
+ * `finish_reason` is the field that says a response was cut off at the token
+ * cap rather than actually finished — unread until REMEDIATION 3.2, which is
+ * why a truncated fragment came back as a final answer. `refusal` is a
+ * separate field on the message, not a finish_reason, so it's checked by the
+ * caller and passed in here.
+ *
+ * Local models behind an OpenAI-compatible endpoint frequently omit
+ * finish_reason entirely; that maps to undefined ("unknown"), never to "end".
+ */
+function toStopReason(finishReason: string | null | undefined, refusal?: string | null): LLMStopReason | undefined {
+  if (refusal) return "refusal";
+  switch (finishReason) {
+    case "stop":
+      return "end";
+    case "tool_calls":
+    case "function_call":
+      return "tool_calls";
+    case "length":
+      return "length";
+    case "content_filter":
+      return "content_filter";
+    case null:
+    case undefined:
+      return undefined;
+    default:
+      return "other";
+  }
 }
 
 /**
@@ -71,7 +129,10 @@ export function createOpenAIProvider(options: OpenAIProviderOptions = {}): LLMPr
  * "internal helper, not public API" posture `crew.ts`'s `checkpointKeyFor()`
  * already has.
  */
-export function createOpenAICompatibleProvider(client: OpenAI, model: string, name: string): LLMProvider {
+export function createOpenAICompatibleProvider(client: OpenAI, model: string, name: string, maxTokens?: number): LLMProvider {
+  // Absent rather than undefined, same reasoning as toolsParam(): some
+  // OpenAI-compatible servers validate the key's presence, not its value.
+  const maxTokensParam = maxTokens === undefined ? {} : { max_tokens: maxTokens };
   return {
     name,
     async chat({ system, messages, tools }: { system?: string; messages: AgentMessage[]; tools: Tool[] }): Promise<LLMTurn> {
@@ -82,10 +143,8 @@ export function createOpenAICompatibleProvider(client: OpenAI, model: string, na
       const response = await client.chat.completions.create({
         model,
         messages: chatMessages,
-        tools: tools.map((t) => ({
-          type: "function" as const,
-          function: { name: t.name, description: t.description, parameters: t.inputSchema as Record<string, unknown> },
-        })),
+        ...toolsParam(tools),
+        ...maxTokensParam,
       });
 
       const choice = response.choices[0];
@@ -104,6 +163,7 @@ export function createOpenAICompatibleProvider(client: OpenAI, model: string, na
         text: message?.content ?? undefined,
         toolCalls,
         stop: toolCalls.length === 0,
+        stopReason: toStopReason(choice?.finish_reason, message?.refusal),
         usage: response.usage
           ? { inputTokens: response.usage.prompt_tokens, outputTokens: response.usage.completion_tokens }
           : undefined,
@@ -121,10 +181,8 @@ export function createOpenAICompatibleProvider(client: OpenAI, model: string, na
       const stream = await client.chat.completions.create({
         model,
         messages: chatMessages,
-        tools: tools.map((t) => ({
-          type: "function" as const,
-          function: { name: t.name, description: t.description, parameters: t.inputSchema as Record<string, unknown> },
-        })),
+        ...toolsParam(tools),
+        ...maxTokensParam,
         stream: true,
         // Without this, a streamed response never carries a usage field at
         // all (unlike the non-streamed chat() call, where it's always
@@ -139,9 +197,17 @@ export function createOpenAICompatibleProvider(client: OpenAI, model: string, na
       // accumulate each field until the stream ends.
       const toolCallsByIndex = new Map<number, { id?: string; name?: string; arguments: string }>();
       let usage: LLMTurn["usage"];
+      // Only the chunk that carries a terminal finish_reason has one; every
+      // earlier chunk's is null. Keep the last non-null rather than reading
+      // the final chunk, because with include_usage the final chunk is a
+      // usage-only frame whose choices array is empty.
+      let finishReason: string | null | undefined;
+      let refusal: string | null | undefined;
 
       for await (const chunk of stream) {
         const delta = chunk.choices[0]?.delta;
+        if (chunk.choices[0]?.finish_reason) finishReason = chunk.choices[0].finish_reason;
+        if (delta?.refusal) refusal = (refusal ?? "") + delta.refusal;
         if (delta?.content) {
           text += delta.content;
           onText(delta.content);
@@ -168,6 +234,7 @@ export function createOpenAICompatibleProvider(client: OpenAI, model: string, na
         text: text || undefined,
         toolCalls,
         stop: toolCalls.length === 0,
+        stopReason: toStopReason(finishReason, refusal),
         usage,
       };
     },
