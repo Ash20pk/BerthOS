@@ -1,0 +1,26 @@
+name: boundary-app-c
+version: 0.1.0
+description: "capability-enforcement.mjs's cross-app boundary fixture — the authorized counterpart to boundary-app-a: it declares app:invoke:boundary-app-b, so its connect to that app's RPC socket must succeed where boundary-app-a's is refused."
+
+capabilities:
+  - filesystem:read:/workspace/packages/docker-orchestrator/test/fixtures/boundary-app-c
+  - filesystem:write:/workspace/packages/docker-orchestrator/test/fixtures/boundary-app-c
+  # The grant under test. Without it, connect(2) to boundary-app-b's socket is
+  # refused by the kernel — see REMEDIATION.md 1.4.
+  - app:invoke:boundary-app-b
+  # Names an app that isn't in this container: must warn at boot and be
+  # ignored, never fail the boot.
+  - app:invoke:no-such-app
+
+exports:
+  - name: write_file
+    input: { path: string, content: string }
+  - name: read_file
+    input: { path: string }
+    output: { content: string }
+  - name: probe_unix_socket
+    input: { path: string }
+    output: { connected: boolean, code: string }
+
+on_install: []
+on_agent_ready: []

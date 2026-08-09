@@ -38,6 +38,9 @@ const REPO_ROOT = join(__dirname, "..", "..", "..");
 const FILESYSTEM_APP_DIR = join(REPO_ROOT, "apps", "filesystem");
 const BOUNDARY_APP_A_DIR = join(__dirname, "fixtures", "boundary-app-a");
 const BOUNDARY_APP_B_DIR = join(__dirname, "fixtures", "boundary-app-b");
+// The authorized counterpart to app A: same source, but its berth.yml declares
+// app:invoke:boundary-app-b (REMEDIATION.md 1.4).
+const BOUNDARY_APP_C_DIR = join(__dirname, "fixtures", "boundary-app-c");
 
 const docker = new Docker();
 
@@ -450,15 +453,18 @@ async function main() {
   // B's directory just because they share a container and a bind mount.
   const boundaryAManifest = await loadManifest(join(BOUNDARY_APP_A_DIR, "berth.yml"));
   const boundaryBManifest = await loadManifest(join(BOUNDARY_APP_B_DIR, "berth.yml"));
+  const boundaryCManifest = await loadManifest(join(BOUNDARY_APP_C_DIR, "berth.yml"));
 
   console.log("Building boundary-app-a's dev image (shared by both apps in this container)...");
   await buildImage({ appDir: BOUNDARY_APP_A_DIR, tag: "berth/boundary-app-a:dev", target: "dev", docker });
 
   const BOUNDARY_APP_A_CONTAINER_DIR = "/workspace/packages/docker-orchestrator/test/fixtures/boundary-app-a";
   const BOUNDARY_APP_B_CONTAINER_DIR = "/workspace/packages/docker-orchestrator/test/fixtures/boundary-app-b";
+  const BOUNDARY_APP_C_CONTAINER_DIR = "/workspace/packages/docker-orchestrator/test/fixtures/boundary-app-c";
   const boundaryApps = [
     { name: "boundary-app-a", workingDir: BOUNDARY_APP_A_CONTAINER_DIR, manifest: boundaryAManifest },
     { name: "boundary-app-b", workingDir: BOUNDARY_APP_B_CONTAINER_DIR, manifest: boundaryBManifest },
+    { name: "boundary-app-c", workingDir: BOUNDARY_APP_C_CONTAINER_DIR, manifest: boundaryCManifest },
   ];
   const boundaryRunning = await startContainer({
     image: "berth/boundary-app-a:dev",
@@ -473,6 +479,7 @@ async function main() {
   try {
     await waitFor(() => /"boundary-app-a" ready/.test(boundaryLog.text()), 20000, "boundary-app-a runtime ready");
     await waitFor(() => /"boundary-app-b" ready/.test(boundaryLog.text()), 20000, "boundary-app-b runtime ready");
+    await waitFor(() => /"boundary-app-c" ready/.test(boundaryLog.text()), 20000, "boundary-app-c runtime ready");
 
     // Seed a file only boundary-app-b is allowed to touch, via app B itself
     // (not a raw docker exec) so it's a real write through B's own ruleset.
@@ -573,7 +580,45 @@ async function main() {
       `something is still listening at the pre-1.4 world-writable socket path: ${JSON.stringify(oldPathSocket)}`,
     );
 
-    console.log("\nPASS — app A can reach its own RPC socket and not app B's (REMEDIATION.md 1.4).");
+    // And the authorized direction: app C is identical to app A except that its
+    // berth.yml declares app:invoke:boundary-app-b. Without this half, the
+    // denial above would be satisfied just as well by a boundary nothing can
+    // cross — including @berth/agents' agent-as-tool path, which is the reason
+    // an opt-in exists at all.
+    console.log("\n--- App C, which DECLARED app:invoke:boundary-app-b, connecting to the same socket ---");
+    const grantedSocket = await invokeAppExport(boundaryRunning.container, "boundary-app-c", {
+      id: "7",
+      export: "probe_unix_socket",
+      input: { path: "/run/berth/boundary-app-b/rpc.sock" },
+    });
+    console.log("app C -> app B's socket:", grantedSocket);
+    assert(
+      grantedSocket.result?.connected === true,
+      `boundary-app-c declares app:invoke:boundary-app-b but was still refused (${JSON.stringify(grantedSocket)}) — the grant is not being wired into group membership at boot`,
+    );
+
+    // Declaring the capability must not be transitive: C may reach B, which
+    // says nothing about C reaching A.
+    const ungrantedDirection = await invokeAppExport(boundaryRunning.container, "boundary-app-c", {
+      id: "8",
+      export: "probe_unix_socket",
+      input: { path: "/run/berth/boundary-app-a/rpc.sock" },
+    });
+    console.log("app C -> app A's socket:", ungrantedDirection);
+    assert(
+      ungrantedDirection.result?.connected === false,
+      `boundary-app-c reached boundary-app-a, which it never declared app:invoke: on: ${JSON.stringify(ungrantedDirection)}`,
+    );
+
+    // The boot must survive a grant naming an app that isn't here — C declares
+    // app:invoke:no-such-app, and every assertion above depends on C having
+    // started at all.
+    assert(
+      /no app named no-such-app is in this container/.test(boundaryLog.text()),
+      "expected a warning for boundary-app-c's app:invoke:no-such-app; without one, the unknown-target path is untested",
+    );
+
+    console.log("\nPASS — an app reaches a sibling's RPC socket only where app:invoke: declared it (REMEDIATION.md 1.4).");
   } finally {
     await boundaryLog.stop();
     await stopContainer(boundaryRunning.container).catch(() => {});
