@@ -64,7 +64,7 @@ README line 88 currently reads: *"a prompt-injected 'ignore previous instruction
 | 1.5 | `on_install` is unsandboxed root shell run before enforcement | Critical | 🟢 | 2d |
 | 1.6 | `berth dev` bind-mounts the whole host repo read-write | Critical | 🟢 | 1d |
 | 1.7 | ttyd / VNC / CDP unauthenticated on all host interfaces | High | 🟢 | 1d |
-| 1.8 | Egress broker: no port check, `*` → SSRF, DNS not pinned | High | 🔴 | 2d |
+| 1.8 | Egress broker: no port check, `*` → SSRF, DNS not pinned | High | 🟢 | 2d |
 | 1.9 | GitHub broker: `read:repos` also grants `/user/emails` etc. | High | 🔴 | 1d |
 | 1.10 | Capability tokens are never verified anywhere | High | 🟢 | 1d |
 | 1.11 | Signals unrestricted — any app can kill the governor | Medium | 🟢 | 1d |
@@ -302,6 +302,24 @@ Worth crediting: there is **no check-vs-dial divergence and no SNI-spoofing surf
 **Fix.** Add a port allowlist derived from the manifest. Escape `?` in `globToRegExp`. Add a deny list for RFC1918, link-local, loopback, and `host.docker.internal` that applies even under `*`. Resolve the hostname once, validate the resolved IP, and dial that IP with the validated `Host`/SNI (pinned resolution) rather than re-resolving. Strip hop-by-hop headers and normalize the `Host` header on the plain-HTTP path (`:141`).
 
 **Verify.** `egress-broker-milestone.mjs` gains cases for a disallowed port, an IMDS address under `*`, and a DNS-rebinding target.
+
+**Closed.** Five changes, and one of them changes what a capability means.
+
+**Ports are scoped, and that needed a decision.** The `port` was parsed and handed to `net.connect` without being compared to anything. The manifest has no port list to derive an allowlist from — `network:connect:<port>` is a *Landlock* grant about which ports the app itself may reach, and `browser-native` declares only `8090`, the broker's own port, so deriving from it would have denied 443 and broken every browser app. So the port comes from the host scope instead: a capability naming no port covers **80 and 443**, and a scope may name its own (`network:host:internal-db.corp:5432`, or `:*` for any). `CONNECT internal-db.corp:5432` under `browser:navigate:*` is now refused; the same app can still reach that port by saying so.
+
+**`?` was an unescaped regex quantifier.** `a?.example.com` meant "optional a", so it matched `.example.com` and anything ending in it.
+
+**Internal addresses are refused under every pattern, `*` included.** Loopback, RFC1918, link-local (169.254.169.254 is cloud IMDS and hands instance credentials to anything that can make a request), CGNAT, and multicast. `browser:navigate:*` reads as "any site on the internet"; nobody declaring it means "and the metadata service, and the Docker bridge, and the host". `host.docker.internal` is covered by the address check rather than by name, because `container.ts` wires it to `host-gateway` and the gateway is what matters.
+
+**DNS is pinned.** The check was on the name and `net.connect` resolved it again, so a record whose answer changed between the two — rebinding — turned an allowed name into an internal address. One resolution, validated, dialled.
+
+**Hop-by-hop headers and `Host` on the plain-HTTP path.** `proxy-authorization` is the broker's own credential to an upstream proxy and must never be supplied by a request; `Host` is normalized because the request line and the `Host` header can disagree, and many upstreams route by the latter while this broker checked the former.
+
+**Two bugs found by running it, not by reading it.** `dns.lookup()` goes through `getaddrinfo`, which on Alpine/musl races A and AAAA and stalls — the same bug the `family: 4` comments elsewhere in this file already exist to dodge, and which passing `family: 4` to `lookup()` does *not* dodge. In a real container every CONNECT logged nothing at all, because the await never settled and neither branch was reached; `resolve4()` (c-ares) fixes it. Separately, a throw inside either handler was an unhandled rejection, and Node exits on those — so one bad request took egress down for the whole container and surfaced to the browser as `ERR_PROXY_CONNECTION_FAILED`, which reads as a network fault rather than a refusal. Handler failures now deny that one request and leave the broker serving.
+
+**Verification — `egress-broker-milestone.mjs` Part A3**, against the broker script directly, since every one of these is decided before a byte leaves it. Undeclared port refused, default ports still working, an explicitly declared port permitted (asserted on the decision, not a completed tunnel — nothing listens on `example.com:5432`, so an allowed CONNECT legitimately fails to establish). IMDS, loopback, RFC1918 and the Docker bridge all refused under `*`. `localtest.me`, a real public record pointing at `127.0.0.1`, covers the rebinding shape where the name passes the glob and the resolved address does not. A real public host still tunnels, as the positive control — every denial above would also "pass" against a broker that had simply stopped working.
+
+**Confirmed against the old broker, and the assertion is written so the control names the vulnerability rather than timing out on it:** it reports that port 5432 was *allowed*, which is the bug. The naive version of that test just hung, because the old broker dials 5432 and nothing answers.
 
 ### 1.9 — GitHub broker: `read:repos` also grants `/user/emails`
 
