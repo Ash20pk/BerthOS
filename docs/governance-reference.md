@@ -8,7 +8,19 @@ The instinct is "gate this at the kernel." Landlock (Berth's real kernel enforce
 
 The layer that actually sees every action an agent takes, regardless of which app owns it, is `Computer` (`packages/agents/src/computer.ts`): the one place that turns every loaded app's exports into `Tool`s that the `Agent`'s tool-use loop calls through (see [agents reference](./agents-reference.md)). Gating there is the closest honest equivalent to "every app the agent uses goes through governance," and it stays pure TypeScript — no kernel, Rust, or Docker changes.
 
-**Scope boundary, stated plainly:** this only gates tool calls made through `Computer`/`Agent` — an LLM-driven agent's tool use. It does not gate `berth rpc`, direct multi-app `invokeAppExport()` calls, or anything at the kernel/Landlock level.
+**Scope boundary, stated plainly:** this gates what goes through `Computer`/`Agent` — an LLM-driven agent's tool use. It does not gate `berth rpc`, `berth mcp`, the HTTP RPC bridge, direct multi-app `invokeAppExport()` calls, or anything at the kernel/Landlock level. Those are separate transports into the same container, and a governance app is not on their path.
+
+**What is gated, as of REMEDIATION.md 1.13.** The gate used to be applied by mapping over one `Tool[]`, so it covered exactly the tools in that array at that moment — anything assembled afterwards escaped it. It now sits on the Computer's *dispatch*, plus an explicit wrapper for the two paths that never touch that dispatch:
+
+| Path | Announced to the governor as |
+|---|---|
+| A resident app's export, however it is reached through this Computer (`computer.tools`, `computer.call`, an Agent's tool list, the retriever) | `{ app: "<app>", export: "<export>" }` |
+| An MCP server's tool | `{ app: "mcp:<server>", export: "<tool>" }` |
+| A delegated agent (`agent.asTool()`, which is what `Crew.withManager()` hands a manager) | `{ app: "agent:<name>", export: "invoke" }` |
+
+The `mcp:` and `agent:` prefixes are deliberate: a governance app can tell at a glance that the action leaves the sandbox (MCP) or hands work to another agent, rather than having to recognise every name. **If your governor denies apps it doesn't recognise, it will now deny these** — that is the point of closing the bypass, but it is a behaviour change for an existing governor, and combined with the fail-closed default it is worth checking before upgrading.
+
+Delegation is gated as one decision, not one per tool the delegate owns: the governor decides whether this agent may be handed work at all. The delegate's own tool calls are then gated normally as it makes them.
 
 ## Becoming the governance authority
 

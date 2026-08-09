@@ -69,7 +69,7 @@ README line 88 currently reads: *"a prompt-injected 'ignore previous instruction
 | 1.10 | Capability tokens are never verified anywhere | High | 🔴 | 1d |
 | 1.11 | Signals unrestricted — any app can kill the governor | Medium | 🟢 | 1d |
 | 1.12 | `agent-init` mkdir's arbitrary manifest paths as root | Medium | 🟢 | 4h |
-| 1.13 | Governance gate bypasses (MCP, agent-as-tool, rpc, mcp, http-rpc) | High | 🔴 | 2d |
+| 1.13 | Governance gate bypasses (MCP, agent-as-tool, rpc, mcp, http-rpc) | High | 🟡 | 2d |
 | 1.14 | semantic-fs / context-bus: unbounded frame allocation + spoofable identity | Medium | 🟢 | 1d |
 | 1.15 | `apps/terminal` is non-functional on any Landlock-enforcing kernel | High | 🟢 | 2d |
 
@@ -436,6 +436,27 @@ The skip is gone from `published-port-security-milestone.mjs`, per the verify cr
 **Fix.** Move the gate from the tool array to the dispatch function so every path through `invokeExport` is covered, rather than wrapping one particular list. Route MCP tools and agent-as-tool through it explicitly. Default `mode` to `fail-closed`.
 
 **Verify.** A test per row of that table asserting a denied action stays denied through each transport.
+
+**🟡 The in-process bypasses are closed; the separate transports are not.** Splitting the entry this way is deliberate — the two halves have different fixes, and calling the whole thing done would overstate it.
+
+**The gate moved off the tool array and onto the dispatch.** That was the actual defect: `applyGovernanceGate` mapped over one `Tool[]`, so it protected exactly the tools in that array at that moment, and anything assembled afterwards was never gated — not because those paths were considered and allowed, but because they weren't in the list. `resolveGovernanceGate().gateDispatch()` now wraps the dispatch function itself, and `computerToolsFor()` builds tools *from the gated dispatch*, so a tool that skipped the gate can no longer exist on a governed Computer. `computer.call()` and the retriever come along for free, because they were always routed through that same dispatch.
+
+Two consequences worth naming. The governor's own exports bypass the gate explicitly, because routing `evaluate_action` through it would recurse forever — previously that fell out of the tool-name lookup by accident, and now it is a stated rule with a test. And the old owner map keyed on `toolNameFor()`, so gating depended on a tool's *name* matching what the map expected; at dispatch level the app and export names are the arguments, and no name matching is involved.
+
+**MCP and agent-as-tool are gated under synthetic app names**, since neither has a resident app behind it:
+
+| Path | Announced as |
+|---|---|
+| MCP server tool | `{ app: "mcp:<server>", export: "<tool>" }` |
+| Delegated agent (`asTool()`, i.e. what `Crew.withManager()` hands a manager) | `{ app: "agent:<name>", export: "invoke" }` |
+
+The prefixes carry information a governor can act on without recognising every name: `mcp:` means the action leaves the sandbox entirely, `agent:` means work is being handed to another agent. Delegation is one decision rather than one per tool the delegate owns — the governor decides whether that agent may be given the task at all, and the delegate's own calls are then gated as it makes them. `McpClientHandle` gained a `name` so the identity comes off the handle rather than being reconstructed from the caller's options; unnamed servers all collapse to `mcp`, which is a reason to name them.
+
+**This is a behaviour change for anyone already running a governor**, stated here rather than discovered: a governance app that denies apps it does not recognise will now deny MCP and delegation calls that previously ran ungated. That is the bypass closing, but combined with 1.11's fail-closed default it is worth checking before upgrading. Called out in `docs/governance-reference.md` too.
+
+**Still open, and now the whole of what this entry tracks:** `berth rpc`, `berth mcp`, the HTTP RPC bridge, the TCP RPC listener, and direct `invokeAppExport()`. These are separate transports into the same container, and no governance app sits on their path — closing them means either routing them through a Computer or giving the governor a presence at the SDK's own RPC dispatch, which is a larger design question than moving a wrapper. 1.4's per-caller sockets now give that dispatch a caller identity to hang per-export policy off, which is the natural foundation for it.
+
+**Verification.** Seven unit tests in `packages/agents/src/governance.test.ts`: a denial through the raw dispatch (not merely through a tool), the governor's own exports bypassing without recursion, `governance.exempt` honoured at dispatch level, the exact `{app, export, input}` payload for both synthetic identities, an unreachable governor blocking an MCP tool under the fail-closed default, and the no-governor case returning `undefined` so ungoverned Computers pay nothing.
 
 ### 1.14 — Unbounded frame allocation and spoofable identity in the daemons
 
