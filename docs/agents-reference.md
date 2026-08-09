@@ -237,7 +237,7 @@ A gated tool call does `POST /grants {appName: requesterName, capability: "agent
 
 Two things this deliberately does **not** do, both by design rather than oversight:
 - **Doesn't touch `generate-capability-policy.ts`/Landlock at all.** That machinery is boot-time-only — Landlock rulesets are fixed at `agent-init`'s `restrict_self()` and can never be widened on an already-running process, so the *existing* async consumer (`requestCapability()`) can only take effect on the app's *next container restart*. There's no container to restart mid-`Agent.run()`, so this gate polls and blocks live instead, reusing only the request/approve/deny/webhook machinery, not the boot-time merge.
-- **Fail-closed, the opposite of the governance gate's fail-open.** A human-approval gate that silently let calls through when `grants-server` was unreachable, slow, or simply never got a human's attention wouldn't be a human-in-the-loop gate at all — a timeout is a denial here, not a pass-through.
+- **Fail-closed, as the governance gate now also is (REMEDIATION.md 1.11 inverted that default).** A human-approval gate that silently let calls through when `grants-server` was unreachable, slow, or simply never got a human's attention wouldn't be a human-in-the-loop gate at all — a timeout is a denial here, not a pass-through.
 
 `only` (an array of tool names) is what makes this usable in practice — gating literally every tool call would mean a human has to click through even harmless reads. Omit it to gate everything; scope it down to just the tool calls that actually warrant a human looking first (a delete, a payment, an external message send).
 

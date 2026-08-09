@@ -67,11 +67,11 @@ README line 88 currently reads: *"a prompt-injected 'ignore previous instruction
 | 1.8 | Egress broker: no port check, `*` → SSRF, DNS not pinned | High | 🔴 | 2d |
 | 1.9 | GitHub broker: `read:repos` also grants `/user/emails` etc. | High | 🔴 | 1d |
 | 1.10 | Capability tokens are never verified anywhere | High | 🔴 | 1d |
-| 1.11 | Signals unrestricted — any app can kill the governor | Medium | 🔴 | 1d |
+| 1.11 | Signals unrestricted — any app can kill the governor | Medium | 🟢 | 1d |
 | 1.12 | `agent-init` mkdir's arbitrary manifest paths as root | Medium | 🟢 | 4h |
 | 1.13 | Governance gate bypasses (MCP, agent-as-tool, rpc, mcp, http-rpc) | High | 🔴 | 2d |
 | 1.14 | semantic-fs / context-bus: unbounded frame allocation + spoofable identity | Medium | 🟢 | 1d |
-| 1.15 | `apps/terminal` is non-functional on any Landlock-enforcing kernel | High | 🟡 | 2d |
+| 1.15 | `apps/terminal` is non-functional on any Landlock-enforcing kernel | High | 🟢 | 2d |
 
 ### 1.1 — `truncate(2)` is not a handled Landlock access right
 
@@ -335,6 +335,22 @@ The HMAC/expiry/`timingSafeEqual` machinery is cryptographically correct and sem
 
 > Step 5 of [docs/per-app-uid-design.md](./docs/per-app-uid-design.md#migration-order) — once uids differ, `kill(2)` between apps is refused by the kernel's ordinary permission check and no new mechanism is needed. `LANDLOCK_SCOPE_SIGNAL` stays optional rather than load-bearing.
 
+**Closed.** Two halves, and the second is the one that mattered more.
+
+**Signals.** No new mechanism, exactly as predicted: apps run as distinct uids, so `kill(2)` between them is refused by the kernel's ordinary permission check. `LANDLOCK_SCOPE_SIGNAL` stays unused. That makes this a *test* rather than a fix — and it needs one, because nothing else in this repo would fail if a future change quietly put two apps back on the same uid.
+
+`capability-enforcement.mjs` Test 12 drives a new `probe_signal` export on all three boundary fixtures, and every assertion is **unconditional** like the socket half of Test 9 — this is DAC, so it holds on Docker Desktop exactly as on an enforcing kernel. Positive control first (app A signals its own process, since every denial below would also "pass" against a broken probe or an already-exited pid), then `signal 0` and a real `SIGKILL` from A to B, both `EPERM`, then B confirming it is still alive.
+
+**The negative control is what makes it evidence**, run against the same booted container rather than a hypothetical one: a `docker exec` process — root, and not a descendant of any `agent-init` — signals app B's pid successfully. So the two refusals are the uid boundary and not a stale pid.
+
+**Governance now defaults to fail-closed.** This is the half that actually changed behaviour. The original entry framed killing the governor as a denial of service; under the old fail-open default it was worse than that — one signal and every subsequent gated call executed anyway, with a `console.warn` as the only trace. The gate's authority was contingent on its own uptime.
+
+Per-app uids close the specific kill, but a governor can still crash, hang, or be slow, and a gate that opens under those conditions is not a gate. So `applyGovernanceGate`'s default is inverted: an unreachable governor now throws `GovernanceUnavailableError` instead of calling through. `fail-open` remains available by name for anyone who genuinely wants availability over the guarantee — it is just no longer what you get by not deciding.
+
+Two tests that asserted the old default are inverted rather than deleted (they were asserting the vulnerability), and one is added to keep `fail-open` itself covered. The claim is corrected at every source that repeated it: `docs/governance-reference.md`'s section heading and body, `docs/agents-reference.md`'s human-approval contrast, `docs/threat-model.md`'s open-gap entry, and both `guardrails.ts` and `guardrails.py`, whose module docstrings described governance as "fail-open by design".
+
+**Not closed by this.** Killing a *broker* still forces its own failure mode — that is 1.8/1.9's territory, not this item's. And `governance.exempt` apps stay ungated by construction.
+
 ### 1.12 — `agent-init` mkdir's arbitrary manifest paths as root
 
 **Evidence.** `main.rs:274` and `:300` — `create_dir_all(path)` for every entry in `writePaths` *and* `readPaths`, run as uid 0 with `CAP_SYS_ADMIN` before `restrict_self()` at `:332`. There is no allowlist in `compileCapabilityPolicy` (`generate-capability-policy.ts:133-136` adds any string). `filesystem:write:/` grants write to the whole container filesystem with no warning. `stripTrailingGlob` only strips a literal `/*` (`:73-75`), so `filesystem:write:*` creates and grants a directory literally named `*`.
@@ -378,7 +394,9 @@ The app boots, registers with the context bus, and reports ready — then every 
 
 **Verify.** `published-port-security-milestone.mjs`'s Tests 4-6 stop skipping (they skip today only on this exact tmux signature, and fail on anything else), and a new assertion that `run_command` round-trips on a Landlock-enforcing kernel.
 
-**🟡 Fixed and unit-tested; the enforcing-kernel proof has not run.** Both unknowns above are now answered, by evidence rather than another guess. Status stays amber deliberately: the decisive artifact is a CI run on `ubuntu-latest`, and this was developed on a Mac where Landlock is absent, so the end-to-end assertion has never executed. Everything below is either established fact or verified locally.
+**🟢 Closed — the enforcing-kernel run is green.** `Published Port Security` passed on `ubuntu-latest` (`main`, 2026-08-09), which is the artifact this entry was waiting on: with the tmux skip removed, tmux starting under a real Landlock ruleset is now asserted rather than assumed. What follows is the original amber write-up, kept because it is the record of how both unknowns were established.
+
+**Originally filed as: fixed and unit-tested; the enforcing-kernel proof has not run.** Both unknowns above are now answered, by evidence rather than another guess. Status stays amber deliberately: the decisive artifact is a CI run on `ubuntu-latest`, and this was developed on a Mac where Landlock is absent, so the end-to-end assertion has never executed. Everything below is either established fact or verified locally.
 
 **Unknown 1 — what tmux actually needs.** `strace`d a real `tmux new-session` inside the terminal image. It opens four things read-write:
 
@@ -405,7 +423,7 @@ So "granting the pty devices is not sufficient" has a mundane answer: a tmux ser
 
 The skip is gone from `published-port-security-milestone.mjs`, per the verify criterion above, and replaced with a positive assertion that tmux's server started — made against the container log rather than an RPC result, because the stdio attach is documented as racy while the log line is not. That takes the milestone from 14 assertions to 15, and it passes on Docker Desktop.
 
-**What this does not prove.** Docker Desktop's kernel has no Landlock, so locally the ruleset is `NotEnforced` and `apps/terminal` worked before this change as well as after. Nothing here demonstrates that tmux now starts *under enforcement*, or that the status is `FullyEnforced` rather than `PartiallyEnforced` — those need the CI run. No VM tooling (colima/lima/multipass) is installed on this machine and installing one wasn't in scope. Move to 🟢 when a green `ubuntu-latest` run of `published-port-security-milestone.mjs` exists; if it fails, the log dump on the `!listening` path now prints the container log rather than skipping past it.
+**What this does not prove.** Docker Desktop's kernel has no Landlock, so locally the ruleset is `NotEnforced` and `apps/terminal` worked before this change as well as after. Nothing here demonstrates that tmux now starts *under enforcement*, or that the status is `FullyEnforced` rather than `PartiallyEnforced` — those need the CI run. No VM tooling (colima/lima/multipass) is installed on this machine and installing one wasn't in scope. That run has since happened and is green (see the header above), which is what closed this. The log dump on the `!listening` path stays, so a future regression prints the container log rather than skipping past it.
 
 **Wider implication worth noting.** This went unnoticed because every milestone test that runs on a real kernel happens to cover apps whose needs Landlock's write model expresses cleanly. `apps/terminal` had no CI coverage at all. It is worth asking which other first-party apps have never been run against an enforcing kernel — that is the same gap 6.3 describes from the other direction.
 
