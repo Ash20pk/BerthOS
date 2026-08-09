@@ -52,7 +52,8 @@ Ordering note: `setresuid()` away from 0 clears the permitted and effective capa
 
 | Path | Mode | Owner | Reachable by |
 |---|---|---|---|
-| `/run/berth/<app>/rpc.sock` | dir `0700` | `<app>` | that app, plus root (the host relay) |
+| `/run/berth/<app>/rpc.sock` | `0600` | `<app>` | that app, plus root (the host relay) |
+| `/run/berth/<app>/peers/<caller>/rpc.sock` | dir `2710`, socket `0660` | `<app>`, group `<caller>` | one sibling that declared `app:invoke:<app>`, plus root |
 | `/tmp/<app>/` | dir `0700` | `<app>` | that app, plus root |
 | `/tmp/berth-context-bus.sock` | `0660` | `root:berth` | every app — by design |
 | `/tmp/berth-semantic-fs.sock` | `0660` | `root:berth` | every app — by design |
@@ -152,7 +153,7 @@ Each step is independently shippable and independently revertable. The ordering 
 | 1 | ~~Create uids, groups, and `/run/berth/<app>`; `chown` `.berth` and the install-marker volume~~ — **done**. No process changes uid yet. | — |
 | 2 | ~~`setgroups`/`setresgid`/`setresuid` in `agent-init` before `exec`~~ — **done**. Sockets stay where they are. **The whole risk lives here** — full regression matrix before anything is built on top. | — |
 | 3 | ~~Sockets move to `/run/berth/<app>/rpc.sock`; `/tmp` out of the baseline write set, replaced by `/tmp/<app>`~~ — **done**, at mode `0710` rather than `0700`, plus a new `app:invoke:<name>` capability (see below). | 1.4 (parts 1, 2) |
-| 4 | `SO_PEERCRED` in `rpc.ts`'s `connectionHandler` (`rpc.ts:58`), and in the context-bus (`main.rs:125`) and semantic-FS (`control.go:136`) control paths, replacing self-asserted identity. | 1.4 (part 3), 1.14 identity half |
+| 4 | ~~`SO_PEERCRED` in the context-bus and semantic-FS control paths~~ — **done**. `rpc.ts` gets the same property a different way (a socket per authorized caller), because Node cannot read peer credentials at all — see below. | 1.4 (part 3) ✅ 1.14 identity half ✅ |
 | 5 | Assert and test signal isolation; make `fail-closed` the governance default. | 1.11 |
 
 Steps 3 and 4 are each about a day once Step 2 holds. Step 2 is the unknown, and Step 0 is most of the calendar time.
@@ -169,7 +170,8 @@ New assertions, per step:
   - **`0700` on the socket directory was wrong**, because it leaves no way to authorize the one caller that legitimately exists: `@berth/agents`' generated agent app calls its sibling apps' exports directly (`network.ts`'s `callSibling`), which is the agent-as-tool feature. The directory is `0710` and the socket `0660`, both owned by the serving app, and a new `app:invoke:<name>` capability is what puts a caller in the target's group at boot. Denying every cross-app call would have deleted a shipped feature rather than secured it.
   - **The negative control did not reproduce the exploit as written**, and this is the more important correction. Against the pre-Step-3 code, `boundary-app-a` connecting to `boundary-app-b`'s socket already got `EACCES` — not because of the `1777` directory, but because the socket *file* was `srwxr-xr-x` (the default umask) and owned by app B's uid, so `other` had no write bit and `connect(2)` was refused. Step 2 closed the connect path by accident. What the `1777` directory still allowed was **squatting**: any app could `bind()` a not-yet-started sibling's socket path and serve in its place, which the sticky bit does not prevent. So the exploit as written in 1.4 stopped working at Step 2, silently, and the boundary only becomes a designed one here.
 
-- **Step 4** — a forged `app` field in a context-bus register frame is rejected in favour of the uid the kernel reports.
+- **Step 4** — ~~a forged `app` field in a context-bus register frame is rejected in favour of the uid the kernel reports~~ **done**, as `capability-enforcement.mjs` Test 9's daemon half, and for semantic-FS's `register` too — where the forged *pid* mattered as much as the name, since that is what the FUSE layer attributes writes by. One correction to what this line assumed:
+  - **`SO_PEERCRED` was not available for the third of the three call sites.** Node exposes no `getsockopt` and no way to read ancillary credentials on a Unix socket, so `rpc.ts` cannot ask the kernel who connected — and this SDK is vendored into images as a tarball with no build step, so a native addon is not a real option either. Instead each authorized caller gets its own socket, in a directory `2710` owned by the target and group-owned by the caller: which socket a connection arrived on is then a fact the kernel established at `connect(2)`, and the caller cannot influence it. Same property, one layer up. It also replaced Step 3's group grant, which was strictly weaker — it let a caller reach the target's socket but told the server nothing about who was calling.
 - **Step 5** — app B cannot `kill` app A's pid.
 
 The Step 3 assertion is the one that matters, and it was confirmed against the pre-Step-3 code before being claimed against the new — the same discipline 1.7's closure used. That is exactly how the second correction above was found: the control did not reproduce what 1.4 describes, and saying so is more useful than a green run.

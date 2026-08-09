@@ -17,6 +17,18 @@ exports:
   - name: probe_unix_socket
     input: { path: string }
     output: { connected: boolean, code: string }
+  - name: register_on_bus
+    input: { app: string }
+    output: { ok: boolean }
+  - name: register_on_semantic_fs
+    input: { app: string, pid: number }
+    output: { ok: boolean }
+  - name: send_oversized_frame
+    input: { path: string }
+    output: { ok: boolean }
+  - name: invoke_via_socket
+    input: { path: string, export: string, input: object }
+    output: { response: string }
 
 on_install: []
 on_agent_ready: []

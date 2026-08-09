@@ -585,16 +585,16 @@ async function main() {
     // denial above would be satisfied just as well by a boundary nothing can
     // cross — including @berth/agents' agent-as-tool path, which is the reason
     // an opt-in exists at all.
-    console.log("\n--- App C, which DECLARED app:invoke:boundary-app-b, connecting to the same socket ---");
+    console.log("\n--- App C, which DECLARED app:invoke:boundary-app-b, on its own peer socket ---");
     const grantedSocket = await invokeAppExport(boundaryRunning.container, "boundary-app-c", {
       id: "7",
       export: "probe_unix_socket",
-      input: { path: "/run/berth/boundary-app-b/rpc.sock" },
+      input: { path: "/run/berth/boundary-app-b/peers/boundary-app-c/rpc.sock" },
     });
-    console.log("app C -> app B's socket:", grantedSocket);
+    console.log("app C -> its peer socket on app B:", grantedSocket);
     assert(
       grantedSocket.result?.connected === true,
-      `boundary-app-c declares app:invoke:boundary-app-b but was still refused (${JSON.stringify(grantedSocket)}) — the grant is not being wired into group membership at boot`,
+      `boundary-app-c declares app:invoke:boundary-app-b but was still refused (${JSON.stringify(grantedSocket)}) — the grant is not being wired up at boot`,
     );
 
     // Declaring the capability must not be transitive: C may reach B, which
@@ -610,6 +610,74 @@ async function main() {
       `boundary-app-c reached boundary-app-a, which it never declared app:invoke: on: ${JSON.stringify(ungrantedDirection)}`,
     );
 
+    // --- Identity, not just reachability: REMEDIATION.md 1.4 part 3. ---
+    //
+    // The per-caller socket is what lets the server say which sibling called
+    // it. Two things have to hold for that to be a boundary rather than a
+    // convention: an authorized caller cannot use *another* caller's channel,
+    // and the target's own general-purpose socket is not a way around it.
+    // App A, which declared nothing, against the channel B keeps for C. This is
+    // the impersonation case: if it were reachable, A could invoke B's exports
+    // and be recorded as C.
+    const impersonation = await invokeAppExport(boundaryRunning.container, "boundary-app-a", {
+      id: "9",
+      export: "probe_unix_socket",
+      input: { path: "/run/berth/boundary-app-b/peers/boundary-app-c/rpc.sock" },
+    });
+    console.log("app A -> the socket app B keeps for app C:", impersonation);
+    assert(
+      impersonation.result?.code === "EACCES",
+      `boundary-app-a was not refused with EACCES on the channel boundary-app-b keeps for boundary-app-c — it could invoke exports while being attributed to another app: ${JSON.stringify(impersonation)}`,
+    );
+
+    const backDoor = await invokeAppExport(boundaryRunning.container, "boundary-app-c", {
+      id: "10",
+      export: "probe_unix_socket",
+      input: { path: "/run/berth/boundary-app-b/rpc.sock" },
+    });
+    console.log("app C -> app B's relay socket:", backDoor);
+    assert(
+      backDoor.result?.connected === false,
+      `boundary-app-c reached boundary-app-b's root-only socket, which carries no caller identity: ${JSON.stringify(backDoor)}`,
+    );
+
+    // And the identity actually reaches the server, rather than merely being
+    // derivable from the layout: a real call over the peer socket, and B's own
+    // audit line naming who made it. This is also the first assertion here
+    // that exercises the whole exploit shape end to end — app C executing an
+    // export with app B's capabilities — except that it is now the authorized
+    // case, so it should succeed and be attributed.
+    const attributed = await invokeAppExport(boundaryRunning.container, "boundary-app-c", {
+      id: "11",
+      export: "invoke_via_socket",
+      input: {
+        path: "/run/berth/boundary-app-b/peers/boundary-app-c/rpc.sock",
+        export: "write_file",
+        input: { path: "written-for-c.txt", content: "written by B, on C's behalf" },
+      },
+    });
+    console.log("app C -> write_file on app B:", attributed);
+    assert(
+      /"id"\s*:\s*"x"/.test(attributed.result?.response ?? "") && !/error/.test(attributed.result?.response ?? ""),
+      `app C's authorized call to app B did not return a clean response: ${JSON.stringify(attributed)}`,
+    );
+    await waitFor(
+      () => /"boundary-app-c" invoked export "write_file"/.test(boundaryLog.text()),
+      5000,
+      'boundary-app-b to attribute the call to "boundary-app-c"',
+    );
+    // The file must exist and must be inside B's scope — proof the call really
+    // ran with B's capabilities and not C's.
+    const writtenBack = await invokeAppExport(boundaryRunning.container, "boundary-app-b", {
+      id: "12",
+      export: "read_file",
+      input: { path: "written-for-c.txt" },
+    });
+    assert(
+      writtenBack.result?.content === "written by B, on C's behalf",
+      `expected app B to have written the file on C's behalf, got ${JSON.stringify(writtenBack)}`,
+    );
+
     // The boot must survive a grant naming an app that isn't here — C declares
     // app:invoke:no-such-app, and every assertion above depends on C having
     // started at all.
@@ -619,6 +687,74 @@ async function main() {
     );
 
     console.log("\nPASS — an app reaches a sibling's RPC socket only where app:invoke: declared it (REMEDIATION.md 1.4).");
+
+    // --- The daemons' identity, REMEDIATION.md 1.14. ---
+    //
+    // Both the context bus and semantic-fs used to take the caller's own word
+    // for which app it is, so any app could publish under another's name or
+    // poison semantic-fs's write attribution. Both now derive it from
+    // SO_PEERCRED. Asserted on the daemon's own log line rather than on a
+    // response, because both daemons ack a register either way — the point is
+    // not that the call fails, it is that the name recorded is not the one
+    // sent.
+    console.log("\n--- App A registering with both daemons under app B's name ---");
+    const busSpoof = await invokeAppExport(boundaryRunning.container, "boundary-app-a", {
+      id: "13",
+      export: "register_on_bus",
+      input: { app: "boundary-app-b" },
+    });
+    assert(busSpoof.result?.ok === true, `the context-bus register probe did not run: ${JSON.stringify(busSpoof)}`);
+    await waitFor(
+      () => /\[context-bus\].*claimed to be "boundary-app-b" but the kernel says App\("boundary-app-a"\)/.test(boundaryLog.text()),
+      5000,
+      "context-bus to override boundary-app-a's claim to be boundary-app-b",
+    );
+    assert(
+      /\[context-bus\] conn \d+ registered as "boundary-app-a"/.test(boundaryLog.text()),
+      "context-bus overrode the claim but did not register the connection under the kernel's answer",
+    );
+
+    // pid 1 is the deliberate part: registering *another* process's pid is how
+    // an app would attribute its own /context writes to something else, and
+    // the pid is now taken from SO_PEERCRED too, not from the request.
+    const fsSpoof = await invokeAppExport(boundaryRunning.container, "boundary-app-a", {
+      id: "14",
+      export: "register_on_semantic_fs",
+      input: { app: "boundary-app-b", pid: 1 },
+    });
+    assert(fsSpoof.result?.ok === true, `the semantic-fs register probe did not run: ${JSON.stringify(fsSpoof)}`);
+    await waitFor(
+      () => /\[semantic-fs:control\].*registered as "boundary-app-b" but the kernel says "boundary-app-a"/.test(boundaryLog.text()),
+      5000,
+      "semantic-fs to override boundary-app-a's claim to be boundary-app-b",
+    );
+
+    // The allocation half of the same item: a 0xFFFFFFFF length header. The
+    // assertion is that the daemon is still there afterwards and still serving
+    // *other* connections — a daemon that died would fail the register below,
+    // and one that allocated 4 GiB would likely take the container with it.
+    console.log("\n--- App A sending an oversized frame header to both daemons ---");
+    for (const socketPath of ["/tmp/berth-context-bus.sock", "/tmp/berth-semantic-fs.sock"]) {
+      const oversized = await invokeAppExport(boundaryRunning.container, "boundary-app-a", {
+        id: "15",
+        export: "send_oversized_frame",
+        input: { path: socketPath },
+      });
+      assert(oversized.result?.ok === true, `the oversized-frame probe did not reach ${socketPath}: ${JSON.stringify(oversized)}`);
+    }
+    const survived = await invokeAppExport(boundaryRunning.container, "boundary-app-a", {
+      id: "16",
+      export: "register_on_bus",
+      input: { app: "boundary-app-a" },
+    });
+    assert(survived.result?.ok === true, `the context bus stopped accepting connections after an oversized frame header: ${JSON.stringify(survived)}`);
+    const registrations = boundaryLog.text().match(/\[context-bus\] conn \d+ registered as/g) ?? [];
+    assert(
+      registrations.length >= 2,
+      `expected the context bus to serve a fresh registration after the oversized frame, saw ${registrations.length}`,
+    );
+
+    console.log("\nPASS — both daemons record the uid the kernel reports, not the name the caller sent, and survive a 4 GiB length header (REMEDIATION.md 1.14).");
   } finally {
     await boundaryLog.stop();
     await stopContainer(boundaryRunning.container).catch(() => {});

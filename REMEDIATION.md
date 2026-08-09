@@ -60,7 +60,7 @@ README line 88 currently reads: *"a prompt-injected 'ignore previous instruction
 | 1.1 | `truncate(2)` is not a handled Landlock access right | High | 🟢 | 1h |
 | 1.2 | `CAP_NET_RAW` retained; Landlock covers TCP only | Critical | 🟢 | 1d |
 | 1.3 | Bounding-set drop undone by `unshare(CLONE_NEWUSER)` | Critical | 🟢 | 2d |
-| 1.4 | App RPC sockets in world-writable `/tmp`, unauthenticated | Critical | 🟡 | 3d |
+| 1.4 | App RPC sockets in world-writable `/tmp`, unauthenticated | Critical | 🟢 | 3d |
 | 1.5 | `on_install` is unsandboxed root shell run before enforcement | Critical | 🟢 | 2d |
 | 1.6 | `berth dev` bind-mounts the whole host repo read-write | Critical | 🟢 | 1d |
 | 1.7 | ttyd / VNC / CDP unauthenticated on all host interfaces | High | 🟢 | 1d |
@@ -70,7 +70,7 @@ README line 88 currently reads: *"a prompt-injected 'ignore previous instruction
 | 1.11 | Signals unrestricted — any app can kill the governor | Medium | 🔴 | 1d |
 | 1.12 | `agent-init` mkdir's arbitrary manifest paths as root | Medium | 🟢 | 4h |
 | 1.13 | Governance gate bypasses (MCP, agent-as-tool, rpc, mcp, http-rpc) | High | 🔴 | 2d |
-| 1.14 | semantic-fs / context-bus: unbounded frame allocation + spoofable identity | Medium | 🔴 | 1d |
+| 1.14 | semantic-fs / context-bus: unbounded frame allocation + spoofable identity | Medium | 🟡 | 1d |
 | 1.15 | `apps/terminal` is non-functional on any Landlock-enforcing kernel | High | 🟡 | 2d |
 
 ### 1.1 — `truncate(2)` is not a handled Landlock access right
@@ -161,11 +161,15 @@ and executes with *filesystem's* capabilities. Per-app Landlock rulesets are rea
 
 **Verify.** Extend the cross-app boundary test (Test 9) to assert app B cannot invoke app A's exports over A's socket.
 
-**🟡 Parts 1 and 2 closed; part 3 is Step 4 and has not been done.** Sockets are at `/run/berth/<app>/rpc.sock`, in a directory `0710` owned by that app's uid, with the socket itself `0660` — `chmod`'d explicitly in `rpc.ts` rather than left to the umask, for a reason the negative control below makes concrete. `/tmp` is out of every app's baseline write set, replaced by a private `/tmp/<app>` that `TMPDIR`, `TMUX_TMPDIR`, `XDG_CONFIG_HOME`/`XDG_CACHE_HOME` and `HOME` all point at. `/run/berth` itself is `0755 root:root`, so nothing but `entrypoint.sh` can add an entry.
+**Closed.** Sockets are at `/run/berth/<app>/rpc.sock`, in a directory `0710` owned by that app's uid, with the socket itself `0660` — `chmod`'d explicitly in `rpc.ts` rather than left to the umask, for a reason the negative control below makes concrete. `/tmp` is out of every app's baseline write set, replaced by a private `/tmp/<app>` that `TMPDIR`, `TMUX_TMPDIR`, `XDG_CONFIG_HOME`/`XDG_CACHE_HOME` and `HOME` all point at. `/run/berth` itself is `0755 root:root`, so nothing but `entrypoint.sh` can add an entry.
 
 **The mode is `0710`, not the `0700` the fix above specified, because `0700` would have deleted a shipped feature rather than secured it.** `@berth/agents` synthesizes an agent app whose whole purpose is calling its sibling apps' exports — `network.ts`'s `callSibling`, the agent-as-tool path — by connecting directly to their sockets. A directory nothing but the owner can traverse leaves no way to authorize that. So reaching a sibling is now something an app *declares*: `app:invoke:<name>` puts the caller in the target's per-app group at boot, and `@berth/agents` emits one line per sibling whose exports it embeds as tools, generated from the same list the tools come from so the declaration cannot drift from what the agent can actually call. An app declaring nothing gets `EACCES` from the kernel. Naming an app that isn't in the container warns and is ignored — a manifest is not the place to learn the container's composition.
 
-Two honest limits on that grant, both real: it is a **connect-time** gate, so it authorizes a caller and not a per-export subset — once granted, the target's whole export surface is reachable; and the serving app still cannot tell *which* sibling is calling, which is exactly what part 3 is for. `app:invoke:` without `SO_PEERCRED` is a door, not a doorman.
+**Part 3 — knowing which sibling is calling — is closed too, but not with `SO_PEERCRED`, because Node cannot read it.** There is no `getsockopt` in Node, and no way to read ancillary credentials on a Unix socket; this SDK is vendored into images as a tarball with no build step, so a native addon is not a real option either. So the identity comes from the filesystem instead: each authorized caller gets its *own* socket at `/run/berth/<target>/peers/<caller>/rpc.sock`, in a directory mode `2710` owned by the target and group-owned by the caller. The caller is the only unprivileged uid that can traverse into it, so which socket a connection arrived on is a fact the kernel established at `connect(2)` and the caller cannot influence — the same property `SO_PEERCRED` gives, one layer up. The target's own `rpc.sock` went to `0600`: no sibling reaches it, only the app itself and root.
+
+That replaced Step 3's group grant, which is gone and was strictly weaker — putting the caller in the target's group let it connect, but left every caller indistinguishable from inside the server. The setgid bit on each peer directory is what makes this work without a privileged step: the socket the target binds inherits the *caller's* group, so a non-root app never has to `chown` anything.
+
+One honest limit remains: it is a **connect-time** gate, so it authorizes a caller and not a per-export subset — once granted, the target's whole export surface is reachable. Per-export policy is 1.13's territory, and now has an identity to hang off.
 
 Three smaller things worth naming:
 
@@ -173,7 +177,13 @@ Three smaller things worth naming:
 2. **`entrypoint.sh`'s multi-app loop is now three serial passes**, not one. A caller can only join its target's group once that group exists, and the target may come later in the app list. The supplementary-group list is also read back with `id -G` after the wiring rather than assembled by hand, so a group added by any step is picked up without that function knowing about it.
 3. **Everything that wrote to a hardcoded `/tmp` path was audited rather than guessed at**, since removing the blanket grant breaks anything that assumed it: `tmux`'s socket directory (`TMUX_TMPDIR`), Playwright's browser profiles and Chromium's `--disable-dev-shm-usage` shared memory (both via `TMPDIR`), and `base.Dockerfile`'s image-wide `XDG_CONFIG_HOME=/tmp/.chromium`, which every app in a multi-app container would otherwise have shared. The three daemon control sockets stay at `/tmp/berth-*.sock` and need no write grant — connecting to a pathname socket is DAC, not Landlock (see the design doc), and group `berth` is what permits it.
 
-**Verification — `capability-enforcement.mjs` Test 9, five new assertions, and they are asserted *unconditionally*** unlike the Landlock half of that same test, which degrades to informational where Landlock is inactive. This boundary is DAC, so it holds on Docker Desktop exactly as on a real host; if it ever starts passing conditionally, something has reverted to running apps as root. App A reaches its own socket (the positive control — every denial below would also "pass" against apps that simply cannot connect to anything) and is refused on app B's with `EACCES`; nothing listens at the pre-1.4 path; and a third fixture, `boundary-app-c`, differs from A by one manifest line and *is* allowed through, while still being refused on a direction it never declared. A fixture also declares `app:invoke:no-such-app`, so the unknown-target branch is exercised rather than assumed.
+**Verification — `capability-enforcement.mjs` Test 9, and every assertion is *unconditional*** unlike the Landlock half of that same test, which degrades to informational where Landlock is inactive. This boundary is DAC, so it holds on Docker Desktop exactly as on a real host; if it ever starts passing conditionally, something has reverted to running apps as root.
+
+- App A reaches its own socket — the positive control, since every denial below would also "pass" against apps that simply cannot connect to anything — and is refused on app B's with `EACCES`. Nothing listens at the pre-1.4 path.
+- A third fixture, `boundary-app-c`, differs from A by one manifest line and *is* allowed through on its own peer socket, while still being refused on a direction it never declared, and on B's `0600` socket, which would otherwise be a way to call B while carrying no identity.
+- **The impersonation case**: app A, which declared nothing, is refused with `EACCES` on the channel B keeps for C. If it were reachable, A could invoke B's exports and be recorded as C.
+- **The identity actually arrives**: C makes a real `write_file` call to B over its peer socket, B's log line names `"boundary-app-c"` as the caller, and the file is then read back through B — proving the call ran with B's capabilities and was attributed to C, not merely that a socket was connectable.
+- A fixture also declares `app:invoke:no-such-app`, so the unknown-target branch is exercised rather than assumed.
 
 **The negative control is where this gets interesting, and it did not reproduce the exploit as written.** Run against the pre-Step-3 code, `boundary-app-a` connecting to `boundary-app-b`'s socket in the `1777` directory already returned `EACCES`. The reason is mundane and was not a design decision by anyone: the socket file was `srwxr-xr-x` — the default umask — and owned by app B's uid, so `other` had no write bit, and `connect(2)` needs one. **Step 2's per-app uids had closed the connect path by accident**, and the "exploit still works verbatim" note this entry carried after Step 2 was wrong from the moment it was written. What the world-writable directory did still permit was *squatting*: any app could `bind()` a not-yet-started sibling's socket path and serve in its place, which the sticky bit does not prevent. That is the hole this step actually closes, alongside making the boundary a designed one — `0660` is set explicitly now precisely because relying on a umask for a security property is how the above happened.
 
@@ -422,6 +432,22 @@ Killing semantic-fs is worse than a crash: `runtime.ts:44-46` silently falls bac
 **Verify.** A test sending an oversized length header and asserting the daemon survives; a test asserting app B cannot register as app A.
 
 > The frame cap is independent and can land any time. The identity half cannot: `SO_PEERCRED` returns uid 0 for every caller today, so it carries no information until [docs/per-app-uid-design.md](./docs/per-app-uid-design.md) Step 2 lands. Sequenced there as Step 4.
+
+**🟡 Frame cap and identity closed; the semantic-fs stub fallback is not.**
+
+**Frame cap.** Both daemons refuse a length header above 8 MiB *before* allocating, and drop the connection — a client that framed one message this badly has no credible next frame on the same stream. 8 MiB is orders of magnitude above what either daemon actually carries (small JSON-ish events on the bus; register/tag/query with an embedding vector as the largest payload on semantic-fs) and refuses the 4 GiB a `0xFFFFFFFF` header used to reserve.
+
+**Identity.** Both daemons now derive it from `SO_PEERCRED` — `tokio::net::UnixStream::peer_cred()` in the context bus, `syscall.GetsockoptUcred` in semantic-fs — read once at `accept()`, since the uid the kernel stamped on a connection cannot change for its lifetime and the client cannot influence it. The rules are three, and identical in both (deliberately duplicated implementations, `src/peer.rs` and `internal/control/peer.go`, each with the other named in its header and the same cases in its tests):
+
+1. **uid 0 keeps its own claim.** The host relay, the daemons themselves, anything that already has full authority in this container — see [Blocker 7](./docs/per-app-uid-design.md). A root caller could set that uid anyway.
+2. **A uid that resolves to a `berth-<app>` account *is* that app**, whatever the frame says. A contradicting claim is overridden and logged.
+3. **Any other uid gets `uid-<n>`.** Not an error, but its claim about an app name is worth nothing. A system account whose name merely lacks the prefix is deliberately not an app, or adding any user to the image would hand it an identity.
+
+Two details worth naming. The failure path — credentials unreadable — resolves to the *most restrictive* answer, not to root; a connection whose credentials cannot be read is one whose claims are worth less, not more. And for semantic-fs the forged **pid** mattered as much as the forged name: the FUSE layer attributes a write by looking the writing pid up in this registry, so a caller able to register another process's pid could attribute its own writes elsewhere. Both now come from the kernel.
+
+**Not closed by this.** The third part of the fix above — `runtime.ts:44-46`'s silent fallback to a stub returning empty query results when semantic-fs is unreachable — is untouched. That is the one that turns a dead daemon into silent data loss rather than an error, and it is independent of everything here.
+
+**Verification.** `capability-enforcement.mjs` Test 9's daemon half, asserted on the daemons' own log lines rather than on a response, because both daemons ack a register either way — the point is not that the call fails, it is that the name recorded is not the one sent. App A registers with both daemons as `boundary-app-b` (and, on semantic-fs, as pid 1); both log the override and record `boundary-app-a`. Then app A sends a `0xFFFFFFFF` length header to each, and the bus is asserted to still serve a fresh registration afterwards — a daemon that had died would fail that, and one that had allocated 4 GiB would likely have taken the container with it. Unit tests in both daemons cover the three rules and the zero-value failure path directly.
 
 ---
 

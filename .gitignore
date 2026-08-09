@@ -40,3 +40,4 @@ __pycache__/
 /multi-app-test.txt
 /packages/docker-orchestrator/test/fixtures/boundary-app-b/b-owned.txt
 /packages/docker-orchestrator/test/fixtures/boundary-app-b/pwned-by-a.txt
+/packages/docker-orchestrator/test/fixtures/boundary-app-b/written-for-c.txt

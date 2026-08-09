@@ -26,9 +26,14 @@ berth dev --apps=apps/code-editor
 
 ## Reaching another app's exports
 
-Each app's RPC socket is at `/run/berth/<app>/rpc.sock`, in a directory mode `0710` owned by that app's own uid. A sibling reaches it only by declaring `app:invoke:<name>` in its `berth.yml`, which is what `entrypoint.sh` turns into membership of the target's group at boot; without that, `connect(2)` is refused by the kernel. The host is unaffected — `invokeAppExport()` enters via `docker exec` as root, and the uid boundary is between apps, never between the host and an app.
+```
+/run/berth/<app>/rpc.sock                    0600  <app>:<app>     the app itself, and root (the host relay)
+/run/berth/<app>/peers/<caller>/rpc.sock     0660  <app>:<caller>  one authorized sibling, and nobody else
+```
 
-This replaced a `1777` `/tmp/berth-rpc/` directory that every app could bind and connect into, which is [REMEDIATION 1.4](../REMEDIATION.md#14--app-rpc-sockets-in-world-writable-tmp-unauthenticated). Two limits remain, both recorded there: the grant is connect-time, so it authorizes a *caller* and not a per-export subset, and the serving app still cannot tell which sibling is calling — that needs `SO_PEERCRED` (Step 4 of the [per-app uid design](./per-app-uid-design.md)).
+An app's own socket is not reachable by any sibling. A sibling that declares `app:invoke:<name>` gets a socket of its own under `peers/`, created at boot in a directory mode `2710` owned by the target and group-owned by the caller — so the caller is the only unprivileged uid that can traverse to it, and the connection's arrival there is the kernel's statement about who connected. That is what lets the target log which app invoked which export. Undeclared, `connect(2)` fails with `EACCES`. The host is unaffected: `invokeAppExport()` enters via `docker exec` as root, and the uid boundary is between apps, never between the host and an app.
+
+This replaced a `1777` `/tmp/berth-rpc/` directory that every app could bind and connect into, which is [REMEDIATION 1.4](../REMEDIATION.md#14--app-rpc-sockets-in-world-writable-tmp-unauthenticated). One limit remains, recorded there: the grant is connect-time, so it authorizes a *caller* and not a per-export subset.
 
 ## Verification
 

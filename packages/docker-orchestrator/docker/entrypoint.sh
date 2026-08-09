@@ -94,17 +94,21 @@ provision_app_identity() {
   # Where this app's RPC socket lives, since Step 3 of the design doc took it
   # out of world-writable /tmp/berth-rpc (REMEDIATION.md 1.4).
   #
-  # 0710, not 0700: the owner needs rwx to bind the socket, and *group* needs
-  # x — the traverse bit — so that a sibling explicitly granted `app:invoke:`
-  # on this app (see grant_invoke_access below) can reach the socket inside.
-  # Without the group x bit there is no way to authorize one, and with a group
-  # r bit a grantee could also enumerate the directory, which it never needs.
+  # 0711 — traverse, but not list. Nothing in here is reachable by a sibling by
+  # default: rpc.sock itself is 0600 (the app and root, i.e. the host relay).
+  # An authorized sibling instead gets its own socket under peers/<caller>/,
+  # created by grant_invoke_access below, and the `x` bit here is only what
+  # lets it walk to that. Without `x` a caller could not reach its own
+  # directory; with `r` it could enumerate every other caller's, which it has
+  # no reason to see.
   #
   # The private scratch directory is the other half: /tmp itself is no longer
   # in any app's write policy, so TMPDIR (exported by run_app / the single-app
   # path) points here instead. 0700 — nothing is ever granted into it.
-  install -d -m 0710 -o "$id" -g "$id" "/run/berth/${app_name}" 2>/dev/null \
+  install -d -m 0711 -o "$id" -g "$id" "/run/berth/${app_name}" 2>/dev/null \
     || echo "[berth:entrypoint] WARNING: could not create /run/berth/${app_name} — this app's RPC socket has nowhere to live" >&2
+  install -d -m 0711 -o "$id" -g "$id" "/run/berth/${app_name}/peers" 2>/dev/null \
+    || echo "[berth:entrypoint] WARNING: could not create /run/berth/${app_name}/peers — no sibling will be able to call this app" >&2
   install -d -m 0700 -o "$id" -g "$id" "/tmp/${app_name}" 2>/dev/null \
     || echo "[berth:entrypoint] WARNING: could not create /tmp/${app_name} — this app has no writable scratch directory" >&2
 
@@ -127,9 +131,25 @@ provision_app_identity() {
 
 }
 
-# One app's declared `app:invoke:<target>` capabilities, turned into group
-# membership: the caller joins the target's own per-app group, which is what
-# the 0710 socket directory and the 0660 socket inside it check.
+# One app's declared `app:invoke:<target>` capabilities, turned into a private
+# channel: `/run/berth/<target>/peers/<caller>/`, owned by the target and
+# group-owned by the *caller*, mode 2710.
+#
+# Each bit of that is load-bearing:
+#   owner <target>  — the target binds its socket in here, and it is not root
+#   group <caller>  — the caller is the only unprivileged uid that can traverse
+#   0710            — no "other" access at all; siblings see nothing
+#   setgid (2)      — the socket the target creates inherits the *caller's*
+#                     group, so it lands reachable without the target (a
+#                     non-root process) needing to chown anything
+#
+# Group membership was the Step 3 mechanism and is deliberately gone: adding
+# the caller to the target's group let it reach that app's socket, but told the
+# *server* nothing about which sibling had called. A directory per caller is
+# both the authorization and the identity, because which socket a connection
+# arrived on is a fact the kernel established at connect(2) and the caller
+# cannot influence. That is Step 4's SO_PEERCRED property, obtained the only
+# way available to a Node server — see @berth/sdk's rpc.ts.
 #
 # This is the authorized half of REMEDIATION.md 1.4. The unauthorized half —
 # any app reaching any other app's socket because they all sat in a 1777
@@ -139,13 +159,10 @@ provision_app_identity() {
 # feature rather than secure it. Declaring the capability is now what buys it,
 # and the declaration is visible in `berth.yml` and in the audit line.
 #
-# Must run after *every* app's identity exists, not inline with provisioning:
-# the target group is created by the target's own provision_app_identity call,
-# which may not have happened yet. Hence the separate pass in the loop below.
+# Must run after *every* app's identity and peers/ directory exist, not inline
+# with provisioning: both belong to the target, which may come later in the app
+# list than its caller. Hence the separate pass in the loop below.
 #
-# What this does NOT do is tell the serving app which sibling is calling — a
-# group grant is symmetric-looking from inside the server. That is Step 4's
-# SO_PEERCRED, and until it lands `app:invoke:` is a connect-time gate only.
 grant_invoke_access() {
   local caller_name="$1"
   local caller_dir="$2"
@@ -159,10 +176,20 @@ grant_invoke_access() {
       echo "[berth:entrypoint] WARNING: ${caller_name} declares app:invoke:${target}, but no app named ${target} is in this container — ignoring" >&2
       continue
     fi
-    if addgroup "berth-${caller_name}" "berth-${target}" 2>/dev/null; then
-      echo "[berth:entrypoint] ${caller_name} may invoke ${target}'s exports (app:invoke:${target})" >&2
+    # Numeric ids rather than names: busybox's `install` resolves both, but the
+    # rest of this script already works in numeric ids and one convention is
+    # easier to check than two.
+    local target_uid caller_gid
+    target_uid="$(id -u "berth-${target}" 2>/dev/null)"
+    caller_gid="$(id -g "berth-${caller_name}" 2>/dev/null)"
+    if [ -z "$target_uid" ] || [ -z "$caller_gid" ]; then
+      echo "[berth:entrypoint] WARNING: could not resolve ids for ${caller_name} -> ${target} — its app:invoke:${target} calls will fail with EACCES" >&2
+      continue
+    fi
+    if install -d -m 2710 -o "$target_uid" -g "$caller_gid" "/run/berth/${target}/peers/${caller_name}" 2>/dev/null; then
+      echo "[berth:entrypoint] ${caller_name} may invoke ${target}'s exports (app:invoke:${target}) via /run/berth/${target}/peers/${caller_name}" >&2
     else
-      echo "[berth:entrypoint] WARNING: could not add berth-${caller_name} to group berth-${target} — its app:invoke:${target} calls will fail with EACCES" >&2
+      echo "[berth:entrypoint] WARNING: could not create /run/berth/${target}/peers/${caller_name} — ${caller_name}'s app:invoke:${target} calls will fail with EACCES" >&2
     fi
   done
 }

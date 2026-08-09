@@ -156,6 +156,7 @@ function renderAgentServerSource(options: GenerateAgentServerAppOptions): string
 import { z } from "zod";
 import * as net from "node:net";
 
+const SELF = ${JSON.stringify(options.name)};
 const TOOLS = ${JSON.stringify(tools)};
 const LLM = ${JSON.stringify(llm)};
 const SYSTEM_PROMPT = ${JSON.stringify(systemPrompt)};
@@ -163,7 +164,13 @@ const MAX_TURNS = 25;
 
 function callSibling(appName, exportName, input) {
   return new Promise((resolve, reject) => {
-    const socket = net.createConnection(\`/run/berth/\${appName}/rpc.sock\`);
+    // Not <appName>/rpc.sock, which is 0600 and reachable only by that app and
+    // root: an authorized caller gets its own socket, in a directory only it
+    // can traverse, so the server knows which sibling called it without having
+    // to trust anything on the wire. See REMEDIATION.md 1.4 and @berth/sdk's
+    // startPeerSocketServers(). SELF is this generated app's own name, which
+    // is also what its berth.yml declares app:invoke: from.
+    const socket = net.createConnection(\`/run/berth/\${appName}/peers/\${SELF}/rpc.sock\`);
     const id = \`\${Date.now()}-\${Math.random().toString(36).slice(2)}\`;
     let buffer = "";
     const timer = setTimeout(() => {
