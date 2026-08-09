@@ -349,7 +349,9 @@ Worth crediting: the CONNECT gate is strict equality not a glob (`:200`), it for
 
 **Confirmed against the old broker, and the assertion says which bug it is:** `/user/emails` comes back `404` — from the mock upstream, not from the broker, which is the whole finding. The message names that explicitly rather than reporting an unexpected status code.
 
-**One thing proven only in CI.** The `readPaths` grant matters solely on a kernel that enforces Landlock. The full milestone (both Docker scenarios, real TLS through the real broker from inside a real container) passes locally on Docker Desktop, where the ruleset is `NotEnforced` — so what's proven there is that the new CA path works end to end, not that the grant is what makes it work. The first green `ubuntu-latest` run is what closes that.
+**One thing that needed CI, now had.** The `readPaths` grant matters solely on a kernel that enforces Landlock: the full milestone passes locally on Docker Desktop, where the ruleset is `NotEnforced`, so a local pass shows the new CA path works end to end without showing that the grant is what makes it work. Both milestones are green on `ubuntu-latest` (`095f1ec`), and the run's own policy line carries the grant — `readPaths=... /run/berth/github-api-broker ...` — with the app going on to read that CA and complete a real handshake through the broker.
+
+Stated precisely, because the distinction is the whole point of the paragraph: what that run proves is that the grant is present and the path works on a Landlock-capable kernel. It does not isolate the grant as *necessary* — that would need the same run with the grant removed, which no test does.
 
 ### 1.10 — Capability tokens are never verified anywhere
 
