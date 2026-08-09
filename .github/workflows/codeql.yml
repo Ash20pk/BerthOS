@@ -34,14 +34,16 @@ jobs:
           # heuristics (plain `go build ./...`) are enough.
           - language: go
             build-mode: autobuild
-          # Compiled, and NOT confirmed to support build-mode: none in
-          # CodeQL's docs (unlike javascript-typescript/python/ruby) — manual
-          # rather than autobuild because there's no root Cargo.toml joining
-          # agent-init/context-bus-daemon/mesh-daemon into one workspace
-          # autobuild could discover on its own; each is built explicitly
-          # below instead.
+          # `none` is the only mode CodeQL's Rust extractor accepts — it
+          # refuses `manual` outright ("Rust does not support the manual build
+          # mode"), which is what this job used to do and why it failed at
+          # init before running a single query. That also means the absence of
+          # a root Cargo.toml joining agent-init/context-bus-daemon/mesh-daemon
+          # no longer matters: nothing is built, so nothing has to be
+          # discovered. The explicit per-crate `cargo build` that used to be
+          # here is gone with it, as is the protoc install it needed.
           - language: rust
-            build-mode: manual
+            build-mode: none
 
     steps:
       - uses: actions/checkout@v7
@@ -50,17 +52,6 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
-
-      - name: Install protoc (context-bus-daemon's build.rs needs a system protoc on PATH)
-        if: matrix.language == 'rust'
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-
-      - name: Build every independent Rust crate (manual build mode)
-        if: matrix.language == 'rust'
-        run: |
-          cargo build --release --manifest-path packages/agent-init/Cargo.toml
-          cargo build --release --manifest-path packages/context-bus-daemon/Cargo.toml
-          cargo build --release --manifest-path packages/mesh-daemon/Cargo.toml
 
       - uses: github/codeql-action/analyze@v4
         with:
