@@ -1,6 +1,6 @@
 import { GoogleGenAI, type Content, type FunctionDeclaration, type Part } from "@google/genai";
 import { wrapProviderErrors } from "../errors.js";
-import type { AgentMessage, LLMProvider, LLMStopReason, LLMTurn, Tool } from "../types.js";
+import type { AgentMessage, LLMCallParams, LLMProvider, LLMStopReason, LLMTurn, Tool } from "../types.js";
 
 export interface GoogleProviderOptions {
   apiKey?: string;
@@ -132,13 +132,17 @@ export function createGoogleProvider(options: GoogleProviderOptions = {}): LLMPr
   // so a future third call path can't miss it.
   return wrapProviderErrors({
     name: "google",
-    async chat({ system, messages, tools }: { system?: string; messages: AgentMessage[]; tools: Tool[] }): Promise<LLMTurn> {
+    async chat({ system, messages, tools, signal }: LLMCallParams): Promise<LLMTurn> {
       const response = await client.models.generateContent({
         model,
         contents: toGoogleContents(messages),
         config: {
           systemInstruction: system,
           tools: tools.length > 0 ? [{ functionDeclarations: toFunctionDeclarations(tools) }] : undefined,
+          // Gemini's SDK takes the signal on `config`, unlike the OpenAI and
+          // Anthropic clients, which take it as a second request-options
+          // argument.
+          abortSignal: signal,
         },
       });
 
@@ -156,7 +160,7 @@ export function createGoogleProvider(options: GoogleProviderOptions = {}): LLMPr
     },
 
     async chatStream(
-      { system, messages, tools }: { system?: string; messages: AgentMessage[]; tools: Tool[] },
+      { system, messages, tools, signal }: LLMCallParams,
       onText: (delta: string) => void,
     ): Promise<LLMTurn> {
       const stream = await client.models.generateContentStream({
@@ -165,6 +169,10 @@ export function createGoogleProvider(options: GoogleProviderOptions = {}): LLMPr
         config: {
           systemInstruction: system,
           tools: tools.length > 0 ? [{ functionDeclarations: toFunctionDeclarations(tools) }] : undefined,
+          // Gemini's SDK takes the signal on `config`, unlike the OpenAI and
+          // Anthropic clients, which take it as a second request-options
+          // argument.
+          abortSignal: signal,
         },
       });
 

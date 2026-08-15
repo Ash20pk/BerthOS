@@ -118,7 +118,7 @@ export { createOllamaProvider, type OllamaProviderOptions } from "./providers/ol
 export { createGoogleProvider, type GoogleProviderOptions } from "./providers/google.js";
 export { createFallbackProvider, type FallbackProviderOptions } from "./providers/fallback.js";
 export { detectLLMProvider, resolveLLMProvider, type LLMProviderConfig } from "./providers/auto.js";
-export type { Tool, LLMProvider, LLMTurn, LLMStopReason, AgentMessage, AgentRole } from "./types.js";
+export type { Tool, ToolInvocationContext, LLMProvider, LLMCallParams, LLMTurn, LLMStopReason, AgentMessage, AgentRole } from "./types.js";
 export { TruncatedResponseError } from "./types.js";
 export { CheckpointReadError } from "./checkpoint.js";
 export {
@@ -133,6 +133,9 @@ export {
   ProviderAuthError,
   ProviderUnavailableError,
   ProviderRequestInvalidError,
+  RunAbortedError,
+  RunTimeoutError,
+  ToolTimeoutError,
   classifyProviderError,
   isAbortError,
   type BerthAgentErrorCode,

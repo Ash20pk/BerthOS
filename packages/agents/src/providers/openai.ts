@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import { wrapProviderErrors } from "../errors.js";
-import type { AgentMessage, LLMProvider, LLMStopReason, LLMTurn, Tool } from "../types.js";
+import type { AgentMessage, LLMCallParams, LLMProvider, LLMStopReason, LLMTurn, Tool } from "../types.js";
 
 export interface OpenAIProviderOptions {
   apiKey?: string;
@@ -139,17 +139,20 @@ export function createOpenAICompatibleProvider(client: OpenAI, model: string, na
   // Azure, Bedrock and Ollama all build on this same implementation.
   return wrapProviderErrors({
     name,
-    async chat({ system, messages, tools }: { system?: string; messages: AgentMessage[]; tools: Tool[] }): Promise<LLMTurn> {
+    async chat({ system, messages, tools, signal }: LLMCallParams): Promise<LLMTurn> {
       const chatMessages: ChatCompletionMessageParam[] = system
         ? [{ role: "system", content: system }, ...toOpenAIMessages(messages)]
         : toOpenAIMessages(messages);
 
-      const response = await client.chat.completions.create({
-        model,
-        messages: chatMessages,
-        ...toolsParam(tools),
-        ...maxTokensParam,
-      });
+      const response = await client.chat.completions.create(
+        {
+          model,
+          messages: chatMessages,
+          ...toolsParam(tools),
+          ...maxTokensParam,
+        },
+        { signal },
+      );
 
       const choice = response.choices[0];
       const message = choice?.message;
@@ -175,19 +178,20 @@ export function createOpenAICompatibleProvider(client: OpenAI, model: string, na
     },
 
     async chatStream(
-      { system, messages, tools }: { system?: string; messages: AgentMessage[]; tools: Tool[] },
+      { system, messages, tools, signal }: LLMCallParams,
       onText: (delta: string) => void,
     ): Promise<LLMTurn> {
       const chatMessages: ChatCompletionMessageParam[] = system
         ? [{ role: "system", content: system }, ...toOpenAIMessages(messages)]
         : toOpenAIMessages(messages);
 
-      const stream = await client.chat.completions.create({
-        model,
-        messages: chatMessages,
-        ...toolsParam(tools),
-        ...maxTokensParam,
-        stream: true,
+      const stream = await client.chat.completions.create(
+        {
+          model,
+          messages: chatMessages,
+          ...toolsParam(tools),
+          ...maxTokensParam,
+          stream: true,
         // Without this, a streamed response never carries a usage field at
         // all (unlike the non-streamed chat() call, where it's always
         // present) — the one extra flag OpenAI's API needs to include it on

@@ -46,7 +46,10 @@ export type BerthAgentErrorCode =
   | "provider_auth_failed"
   | "provider_unavailable"
   | "provider_request_invalid"
-  | "provider_error";
+  | "provider_error"
+  | "run_aborted"
+  | "run_timed_out"
+  | "tool_timed_out";
 
 /**
  * Base class for every error this package raises deliberately.
@@ -131,6 +134,52 @@ export class CheckpointStoreMissingError extends BerthAgentError {
       `Agent "${agentName}" has no checkpoint store configured — pass { checkpoint } when constructing it to resume a run`,
       "checkpoint_store_missing",
     );
+  }
+}
+
+/**
+ * The caller's own `signal` fired — REMEDIATION 4.2.
+ *
+ * `name` is forced to `"AbortError"` rather than the class name every other
+ * error here uses, so that `isAbortError()` recognizes it and every layer
+ * that checks for a cancellation — the fallback chain, `withProviderErrors`,
+ * a caller's own `catch` — treats it the same as the DOMException a raw
+ * `AbortController` raises. A cancellation that only *some* layers recognize
+ * is worse than none.
+ */
+export class RunAbortedError extends BerthAgentError {
+  constructor(readonly agentName: string) {
+    super(`Agent "${agentName}" run was aborted by its caller`, "run_aborted");
+    this.name = "AbortError";
+  }
+}
+
+/** The run's wall-clock `timeoutMs` elapsed. Distinct from RunAbortedError because "you ran out of time" and "someone cancelled you" call for different responses — a retry is plausible for one and pointless for the other. */
+export class RunTimeoutError extends BerthAgentError {
+  constructor(
+    readonly agentName: string,
+    readonly timeoutMs: number,
+  ) {
+    super(`Agent "${agentName}" exceeded its timeoutMs (${timeoutMs}ms) before reaching a final answer`, "run_timed_out");
+  }
+}
+
+/**
+ * One tool call exceeded `toolTimeoutMs`.
+ *
+ * Fed back to the model as a tool result rather than ending the run — same
+ * treatment every other tool failure gets, and for the same reason: a model
+ * that learns one tool is hanging can try a different one, and killing the
+ * whole run over a single slow call would make the timeout more destructive
+ * than the hang it exists to bound. The run-level deadline is the backstop
+ * for a model that responds by retrying the same slow tool forever.
+ */
+export class ToolTimeoutError extends BerthAgentError {
+  constructor(
+    readonly toolName: string,
+    readonly timeoutMs: number,
+  ) {
+    super(`tool "${toolName}" timed out after ${timeoutMs}ms`, "tool_timed_out");
   }
 }
 

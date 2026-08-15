@@ -1,6 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
 import type { Agent } from "./agent.js";
 import { createInMemorySession, type Session } from "./session.js";
+import { abortOnClientDisconnect } from "./cancellation.js";
+import { isAbortError } from "./errors.js";
 import type { AgentMessage } from "./types.js";
 
 // The exact headers the `ai` package's own UI_MESSAGE_STREAM_HEADERS
@@ -138,15 +140,27 @@ async function handleTask(
     return;
   }
 
+  // A client that hangs up mid-run used to leave the run going: nothing here
+  // listened for a disconnect, so a closed tab kept driving LLM turns and
+  // billing for them with no one left to receive the answer. See
+  // REMEDIATION 4.2.
+  const disconnect = abortOnClientDisconnect(req);
   try {
     const session = typeof body.sessionId === "string" ? sessionFor(body.sessionId) : undefined;
     const result = await agent.run(body.task, {
       runId: typeof body.runId === "string" ? body.runId : undefined,
       session,
+      signal: disconnect.signal,
     });
     sendJson(res, 200, result);
   } catch (err) {
+    // Writing to a socket the client already closed throws; there is also
+    // nobody to read the status code. Stay quiet rather than turning a
+    // routine disconnect into an unhandled error in the server's logs.
+    if (isAbortError(err)) return;
     sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) });
+  } finally {
+    disconnect.dispose();
   }
 }
 
@@ -176,6 +190,7 @@ async function handleChat(agent: Agent, req: IncomingMessage, res: ServerRespons
   send({ type: "start-step" });
   send({ type: "text-start", id: "0" });
 
+  const disconnect = abortOnClientDisconnect(req);
   try {
     // onText only fires when the resolved LLMProvider implements
     // chatStream (see AgentOptions.trace's own doc comment for the same
@@ -186,6 +201,7 @@ async function handleChat(agent: Agent, req: IncomingMessage, res: ServerRespons
     let streamed = false;
     const result = await agent.run(input, {
       session,
+      signal: disconnect.signal,
       onText: (delta) => {
         streamed = true;
         send({ type: "text-delta", id: "0", delta });
@@ -198,10 +214,21 @@ async function handleChat(agent: Agent, req: IncomingMessage, res: ServerRespons
     send({ type: "finish-step" });
     send({ type: "finish" });
   } catch (err) {
-    send({ type: "error", errorText: err instanceof Error ? err.message : String(err) });
+    // A disconnect is the client's own doing, and the stream it would be
+    // reported on is the one that just went away.
+    if (!isAbortError(err)) {
+      send({ type: "error", errorText: err instanceof Error ? err.message : String(err) });
+    }
   } finally {
-    res.write("data: [DONE]\n\n");
-    res.end();
+    disconnect.dispose();
+    // The [DONE] sentinel is part of the stream contract the `ai` package's
+    // client parser reads, so it stays on every path — but only while the
+    // socket is still there. Writing to a destroyed one throws, which in a
+    // `finally` would replace the real error with an ERR_STREAM_DESTROYED.
+    if (!res.destroyed) {
+      res.write("data: [DONE]\n\n");
+      res.end();
+    }
   }
 }
 

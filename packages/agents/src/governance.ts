@@ -216,7 +216,7 @@ export function resolveGovernanceGate(
     gateExternalTool(tool, action) {
       return {
         ...tool,
-        invoke: (input: unknown) => enforce(action, input, () => tool.invoke(input), askGovernor, mode),
+        invoke: (input: unknown, ctx) => enforce(action, input, () => tool.invoke(input, ctx), askGovernor, mode),
       };
     },
   };
@@ -257,7 +257,7 @@ export function applyGovernanceGate(
 
     return {
       ...tool,
-      invoke: async (input: unknown) => {
+      invoke: async (input: unknown, ctx) => {
         let verdict: EvaluateActionResult;
         try {
           verdict = (await withTimeout(
@@ -270,12 +270,12 @@ export function applyGovernanceGate(
             throw new GovernanceUnavailableError(owner.appName, owner.exportName, cause);
           }
           console.warn(`[governance] evaluate_action call failed (${cause}) — failing open for ${owner.appName}.${owner.exportName}`);
-          return tool.invoke(input);
+          return tool.invoke(input, ctx);
         }
         if (!verdict.allowed) {
           throw new GovernanceDeniedError(owner.appName, owner.exportName, verdict.reason ?? "denied");
         }
-        return tool.invoke(input);
+        return tool.invoke(input, ctx);
       },
     };
   });

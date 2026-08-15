@@ -21,7 +21,9 @@ import {
   CheckpointStoreMissingError,
   MaxTurnsExceededError,
   UnknownToolError,
+  isAbortError,
 } from "./errors.js";
+import { createRunCancellation, withToolTimeout, type RunCancellation } from "./cancellation.js";
 import { TruncatedResponseError, type AgentMessage, type LLMProvider, type Tool } from "./types.js";
 
 export interface AgentOptions {
@@ -70,6 +72,24 @@ export interface AgentOptions {
    * guardrails.ts.
    */
   outputGuardrails?: Guardrail[];
+  /**
+   * Wall-clock ceiling for a whole run(), in milliseconds — checked at every
+   * loop boundary and propagated to the in-flight LLM call and tool call as
+   * an AbortSignal. Unset means no deadline, which was the only behaviour
+   * before REMEDIATION 4.2: `maxTurns` bounded how many times the loop went
+   * round, and nothing at all bounded how long that took.
+   *
+   * Overridable per call via run()'s own `timeoutMs`.
+   */
+  timeoutMs?: number;
+  /**
+   * Ceiling for a single tool call, in milliseconds. A call that exceeds it
+   * comes back to the model as a ToolTimeoutError tool result — a failure it
+   * can route around — rather than ending the run. See errors.ts for why
+   * that direction, and cancellation.ts for what the bound does and doesn't
+   * promise about a tool that ignores its signal.
+   */
+  toolTimeoutMs?: number;
 }
 
 export interface AgentRunResult {
@@ -123,6 +143,21 @@ function pendingToolCalls(messages: AgentMessage[]): { id: string; name: string;
 const DEFAULT_MAX_TURNS = 25;
 const DEFAULT_MAX_REPAIR_ATTEMPTS = 2;
 
+/** The arguments Agent's internal loop takes. Named rather than inlined because both loop() and loopWith() carry it — see loop() for why they're split. */
+interface LoopArgs<T> {
+  initialMessages: AgentMessage[];
+  initialExecuted: AgentRunResult["toolCalls"];
+  startTurn: number;
+  runId: string | undefined;
+  onText: ((delta: string) => void) | undefined;
+  responseSchema?: z.ZodType<T>;
+  maxRepairAttempts?: number;
+  session?: Session;
+  sessionBaseline?: number;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
+
 /**
  * The provider-agnostic tool-use loop: identical regardless of which
  * LLMProvider or which Tool implementations (resident-app exports, other
@@ -138,6 +173,8 @@ export class Agent {
   private readonly tracer: StepTracer | undefined;
   private readonly inputGuardrails: Guardrail[];
   private readonly outputGuardrails: Guardrail[];
+  private readonly timeoutMs: number | undefined;
+  private readonly toolTimeoutMs: number | undefined;
   /**
    * The governance authority of the Computer this agent was built from, set
    * by createAgent(). Only asTool() uses it — every other tool this agent
@@ -157,27 +194,39 @@ export class Agent {
     this.inputGuardrails = options.inputGuardrails ?? [];
     this.outputGuardrails = options.outputGuardrails ?? [];
     this.governance = options.governance;
+    this.timeoutMs = options.timeoutMs;
+    this.toolTimeoutMs = options.toolTimeoutMs;
   }
 
   async run<T = never>(
     input: string,
-    opts: { runId?: string; onText?: (delta: string) => void; session?: Session } & StructuredOutputRunOptions<T> = {},
+    opts: {
+      runId?: string;
+      onText?: (delta: string) => void;
+      session?: Session;
+      /** Cancels this run: the in-flight LLM call and tool call are aborted, and run() rejects with an AbortError. See REMEDIATION 4.2. */
+      signal?: AbortSignal;
+      /** Overrides the Agent's own `timeoutMs` for this call. */
+      timeoutMs?: number;
+    } & StructuredOutputRunOptions<T> = {},
   ): Promise<AgentRunResult & { data?: T }> {
     if (this.inputGuardrails.length > 0) {
       await runGuardrails(this.inputGuardrails, input, "input");
     }
     const priorItems = opts.session ? await opts.session.getItems() : [];
-    return this.loop(
-      [...priorItems, { role: "user", text: input }],
-      [],
-      0,
-      opts.runId,
-      opts.onText,
-      opts.responseSchema,
-      opts.maxRepairAttempts,
-      opts.session,
-      priorItems.length,
-    );
+    return this.loop({
+      initialMessages: [...priorItems, { role: "user", text: input }],
+      initialExecuted: [],
+      startTurn: 0,
+      runId: opts.runId,
+      onText: opts.onText,
+      responseSchema: opts.responseSchema,
+      maxRepairAttempts: opts.maxRepairAttempts,
+      session: opts.session,
+      sessionBaseline: priorItems.length,
+      signal: opts.signal,
+      timeoutMs: opts.timeoutMs ?? this.timeoutMs,
+    });
   }
 
   /**
@@ -192,7 +241,7 @@ export class Agent {
    */
   async resume<T = never>(
     runId: string,
-    opts: { onText?: (delta: string) => void } & StructuredOutputRunOptions<T> = {},
+    opts: { onText?: (delta: string) => void; signal?: AbortSignal; timeoutMs?: number } & StructuredOutputRunOptions<T> = {},
   ): Promise<AgentRunResult & { data?: T }> {
     if (!this.checkpointStore) {
       throw new CheckpointStoreMissingError(this.name);
@@ -204,20 +253,46 @@ export class Agent {
     if (checkpoint.status === "done") {
       return { text: checkpoint.text ?? "", toolCalls: checkpoint.toolCalls };
     }
-    return this.loop(checkpoint.messages, checkpoint.toolCalls, checkpoint.turnCount, runId, opts.onText, opts.responseSchema, opts.maxRepairAttempts);
+    return this.loop({
+      initialMessages: checkpoint.messages,
+      initialExecuted: checkpoint.toolCalls,
+      startTurn: checkpoint.turnCount,
+      runId,
+      onText: opts.onText,
+      responseSchema: opts.responseSchema,
+      maxRepairAttempts: opts.maxRepairAttempts,
+      signal: opts.signal,
+      timeoutMs: opts.timeoutMs ?? this.timeoutMs,
+    });
   }
 
-  private async loop<T = never>(
-    initialMessages: AgentMessage[],
-    initialExecuted: AgentRunResult["toolCalls"],
-    startTurn: number,
-    runId: string | undefined,
-    onText: ((delta: string) => void) | undefined,
-    responseSchema?: z.ZodType<T>,
-    maxRepairAttempts = DEFAULT_MAX_REPAIR_ATTEMPTS,
-    session?: Session,
-    sessionBaseline = 0,
+  private async loop<T = never>(args: LoopArgs<T>): Promise<AgentRunResult & { data?: T }> {
+    // The deadline is a real timer, so it has to be cleared however the run
+    // ends — including the paths that throw. Without this, a run that beats
+    // its own timeout by an hour keeps the process alive for that hour.
+    const cancellation = createRunCancellation(this.name, args.signal, args.timeoutMs);
+    try {
+      return await this.loopWith(args, cancellation);
+    } finally {
+      cancellation.dispose();
+    }
+  }
+
+  private async loopWith<T = never>(
+    args: LoopArgs<T>,
+    cancellation: RunCancellation,
   ): Promise<AgentRunResult & { data?: T }> {
+    const {
+      initialMessages,
+      initialExecuted,
+      startTurn,
+      runId,
+      onText,
+      responseSchema,
+      maxRepairAttempts = DEFAULT_MAX_REPAIR_ATTEMPTS,
+      session,
+      sessionBaseline = 0,
+    } = args;
     const messages = [...initialMessages];
     const executed = [...initialExecuted];
     let repairAttempts = 0;
@@ -256,7 +331,9 @@ export class Agent {
         result = { error };
       } else {
         try {
-          result = await tool.invoke(call.input);
+          result = await withToolTimeout(call.name, this.toolTimeoutMs, cancellation.signal, (signal) =>
+            tool.invoke(call.input, { signal }),
+          );
         } catch (err) {
           // A refusal is not a failure the model gets to route around.
           // Feeding a human's "no" back as a tool result let the model
@@ -267,6 +344,22 @@ export class Agent {
           // agent-as-tool. See REMEDIATION 3.4.
           if (isRefusal(err)) {
             await checkpoint(turnCount, "error", turnText);
+            throw err;
+          }
+          // A cancelled *run* ends the run — feeding "aborted" back as a tool
+          // result would have the model politely retry the call that someone
+          // just cancelled. A cancelled *tool* is different and deliberately
+          // falls through to the {error} path below: the run is still alive,
+          // and one slow tool is a failure the model can route around.
+          //
+          // Keyed on the run's own signal rather than on the error's shape,
+          // because the two are not reliably distinguishable from the error
+          // alone: a tool that honours its signal rejects with an AbortError
+          // either way, and a run deadline rejects with RunTimeoutError,
+          // which is deliberately *not* an AbortError. See cancellation.ts.
+          if (cancellation.signal?.aborted) {
+            await checkpoint(turnCount, "error", turnText);
+            cancellation.throwIfCancelled();
             throw err;
           }
           // Every other failing tool call still feeds an {error} result back
@@ -323,13 +416,17 @@ export class Agent {
     if (pending.length > 0) await checkpoint(startTurn, "running");
 
     for (let turnCount = startTurn; turnCount < this.maxTurns; turnCount++) {
+      // Checked at the top of every turn, so a run cancelled while a tool was
+      // executing stops here rather than spending one more LLM call first.
+      cancellation.throwIfCancelled();
       const turnStart = Date.now();
       let turn;
+      const callParams = { system: this.systemPrompt, messages, tools: this.tools, signal: cancellation.signal };
       try {
         turn =
           onText && this.llm.chatStream
-            ? await this.llm.chatStream({ system: this.systemPrompt, messages, tools: this.tools }, onText)
-            : await this.llm.chat({ system: this.systemPrompt, messages, tools: this.tools });
+            ? await this.llm.chatStream(callParams, onText)
+            : await this.llm.chat(callParams);
       } catch (err) {
         await trace({
           turn: turnCount,
@@ -337,6 +434,11 @@ export class Agent {
           durationMs: Date.now() - turnStart,
           error: err instanceof Error ? err.message : String(err),
         });
+        // Turns the provider SDK's own abort (a DOMException, or the vendor's
+        // APIUserAbortError) into this package's RunTimeoutError /
+        // RunAbortedError, so a caller learns *why* it stopped rather than
+        // getting a bare "The operation was aborted" from a dependency.
+        if (isAbortError(err)) cancellation.throwIfCancelled();
         throw err;
       }
       await trace({ turn: turnCount, kind: "llm-turn", durationMs: Date.now() - turnStart, usage: turn.usage });
@@ -454,9 +556,12 @@ export class Agent {
         properties: { task: { type: "string", description: "the task to delegate to this agent" } },
         required: ["task"],
       },
-      invoke: async (input: unknown) => {
+      invoke: async (input: unknown, ctx) => {
         const { task } = input as { task: string };
-        const result = await this.run(task);
+        // The delegate's run inherits the caller's signal, so cancelling a
+        // manager cancels the workers it is waiting on rather than leaving
+        // them running against a run nobody is listening to any more.
+        const result = await this.run(task, { signal: ctx?.signal });
         return result.text;
       },
     };
