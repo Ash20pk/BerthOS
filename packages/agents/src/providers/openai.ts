@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
+import { wrapProviderErrors } from "../errors.js";
 import type { AgentMessage, LLMProvider, LLMStopReason, LLMTurn, Tool } from "../types.js";
 
 export interface OpenAIProviderOptions {
@@ -133,7 +134,10 @@ export function createOpenAICompatibleProvider(client: OpenAI, model: string, na
   // Absent rather than undefined, same reasoning as toolsParam(): some
   // OpenAI-compatible servers validate the key's presence, not its value.
   const maxTokensParam = maxTokens === undefined ? {} : { max_tokens: maxTokens };
-  return {
+  // Wrapped so both call paths classify vendor errors into the taxonomy in
+  // errors.ts — REMEDIATION 4.8. This one wrapping covers four providers:
+  // Azure, Bedrock and Ollama all build on this same implementation.
+  return wrapProviderErrors({
     name,
     async chat({ system, messages, tools }: { system?: string; messages: AgentMessage[]; tools: Tool[] }): Promise<LLMTurn> {
       const chatMessages: ChatCompletionMessageParam[] = system
@@ -238,5 +242,5 @@ export function createOpenAICompatibleProvider(client: OpenAI, model: string, na
         usage,
       };
     },
-  };
+  });
 }

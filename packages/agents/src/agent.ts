@@ -16,6 +16,12 @@ import { createMcpClientTools, type McpClientHandle, type McpClientToolsOptions 
 import { runGuardrails, GuardrailTripwireError, type Guardrail } from "./guardrails.js";
 import type { GovernanceGate } from "./governance.js";
 import type { Session } from "./session.js";
+import {
+  CheckpointNotFoundError,
+  CheckpointStoreMissingError,
+  MaxTurnsExceededError,
+  UnknownToolError,
+} from "./errors.js";
 import { TruncatedResponseError, type AgentMessage, type LLMProvider, type Tool } from "./types.js";
 
 export interface AgentOptions {
@@ -189,11 +195,11 @@ export class Agent {
     opts: { onText?: (delta: string) => void } & StructuredOutputRunOptions<T> = {},
   ): Promise<AgentRunResult & { data?: T }> {
     if (!this.checkpointStore) {
-      throw new Error(`Agent "${this.name}" has no checkpoint store configured — pass { checkpoint } when constructing it to resume a run`);
+      throw new CheckpointStoreMissingError(this.name);
     }
     const checkpoint = await this.checkpointStore.load(runId);
     if (!checkpoint) {
-      throw new Error(`no checkpoint found for run "${runId}"`);
+      throw new CheckpointNotFoundError(runId);
     }
     if (checkpoint.status === "done") {
       return { text: checkpoint.text ?? "", toolCalls: checkpoint.toolCalls };
@@ -236,7 +242,17 @@ export class Agent {
       let result: unknown;
       let error: string | undefined;
       if (!tool) {
-        error = `no such tool "${call.name}"`;
+        // Fed back to the model rather than thrown, unchanged from before —
+        // picking a tool that doesn't exist is a mistake the model can
+        // correct on the next turn, and killing the run over it would be a
+        // regression. UnknownToolError is used for its *message*, which now
+        // names the tools that do exist; "no such tool X" on its own is the
+        // least actionable thing to hand a model that just guessed. See
+        // REMEDIATION 4.8 and errors.ts.
+        error = new UnknownToolError(
+          call.name,
+          this.tools.map((t) => t.name),
+        ).message;
         result = { error };
       } else {
         try {
@@ -389,7 +405,16 @@ export class Agent {
     }
 
     await checkpoint(this.maxTurns, "error");
-    throw new Error(`Agent "${this.name}" exceeded its maxTurns (${this.maxTurns}) without reaching a final answer`);
+    // Carries the executed tool calls and the last thing the model said. The
+    // bare Error this replaces discarded both, so a caller who wanted to
+    // salvage a run that ran long — or just see how far it got — had nothing
+    // to work with but a message string. See REMEDIATION 4.8.
+    throw new MaxTurnsExceededError(
+      this.name,
+      this.maxTurns,
+      executed,
+      [...messages].reverse().find((m) => m.role === "assistant" && m.text)?.text,
+    );
   }
 
 

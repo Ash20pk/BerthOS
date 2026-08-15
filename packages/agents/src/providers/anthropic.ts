@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { wrapProviderErrors } from "../errors.js";
 import type { AgentMessage, LLMProvider, LLMStopReason, LLMTurn, Tool } from "../types.js";
 
 export interface AnthropicProviderOptions {
@@ -107,7 +108,10 @@ export function createAnthropicProvider(options: AnthropicProviderOptions = {}):
   const model = options.model ?? DEFAULT_MODEL;
   const maxTokens = options.maxTokens ?? DEFAULT_MAX_TOKENS;
 
-  return {
+  // Wrapped so both call paths classify vendor errors into the taxonomy in
+  // errors.ts — REMEDIATION 4.8. Applied here rather than around each await
+  // so a future third call path can't miss it.
+  return wrapProviderErrors({
     name: "anthropic",
     async chat({ system, messages, tools }: { system?: string; messages: AgentMessage[]; tools: Tool[] }): Promise<LLMTurn> {
       const response = await client.messages.create({
@@ -163,5 +167,5 @@ export function createAnthropicProvider(options: AnthropicProviderOptions = {}):
         usage: { inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens },
       };
     },
-  };
+  });
 }

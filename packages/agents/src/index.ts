@@ -121,3 +121,19 @@ export { detectLLMProvider, resolveLLMProvider, type LLMProviderConfig } from ".
 export type { Tool, LLMProvider, LLMTurn, LLMStopReason, AgentMessage, AgentRole } from "./types.js";
 export { TruncatedResponseError } from "./types.js";
 export { CheckpointReadError } from "./checkpoint.js";
+export {
+  BerthAgentError,
+  MaxTurnsExceededError,
+  UnknownToolError,
+  CheckpointNotFoundError,
+  CheckpointStoreMissingError,
+  ProviderError,
+  RateLimitError,
+  ContextLengthExceededError,
+  ProviderAuthError,
+  ProviderUnavailableError,
+  ProviderRequestInvalidError,
+  classifyProviderError,
+  isAbortError,
+  type BerthAgentErrorCode,
+} from "./errors.js";

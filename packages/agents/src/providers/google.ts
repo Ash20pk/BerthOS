@@ -1,4 +1,5 @@
 import { GoogleGenAI, type Content, type FunctionDeclaration, type Part } from "@google/genai";
+import { wrapProviderErrors } from "../errors.js";
 import type { AgentMessage, LLMProvider, LLMStopReason, LLMTurn, Tool } from "../types.js";
 
 export interface GoogleProviderOptions {
@@ -126,7 +127,10 @@ export function createGoogleProvider(options: GoogleProviderOptions = {}): LLMPr
     return { inputTokens: usageMetadata.promptTokenCount ?? 0, outputTokens: usageMetadata.candidatesTokenCount ?? 0 };
   }
 
-  return {
+  // Wrapped so both call paths classify vendor errors into the taxonomy in
+  // errors.ts — REMEDIATION 4.8. Applied here rather than around each await
+  // so a future third call path can't miss it.
+  return wrapProviderErrors({
     name: "google",
     async chat({ system, messages, tools }: { system?: string; messages: AgentMessage[]; tools: Tool[] }): Promise<LLMTurn> {
       const response = await client.models.generateContent({
@@ -198,5 +202,5 @@ export function createGoogleProvider(options: GoogleProviderOptions = {}): LLMPr
         usage,
       };
     },
-  };
+  });
 }
