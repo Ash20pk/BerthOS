@@ -2,6 +2,7 @@ export { Computer, type BootComputerOptions, type ConnectComputerOptions, type C
 export { HttpBridgeComputer, type DeployComputerOptions } from "./fleet-computer.js";
 export { resolveComputerApps, type ComputerAppSpec } from "./resolve-apps.js";
 export { computerToolsFor, toolNameFor } from "./tools.js";
+export { toAiSdkTools, toLangChainTools, toToolSpecs, type ToolSpec } from "./interop.js";
 export {
   createMcpClientTools,
   type McpClientHandle,

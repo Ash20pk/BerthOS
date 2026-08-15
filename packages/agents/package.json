@@ -32,7 +32,10 @@
     "mcp",
     "opentelemetry",
     "sandbox",
-    "multi-agent"
+    "multi-agent",
+    "vercel-ai-sdk",
+    "langchain",
+    "langgraph"
   ],
   "engines": {
     "node": ">=22"
@@ -65,10 +68,23 @@
     "zod-to-json-schema": "^3.24.1"
   },
   "devDependencies": {
+    "@langchain/core": "^1.2.8",
     "@opentelemetry/sdk-trace-base": "^2.10.0",
     "@types/dockerode": "^4.0.1",
     "@types/node": "^26.1.2",
     "ai": "^7.0.55",
     "typescript": "^7.0.2"
+  },
+  "peerDependencies": {
+    "ai": ">=5",
+    "@langchain/core": ">=0.3"
+  },
+  "peerDependenciesMeta": {
+    "ai": {
+      "optional": true
+    },
+    "@langchain/core": {
+      "optional": true
+    }
   }
 }
