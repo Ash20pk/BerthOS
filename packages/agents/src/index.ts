@@ -78,6 +78,15 @@ export {
 } from "./guardrails.js";
 export { createInMemorySession, createSemanticFsSession, type Session } from "./session.js";
 export {
+  compactMessages,
+  estimateTokens,
+  estimateMessageTokens,
+  estimateFixedTokens,
+  SUMMARY_PREFIX,
+  type ContextPolicy,
+  type CompactionResult,
+} from "./context.js";
+export {
   createAgentRequestHandler,
   serveAgent,
   type AgentRequestHandlerOptions,

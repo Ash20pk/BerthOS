@@ -6,10 +6,18 @@ export interface AgentStepEvent {
   agentName: string;
   /** Index of the turn this step happened in — same numbering as CheckpointedRun.turnCount. */
   turn: number;
-  kind: "llm-turn" | "tool-call";
+  kind: "llm-turn" | "tool-call" | "context-compaction";
   /** Set only on kind "tool-call". */
   toolName?: string;
   durationMs: number;
+  /**
+   * Set only on kind "context-compaction" — how many messages were dropped
+   * to fit the window. Emitted because compaction is otherwise invisible:
+   * the model quietly stops being able to refer to earlier turns, which is
+   * indistinguishable from the model just forgetting unless there's a record.
+   * See REMEDIATION 4.1.
+   */
+  droppedMessages?: number;
   /** Set when the LLM call or tool.invoke() threw — the same message Agent.run()'s {error} tool result carries for tool-calls. */
   error?: string;
   /** Set only on kind "llm-turn", when the LLMProvider reports it (LLMTurn.usage) — absent, not zero, for a provider that doesn't. */

@@ -19,11 +19,13 @@ import type { Session } from "./session.js";
 import {
   CheckpointNotFoundError,
   CheckpointStoreMissingError,
+  ContextLengthExceededError,
   MaxTurnsExceededError,
   UnknownToolError,
   isAbortError,
 } from "./errors.js";
 import { createRunCancellation, withToolTimeout, type RunCancellation } from "./cancellation.js";
+import { compactMessages, emergencyBudget, estimateFixedTokens, type ContextPolicy } from "./context.js";
 import { TruncatedResponseError, type AgentMessage, type LLMProvider, type Tool } from "./types.js";
 
 export interface AgentOptions {
@@ -90,6 +92,14 @@ export interface AgentOptions {
    * promise about a tool that ignores its signal.
    */
   toolTimeoutMs?: number;
+  /**
+   * Bounds how much history is sent to the model, and what happens when it
+   * doesn't fit — see context.ts. Unset leaves proactive compaction off, but
+   * *not* the reactive half: a provider reporting a context overflow still
+   * triggers a trim-and-retry, because the alternative is a session that
+   * fails permanently from that point on. See REMEDIATION 4.1.
+   */
+  context?: ContextPolicy;
 }
 
 export interface AgentRunResult {
@@ -175,6 +185,7 @@ export class Agent {
   private readonly outputGuardrails: Guardrail[];
   private readonly timeoutMs: number | undefined;
   private readonly toolTimeoutMs: number | undefined;
+  private readonly context: ContextPolicy;
   /**
    * The governance authority of the Computer this agent was built from, set
    * by createAgent(). Only asTool() uses it — every other tool this agent
@@ -196,6 +207,7 @@ export class Agent {
     this.governance = options.governance;
     this.timeoutMs = options.timeoutMs;
     this.toolTimeoutMs = options.toolTimeoutMs;
+    this.context = options.context ?? {};
   }
 
   async run<T = never>(
@@ -296,6 +308,10 @@ export class Agent {
     const messages = [...initialMessages];
     const executed = [...initialExecuted];
     let repairAttempts = 0;
+    // Bounds the trim-and-retry to one attempt per run, so a provider that
+    // reports an overflow for some other reason can't drive an endless
+    // shrink loop.
+    let contextRetried = false;
 
     const checkpoint = async (turnCount: number, status: CheckpointedRun["status"], text?: string) => {
       if (!this.checkpointStore || !runId) return;
@@ -421,6 +437,24 @@ export class Agent {
       cancellation.throwIfCancelled();
       const turnStart = Date.now();
       let turn;
+
+      // Proactive half of REMEDIATION 4.1: compact before the call when a
+      // budget is set. Mutates `messages` in place rather than shadowing it,
+      // so what gets checkpointed and what gets sent are the same history —
+      // otherwise a resumed run would restore the full, over-budget list and
+      // fail exactly where the live run had recovered.
+      const fixedTokens = estimateFixedTokens(this.systemPrompt, this.tools);
+      const compaction = await compactMessages(messages, fixedTokens, this.context);
+      if (compaction.compacted) {
+        messages.splice(0, messages.length, ...compaction.messages);
+        await trace({
+          turn: turnCount,
+          kind: "context-compaction",
+          durationMs: 0,
+          droppedMessages: compaction.droppedCount,
+        });
+      }
+
       const callParams = { system: this.systemPrompt, messages, tools: this.tools, signal: cancellation.signal };
       try {
         turn =
@@ -428,6 +462,35 @@ export class Agent {
             ? await this.llm.chatStream(callParams, onText)
             : await this.llm.chat(callParams);
       } catch (err) {
+        // Reactive half: the provider says the request didn't fit. Without
+        // this, a session that outgrew the window failed here and on every
+        // subsequent run() forever — the history that makes a session useful
+        // being exactly what made it unusable.
+        //
+        // Retried once per turn, against a budget derived from what was just
+        // rejected (see emergencyBudget) rather than a guess at the model's
+        // real window, which no API exposes. If compaction can't drop
+        // anything more, the error propagates rather than looping.
+        if (err instanceof ContextLengthExceededError && !contextRetried) {
+          const emergency = await compactMessages(
+            messages,
+            fixedTokens,
+            { ...this.context, maxInputTokens: emergencyBudget(messages, fixedTokens) },
+          );
+          if (emergency.compacted) {
+            messages.splice(0, messages.length, ...emergency.messages);
+            contextRetried = true;
+            await trace({
+              turn: turnCount,
+              kind: "context-compaction",
+              durationMs: Date.now() - turnStart,
+              droppedMessages: emergency.droppedCount,
+              error: "recovered from a provider context-length error",
+            });
+            turnCount--; // Re-run this turn against the compacted history.
+            continue;
+          }
+        }
         await trace({
           turn: turnCount,
           kind: "llm-turn",
