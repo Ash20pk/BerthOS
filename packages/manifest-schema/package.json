@@ -12,7 +12,9 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "!dist/**/*.test.*",
+    "!dist/**/mock-server.*"
   ],
   "license": "Apache-2.0",
   "repository": {
