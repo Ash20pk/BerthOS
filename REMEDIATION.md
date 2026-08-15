@@ -11,6 +11,11 @@ Each item lists evidence (`file:line`), the fix, and a verification step that wo
 - 🔴 Open
 - 🟡 In progress
 - 🟢 Closed — with a verification artifact, not just a passing build
+- ⚪ Won't fix at this seam — the limitation is real, stated in the code, and
+  paired with a mitigation. Added because 3.5 sat amber indefinitely while
+  being, in one part, genuinely unfixable without work an order of magnitude
+  larger than the item; an entry that will never go green is more honestly
+  labelled than left in progress forever.
 
 ---
 
@@ -680,9 +685,9 @@ Real defects in shipped code, independent of security.
 | 3.2 | Truncated responses returned as final answers | 🟢 | 4h |
 | 3.3 | `Crew.parallel` shares one `runId` across concurrent agents | 🟢 | 4h |
 | 3.4 | Denied human approval doesn't stop the run | 🟢 | 4h |
-| 3.5 | Checkpoints written per turn, not per tool call | 🟡 | 1d |
+| 3.5 | Checkpoints written per turn, not per tool call | ⚪ | 1d |
 | 3.6 | Anthropic empty-content messages rejected by the API | 🟢 | 2h |
-| 3.7 | No provider adapter has a unit test | 🟡 | 2d |
+| 3.7 | No provider adapter has a unit test | 🟢 | 2d |
 
 ### 3.1 — `tools: []` breaks every OpenAI-family LLM judge
 
@@ -750,13 +755,13 @@ The positive control matters more than usual: an ordinary tool failure must stil
 
 **Fix.** Checkpoint after each tool call. Make `save()` atomic (temp file + rename). Distinguish "no checkpoint" from "read failed" in `load()`.
 
-**Two of three closed; `save()` atomicity is not, which is why this is 🟡.**
+**Two of three closed; `save()` atomicity is not, and won't be at this seam — hence ⚪ rather than a permanent 🟡.**
 
 **Per-tool-call checkpointing needed a second half nobody asked for.** Writing a checkpoint mid-turn is easy; it's worthless unless resume can *use* one. A partial turn is an assistant message whose later tool calls have no results, and every vendor rejects that outright — so a naive fix would have turned "loses work on resume" into "cannot resume at all". `Agent.loop()` now completes the outstanding calls first and only then asks the model, with a test asserting no unanswered tool call ever reaches a provider. The last call of a turn skips its own save, since the turn-end checkpoint records the same state one line later.
 
 **`load()` no longer swallows failures.** Only a genuine `ENOENT` returns null; a timed-out RPC, a permission error, or unparseable content throws the new `CheckpointReadError`. Before this a transient read failure was indistinguishable from a fresh run, so `resume()` silently restarted and re-executed everything the checkpoint existed to avoid. Resident-app errors cross the wire as plain strings rather than typed codes, so this matches on message text — not pretty, and the reason the test asserts both directions: guessing wrong toward "absent" resurrects the original bug, and guessing wrong the other way makes every first run throw.
 
-**`save()` is still not atomic, and can't be at this seam.** It's a write followed by a tag, and there is no rename primitive in the `write_context_file`/`read_context_file`/`tag_context_file` contract a store reaches Semantic FS through — a temp-file-plus-rename would need a new resident-app export *and* FUSE-level rename support in `semantic-fs-daemon`. What's done instead is to make a torn write loud rather than silent: `load()`'s parse failure is now an error instead of a null that quietly restarts the run. The tag half is separately harmless — `load()` reads by exact path, so an untagged checkpoint still loads and only discoverability suffers. Stated in `checkpoint.ts` rather than implied.
+**`save()` is still not atomic, and can't be at this seam — recorded as a won't-fix rather than left open.** Making it atomic needs a rename primitive that does not exist anywhere in the path: a new resident-app export *and* FUSE-level rename support in `semantic-fs-daemon` (Go), which is a larger piece of work than everything else in Phase 3 combined, to close a window that a torn write now makes loud rather than silent. Revisit it if and when Semantic FS grows rename for its own reasons; do not carry it as in-progress in the meantime. It's a write followed by a tag, and there is no rename primitive in the `write_context_file`/`read_context_file`/`tag_context_file` contract a store reaches Semantic FS through — a temp-file-plus-rename would need a new resident-app export *and* FUSE-level rename support in `semantic-fs-daemon`. What's done instead is to make a torn write loud rather than silent: `load()`'s parse failure is now an error instead of a null that quietly restarts the run. The tag half is separately harmless — `load()` reads by exact path, so an untagged checkpoint still loads and only discoverability suffers. Stated in `checkpoint.ts` rather than implied.
 
 **Verify.** `packages/agents/src/checkpoint-durability.test.ts`, 8 tests, 5 of which fail against the unfixed code. The one that matters asserts a resumed run re-executes *only* the outstanding calls, not the side-effecting ones that already completed; the positive control asserts a fully-complete history re-runs nothing, since getting that wrong would double-run every ordinary resume.
 
@@ -768,7 +773,7 @@ The positive control matters more than usual: an ordinary tool failure must stil
 
 `packages/agents/src/providers/` contains eight implementation files and no test files; the only provider test is `fallback.test.ts`, which uses stubs. That absence is why 3.1, 3.2, and 3.6 are all live. Same on the Python side (618 lines, no tests). Add mock-server-backed tests per provider covering message mapping, tool-call round trips, empty tool lists, streaming deltas, and finish reasons.
 
-**TypeScript closed; Python not yet, which is why this is 🟡.**
+**Closed in both languages.**
 
 `packages/agents/src/providers/mock-server.ts` stands up a real HTTP server on an ephemeral port and records what arrived. **A real server rather than a stubbed vendor client, deliberately**: all three bugs this was meant to catch were about the request body an adapter *builds* or the response field it fails to *read*. A stub of `client.chat.completions.create` asserts the arguments this repo passes to the SDK — the half that was never wrong. Every provider already takes a base URL for production reasons, so this needs no seam that didn't exist.
 
@@ -778,7 +783,14 @@ Coverage: `openai.test.ts` (14) — empty tool lists, message mapping including 
 
 **Also added: a `baseUrl` option on the Google provider.** Its absence was why that adapter was the one nothing could be stood in front of — and it's plain parity with the `baseURL` the other two already took.
 
-**Still open:** the Python provider adapters, which remain untested at the unit level. `docs/agents-python-reference.md` justified that with a claim about the TypeScript side that 2.4 corrected and this item now makes obsolete — the convention it appealed to no longer exists.
+**The Python half now matches**, on the same design: `tests/mock_llm_server.py` stands up a real `ThreadingHTTPServer` on an ephemeral port and records what arrived, rather than stubbing the vendor client. Every Python provider already took a `base_url` for production reasons, so this needed no new seam either. 15 tests across the OpenAI family and Anthropic — message mapping including the JSON-string encoding of tool-call arguments and `tool_call_id` correlation, empty tool lists, a tool-call round trip, streaming text deltas, reassembly of a tool call fragmented across frames, the usage-only final frame, 3.6's empty-content rules in both directions, and transport failures surfacing rather than becoming an empty turn.
+
+**It found a live bug on the first run, which is the entire argument for the item.** `providers/openai.py` still sent `tools=[]` — REMEDIATION 3.1, fixed in `openai.ts` and never ported. So `create_llm_guardrail()` and `llm_judge()` were broken against OpenAI, Azure, Bedrock and Ollama in Python for exactly as long as the adapters went untested. Now a `_tools_param()` splat, mirroring the TypeScript helper. `google.py` already guarded it, same as `google.ts`.
+
+**Two Python gaps this surfaced and did *not* close**, recorded here rather than left to be rediscovered:
+
+- **3.2 has no Python half.** `LLMTurn` in `berth_agents/types.py` has no `stop_reason` field, nothing reads `finish_reason`/`stop_reason`, and there is no `TruncatedResponseError`. A response cut off at the token cap is still returned to a Python caller as a final answer — the exact defect 3.2 describes. 3.2 is marked 🟢 on the strength of the TypeScript work; that closure is narrower than its status implies.
+- **`google.py` has no `base_url`.** The same absence 3.7 had to fix in `google.ts` before that adapter could be tested, which is why the Gemini adapter is the one provider with no coverage here.
 
 ---
 

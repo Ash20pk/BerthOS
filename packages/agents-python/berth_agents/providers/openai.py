@@ -47,11 +47,26 @@ def _to_openai_messages(messages: list[AgentMessage]) -> list[dict[str, Any]]:
     return result
 
 
-def _to_openai_tools(tools: list[Tool]) -> list[dict[str, Any]]:
-    return [
-        {"type": "function", "function": {"name": t.name, "description": t.description, "parameters": t.input_schema}}
-        for t in tools
-    ]
+def _tools_param(tools: list[Tool]) -> dict[str, Any]:
+    """The OpenAI API rejects `tools: []` outright — the key has to be absent,
+    not empty. That matters beyond tidiness: create_llm_guardrail() and
+    llm_judge() both call chat() with no tools at all, so every LLM-judge
+    feature was broken against OpenAI, Azure, Bedrock and Ollama (all four
+    share the implementation below).
+
+    This is REMEDIATION 3.1, which was fixed in `providers/openai.ts` and
+    stayed live here — the Python adapters had no tests, which is 3.7, and
+    this is what that absence was costing. Returned as a dict to be splatted
+    into the request so the key simply doesn't exist rather than being set to
+    None, exactly as `toolsParam()` does in the TypeScript adapter."""
+    if not tools:
+        return {}
+    return {
+        "tools": [
+            {"type": "function", "function": {"name": t.name, "description": t.description, "parameters": t.input_schema}}
+            for t in tools
+        ]
+    }
 
 
 class _OpenAIProvider:
@@ -75,7 +90,7 @@ class _OpenAIProvider:
         response = await self._client.chat.completions.create(
             model=self._model,
             messages=chat_messages,
-            tools=_to_openai_tools(tools),
+            **_tools_param(tools),
         )
 
         choice = response.choices[0]
@@ -113,7 +128,7 @@ class _OpenAIProvider:
         stream = await self._client.chat.completions.create(
             model=self._model,
             messages=chat_messages,
-            tools=_to_openai_tools(tools),
+            **_tools_param(tools),
             stream=True,
             # Without this, a streamed response never carries a usage field
             # at all (unlike the non-streamed chat() call, where it's always
