@@ -26,9 +26,9 @@
     "publish:npm": "turbo run build && pnpm -r publish --no-git-checks"
   },
   "devDependencies": {
-    "turbo": "^2.10.8",
+    "turbo": "^2.10.9",
     "typescript": "^7.0.2",
-    "@types/node": "^26.1.2"
+    "@types/node": "^26.2.0"
   },
   "pnpm": {
     "overrides": {

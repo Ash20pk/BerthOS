@@ -74,7 +74,7 @@
   "devDependencies": {
     "@berth/registry-server": "workspace:*",
     "@types/dockerode": "^4.0.1",
-    "@types/node": "^26.1.2",
+    "@types/node": "^26.2.0",
     "@types/tar-fs": "^2.0.4",
     "oclif": "^4.23.30",
     "typescript": "^7.0.2"
