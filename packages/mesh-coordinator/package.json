@@ -49,6 +49,7 @@
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
+    "@berth/tls": "workspace:*",
     "fastify": "^5.11.2"
   },
   "devDependencies": {

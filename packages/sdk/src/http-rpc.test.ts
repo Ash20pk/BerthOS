@@ -3,6 +3,11 @@ import assert from "node:assert/strict";
 import { z } from "zod";
 import { defineApp } from "./app.js";
 import { startHttpRpcServer } from "./http-rpc.js";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Agent, fetch as undiciFetch } from "undici";
+import { generateSelfSignedCerts } from "@berth/tls";
 
 function testApp() {
   return defineApp((a) => {
@@ -73,4 +78,42 @@ test("unknown routes get a 404", async () => {
     const res = await fetch(`http://127.0.0.1:${port}/nope`);
     assert.equal(res.status, 404);
   });
+});
+
+test("serves HTTPS when given a cert, and still enforces the bearer token over it", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "berth-http-rpc-tls-"));
+  const { caCertPath, certPath, keyPath } = generateSelfSignedCerts({ dir, hosts: ["localhost", "127.0.0.1"] });
+  const port = 20000 + Math.floor(Math.random() * 10000);
+  const server = startHttpRpcServer(testApp(), {
+    port,
+    authToken: "secret-token",
+    tls: { cert: readFileSync(certPath, "utf-8"), key: readFileSync(keyPath, "utf-8") },
+  });
+
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const dispatcher = new Agent({ connect: { ca: readFileSync(caCertPath, "utf-8") } });
+
+    const ok = await undiciFetch(`https://localhost:${port}/rpc`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer secret-token" },
+      body: JSON.stringify({ id: "1", export: "greet", input: { name: "world" } }),
+      dispatcher,
+    });
+    assert.equal(ok.status, 200);
+    assert.deepEqual(await ok.json(), { id: "1", result: "hello world" });
+
+    // TLS is not a substitute for the token — an encrypted connection still
+    // has to prove who is on it.
+    const unauthorized = await undiciFetch(`https://localhost:${port}/rpc`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: "1", export: "greet", input: { name: "world" } }),
+      dispatcher,
+    });
+    assert.equal(unauthorized.status, 401);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

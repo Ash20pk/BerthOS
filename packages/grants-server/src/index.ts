@@ -1,5 +1,6 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import { join } from "node:path";
+import type { ServerTlsOptions } from "@berth/tls";
 import { GrantsDb } from "./db.js";
 import { registerGrantsRoutes } from "./routes.js";
 import { readOrCreateOperatorToken } from "./operator-token.js";
@@ -19,6 +20,13 @@ export interface CreateGrantsServerOptions {
    * secret rather than an unauthenticated approve/deny endpoint.
    */
   operatorToken?: string;
+  /**
+   * Serve HTTPS instead of plain HTTP. Built by `resolveServerTls()` from
+   * cert/key paths — see @berth/tls and docs/tls-reference.md. Undefined
+   * means plain HTTP, which is the default and what every existing
+   * deployment keeps getting (REMEDIATION.md 5.3).
+   */
+  tls?: ServerTlsOptions;
 }
 
 /** Builds a ready-to-listen Fastify instance; the caller decides host/port and when to close it. */
@@ -26,7 +34,11 @@ export async function createGrantsServer(opts: CreateGrantsServerOptions): Promi
   const db = new GrantsDb(join(opts.dataDir, "grants.sqlite"));
   const operatorToken = opts.operatorToken ?? readOrCreateOperatorToken(opts.dataDir);
 
-  const app = Fastify();
+  // `https: null` rather than conditionally spreading the option: a
+  // `{https} | {}` union makes TypeScript pick Fastify's HTTP/2-secure
+  // overload and the instance type stops matching FastifyInstance. `null` is
+  // Fastify's own spelling for "no TLS" and resolves one overload cleanly.
+  const app = Fastify({ https: opts.tls ?? null });
   await registerGrantsRoutes(app, { db, now: opts.now, webhookUrl: opts.webhookUrl, operatorToken });
 
   app.addHook("onClose", async () => {

@@ -617,6 +617,9 @@ importers:
 
   packages/grants-server:
     dependencies:
+      '@berth/tls':
+        specifier: workspace:*
+        version: link:../tls
       fastify:
         specifier: ^5.11.2
         version: 5.11.2
@@ -627,6 +630,9 @@ importers:
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
+      undici:
+        specifier: ^8.10.0
+        version: 8.10.0
 
   packages/manifest-schema:
     dependencies:
@@ -646,6 +652,9 @@ importers:
 
   packages/mesh-coordinator:
     dependencies:
+      '@berth/tls':
+        specifier: workspace:*
+        version: link:../tls
       fastify:
         specifier: ^5.11.2
         version: 5.11.2
@@ -662,6 +671,9 @@ importers:
       '@berth/manifest-schema':
         specifier: workspace:*
         version: link:../manifest-schema
+      '@berth/tls':
+        specifier: workspace:*
+        version: link:../tls
       '@fastify/multipart':
         specifier: ^10.1.0
         version: 10.1.0
@@ -697,12 +709,28 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@berth/tls':
+        specifier: workspace:*
+        version: link:../tls
       '@types/node':
         specifier: ^26.1.2
         version: 26.1.2
       esbuild:
         specifier: ^0.28.1
         version: 0.28.1
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
+  packages/tls:
+    dependencies:
+      undici:
+        specifier: ^8.10.0
+        version: 8.10.0
+    devDependencies:
+      '@types/node':
+        specifier: ^26.1.2
+        version: 26.1.2
       typescript:
         specifier: ^7.0.2
         version: 7.0.2

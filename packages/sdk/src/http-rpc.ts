@@ -1,4 +1,5 @@
 import * as http from "node:http";
+import * as https from "node:https";
 import { timingSafeEqual } from "node:crypto";
 import type { BerthApp } from "./app.js";
 import { invokeExport, type RpcRequest } from "./rpc.js";
@@ -17,11 +18,23 @@ import { invokeExport, type RpcRequest } from "./rpc.js";
  * already gated by host access) or the TCP transport (only reachable inside
  * a shared Docker network), this listens on a real public URL — so a bearer
  * token generated per-boot and checked here is load-bearing, not optional.
+ *
+ * **TLS.** Pass `tls` to serve HTTPS directly (REMEDIATION.md 5.3). Whether
+ * you need to depends on how the port is exposed: E2B's `getHost` and
+ * Daytona's preview links terminate TLS in front of this, so the bearer
+ * token is already protected in transit there and this listener is only
+ * reachable through their proxy. A NodePort Service, a raw port mapping, or
+ * anything else that hands out the port directly is the case that matters —
+ * there the token crosses the network in the clear, and the alternative to
+ * this option is a sidecar terminator the deploy adapters do not set up.
  */
-export function startHttpRpcServer(app: BerthApp, options: { port: number; authToken: string }): http.Server {
+export function startHttpRpcServer(
+  app: BerthApp,
+  options: { port: number; authToken: string; tls?: { cert: string; key: string } },
+): http.Server {
   const expectedToken = Buffer.from(options.authToken, "utf-8");
 
-  const server = http.createServer((req, res) => {
+  const handler: http.RequestListener = (req, res) => {
     if (req.method === "GET" && req.url === "/healthz") {
       res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ ok: true }));
       return;
@@ -44,10 +57,15 @@ export function startHttpRpcServer(app: BerthApp, options: { port: number; authT
     req.on("end", () => {
       void handleRequest(app, body, res);
     });
-  });
+  };
+
+  const server = options.tls ? https.createServer(options.tls, handler) : http.createServer(handler);
 
   server.listen(options.port, "0.0.0.0", () => {
-    console.error(`[berth:runtime] HTTP RPC server listening on 0.0.0.0:${options.port}`);
+    console.error(
+      `[berth:runtime] ${options.tls ? "HTTPS" : "HTTP"} RPC server listening on 0.0.0.0:${options.port}` +
+        (options.tls ? "" : " (plain HTTP — the bearer token is protected only by whatever terminates TLS in front of this)"),
+    );
   });
 
   return server;
