@@ -1,4 +1,5 @@
 import { Command, Flags } from "@oclif/core";
+import { warnIfCredentialOverPlaintext } from "@berth/tls";
 import { loadManifestOrExit } from "../util/manifest.js";
 import { buildProductionImage, productionImageTag } from "../util/build.js";
 import { resolveFleet } from "../util/fleet.js";
@@ -76,6 +77,10 @@ export default class Deploy extends Command {
       appsEnv.BERTH_APPS = JSON.stringify(apps.map((a) => ({ name: a.name, workingDir: `/app/apps/${a.name}` })));
     }
     if (flags["grants-server"]) {
+      // This URL is reachable from the fleet by definition, so it is a
+      // network hop by definition — the one case REMEDIATION.md 5.3 names
+      // outright. Every capability request and its verdict crosses it.
+      warnIfCredentialOverPlaintext(flags["grants-server"], "capability grant requests");
       appsEnv.BERTH_GRANTS_SERVER_URL = flags["grants-server"];
     }
     const target = { imageRef, manifest, env: { ...env, ...appsEnv }, region };

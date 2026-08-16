@@ -835,7 +835,7 @@ Only start this once Phases 0–2 are done; there is no point adding SSO to a sy
 |---|------|--------|--------|
 | 5.1 | No audit trail with a verifiable actor | 🔴 | 1w |
 | 5.2 | No identity, tenancy, or RBAC anywhere | 🔴 | 2w |
-| 5.3 | No TLS on anything, no option to enable it | 🔴 | 3d |
+| 5.3 | No TLS on anything, no option to enable it | 🟢 | 3d |
 | 5.4 | Nothing encrypted at rest; conversation history plaintext 0644 | 🔴 | 1w |
 | 5.5 | Secrets management: plaintext in `~/.berthrc`, `docker inspect`, snapshots | 🔴 | 1w |
 | 5.6 | No health/metrics/graceful shutdown/rate limiting on any server | 🔴 | 3d |
@@ -846,7 +846,17 @@ Only start this once Phases 0–2 are done; there is no point adding SSO to a sy
 
 **5.2** — No user, tenant, org, or role concept exists. One shared operator secret for grants-server, per-name tokens for registry, per-peer tokens for mesh. Anyone with the operator token can approve any team's escalation and attribute it to any name. The context bus performs no identity check at all. Two teams cannot share an installation.
 
-**5.3** — Every server is plain HTTP with no `https` option. The CLI hardcodes `http://127.0.0.1:4874` (`commands/grants/{list,approve,deny}.ts:3-4`) and sends the operator token in cleartext. `berth deploy --grants-server` requires a URL reachable from the fleet — capability approvals crossing a network over HTTP. `http-rpc.ts:49` binds `0.0.0.0` plain HTTP. `docs/mesh-reference.md:51` states the assumption repo-wide.
+**5.3** — **Closed.** `@berth/tls` plus wiring in all three Fastify servers, the SDK's HTTP RPC bridge, and every CLI client that talks to one.
+
+- **Servers**: `<PREFIX>_TLS_CERT`/`_KEY`/`_CA`/`_REQUIRE_CLIENT_CERT` per server (`BERTH_GRANTS`, `BERTH_REGISTRY`, `BERTH_MESH_COORDINATOR`), or `tls:` when embedding. Off by default, so existing deployments are unchanged. A half-configured pair — cert without key, or an unreadable path — refuses to start rather than falling back, since a deployment that thinks it has TLS and doesn't is worse than one that never offered it.
+- **CLI**: `--ca` and `--insecure` on the grants, publish, and init commands; `--insecure` warns every time. Commands carrying a credential (`grants approve/deny`, `publish`, `deploy --grants-server`) warn when the target is plain HTTP on a non-loopback host. Loopback is exempt on purpose — nothing crosses a network there, and a warning that fires constantly is one people learn to skip.
+- **`berth tls init`** mints a local CA and server cert (keys 0600 in a 0700 directory, SAN entries correctly tagged `DNS:` vs `IP:`) and prints the env vars and `--ca` invocation to use them.
+- **RPC bridge**: `BERTH_HTTP_RPC_TLS_CERT`/`_KEY`, read as paths rather than PEMs in the environment, where they would sit in `docker inspect` next to the bearer token (5.5). Its doc comment now distinguishes the exposures that already have TLS in front (E2B `getHost`, Daytona preview links) from the ones that don't (NodePort, raw port mappings) — only the latter was ever the real exposure.
+- **`docs/mesh-reference.md`'s repo-wide "no TLS anywhere" statement** is corrected rather than deleted: TLS is available, it is still off unless configured, and the owner token crosses plaintext until it is.
+
+**Verified** by a real handshake, not by config-shape assertions: `generate.test.ts` and `grants-server/src/tls.test.ts` stand up listening servers and drive them through undici with the generated CA, confirm a client that doesn't trust the CA is refused (checking `err.cause`, since undici reports every transport failure as a bare "fetch failed"), and confirm the bearer token is still enforced over TLS. `app.inject()` was deliberately not used for these — it skips the network stack, so it would pass identically whether TLS was configured or silently dropped. Also driven by hand end to end: `berth-grants` over HTTPS, the CLI refused without `--ca` and accepted with it, a grant approved over TLS.
+
+**Still open.** mTLS works server-side but no first-party client presents a certificate, and turning it on today locks all of them out — there is no CA to issue from until 5.2. No HTTPS-by-default, no HTTP→HTTPS redirect, no certificate reload without a restart, no cipher/version pinning beyond Node's defaults. `POST /grants` stays unauthenticated regardless of transport. See `docs/tls-reference.md`.
 
 **5.4** — No encryption anywhere (grep for `encrypt|aes-|cipher|kms|vault` finds only MITM comments). `CheckpointedRun` persists full `messages` to `/context/agent-runs/<runId>.json` (`checkpoint.ts:5-15`) and `Session` persists conversation history to `/context/agent-sessions/<id>.json` (`session.ts:42-50`) — both 0644, both captured verbatim into snapshot tarballs. For PHI/PII this is a non-starter on its own.
 
