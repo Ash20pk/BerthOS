@@ -62,7 +62,7 @@ export function applyClientTls(flags: ClientTlsFlags): void {
  * the URL has to be reachable *from the fleet* — so it is remote by
  * definition, and every approval crosses it in the clear.
  */
-export function warnIfCredentialOverPlaintext(url: string, what = "credential"): void {
+export function warnIfCredentialOverPlaintext(url: string, what = "a credential"): void {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -71,7 +71,7 @@ export function warnIfCredentialOverPlaintext(url: string, what = "credential"):
   }
   if (parsed.protocol !== "http:") return;
   if (isLoopback(parsed.hostname)) return;
-  console.error(`[berth] WARNING: sending a ${what} to ${parsed.origin} over plain HTTP — it crosses the network in the clear. Use https:// (see docs/tls-reference.md).`);
+  console.error(`[berth] WARNING: sending ${what} to ${parsed.origin} over plain HTTP — it crosses the network in the clear. Use https:// (see docs/tls-reference.md).`);
 }
 
 function isLoopback(hostname: string): boolean {

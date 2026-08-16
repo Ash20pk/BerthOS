@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createGzip } from "node:zlib";
 import { pipeline } from "node:stream/promises";
 import { pack } from "tar-fs";
+import { applyClientTls, warnIfCredentialOverPlaintext } from "@berth/tls";
 import { loadManifestOrExit } from "../util/manifest.js";
 import { buildProductionImage, productionImageTag } from "../util/build.js";
 
@@ -12,6 +13,13 @@ export default class Publish extends Command {
   static override description = "Build the resident app and, with --registry, publish it to a running berth-registry";
   static override flags = {
     registry: Flags.string({ description: "registry URL to publish to, e.g. http://localhost:4873" }),
+    ca: Flags.string({
+      description: "CA certificate to trust for an https:// server (e.g. the one `berth tls init` minted); also settable via NODE_EXTRA_CA_CERTS",
+    }),
+    insecure: Flags.boolean({
+      description: "skip TLS certificate verification — encrypted but unauthenticated, and trivially interceptable. Use --ca instead",
+      default: false,
+    }),
     author: Flags.string({ description: "author name recorded alongside the published app" }),
     token: Flags.string({
       description: "owner token for this app name (also read from BERTH_REGISTRY_TOKEN) — required to publish a new version of a name someone already published; not needed for a name's first-ever publish",
@@ -21,6 +29,8 @@ export default class Publish extends Command {
 
   async run(): Promise<void> {
     const { flags } = await this.parse(Publish);
+    applyClientTls(flags);
+    if (flags.registry) warnIfCredentialOverPlaintext(flags.registry, "a registry owner token");
     const appDir = process.cwd();
     const manifest = await loadManifestOrExit(appDir);
 

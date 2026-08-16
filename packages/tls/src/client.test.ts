@@ -15,7 +15,7 @@ function captureStderr(fn: () => void): string[] {
 }
 
 test("warns about a credential sent over plain HTTP to a remote host", () => {
-  const warnings = captureStderr(() => warnIfCredentialOverPlaintext("http://grants.internal:4874", "operator token"));
+  const warnings = captureStderr(() => warnIfCredentialOverPlaintext("http://grants.internal:4874", "an operator token"));
   assert.equal(warnings.length, 1);
   assert.match(warnings[0]!, /operator token/);
   assert.match(warnings[0]!, /plain HTTP/);

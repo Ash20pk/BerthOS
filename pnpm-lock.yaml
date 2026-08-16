@@ -428,6 +428,9 @@ importers:
       '@berth/sdk':
         specifier: workspace:*
         version: link:../sdk
+      '@berth/tls':
+        specifier: workspace:*
+        version: link:../tls
       '@inquirer/prompts':
         specifier: ^8.5.2
         version: 8.5.2(@types/node@26.1.2)

@@ -1,4 +1,5 @@
 import { Args, Command, Flags } from "@oclif/core";
+import { applyClientTls } from "@berth/tls";
 import { input, select } from "@inquirer/prompts";
 import { cp, readFile, writeFile, readdir, stat, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -32,10 +33,18 @@ export default class Init extends Command {
     registry: Flags.string({
       description: "scaffold from a published app on this berth-registry instead of a bundled local template",
     }),
+    ca: Flags.string({
+      description: "CA certificate to trust for an https:// server (e.g. the one `berth tls init` minted); also settable via NODE_EXTRA_CA_CERTS",
+    }),
+    insecure: Flags.boolean({
+      description: "skip TLS certificate verification — encrypted but unauthenticated, and trivially interceptable. Use --ca instead",
+      default: false,
+    }),
   };
 
   async run(): Promise<void> {
     const { args, flags } = await this.parse(Init);
+    applyClientTls(flags);
 
     const name =
       args.name ??

@@ -1,4 +1,5 @@
 import { Command, Flags } from "@oclif/core";
+import { applyClientTls, warnIfCredentialOverPlaintext } from "@berth/tls";
 
 const DEFAULT_SERVER = "http://127.0.0.1:4874";
 
@@ -6,12 +7,20 @@ export default class GrantsList extends Command {
   static override description = "List capability grant requests from a running berth-grants server";
   static override flags = {
     server: Flags.string({ description: "berth-grants server URL", default: DEFAULT_SERVER }),
+    ca: Flags.string({
+      description: "CA certificate to trust for an https:// server (e.g. the one `berth tls init` minted); also settable via NODE_EXTRA_CA_CERTS",
+    }),
+    insecure: Flags.boolean({
+      description: "skip TLS certificate verification — encrypted but unauthenticated, and trivially interceptable. Use --ca instead",
+      default: false,
+    }),
     status: Flags.string({ description: "filter by status", options: ["pending", "approved", "denied"] }),
     app: Flags.string({ description: "filter by app name" }),
   };
 
   async run(): Promise<void> {
     const { flags } = await this.parse(GrantsList);
+    applyClientTls(flags);
     const url = new URL("/grants", flags.server);
     if (flags.status) url.searchParams.set("status", flags.status);
     if (flags.app) url.searchParams.set("app", flags.app);

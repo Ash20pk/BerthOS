@@ -54,6 +54,7 @@
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
+    "@berth/tls": "workspace:*",
     "@berth/adapter-core": "workspace:*",
     "@berth/adapter-daytona": "workspace:*",
     "@berth/adapter-e2b": "workspace:*",
