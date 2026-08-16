@@ -641,3 +641,86 @@ test("run() without a session behaves exactly as before — no session, no prior
   assert.equal(result.text, "hello");
   assert.equal(callCount(), 1);
 });
+
+// --- Actor and payload capture on step events (REMEDIATION.md 5.1) -------
+
+test("emits steps with no actor by default, rather than inventing one", async () => {
+  const { llm } = scriptedLLM([{ text: "done", toolCalls: [], stop: true }]);
+  const tracer = memoryStepTracer();
+  const agent = new Agent({ llm, tools: [], trace: tracer });
+
+  await agent.run("do the thing", { runId: "run-a" });
+
+  // The tracer fills in the agent's own name when it needs one; the Agent
+  // does not claim an actor it was never given.
+  assert.equal(tracer.events[0]!.actor, undefined);
+  assert.equal(tracer.events[0]!.agentName, "agent");
+});
+
+test("carries a configured actor onto every step", async () => {
+  const { llm } = scriptedLLM([
+    { toolCalls: [{ id: "1", name: "search", input: { q: "x" } }], stop: false },
+    { text: "final answer", toolCalls: [], stop: true },
+  ]);
+  const tracer = memoryStepTracer();
+  const agent = new Agent({
+    llm,
+    tools: [echoTool("search")],
+    trace: tracer,
+    actor: { kind: "operator", id: "alice", verifiedBy: "token" },
+  });
+
+  await agent.run("do the thing", { runId: "run-a" });
+
+  assert.ok(tracer.events.length >= 2);
+  for (const event of tracer.events) {
+    assert.deepEqual(event.actor, { kind: "operator", id: "alice", verifiedBy: "token" });
+  }
+});
+
+test("omits tool arguments and results from steps unless tracePayloads is set", async () => {
+  const { llm } = scriptedLLM([
+    { toolCalls: [{ id: "1", name: "search", input: { q: "secret query" } }], stop: false },
+    { text: "final answer", toolCalls: [], stop: true },
+  ]);
+  const tracer = memoryStepTracer();
+  const agent = new Agent({ llm, tools: [echoTool("search")], trace: tracer });
+
+  await agent.run("do the thing", { runId: "run-a" });
+
+  const toolStep = tracer.events.find((e) => e.kind === "tool-call")!;
+  assert.equal(toolStep.input, undefined);
+  assert.equal(toolStep.output, undefined);
+});
+
+test("captures redacted tool arguments and results when tracePayloads is set", async () => {
+  const { llm } = scriptedLLM([
+    { toolCalls: [{ id: "1", name: "search", input: { q: "weather", apiKey: "sk-live-abc" } }], stop: false },
+    { text: "final answer", toolCalls: [], stop: true },
+  ]);
+  const tracer = memoryStepTracer();
+  const agent = new Agent({ llm, tools: [echoTool("search", { rows: 3 })], trace: tracer, tracePayloads: true });
+
+  await agent.run("do the thing", { runId: "run-a" });
+
+  const toolStep = tracer.events.find((e) => e.kind === "tool-call")!;
+  // Redaction happens in the Agent, so every backend the event reaches gets
+  // the already-safe value — a tracer can't forget to do it.
+  assert.deepEqual(toolStep.input, { q: "weather", apiKey: "[redacted]" });
+  assert.deepEqual(toolStep.output, { rows: 3 });
+});
+
+test("captures the {error} result of a failed tool call when tracePayloads is set", async () => {
+  const { llm } = scriptedLLM([
+    { toolCalls: [{ id: "1", name: "flaky", input: {} }], stop: false },
+    { text: "final answer", toolCalls: [], stop: true },
+  ]);
+  const tracer = memoryStepTracer();
+  const agent = new Agent({ llm, tools: [throwingTool("flaky", "boom")], trace: tracer, tracePayloads: true });
+
+  await agent.run("do the thing", { runId: "run-a" });
+
+  const toolStep = tracer.events.find((e) => e.kind === "tool-call")!;
+  assert.equal(toolStep.error, "boom");
+  assert.deepEqual(toolStep.output, { error: "boom" });
+});

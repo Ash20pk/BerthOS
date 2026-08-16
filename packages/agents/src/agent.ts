@@ -1,8 +1,9 @@
 import type { z } from "zod";
+import { redact, type Actor, type AuditSink } from "@berth/audit";
 import { Computer, type BootComputerOptions, type ConnectComputerOptions } from "./computer.js";
 import { resolveLLMProvider, type LLMProviderConfig } from "./providers/auto.js";
 import { createSemanticFsCheckpointStore, type CheckpointedRun, type CheckpointStore } from "./checkpoint.js";
-import { createAgentTracer, type StepTracer } from "./tracing.js";
+import { combineStepTracers, createAgentTracer, createAuditStepTracer, type StepTracer } from "./tracing.js";
 import { createOtelStepTracer } from "./otel-tracer.js";
 import { applyHumanApprovalGate, HumanApprovalDeniedError, type HumanApprovalGateOptions } from "./approval.js";
 import {
@@ -56,6 +57,22 @@ export interface AgentOptions {
    * seam, run-level activation" shape as `checkpoint`.
    */
   trace?: StepTracer;
+  /**
+   * Who this agent's steps are attributed to in the trace. Defaults to the
+   * agent itself, which is honest but self-asserted; pass the operator or
+   * tenant that started the run to make a trace answer "who", not just
+   * "what". See AgentStepEvent.actor.
+   */
+  actor?: Actor;
+  /**
+   * Include each tool call's arguments and result in its AgentStepEvent,
+   * redacted first. Off by default: traces are written to Semantic FS as
+   * plaintext (REMEDIATION.md 5.4), and tool arguments are where customer
+   * data turns up. REMEDIATION.md 5.1 flagged the absence of arguments and
+   * outputs from the event, so this is the switch that closes it — a
+   * decision an operator makes per agent, not one taken for them.
+   */
+  tracePayloads?: boolean;
   /**
    * Run against the raw input string before the first LLM call, in order,
    * stopping at the first tripped one — a tripped guardrail throws
@@ -181,6 +198,8 @@ export class Agent {
   private readonly maxTurns: number;
   private readonly checkpointStore: CheckpointStore | undefined;
   private readonly tracer: StepTracer | undefined;
+  private readonly actor: Actor | undefined;
+  private readonly tracePayloads: boolean;
   private readonly inputGuardrails: Guardrail[];
   private readonly outputGuardrails: Guardrail[];
   private readonly timeoutMs: number | undefined;
@@ -202,6 +221,8 @@ export class Agent {
     this.maxTurns = options.maxTurns ?? DEFAULT_MAX_TURNS;
     this.checkpointStore = options.checkpoint;
     this.tracer = options.trace;
+    this.actor = options.actor;
+    this.tracePayloads = options.tracePayloads ?? false;
     this.inputGuardrails = options.inputGuardrails ?? [];
     this.outputGuardrails = options.outputGuardrails ?? [];
     this.governance = options.governance;
@@ -320,7 +341,7 @@ export class Agent {
 
     const trace = async (event: Omit<Parameters<StepTracer["emit"]>[0], "runId" | "agentName">) => {
       if (!this.tracer || !runId) return;
-      await this.tracer.emit({ ...event, runId, agentName: this.name });
+      await this.tracer.emit({ ...event, runId, agentName: this.name, actor: this.actor });
     };
 
     const runToolCall = async (
@@ -391,7 +412,17 @@ export class Agent {
           result = { error };
         }
       }
-      await trace({ turn: turnCount, kind: "tool-call", toolName: call.name, durationMs: Date.now() - callStart, error });
+      await trace({
+        turn: turnCount,
+        kind: "tool-call",
+        toolName: call.name,
+        durationMs: Date.now() - callStart,
+        error,
+        // redact() here rather than in the tracer, so every backend an
+        // AgentStepEvent reaches gets the same already-safe value — a tracer
+        // that forgot to redact would otherwise be a leak per backend.
+        ...(this.tracePayloads ? { input: redact(call.input), output: redact(result) } : {}),
+      });
       executed.push({ name: call.name, input: call.input, result });
       messages.push({ role: "tool", toolResult: { id: call.id, name: call.name, output: result } });
     };
@@ -705,6 +736,25 @@ export interface CreateAgentOptions extends Pick<BootComputerOptions, "network" 
    */
   trace?: "full" | "otel" | StepTracer;
   /**
+   * Routes this agent's steps *and* its Computer's governance verdicts into
+   * one hash-chained audit trail — REMEDIATION.md 5.1.
+   *
+   * Separate from `trace`, and composable with it: a trace answers "replay
+   * this run", an audit trail answers "what happened on this machine, in
+   * order, and who did it". Passing this alongside `trace: "full"` gives
+   * both, and passing it alone is the cheapest way to get a record that a
+   * reviewer can read.
+   *
+   * Only applies to a Computer this call boots. A `computer` you built
+   * yourself already resolved its governance gate, so pass the sink to
+   * Computer.boot({ governance: { audit } }) there instead.
+   */
+  audit?: AuditSink;
+  /** Who to attribute this agent's records to. See AgentOptions.actor. */
+  actor?: Actor;
+  /** Capture redacted tool arguments and results. See AgentOptions.tracePayloads. */
+  tracePayloads?: boolean;
+  /**
    * Wraps `computer.tools` through applyHumanApprovalGate() before
    * constructing the Agent — every gated tool call blocks on a human
    * decision via a running grants-server instance instead of executing
@@ -770,11 +820,21 @@ export async function createAgent(
           network: options.network,
           env: options.env,
           docker: options.docker,
-          governance: options.governance,
+          // The audit sink reaches governance through the same options bag a
+          // caller could have set by hand — `audit` is a shorthand, not a
+          // second channel, so an explicit governance.audit wins.
+          governance: options.audit
+            ? { ...options.governance, audit: options.governance?.audit ?? options.audit, actor: options.governance?.actor ?? options.actor }
+            : options.governance,
         }));
   const checkpoint = options.checkpoint === "semantic-fs" ? createSemanticFsCheckpointStore(computer) : options.checkpoint;
-  const trace =
+  const stepTracer =
     options.trace === "full" ? createAgentTracer(computer) : options.trace === "otel" ? createOtelStepTracer() : options.trace;
+  // Both, when both are asked for — an audit sink is an additional
+  // destination for steps, never a replacement for the trace backend.
+  const auditTracer = options.audit ? createAuditStepTracer(options.audit) : undefined;
+  const trace =
+    stepTracer && auditTracer ? combineStepTracers(stepTracer, auditTracer) : (stepTracer ?? auditTracer);
   const retriever = options.retriever === "semantic-fs" ? createSemanticFsRetriever(computer) : options.retriever;
   const mcpServers = options.mcpServers ? await Promise.all(options.mcpServers.map((server) => createMcpClientTools(server))) : [];
   const gatedTools = options.humanApproval
@@ -807,6 +867,8 @@ export async function createAgent(
     maxTurns: options.maxTurns,
     checkpoint,
     trace,
+    actor: options.actor,
+    tracePayloads: options.tracePayloads,
     inputGuardrails: options.inputGuardrails,
     outputGuardrails: options.outputGuardrails,
     // So this agent's own asTool() delegation is gated too — the manager

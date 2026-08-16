@@ -58,7 +58,9 @@ export {
   type LlmJudgeOptions,
 } from "./eval.js";
 export {
+  combineStepTracers,
   createAgentTracer,
+  createAuditStepTracer,
   createContextBusStepTracer,
   createSemanticFsStepTracer,
   readAgentTrace,
