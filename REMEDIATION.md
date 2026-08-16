@@ -833,7 +833,7 @@ Only start this once Phases 0–2 are done; there is no point adding SSO to a sy
 
 | # | Item | Status | Effort |
 |---|------|--------|--------|
-| 5.1 | No audit trail with a verifiable actor | 🔴 | 1w |
+| 5.1 | No audit trail with a verifiable actor | 🟢 | 1w |
 | 5.2 | No identity, tenancy, or RBAC anywhere | 🔴 | 2w |
 | 5.3 | No TLS on anything, no option to enable it | 🔴 | 3d |
 | 5.4 | Nothing encrypted at rest; conversation history plaintext 0644 | 🔴 | 1w |
@@ -842,7 +842,20 @@ Only start this once Phases 0–2 are done; there is no point adding SSO to a sy
 | 5.7 | No data-schema migrations for any of the four SQLite DBs | 🔴 | 2d |
 | 5.8 | SQLite: no WAL, no busy_timeout, synchronous driver blocks the event loop | 🔴 | 1d |
 
-**5.1** — Governance denials are logged **nowhere** (`governance.ts:159-161` throws silently; the only log line is the fail-open warning at `:156`). No HTTP access logs on any server — all three Fastify instances are constructed without a `logger` (`grants-server/src/index.ts:29`, `registry-server/src/index.ts:22`, `mesh-coordinator/src/index.ts:19`). `AgentStepEvent` (`tracing.ts:4-17`) records tool *names* but never arguments or outputs, and no actor. `decided_by` on a grant is free text from the request body (`grants-server/src/routes.ts:91-92`). The `[agent-init] {...}` JSON lines are good content but aren't parseable JSON because of the prefix. No file sink, rotation, retention, or integrity chaining anywhere.
+**5.1** — **Closed.** `@berth/audit` is the shared record: one JSON object per line, hash-chained, 0600, resuming its chain across restarts and carrying it across rotation. Every record has an `actor` whose `verifiedBy` field states how the identity was established — `peer-socket` (the kernel said so), `token` (someone held a secret), or `self-asserted` (nobody checked). Self-asserted actors are recorded rather than rejected, since not knowing who did something is itself a finding, but the field means nothing downstream can mistake one for an identity.
+
+What each half of the original finding got:
+
+- **Governance denials** now reach the sink, and so do allows and the `unavailable` case — a trail of only refusals cannot answer "what did this agent do", and under `mode: "fail-open"` an unreachable governor is an allow that no policy approved. `applyGovernanceGate` and `resolveGovernanceGate` were collapsed onto one `enforce()` first; they had drifted apart once already, and auditing only one of them would have done it again.
+- **`decided_by`** is derived from the presented token via a named-operator registry (`operators.json`, hashes only, 0600), and the request body's field is ignored outright. `berth grants approve --by` is gone. An existing plaintext `operator.token` is adopted rather than invalidated, attributed to `operator` — which is all a shared secret can honestly claim. Failed authentication attempts are recorded too: someone probing for a valid operator token was previously a bare 401 with no trace.
+- **`AgentStepEvent`** gained an optional `actor`, plus `input`/`output` under the opt-in `tracePayloads`. Redaction happens in the Agent, so every backend gets the already-safe value rather than each tracer having to remember. `createAuditStepTracer` puts steps in the same chained trail as the verdicts that gated them.
+- **HTTP access logs** exist on all three Fastify servers, off by default so tests stay quiet, on in each binary.
+- **`[agent-init] {...}`** lines dropped the prefix and carry `"source":"agent-init"` inside the object instead, so they survive `JSON.parse`.
+- **File sink, rotation, integrity chaining** are the sink's own behaviour. `berth audit list` and `berth audit verify` read and check a trail, the latter walking rotated segments oldest-first.
+
+**Deliberately not claimed.** The chain is tamper-*evident*, not tamper-proof: anyone who can write the file can recompute every hash after the line they edited. Fixing that needs the hashes somewhere the editor cannot reach — an append-only or remote sink, external anchoring — and none of that is built; `berth audit verify` prints the caveat rather than implying a guarantee. Payload capture is off by default in both places because records are plaintext (5.4). Retention is size-based rotation only. `POST /grants` is still unauthenticated, so `grant.request` records are `self-asserted` by construction. And none of this is identity in 5.2's sense: no user directory, no tenancy, no RBAC, revocation means editing a file.
+
+See `docs/audit-reference.md`.
 
 **5.2** — No user, tenant, org, or role concept exists. One shared operator secret for grants-server, per-name tokens for registry, per-peer tokens for mesh. Anyone with the operator token can approve any team's escalation and attribute it to any name. The context bus performs no identity check at all. Two teams cannot share an installation.
 

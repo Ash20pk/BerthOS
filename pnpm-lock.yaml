@@ -431,6 +431,9 @@ importers:
       '@berth/agents':
         specifier: workspace:*
         version: link:../agents
+      '@berth/audit':
+        specifier: workspace:*
+        version: link:../audit
       '@berth/docker-orchestrator':
         specifier: workspace:*
         version: link:../docker-orchestrator
