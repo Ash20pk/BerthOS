@@ -314,6 +314,9 @@ importers:
       '@berth/adapter-core':
         specifier: workspace:*
         version: link:../adapters/adapter-core
+      '@berth/audit':
+        specifier: workspace:*
+        version: link:../audit
       '@berth/docker-orchestrator':
         specifier: workspace:*
         version: link:../docker-orchestrator
@@ -394,6 +397,15 @@ importers:
       zod:
         specifier: ^4.4.3
         version: 4.4.3
+    devDependencies:
+      '@types/node':
+        specifier: ^26.1.2
+        version: 26.1.2
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
+  packages/audit:
     devDependencies:
       '@types/node':
         specifier: ^26.1.2
@@ -617,6 +629,9 @@ importers:
 
   packages/grants-server:
     dependencies:
+      '@berth/audit':
+        specifier: workspace:*
+        version: link:../audit
       fastify:
         specifier: ^5.11.2
         version: 5.11.2

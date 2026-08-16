@@ -1,5 +1,4 @@
 import { Command, Args, Flags } from "@oclif/core";
-import { userInfo } from "node:os";
 
 const DEFAULT_SERVER = "http://127.0.0.1:4874";
 
@@ -11,7 +10,6 @@ export default class GrantsApprove extends Command {
   };
   static override flags = {
     server: Flags.string({ description: "berth-grants server URL", default: DEFAULT_SERVER }),
-    by: Flags.string({ description: "who approved this (defaults to the current OS user)" }),
     token: Flags.string({
       description: "berth-grants operator token (also read from BERTH_GRANTS_TOKEN) — printed by `berth-grants` on first start, or saved to <data-dir>/operator.token",
       env: "BERTH_GRANTS_TOKEN",
@@ -20,21 +18,25 @@ export default class GrantsApprove extends Command {
 
   async run(): Promise<void> {
     const { args, flags } = await this.parse(GrantsApprove);
-    const decidedBy = flags.by ?? userInfo().username;
 
+    // No `--by`: the server names the operator from the token presented. The
+    // old flag defaulted to the local OS username and the server wrote it
+    // down verbatim, so the recorded approver was whatever the caller felt
+    // like claiming (REMEDIATION.md 5.1). Mint a named token with
+    // `berth-grants --add-operator <name>` to control what gets recorded.
     const res = await fetch(new URL(`/grants/${args.id}/approve`, flags.server), {
       method: "POST",
       headers: {
         "content-type": "application/json",
         ...(flags.token ? { authorization: `Bearer ${flags.token}` } : {}),
       },
-      body: JSON.stringify({ decidedBy }),
+      body: JSON.stringify({}),
     });
     const body = await res.json();
     if (!res.ok) this.error(`berth-grants returned ${res.status}: ${(body as { error?: string }).error ?? res.statusText}`);
 
-    const grant = body as { appName: string; capability: string };
-    this.log(`Approved ${grant.capability} for "${grant.appName}".`);
+    const grant = body as { appName: string; capability: string; decidedBy: string };
+    this.log(`Approved ${grant.capability} for "${grant.appName}", recorded as "${grant.decidedBy}".`);
     this.log(`This takes effect the next time "${grant.appName}"'s container restarts, not immediately.`);
   }
 }

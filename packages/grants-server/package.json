@@ -50,6 +50,7 @@
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
+    "@berth/audit": "workspace:*",
     "fastify": "^5.11.2"
   },
   "devDependencies": {

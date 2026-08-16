@@ -12,6 +12,13 @@ export interface CreateRegistryServerOptions {
   /** Directory for the SQLite index and blob storage. Created if missing. */
   dataDir: string;
   now?: () => string;
+  /**
+   * Fastify's request logger. Off by default so tests stay quiet; the
+   * `berth-registry` binary turns it on. REMEDIATION.md 5.1 counted "no HTTP
+   * access logs on any server" among its findings — a request that reached
+   * this server previously left no trace at all.
+   */
+  logger?: boolean;
 }
 
 /** Builds a ready-to-listen Fastify instance; the caller decides host/port and when to close it. */
@@ -19,7 +26,7 @@ export async function createRegistryServer(opts: CreateRegistryServerOptions): P
   const db = new RegistryDb(join(opts.dataDir, "registry.sqlite"));
   const blobs = new BlobStore(join(opts.dataDir, "blobs"));
 
-  const app = Fastify({ bodyLimit: 100 * 1024 * 1024 });
+  const app = Fastify({ bodyLimit: 100 * 1024 * 1024, logger: opts.logger ?? false });
   await app.register(multipart, { limits: { fileSize: 100 * 1024 * 1024 } });
   await registerRegistryRoutes(app, { db, blobs, now: opts.now });
 
