@@ -182,6 +182,12 @@ importers:
         specifier: ^7.0.55
         version: 7.0.55(zod@4.4.3)
 
+  examples/kernel-says-no:
+    dependencies:
+      '@berth/agents':
+        specifier: workspace:*
+        version: link:../../packages/agents
+
   examples/resident-apps/generic-connector:
     dependencies:
       '@berth/sdk':

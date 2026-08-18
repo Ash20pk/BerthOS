@@ -1,6 +1,6 @@
 # Getting Started
 
-This walkthrough takes you from a clean checkout to a working resident app with a live browser you can watch over VNC. It should take under 10 minutes. It's the resident-app-building path. For the fastest way to see a working agent, try the [README's Quickstart](../README.md#quickstart) instead. Both feed into the same [Berth OS](./berth-os.md), the sandboxed computer a resident app runs in and an agent's tools come from.
+This walkthrough takes you from a clean checkout to a working resident app with a live browser you can watch over VNC. It should take under 10 minutes. It's the resident-app-building path. For the fastest way to see a working agent, try the [Quickstart](./quickstart.md) instead. Both feed into the same [Berth OS](./berth-os.md), the sandboxed computer a resident app runs in and an agent's tools come from.
 
 ## Prerequisites
 

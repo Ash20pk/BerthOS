@@ -1,6 +1,6 @@
 # Multi-App Sandbox Reference
 
-See [What is a Berth OS?](./berth-os.md) and the README's [Resident apps](../README.md#resident-apps) section first if you're not yet familiar with those terms — this doc assumes them.
+See [What is a Berth OS?](./berth-os.md) and [Resident apps](./resident-apps.md) first if you're not yet familiar with those terms — this doc assumes them.
 
 `berth dev`/`test`/`deploy` originally supported exactly one resident app per container. The real gap that closes: the pre-existing way to demo "multiple resident apps in one sandbox" (`packages/docker-orchestrator/test/context-bus-milestone.mjs`) bind-mounts the whole workspace and starts a second app via a raw `docker exec` — which bypasses `agent-init` entirely, so that second app gets **zero** Landlock enforcement. `--apps` gives every app in the container its own real, independently-enforced process.
 

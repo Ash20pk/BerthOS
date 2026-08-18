@@ -10,7 +10,7 @@ Use [GitHub's private vulnerability reporting](https://github.com/Ash20pk/BerthO
 
 Include what you can:
 - The capability or component involved (e.g. `agent-init`/Landlock, the egress broker, the grants server)
-- Whether it's a bypass of an *enforced* boundary versus a gap in something the docs already mark as unenforced (see the [threat model](./docs/threat-model.md#not-protected-against-today) and the [capability table in the README](./README.md#available-capabilities) — several capabilities are explicitly recorded-only today, not kernel- or broker-enforced, and that's expected, not a vulnerability)
+- Whether it's a bypass of an *enforced* boundary versus a gap in something the docs already mark as unenforced (see the [threat model](./docs/threat-model.md#not-protected-against-today) and [the capability table](./docs/kernel-enforcement.md#available-capabilities) — several capabilities are explicitly recorded-only today, not kernel- or broker-enforced, and that's expected, not a vulnerability)
 - Reproduction steps, ideally against a real Linux host or CI (`ubuntu-latest`) rather than Docker Desktop for Mac, where Landlock isn't active — see [docs/capability-tokens-reference.md](./docs/capability-tokens-reference.md)
 
 ## Response time

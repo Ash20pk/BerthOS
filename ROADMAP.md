@@ -41,7 +41,7 @@ Built after the initial 5 phases. Most have their own milestone test and CI work
 
 ## Known gaps
 
-- Nothing under `@berth/*` is published to npm yet. Today you build from source (see [Quickstart](./README.md#quickstart)).
+- Nothing under `@berth/*` is published to npm yet. Today you build from source (see [Quickstart](./docs/quickstart.md)).
 - Landlock verification has a real gap outside a genuine Linux LSM environment — see Phase 3 above. CI runs on `ubuntu-latest`, which has it; Docker Desktop for Mac's linuxkit kernel doesn't have it at all. On macOS, [docs/mac-enforcement.md](./docs/mac-enforcement.md) is the way out: swap the daemon to Colima and `berth doctor` reports `ACTIVE` rather than `NOT ACTIVE`.
 - No hosted/public app registry — `berth publish` targets a self-run instance.
 - Single maintainer, so review latency varies — see [CONTRIBUTING.md](./CONTRIBUTING.md).

@@ -74,13 +74,13 @@ Three tiers. Treat the tier, not the capability name, as the security claim.
 | **Kernel** | Landlock write rules on the pty devices | `terminal:*` — grants `/dev/pts` and `/dev/ptmx`, without which a tmux server cannot allocate a pty at all under enforcement (*1.15*) | `published-port-security-milestone.mjs`; Rust unit tests |
 | **Recorded** | Nothing — reported by `requestCapability()`, used for `expose:` | `browser:screenshot:*`, any unimplemented namespace | — |
 
-Full mechanics in [capability tokens reference](./capability-tokens-reference.md); the per-capability table is in the [README](../README.md#available-capabilities).
+Full mechanics in [capability tokens reference](./capability-tokens-reference.md); the per-capability table is in [docs/kernel-enforcement.md](./kernel-enforcement.md#available-capabilities).
 
 ### Platform dependency
 
 `agent-init` **fails open by default**: if the ruleset can't be verified as `FullyEnforced`, it logs a warning and execs the app unrestricted. That exists so a Docker Desktop for Mac linuxkit kernel (no Landlock) doesn't block local development, and for no other reason.
 
-**A production deployment must set `BERTH_REQUIRE_ENFORCEMENT=1`**, which turns that into a refusal to exec with a `capability_enforcement_refused` audit event. `Computer.boot()` sets it by default; relaxing it requires an explicit `enforcement: "warn"` or `BERTH_ALLOW_UNENFORCED=1` and prints a per-boot warning. Nothing on this page is true on a kernel without Landlock — see the README's [Kernel enforcement, by platform](../README.md#kernel-enforcement-by-platform) matrix.
+**A production deployment must set `BERTH_REQUIRE_ENFORCEMENT=1`**, which turns that into a refusal to exec with a `capability_enforcement_refused` audit event. `Computer.boot()` sets it by default; relaxing it requires an explicit `enforcement: "warn"` or `BERTH_ALLOW_UNENFORCED=1` and prints a per-boot warning. Nothing on this page is true on a kernel without Landlock — see the [Kernel enforcement, by platform](./kernel-enforcement.md#kernel-enforcement-by-platform) matrix.
 
 ## Not protected against, today
 

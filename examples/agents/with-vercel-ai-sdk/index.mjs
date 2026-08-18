@@ -17,8 +17,8 @@
  * Run it:
  *   OPENAI_API_KEY=... pnpm start
  *
- * Kernel enforcement needs a Linux host with Landlock (see the README's
- * platform matrix). On Docker Desktop for Mac the sandbox still boots and
+ * Kernel enforcement needs a Linux host with Landlock (see
+ * ../../../docs/kernel-enforcement.md's platform matrix). On Docker Desktop for Mac the sandbox still boots and
  * this example still runs — the denial below just won't be a kernel denial.
  */
 

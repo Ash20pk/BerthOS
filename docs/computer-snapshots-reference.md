@@ -1,6 +1,6 @@
 # Computer Snapshots Reference
 
-See [What is a Berth OS?](./berth-os.md) and the README's [Resident apps](../README.md#resident-apps) section first if you're not yet familiar with those terms — a "snapshot" here is a snapshot of a Berth OS.
+See [What is a Berth OS?](./berth-os.md) and [Resident apps](./resident-apps.md) first if you're not yet familiar with those terms — a "snapshot" here is a snapshot of a Berth OS.
 
 `berth snapshot create/restore/list` is a real, if deliberately narrow, MVP of the "Computer Snapshots" primitive ("Checkpoint the entire OS state... Rollback or fork at any point. Git for agent computers.") — not the full vision, which spans browser tabs, active tokens, and fork-and-run-in-parallel. This primitive has no build phase in the original scope at all; it's vision/primitive-level language only, so this is a standalone addition.
 

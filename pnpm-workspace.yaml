@@ -4,5 +4,7 @@ packages:
   - "apps/*"
   - "examples/resident-apps/*"
   - "examples/agents/*"
+  # The hero demo, deliberately not under agents/: it has no agent and no LLM in it.
+  - "examples/kernel-says-no"
   - "packages/docker-orchestrator/test/fixtures/*"
   - "packages/agents/test/fixtures/*"
