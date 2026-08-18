@@ -936,7 +936,7 @@ See `docs/audit-reference.md`.
 | 6.2 | `providers/auto.ts` — the quickstart's defining feature — is untested | 🔴 | 4h |
 | 6.3 | CI runs one Node, one Python, one OS | 🔴 | 4h |
 | 6.4 | Eleven documented features have no runnable example | 🔴 | 2d |
-| 6.5 | No `berth doctor`; no Docker preflight; no troubleshooting docs | 🔴 | 1d |
+| 6.5 | No `berth doctor`; no Docker preflight; no troubleshooting docs | 🟡 | 1d |
 | 6.6 | Pin GitHub Actions by SHA; add SBOM and license scanning | 🔴 | 1d |
 | 6.7 | `berth fleet scale` drops the alias's env and region | 🔴 | 4h |
 | 6.8 | `berth deploy --fleet=daytona` cannot work as written | 🔴 | 1d |
@@ -951,6 +951,22 @@ See `docs/audit-reference.md`.
 **6.4** — Guardrails, checkpointing, sessions, retrieval, MCP client, structured output, evals, tracing, A2A, declarative YAML, and four of the seven Crew shapes all have full doc sections and no runnable example. Also: examples live in two roots (`examples/agents/` and `packages/agents/examples/`) and `README.md:406-408` documents only the first, so a reader following the README's own map never finds the crew examples.
 
 **6.5** — `Computer.boot()` constructs `new Docker()` bare (`computer.ts:164`); no `docker.ping()` anywhere. With Docker stopped, a first run fails with a raw dockerode socket error. There is no `doctor`/`preflight` command among the 17. `README.md:411` — the section titled "Something not working?" contains three issue-template links and no troubleshooting. Zero Windows/WSL guidance anywhere. Build time is never stated, so a first-timer can't distinguish a slow cold build from a hang.
+
+**Mostly closed** (LAUNCH_PLAN WS1.2). `berth doctor` exists, with `--json` documented as a versioned contract in [docs/doctor-reference.md](../doctor-reference.md), and `docker.ping()` now runs there as the gating first check. "Something not working?" leads with the command instead of three issue templates.
+
+**The interesting part is what the probe had to be.** Landlock can be missing two ways that look identical from outside: the syscalls absent (`ENOSYS`), or the syscalls present while `landlock` is not in the kernel's active LSM stack — in which case `restrict_self()` returns 0 and *nothing is ever denied*. The second is the dangerous one, because every call Berth makes succeeds. So the check is behavioural rather than a feature query: it builds a ruleset granting nothing and tries to open a file for writing, inside a container, against the daemon's kernel. Reading `/sys/kernel/security/lsm` would also separate them but needs a `--privileged` container to mount securityfs (verified: the path does not exist unprivileged), and a diagnostic should not have to ask for that. Landlock is unprivileged by design, so the probe needs no privilege.
+
+**Which kernel is the whole point.** On macOS and Windows the apps run in Docker's Linux VM, so a host-side check answers a question nobody asked — on macOS `/sys/kernel/security/lsm` does not even exist, and its absence says nothing about whether Berth can enforce. Every kernel check therefore runs in a container.
+
+**A false claim in the boot output is fixed at its source.** When enforcement is not *required* — every `berth dev`, the primary workflow — `agent-init` printed `restricted "<app>" — write access allowed only under: …` regardless of whether the ruleset had bound. On a kernel without Landlock that sentence was simply untrue, and it was the only thing the boot said about enforcement. It now follows `ruleset_status` and says `NOT RESTRICTED … recorded but NOT enforced` when that is what happened.
+
+The host-side banner is wired into `startContainer()` rather than the three call sites, so `berth dev`, `berth os up` and `Computer.boot()` are covered by construction and a future entry point cannot miss it. Cached in `~/.berth/enforcement-cache.json` keyed by kernel version and arch, because this is a property of a kernel and not of a boot; a failed probe is never cached, since it established nothing.
+
+**`unknown` is not `off`, in both directions.** A skipped or failed probe reports `enforcement: UNKNOWN`, not `NOT ACTIVE` — asserting a host is unenforced when it was never checked is the same overclaim this command exists to prevent, made by the command itself. Both still exit non-zero: a preflight that exits 0 on "I couldn't tell" is worse than none, because it gets trusted.
+
+**Verify.** `packages/docker-orchestrator/src/doctor.test.ts` — 31 tests. The `enforcing` branch is covered through an injected probe **because it cannot be reached on a macOS developer machine at all**, and a verdict table exercised only in its failing half is exactly the thing that looks verified while being untested. One test earned its keep immediately: `probeKernel` awaited `container.wait()` but not the attached stream draining, so the probe could read as having printed nothing — a real race that a fake daemon exposed deterministically and a real one would have hit intermittently.
+
+**Not closed by this.** Still open from the original entry: no Windows/WSL guidance, and build time is still never stated, so a first-timer cannot tell a slow cold build from a hang. `berth doctor --fix` does not exist — every failing check carries a `remedy` string, but nothing acts on it. The `enforcing` verdict has not been observed on real hardware from this branch; that wants a CI run on `ubuntu-latest` and is the same green run WS1.3's Mac recipe needs.
 
 **6.6** — No action is SHA-pinned; all use floating tags, and `pypa/gh-action-pypi-publish@release/v1` is a mutable *branch* ref on the workflow holding `id-token: write`. `.github/dependabot.yml:52-56` claims actions are "pinned for supply-chain safety" — pinned to tags, not digests. No SBOM, no CI license scan, no digest-pinned base images (`base.Dockerfile:16, 27, 39, 46, 58, 62`), unpinned `apk`/`pip` installs (`:64-107`, including `rm -f /usr/lib/python3*/EXTERNALLY-MANAGED`), and `image.ts:92-96` falls back to `npm install` rather than `ci`. No Cargo.toml declares a `license` field. Two dependency risks worth tracking: `@xenova/transformers@2.17.2` (superseded, single-maintainer, critical path for Semantic FS) and a workspace-wide `onnxruntime-web@1.14.0` override.
 

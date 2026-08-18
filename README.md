@@ -414,6 +414,7 @@ Want more than one app in a single Berth OS, each still independently enforced b
 
 | Command | What it does |
 |---|---|
+| `berth doctor [--json]` | Check whether this host can actually enforce capabilities, and say so plainly. Exits non-zero when it can't — see [the doctor reference](./docs/doctor-reference.md) |
 | `berth init <name>` | Scaffold a new resident app from a template |
 | `berth dev` | Build a dev image, run it, hot-reload on source changes |
 | `berth test` | Build the production image, validate exports against `berth.yml`, invoke each with a schema-valid stub, run your own `npm test` |
@@ -482,6 +483,8 @@ examples/
 ```
 
 ## Something not working?
+
+Run **`berth doctor`** first. It reports whether the kernel that runs your apps can enforce anything at all, whether Docker is reachable, and what to do about each answer — most "it built but nothing is being enforced" reports on macOS are answered by its first line. Full output contract: [docs/doctor-reference.md](./docs/doctor-reference.md).
 
 Found a [bug](./.github/ISSUE_TEMPLATE/bug_report.md), something confusing about the [workflow](./.github/ISSUE_TEMPLATE/workflow_feedback.md), or want to pitch a [resident app](./.github/ISSUE_TEMPLATE/resident_app_proposal.md)? Tell us. Those reports are exactly what we need right now.
 

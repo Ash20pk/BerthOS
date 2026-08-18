@@ -345,12 +345,29 @@ fn main() {
                 log_enforcement_refused_event(&policy.app_name, &reason);
                 std::process::exit(1);
             }
-            eprintln!(
-                "[agent-init] restricted \"{}\" — write access allowed only under: {} (declared capabilities: {})",
-                policy.app_name,
-                policy.write_paths.join(", "),
-                policy.declared_capabilities.join(", "),
-            );
+            // The wording follows the ruleset status rather than the intent.
+            // This used to say "restricted ..." unconditionally, which on a
+            // kernel without Landlock in its active LSM stack was simply false
+            // — nothing had been restricted — and it was the *only* thing the
+            // boot printed about enforcement when BERTH_REQUIRE_ENFORCEMENT
+            // was unset, i.e. on every `berth dev`. Claiming a boundary that
+            // isn't there is worse than saying nothing, because it is believed.
+            if ruleset_status == RulesetStatus::NotEnforced {
+                eprintln!(
+                    "[agent-init] NOT RESTRICTED \"{}\" — this kernel did not apply the Landlock ruleset (status {:?}), so the declared capabilities ({}) are recorded but NOT enforced. An undeclared write will succeed. Run `berth doctor` on the host.",
+                    policy.app_name,
+                    ruleset_status,
+                    policy.declared_capabilities.join(", "),
+                );
+            } else {
+                eprintln!(
+                    "[agent-init] restricted \"{}\" ({:?}) — write access allowed only under: {} (declared capabilities: {})",
+                    policy.app_name,
+                    ruleset_status,
+                    policy.write_paths.join(", "),
+                    policy.declared_capabilities.join(", "),
+                );
+            }
             // Only for apps with *no* declared outbound network at all. An
             // app that declared even one port needs DNS (UDP 53) for that
             // port to be reachable by name, and Landlock's per-port model
