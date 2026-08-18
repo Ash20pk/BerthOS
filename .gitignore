@@ -41,3 +41,8 @@ __pycache__/
 /packages/docker-orchestrator/test/fixtures/boundary-app-b/b-owned.txt
 /packages/docker-orchestrator/test/fixtures/boundary-app-b/pwned-by-a.txt
 /packages/docker-orchestrator/test/fixtures/boundary-app-b/written-for-c.txt
+
+# A macOS $TMPDIR path ("/var/folders/...") that lost its leading slash and got
+# recreated relative to the repo root. Nothing in the current tree does this,
+# but the shape is easy to reintroduce and trivially easy to `git add -A`.
+/var/
