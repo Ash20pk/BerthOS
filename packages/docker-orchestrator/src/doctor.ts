@@ -115,13 +115,20 @@ else:
     if fd < 0:
         out["status"], out["reason"] = "unsupported", "landlock_create_ruleset: " + os.strerror(err)
     else:
+        # Resolved *before* restrict_self, and that ordering is load-bearing:
+        # tempfile.gettempdir() finds a writable directory by creating a file in
+        # each candidate, so on a kernel that really enforces this ruleset it
+        # raises instead of returning a path — the probe then died with a
+        # traceback and the report said UNKNOWN on precisely the hosts where the
+        # answer was "enforcing". Found the first time this ran on a kernel with
+        # landlock in its LSM stack (Colima, Ubuntu 24.04, 6.8.0).
+        path = os.path.join(tempfile.gettempdir(), "berth-landlock-probe")
         libc.prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)
         r, err = sc(NR_RESTRICT, ctypes.c_int(fd), ctypes.c_uint32(0))
         if r != 0:
             out["status"], out["reason"] = "unsupported", "landlock_restrict_self: " + os.strerror(err)
         else:
             # The ruleset granted nothing, so an enforcing kernel must refuse this.
-            path = os.path.join(tempfile.gettempdir(), "berth-landlock-probe")
             try:
                 f = os.open(path, os.O_WRONLY | os.O_CREAT, 0o600)
                 os.close(f)
