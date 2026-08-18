@@ -1,5 +1,13 @@
 # Roadmap
 
+> **Which document is authoritative for what.** `REMEDIATION.md` — defects: what
+> is broken, the evidence, and what would prove it closed. `LAUNCH_PLAN.md` —
+> execution order: which of those defects gate a launch and in what sequence.
+> `PRIORITIES.md` — an opinionated filter over REMEDIATION, kept for its
+> reasoning; superseded on *ordering* by LAUNCH_PLAN. `ROADMAP.md` — the public
+> "is X real yet" page. `gaps.md` — **archived**; it validated that the substrate
+> is usable from a framework, and is not a roadmap.
+
 Berth was built against an original 5-phase plan. All five phases have at least an initial, milestone-tested implementation today, plus several things beyond the original scope. This page is the one place to check "is X real yet" instead of piecing it together from commit history.
 
 "Milestone-tested" below means there's a Docker-backed integration test (`packages/*/test/*-milestone.mjs`) wired into its own CI workflow under `.github/workflows/`, not just a unit test. See [CONTRIBUTING.md](./CONTRIBUTING.md) for how to run them locally.

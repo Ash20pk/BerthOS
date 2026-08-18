@@ -1,5 +1,13 @@
 # Launch plan
 
+> **Which document is authoritative for what.** `REMEDIATION.md` — defects: what
+> is broken, the evidence, and what would prove it closed. `LAUNCH_PLAN.md` —
+> execution order: which of those defects gate a launch and in what sequence.
+> `PRIORITIES.md` — an opinionated filter over REMEDIATION, kept for its
+> reasoning; superseded on *ordering* by LAUNCH_PLAN. `ROADMAP.md` — the public
+> "is X real yet" page. `gaps.md` — **archived**; it validated that the substrate
+> is usable from a framework, and is not a roadmap.
+
 Written 2026-08-18. This is the execution plan for taking Berth to a public launch, written to be **executed by AI coding agents** working in this repo. It supersedes the *ordering* in [REMEDIATION.md](./REMEDIATION.md) and [PRIORITIES.md](./PRIORITIES.md) but not their findings — where this file says "skip," the defect is still real, it's just not launch-blocking.
 
 ## The strategic decision this plan encodes
@@ -17,7 +25,7 @@ Berth is two products sharing one repo:
 - **Verification is part of the task.** A task is done when its "Done when" check passes and is *recorded* (in the doc the task touches, or the item's row below marked with commit hash). This repo's brand is verified honesty — an overclaimed closure is worse than an open item.
 - **Never weaken an honesty caveat** in docs to make something look done. If enforcement/testing status is unclear, say so explicitly, as the existing docs do.
 - **Do not extend `@berth/agents`' feature surface** under any workstream. Bug fixes to existing behavior: yes. New capabilities, providers, Crew shapes, integrations: no — reject or file under Non-goals.
-- Before starting any REMEDIATION-numbered item, re-verify its status against the actual code — the status tables have drifted (e.g. Phase 4's 4.1/4.2/4.8 are marked 🔴 but shipped in commits `d527c92`, `8504106`, `0aa8f87`).
+- Before starting any REMEDIATION-numbered item, re-verify its status against the actual code — and verify it against **`main`**, not against a branch. When this file was written it asserted that 4.1/4.2/4.8 "shipped in commits `d527c92`, `8504106`, `0aa8f87`" while REMEDIATION still marked them 🔴. Both were half right: those commits existed, but on an unmerged branch, so REMEDIATION was correct about `main` and this file was describing a tree nobody else had. **Resolved in WS0.2** — the stack is merged and the rows are 🟢. The lesson stands as a rule: `git merge-base --is-ancestor <sha> main` before believing any "already shipped" claim, including one in this file.
 
 ---
 
@@ -45,13 +53,17 @@ The repo must look like a security product and its status docs must be trustwort
 
 These are the two Tier-2 items PRIORITIES already picked, plus the cheap operational floor. All in REMEDIATION Phase 5.
 
+**WS0.2 changed this workstream's shape.** 5.1 and 5.3 were already built on unmerged branches and are now on `main`, so 2.1 is a verification task rather than a build task, and TLS — which this plan didn't list at all — is available to talk about at launch. That leaves **2.2 (secrets) as the only WS2 item still needing to be written**, which matters because 2.2 is the one the launch gate requires.
+
 | # | Task | Done when |
 |---|------|-----------|
-| 2.1 | **5.1 Audit trail.** Append-only, per-Berth-OS log of every capability decision, broker allow/deny, grant approve/deny, and governed tool call — with the *kernel-established* actor identity where available (per-app uid), timestamped, hash-chained. Readable via `berth audit`. | Every deny in a milestone run appears in the trail with actor + capability + decision; tampering with a line is detectable. |
+| 2.1 | ~~**5.1 Audit trail.**~~ **Landed** (`6956d4b`…`602237e`, merged in `9c42449`): `@berth/audit` with a hash-chained append-only sink, governance denials recorded, named operator tokens so an approver can't sign someone else's name, and `berth audit list` / `berth audit verify`. 26 unit tests. **Remaining work is verification, not construction:** assert that every deny in a *milestone* run reaches the trail with an actor, and that a tampered line is detected end to end. Note the honest limit already recorded in `docs/audit-reference.md` — payload capture is opt-in because 5.4 (nothing encrypted at rest) is still open, so the strongest forensic setting is one a deployment must choose. | A milestone run's denials all appear in the trail with actor + capability + decision; `berth audit verify` fails on a hand-edited line. |
 | 2.2 | **5.5 Secrets.** Stop plaintext secrets in `~/.berthrc`, `docker inspect`-visible env, and snapshots. Minimum bar: file mode 0600 store, secrets injected at runtime not baked into images/snapshots, snapshot scrubbing, and a documented "what we do / don't protect" section in the threat model. | `docker inspect` on a booted sandbox shows no provider API key; a snapshot restored on another machine contains no credentials; threat model updated. |
 | 2.3 | **5.6 + 5.8 (cheap ops floor).** Health endpoints + graceful shutdown on the four servers; SQLite WAL + `busy_timeout`. | Each server answers `/health`; SIGTERM drains; DBs opened WAL. |
 
 ## WS3 — Product separation & framework freeze (~2 days)
+
+The adapters this workstream tells contributors to use — `toAiSdkTools`, `toLangChainTools`, `toToolSpecs` — are real and on `main` as of WS0.2 (`packages/agents/src/interop.ts`, plus `examples/agents/with-vercel-ai-sdk`). They were on an unmerged branch when this plan was written, so 3.1's freeze notice pointed at symbols that didn't exist; it now points at shipped ones.
 
 | # | Task | Done when |
 |---|------|-----------|

@@ -1,5 +1,22 @@
 # Gap analysis: `@berth/agents` vs. LangChain/LangGraph
 
+> **Which document is authoritative for what.** `REMEDIATION.md` — defects: what
+> is broken, the evidence, and what would prove it closed. `LAUNCH_PLAN.md` —
+> execution order: which of those defects gate a launch and in what sequence.
+> `PRIORITIES.md` — an opinionated filter over REMEDIATION, kept for its
+> reasoning; superseded on *ordering* by LAUNCH_PLAN. `ROADMAP.md` — the public
+> "is X real yet" page. `gaps.md` — **archived**; it validated that the substrate
+> is usable from a framework, and is not a roadmap.
+
+> **ARCHIVED — not a roadmap, and deliberately not being worked.** This file did
+> its job: it established that the Berth substrate is usable from a real agent
+> framework, by building one against it. It is kept for that evidence and for the
+> reasoning in its entries. It is **not** a plan of record. `@berth/agents` is a
+> feature-frozen reference consumer — a gap listed below as open is a gap Berth
+> has decided not to close, because racing LangGraph on framework features is
+> unwinnable and beside the point. New framework features are a Non-goal; see
+> `LAUNCH_PLAN.md` § Non-goals and WS3.
+
 Working list of concrete gaps found by auditing `packages/agents`, `packages/mesh-coordinator`/`mesh-daemon`, `packages/sdk`, and `packages/sdk-python` against LangChain/LangGraph's feature set (2026-08-04). Ranked by how quickly each would surface in a head-to-head technical evaluation. Status is updated as gaps get closed — see the progress log at the bottom for what changed and why.
 
 Design constraint that shapes every "fixed" entry below: **no LangGraph-style node/edge graph DSL.** Where LangGraph would reach for a dedicated subsystem (a checkpointer, an interrupt primitive, a tracer), Berth's answer is to expose primitives the OS layer already has (Semantic FS, Context Bus, grants-server) to `@berth/agents`, rather than build a parallel one.
