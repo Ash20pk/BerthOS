@@ -1,4 +1,5 @@
 import Docker from "dockerode";
+import { warnIfEnforcementInactive } from "./doctor.js";
 import { randomBytes } from "node:crypto";
 import type { BerthManifest } from "@berth/manifest-schema";
 
@@ -205,6 +206,12 @@ function resolvePublishHost(explicit: string | undefined): string {
 
 export async function startContainer(options: StartContainerOptions): Promise<RunningContainer> {
   const docker = options.docker ?? new Docker();
+
+  // Before anything else, because a banner printed after a screenful of app
+  // logs is a banner nobody reads. Cached per kernel, so this costs one probe
+  // container on the first boot after a kernel change and nothing after that.
+  // Best-effort by construction: it never throws and never blocks a boot.
+  await warnIfEnforcementInactive(docker, options.image);
   const wantsBrowserPorts =
     options.apps && options.apps.length > 0
       ? options.apps.some((a) => needsBrowserPorts(a.manifest))

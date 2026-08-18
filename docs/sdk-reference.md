@@ -80,7 +80,7 @@ const grant = await requestCapability("my-app", "filesystem:write:/workspace");
 // (see docs/capability-tokens-reference.md)
 ```
 
-**Real as of Phase 3, for filesystem writes and (opt-in, when declared) reads and network ports.** `requestCapability()` checks the requested capability against `berth.yml`'s declared `capabilities:` (the same list `agent-init` turned into an enforced Landlock policy at boot) and reports `{ granted, pending? }` honestly — `granted: false` for anything undeclared, with `pending: true` when the denial was submitted to a grants server for human approval. It reports a decision the kernel already made; it does not grant anything itself. It used to also return an HMAC-signed token — removed in [REMEDIATION.md 1.10](../REMEDIATION.md#110--capability-tokens-are-never-verified-anywhere), since nothing verified it and the app held the signing key.
+**Real as of Phase 3, for filesystem writes and (opt-in, when declared) reads and network ports.** `requestCapability()` checks the requested capability against `berth.yml`'s declared `capabilities:` (the same list `agent-init` turned into an enforced Landlock policy at boot) and reports `{ granted, pending? }` honestly — `granted: false` for anything undeclared, with `pending: true` when the denial was submitted to a grants server for human approval. It reports a decision the kernel already made; it does not grant anything itself. It used to also return an HMAC-signed token — removed in [REMEDIATION.md 1.10](./internal/REMEDIATION.md#110--capability-tokens-are-never-verified-anywhere), since nothing verified it and the app held the signing key.
 
 ## `defineConnectorApp(config)`: a resident app from a declarative REST API description
 

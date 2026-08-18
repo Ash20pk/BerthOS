@@ -1,8 +1,9 @@
 import type { z } from "zod";
+import { redact, type Actor, type AuditSink } from "@berth/audit";
 import { Computer, type BootComputerOptions, type ConnectComputerOptions } from "./computer.js";
 import { resolveLLMProvider, type LLMProviderConfig } from "./providers/auto.js";
 import { createSemanticFsCheckpointStore, type CheckpointedRun, type CheckpointStore } from "./checkpoint.js";
-import { createAgentTracer, type StepTracer } from "./tracing.js";
+import { combineStepTracers, createAgentTracer, createAuditStepTracer, type StepTracer } from "./tracing.js";
 import { createOtelStepTracer } from "./otel-tracer.js";
 import { applyHumanApprovalGate, HumanApprovalDeniedError, type HumanApprovalGateOptions } from "./approval.js";
 import {
@@ -16,6 +17,16 @@ import { createMcpClientTools, type McpClientHandle, type McpClientToolsOptions 
 import { runGuardrails, GuardrailTripwireError, type Guardrail } from "./guardrails.js";
 import type { GovernanceGate } from "./governance.js";
 import type { Session } from "./session.js";
+import {
+  CheckpointNotFoundError,
+  CheckpointStoreMissingError,
+  ContextLengthExceededError,
+  MaxTurnsExceededError,
+  UnknownToolError,
+  isAbortError,
+} from "./errors.js";
+import { createRunCancellation, withToolTimeout, type RunCancellation } from "./cancellation.js";
+import { compactMessages, emergencyBudget, estimateFixedTokens, type ContextPolicy } from "./context.js";
 import { TruncatedResponseError, type AgentMessage, type LLMProvider, type Tool } from "./types.js";
 
 export interface AgentOptions {
@@ -47,6 +58,22 @@ export interface AgentOptions {
    */
   trace?: StepTracer;
   /**
+   * Who this agent's steps are attributed to in the trace. Defaults to the
+   * agent itself, which is honest but self-asserted; pass the operator or
+   * tenant that started the run to make a trace answer "who", not just
+   * "what". See AgentStepEvent.actor.
+   */
+  actor?: Actor;
+  /**
+   * Include each tool call's arguments and result in its AgentStepEvent,
+   * redacted first. Off by default: traces are written to Semantic FS as
+   * plaintext (REMEDIATION.md 5.4), and tool arguments are where customer
+   * data turns up. REMEDIATION.md 5.1 flagged the absence of arguments and
+   * outputs from the event, so this is the switch that closes it — a
+   * decision an operator makes per agent, not one taken for them.
+   */
+  tracePayloads?: boolean;
+  /**
    * Run against the raw input string before the first LLM call, in order,
    * stopping at the first tripped one — a tripped guardrail throws
    * GuardrailTripwireError, and the loop never starts. Applies only to
@@ -64,6 +91,32 @@ export interface AgentOptions {
    * guardrails.ts.
    */
   outputGuardrails?: Guardrail[];
+  /**
+   * Wall-clock ceiling for a whole run(), in milliseconds — checked at every
+   * loop boundary and propagated to the in-flight LLM call and tool call as
+   * an AbortSignal. Unset means no deadline, which was the only behaviour
+   * before REMEDIATION 4.2: `maxTurns` bounded how many times the loop went
+   * round, and nothing at all bounded how long that took.
+   *
+   * Overridable per call via run()'s own `timeoutMs`.
+   */
+  timeoutMs?: number;
+  /**
+   * Ceiling for a single tool call, in milliseconds. A call that exceeds it
+   * comes back to the model as a ToolTimeoutError tool result — a failure it
+   * can route around — rather than ending the run. See errors.ts for why
+   * that direction, and cancellation.ts for what the bound does and doesn't
+   * promise about a tool that ignores its signal.
+   */
+  toolTimeoutMs?: number;
+  /**
+   * Bounds how much history is sent to the model, and what happens when it
+   * doesn't fit — see context.ts. Unset leaves proactive compaction off, but
+   * *not* the reactive half: a provider reporting a context overflow still
+   * triggers a trim-and-retry, because the alternative is a session that
+   * fails permanently from that point on. See REMEDIATION 4.1.
+   */
+  context?: ContextPolicy;
 }
 
 export interface AgentRunResult {
@@ -117,6 +170,21 @@ function pendingToolCalls(messages: AgentMessage[]): { id: string; name: string;
 const DEFAULT_MAX_TURNS = 25;
 const DEFAULT_MAX_REPAIR_ATTEMPTS = 2;
 
+/** The arguments Agent's internal loop takes. Named rather than inlined because both loop() and loopWith() carry it — see loop() for why they're split. */
+interface LoopArgs<T> {
+  initialMessages: AgentMessage[];
+  initialExecuted: AgentRunResult["toolCalls"];
+  startTurn: number;
+  runId: string | undefined;
+  onText: ((delta: string) => void) | undefined;
+  responseSchema?: z.ZodType<T>;
+  maxRepairAttempts?: number;
+  session?: Session;
+  sessionBaseline?: number;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
+
 /**
  * The provider-agnostic tool-use loop: identical regardless of which
  * LLMProvider or which Tool implementations (resident-app exports, other
@@ -130,8 +198,13 @@ export class Agent {
   private readonly maxTurns: number;
   private readonly checkpointStore: CheckpointStore | undefined;
   private readonly tracer: StepTracer | undefined;
+  private readonly actor: Actor | undefined;
+  private readonly tracePayloads: boolean;
   private readonly inputGuardrails: Guardrail[];
   private readonly outputGuardrails: Guardrail[];
+  private readonly timeoutMs: number | undefined;
+  private readonly toolTimeoutMs: number | undefined;
+  private readonly context: ContextPolicy;
   /**
    * The governance authority of the Computer this agent was built from, set
    * by createAgent(). Only asTool() uses it — every other tool this agent
@@ -148,30 +221,45 @@ export class Agent {
     this.maxTurns = options.maxTurns ?? DEFAULT_MAX_TURNS;
     this.checkpointStore = options.checkpoint;
     this.tracer = options.trace;
+    this.actor = options.actor;
+    this.tracePayloads = options.tracePayloads ?? false;
     this.inputGuardrails = options.inputGuardrails ?? [];
     this.outputGuardrails = options.outputGuardrails ?? [];
     this.governance = options.governance;
+    this.timeoutMs = options.timeoutMs;
+    this.toolTimeoutMs = options.toolTimeoutMs;
+    this.context = options.context ?? {};
   }
 
   async run<T = never>(
     input: string,
-    opts: { runId?: string; onText?: (delta: string) => void; session?: Session } & StructuredOutputRunOptions<T> = {},
+    opts: {
+      runId?: string;
+      onText?: (delta: string) => void;
+      session?: Session;
+      /** Cancels this run: the in-flight LLM call and tool call are aborted, and run() rejects with an AbortError. See REMEDIATION 4.2. */
+      signal?: AbortSignal;
+      /** Overrides the Agent's own `timeoutMs` for this call. */
+      timeoutMs?: number;
+    } & StructuredOutputRunOptions<T> = {},
   ): Promise<AgentRunResult & { data?: T }> {
     if (this.inputGuardrails.length > 0) {
       await runGuardrails(this.inputGuardrails, input, "input");
     }
     const priorItems = opts.session ? await opts.session.getItems() : [];
-    return this.loop(
-      [...priorItems, { role: "user", text: input }],
-      [],
-      0,
-      opts.runId,
-      opts.onText,
-      opts.responseSchema,
-      opts.maxRepairAttempts,
-      opts.session,
-      priorItems.length,
-    );
+    return this.loop({
+      initialMessages: [...priorItems, { role: "user", text: input }],
+      initialExecuted: [],
+      startTurn: 0,
+      runId: opts.runId,
+      onText: opts.onText,
+      responseSchema: opts.responseSchema,
+      maxRepairAttempts: opts.maxRepairAttempts,
+      session: opts.session,
+      sessionBaseline: priorItems.length,
+      signal: opts.signal,
+      timeoutMs: opts.timeoutMs ?? this.timeoutMs,
+    });
   }
 
   /**
@@ -186,35 +274,65 @@ export class Agent {
    */
   async resume<T = never>(
     runId: string,
-    opts: { onText?: (delta: string) => void } & StructuredOutputRunOptions<T> = {},
+    opts: { onText?: (delta: string) => void; signal?: AbortSignal; timeoutMs?: number } & StructuredOutputRunOptions<T> = {},
   ): Promise<AgentRunResult & { data?: T }> {
     if (!this.checkpointStore) {
-      throw new Error(`Agent "${this.name}" has no checkpoint store configured — pass { checkpoint } when constructing it to resume a run`);
+      throw new CheckpointStoreMissingError(this.name);
     }
     const checkpoint = await this.checkpointStore.load(runId);
     if (!checkpoint) {
-      throw new Error(`no checkpoint found for run "${runId}"`);
+      throw new CheckpointNotFoundError(runId);
     }
     if (checkpoint.status === "done") {
       return { text: checkpoint.text ?? "", toolCalls: checkpoint.toolCalls };
     }
-    return this.loop(checkpoint.messages, checkpoint.toolCalls, checkpoint.turnCount, runId, opts.onText, opts.responseSchema, opts.maxRepairAttempts);
+    return this.loop({
+      initialMessages: checkpoint.messages,
+      initialExecuted: checkpoint.toolCalls,
+      startTurn: checkpoint.turnCount,
+      runId,
+      onText: opts.onText,
+      responseSchema: opts.responseSchema,
+      maxRepairAttempts: opts.maxRepairAttempts,
+      signal: opts.signal,
+      timeoutMs: opts.timeoutMs ?? this.timeoutMs,
+    });
   }
 
-  private async loop<T = never>(
-    initialMessages: AgentMessage[],
-    initialExecuted: AgentRunResult["toolCalls"],
-    startTurn: number,
-    runId: string | undefined,
-    onText: ((delta: string) => void) | undefined,
-    responseSchema?: z.ZodType<T>,
-    maxRepairAttempts = DEFAULT_MAX_REPAIR_ATTEMPTS,
-    session?: Session,
-    sessionBaseline = 0,
+  private async loop<T = never>(args: LoopArgs<T>): Promise<AgentRunResult & { data?: T }> {
+    // The deadline is a real timer, so it has to be cleared however the run
+    // ends — including the paths that throw. Without this, a run that beats
+    // its own timeout by an hour keeps the process alive for that hour.
+    const cancellation = createRunCancellation(this.name, args.signal, args.timeoutMs);
+    try {
+      return await this.loopWith(args, cancellation);
+    } finally {
+      cancellation.dispose();
+    }
+  }
+
+  private async loopWith<T = never>(
+    args: LoopArgs<T>,
+    cancellation: RunCancellation,
   ): Promise<AgentRunResult & { data?: T }> {
+    const {
+      initialMessages,
+      initialExecuted,
+      startTurn,
+      runId,
+      onText,
+      responseSchema,
+      maxRepairAttempts = DEFAULT_MAX_REPAIR_ATTEMPTS,
+      session,
+      sessionBaseline = 0,
+    } = args;
     const messages = [...initialMessages];
     const executed = [...initialExecuted];
     let repairAttempts = 0;
+    // Bounds the trim-and-retry to one attempt per run, so a provider that
+    // reports an overflow for some other reason can't drive an endless
+    // shrink loop.
+    let contextRetried = false;
 
     const checkpoint = async (turnCount: number, status: CheckpointedRun["status"], text?: string) => {
       if (!this.checkpointStore || !runId) return;
@@ -223,7 +341,7 @@ export class Agent {
 
     const trace = async (event: Omit<Parameters<StepTracer["emit"]>[0], "runId" | "agentName">) => {
       if (!this.tracer || !runId) return;
-      await this.tracer.emit({ ...event, runId, agentName: this.name });
+      await this.tracer.emit({ ...event, runId, agentName: this.name, actor: this.actor });
     };
 
     const runToolCall = async (
@@ -236,11 +354,23 @@ export class Agent {
       let result: unknown;
       let error: string | undefined;
       if (!tool) {
-        error = `no such tool "${call.name}"`;
+        // Fed back to the model rather than thrown, unchanged from before —
+        // picking a tool that doesn't exist is a mistake the model can
+        // correct on the next turn, and killing the run over it would be a
+        // regression. UnknownToolError is used for its *message*, which now
+        // names the tools that do exist; "no such tool X" on its own is the
+        // least actionable thing to hand a model that just guessed. See
+        // REMEDIATION 4.8 and errors.ts.
+        error = new UnknownToolError(
+          call.name,
+          this.tools.map((t) => t.name),
+        ).message;
         result = { error };
       } else {
         try {
-          result = await tool.invoke(call.input);
+          result = await withToolTimeout(call.name, this.toolTimeoutMs, cancellation.signal, (signal) =>
+            tool.invoke(call.input, { signal }),
+          );
         } catch (err) {
           // A refusal is not a failure the model gets to route around.
           // Feeding a human's "no" back as a tool result let the model
@@ -251,6 +381,22 @@ export class Agent {
           // agent-as-tool. See REMEDIATION 3.4.
           if (isRefusal(err)) {
             await checkpoint(turnCount, "error", turnText);
+            throw err;
+          }
+          // A cancelled *run* ends the run — feeding "aborted" back as a tool
+          // result would have the model politely retry the call that someone
+          // just cancelled. A cancelled *tool* is different and deliberately
+          // falls through to the {error} path below: the run is still alive,
+          // and one slow tool is a failure the model can route around.
+          //
+          // Keyed on the run's own signal rather than on the error's shape,
+          // because the two are not reliably distinguishable from the error
+          // alone: a tool that honours its signal rejects with an AbortError
+          // either way, and a run deadline rejects with RunTimeoutError,
+          // which is deliberately *not* an AbortError. See cancellation.ts.
+          if (cancellation.signal?.aborted) {
+            await checkpoint(turnCount, "error", turnText);
+            cancellation.throwIfCancelled();
             throw err;
           }
           // Every other failing tool call still feeds an {error} result back
@@ -266,7 +412,17 @@ export class Agent {
           result = { error };
         }
       }
-      await trace({ turn: turnCount, kind: "tool-call", toolName: call.name, durationMs: Date.now() - callStart, error });
+      await trace({
+        turn: turnCount,
+        kind: "tool-call",
+        toolName: call.name,
+        durationMs: Date.now() - callStart,
+        error,
+        // redact() here rather than in the tracer, so every backend an
+        // AgentStepEvent reaches gets the same already-safe value — a tracer
+        // that forgot to redact would otherwise be a leak per backend.
+        ...(this.tracePayloads ? { input: redact(call.input), output: redact(result) } : {}),
+      });
       executed.push({ name: call.name, input: call.input, result });
       messages.push({ role: "tool", toolResult: { id: call.id, name: call.name, output: result } });
     };
@@ -307,20 +463,76 @@ export class Agent {
     if (pending.length > 0) await checkpoint(startTurn, "running");
 
     for (let turnCount = startTurn; turnCount < this.maxTurns; turnCount++) {
+      // Checked at the top of every turn, so a run cancelled while a tool was
+      // executing stops here rather than spending one more LLM call first.
+      cancellation.throwIfCancelled();
       const turnStart = Date.now();
       let turn;
+
+      // Proactive half of REMEDIATION 4.1: compact before the call when a
+      // budget is set. Mutates `messages` in place rather than shadowing it,
+      // so what gets checkpointed and what gets sent are the same history —
+      // otherwise a resumed run would restore the full, over-budget list and
+      // fail exactly where the live run had recovered.
+      const fixedTokens = estimateFixedTokens(this.systemPrompt, this.tools);
+      const compaction = await compactMessages(messages, fixedTokens, this.context);
+      if (compaction.compacted) {
+        messages.splice(0, messages.length, ...compaction.messages);
+        await trace({
+          turn: turnCount,
+          kind: "context-compaction",
+          durationMs: 0,
+          droppedMessages: compaction.droppedCount,
+        });
+      }
+
+      const callParams = { system: this.systemPrompt, messages, tools: this.tools, signal: cancellation.signal };
       try {
         turn =
           onText && this.llm.chatStream
-            ? await this.llm.chatStream({ system: this.systemPrompt, messages, tools: this.tools }, onText)
-            : await this.llm.chat({ system: this.systemPrompt, messages, tools: this.tools });
+            ? await this.llm.chatStream(callParams, onText)
+            : await this.llm.chat(callParams);
       } catch (err) {
+        // Reactive half: the provider says the request didn't fit. Without
+        // this, a session that outgrew the window failed here and on every
+        // subsequent run() forever — the history that makes a session useful
+        // being exactly what made it unusable.
+        //
+        // Retried once per turn, against a budget derived from what was just
+        // rejected (see emergencyBudget) rather than a guess at the model's
+        // real window, which no API exposes. If compaction can't drop
+        // anything more, the error propagates rather than looping.
+        if (err instanceof ContextLengthExceededError && !contextRetried) {
+          const emergency = await compactMessages(
+            messages,
+            fixedTokens,
+            { ...this.context, maxInputTokens: emergencyBudget(messages, fixedTokens) },
+          );
+          if (emergency.compacted) {
+            messages.splice(0, messages.length, ...emergency.messages);
+            contextRetried = true;
+            await trace({
+              turn: turnCount,
+              kind: "context-compaction",
+              durationMs: Date.now() - turnStart,
+              droppedMessages: emergency.droppedCount,
+              error: "recovered from a provider context-length error",
+            });
+            turnCount--; // Re-run this turn against the compacted history.
+            continue;
+          }
+        }
         await trace({
           turn: turnCount,
           kind: "llm-turn",
           durationMs: Date.now() - turnStart,
           error: err instanceof Error ? err.message : String(err),
         });
+        // Turns the provider SDK's own abort (a DOMException, or the vendor's
+        // APIUserAbortError) into this package's RunTimeoutError /
+        // RunAbortedError, so a caller learns *why* it stopped rather than
+        // getting a bare "The operation was aborted" from a dependency.
+        if (isAbortError(err)) cancellation.throwIfCancelled();
         throw err;
       }
       await trace({ turn: turnCount, kind: "llm-turn", durationMs: Date.now() - turnStart, usage: turn.usage });
@@ -389,7 +601,16 @@ export class Agent {
     }
 
     await checkpoint(this.maxTurns, "error");
-    throw new Error(`Agent "${this.name}" exceeded its maxTurns (${this.maxTurns}) without reaching a final answer`);
+    // Carries the executed tool calls and the last thing the model said. The
+    // bare Error this replaces discarded both, so a caller who wanted to
+    // salvage a run that ran long — or just see how far it got — had nothing
+    // to work with but a message string. See REMEDIATION 4.8.
+    throw new MaxTurnsExceededError(
+      this.name,
+      this.maxTurns,
+      executed,
+      [...messages].reverse().find((m) => m.role === "assistant" && m.text)?.text,
+    );
   }
 
 
@@ -429,9 +650,12 @@ export class Agent {
         properties: { task: { type: "string", description: "the task to delegate to this agent" } },
         required: ["task"],
       },
-      invoke: async (input: unknown) => {
+      invoke: async (input: unknown, ctx) => {
         const { task } = input as { task: string };
-        const result = await this.run(task);
+        // The delegate's run inherits the caller's signal, so cancelling a
+        // manager cancels the workers it is waiting on rather than leaving
+        // them running against a run nobody is listening to any more.
+        const result = await this.run(task, { signal: ctx?.signal });
         return result.text;
       },
     };
@@ -512,6 +736,25 @@ export interface CreateAgentOptions extends Pick<BootComputerOptions, "network" 
    */
   trace?: "full" | "otel" | StepTracer;
   /**
+   * Routes this agent's steps *and* its Computer's governance verdicts into
+   * one hash-chained audit trail — REMEDIATION.md 5.1.
+   *
+   * Separate from `trace`, and composable with it: a trace answers "replay
+   * this run", an audit trail answers "what happened on this machine, in
+   * order, and who did it". Passing this alongside `trace: "full"` gives
+   * both, and passing it alone is the cheapest way to get a record that a
+   * reviewer can read.
+   *
+   * Only applies to a Computer this call boots. A `computer` you built
+   * yourself already resolved its governance gate, so pass the sink to
+   * Computer.boot({ governance: { audit } }) there instead.
+   */
+  audit?: AuditSink;
+  /** Who to attribute this agent's records to. See AgentOptions.actor. */
+  actor?: Actor;
+  /** Capture redacted tool arguments and results. See AgentOptions.tracePayloads. */
+  tracePayloads?: boolean;
+  /**
    * Wraps `computer.tools` through applyHumanApprovalGate() before
    * constructing the Agent — every gated tool call blocks on a human
    * decision via a running grants-server instance instead of executing
@@ -577,11 +820,21 @@ export async function createAgent(
           network: options.network,
           env: options.env,
           docker: options.docker,
-          governance: options.governance,
+          // The audit sink reaches governance through the same options bag a
+          // caller could have set by hand — `audit` is a shorthand, not a
+          // second channel, so an explicit governance.audit wins.
+          governance: options.audit
+            ? { ...options.governance, audit: options.governance?.audit ?? options.audit, actor: options.governance?.actor ?? options.actor }
+            : options.governance,
         }));
   const checkpoint = options.checkpoint === "semantic-fs" ? createSemanticFsCheckpointStore(computer) : options.checkpoint;
-  const trace =
+  const stepTracer =
     options.trace === "full" ? createAgentTracer(computer) : options.trace === "otel" ? createOtelStepTracer() : options.trace;
+  // Both, when both are asked for — an audit sink is an additional
+  // destination for steps, never a replacement for the trace backend.
+  const auditTracer = options.audit ? createAuditStepTracer(options.audit) : undefined;
+  const trace =
+    stepTracer && auditTracer ? combineStepTracers(stepTracer, auditTracer) : (stepTracer ?? auditTracer);
   const retriever = options.retriever === "semantic-fs" ? createSemanticFsRetriever(computer) : options.retriever;
   const mcpServers = options.mcpServers ? await Promise.all(options.mcpServers.map((server) => createMcpClientTools(server))) : [];
   const gatedTools = options.humanApproval
@@ -614,6 +867,8 @@ export async function createAgent(
     maxTurns: options.maxTurns,
     checkpoint,
     trace,
+    actor: options.actor,
+    tracePayloads: options.tracePayloads,
     inputGuardrails: options.inputGuardrails,
     outputGuardrails: options.outputGuardrails,
     // So this agent's own asTool() delegation is gated too — the manager

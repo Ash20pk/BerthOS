@@ -1,10 +1,27 @@
+/**
+ * Passed to `Tool.invoke()` as an optional second argument — REMEDIATION 4.2.
+ *
+ * Optional, and second, so that every Tool written before this existed stays
+ * valid: an `invoke: async (input) => ...` simply ignores it. A tool that
+ * *does* accept it should abandon its work when the signal fires and reject
+ * with an `AbortError`, the same contract `fetch` follows.
+ */
+export interface ToolInvocationContext {
+  /**
+   * Fires when the run this call belongs to is cancelled — the caller
+   * aborted, the run's wall-clock deadline elapsed, or this individual call
+   * exceeded its own timeout.
+   */
+  signal?: AbortSignal;
+}
+
 /** The single interface a Computer's resident-app exports, and other Agents, both implement — see Agent.asTool(). */
 export interface Tool {
   name: string;
   description: string;
   /** JSON Schema for the tool's input. */
   inputSchema: object;
-  invoke(input: unknown): Promise<unknown>;
+  invoke(input: unknown, ctx?: ToolInvocationContext): Promise<unknown>;
 }
 
 export type AgentRole = "user" | "assistant" | "tool";
@@ -91,9 +108,24 @@ export interface LLMTurn {
  * createFallbackProvider() for retry-through-a-chain. Nothing in
  * Computer/Agent/Crew references a specific vendor.
  */
+/**
+ * What every LLMProvider call receives. `signal` is REMEDIATION 4.2: without
+ * it a cancelled run still held an in-flight completion open to its natural
+ * end, so `abort()` stopped the *loop* while the tokens kept being paid for.
+ * Every built-in provider forwards it to its vendor SDK, all of which accept
+ * one. A custom provider that ignores it still works — the loop stops either
+ * way, it just can't stop the request already in flight.
+ */
+export interface LLMCallParams {
+  system?: string;
+  messages: AgentMessage[];
+  tools: Tool[];
+  signal?: AbortSignal;
+}
+
 export interface LLMProvider {
   readonly name: string;
-  chat(params: { system?: string; messages: AgentMessage[]; tools: Tool[] }): Promise<LLMTurn>;
+  chat(params: LLMCallParams): Promise<LLMTurn>;
   /**
    * Same request/response contract as chat(), but calls onText(delta) for
    * each chunk of assistant text as the model produces it, instead of only
@@ -102,8 +134,5 @@ export interface LLMProvider {
    * Agent.run()/resume() fall back to chat() when it's absent, simply
    * without incremental text events.
    */
-  chatStream?(
-    params: { system?: string; messages: AgentMessage[]; tools: Tool[] },
-    onText: (delta: string) => void,
-  ): Promise<LLMTurn>;
+  chatStream?(params: LLMCallParams, onText: (delta: string) => void): Promise<LLMTurn>;
 }

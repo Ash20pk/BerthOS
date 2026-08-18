@@ -1,4 +1,6 @@
 import type { GrantRecord } from "@berth/grants-server";
+import { abortableSleep } from "./cancellation.js";
+import { isAbortError } from "./errors.js";
 import type { Tool } from "./types.js";
 
 /**
@@ -54,16 +56,12 @@ async function requestGrant(baseUrl: string, appName: string, capability: string
   return (await res.json()) as GrantRecord;
 }
 
-async function fetchGrant(baseUrl: string, id: string): Promise<GrantRecord> {
-  const res = await fetch(`${baseUrl}/grants/${id}`);
+async function fetchGrant(baseUrl: string, id: string, signal?: AbortSignal): Promise<GrantRecord> {
+  const res = await fetch(`${baseUrl}/grants/${id}`, { signal });
   if (!res.ok) {
     throw new Error(`grants-server GET /grants/${id} failed: ${res.status} ${await res.text()}`);
   }
   return (await res.json()) as GrantRecord;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
@@ -72,15 +70,28 @@ function sleep(ms: number): Promise<void> {
  * mid-Agent.run() — until a human decides via `berth grants approve/deny`
  * (or the REST API directly), or `timeoutMs` elapses.
  */
-async function awaitDecision(baseUrl: string, id: string, pollIntervalMs: number, timeoutMs: number): Promise<GrantRecord> {
+async function awaitDecision(
+  baseUrl: string,
+  id: string,
+  pollIntervalMs: number,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<GrantRecord> {
   const deadline = Date.now() + timeoutMs;
   while (true) {
-    const grant = await fetchGrant(baseUrl, id);
+    // Before the request, not only around the sleep: a run cancelled while a
+    // poll was in flight should not issue another one.
+    signal?.throwIfAborted();
+    const grant = await fetchGrant(baseUrl, id, signal);
     if (grant.status !== "pending") return grant;
     if (Date.now() >= deadline) {
       throw new Error(`timed out after ${timeoutMs}ms waiting for a human decision on grant "${id}"`);
     }
-    await sleep(pollIntervalMs);
+    // Wakes on cancellation instead of sitting out the full interval. With
+    // the default 10-minute timeout and a 2-second poll, the old unabortable
+    // sleep meant a cancelled run could sit here for the remainder of ten
+    // minutes with nothing able to interrupt it. See REMEDIATION 4.2.
+    await abortableSleep(pollIntervalMs, signal);
   }
 }
 
@@ -110,7 +121,7 @@ export function applyHumanApprovalGate(tools: Tool[], options: HumanApprovalGate
 
     return {
       ...tool,
-      invoke: async (input: unknown) => {
+      invoke: async (input: unknown, ctx) => {
         const grant = await requestGrant(
           options.grantsServerUrl,
           options.requesterName,
@@ -120,14 +131,19 @@ export function applyHumanApprovalGate(tools: Tool[], options: HumanApprovalGate
 
         let decided: GrantRecord;
         try {
-          decided = await awaitDecision(options.grantsServerUrl, grant.id, pollIntervalMs, timeoutMs);
+          decided = await awaitDecision(options.grantsServerUrl, grant.id, pollIntervalMs, timeoutMs, ctx?.signal);
         } catch (err) {
+          // A cancelled run is not a human saying no. Converting it would
+          // record a denial nobody made, and — because a denial is one of
+          // the two errors Agent's loop treats as a hard stop (REMEDIATION
+          // 3.4) — would report the run as refused rather than cancelled.
+          if (isAbortError(err)) throw err;
           throw new HumanApprovalDeniedError(tool.name, err instanceof Error ? err.message : String(err));
         }
         if (decided.status !== "approved") {
           throw new HumanApprovalDeniedError(tool.name, decided.reason ?? "denied");
         }
-        return tool.invoke(input);
+        return tool.invoke(input, ctx);
       },
     };
   });

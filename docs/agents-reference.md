@@ -776,4 +776,4 @@ The first eight need only a local Docker daemon and run in CI (`.github/workflow
 BERTH_ALLOW_UNENFORCED=1 node test/computer-boot-milestone.mjs
 ```
 
-The env var relaxes the enforcement gate for the whole process; `Computer.boot({ enforcement: "warn" })` does the same for one Computer. Both print a warning per boot, and neither provides any isolation on such a host — see the platform table in the README's prerequisites. `computer-boot-failure-milestone.mjs` is the one exception: it asserts on this behavior directly, so it passes with or without the env var and needs neither.
+The env var relaxes the enforcement gate for the whole process; `Computer.boot({ enforcement: "warn" })` does the same for one Computer. Both print a warning per boot, and neither provides any isolation on such a host — see the platform table in [docs/kernel-enforcement.md](./kernel-enforcement.md#kernel-enforcement-by-platform). `computer-boot-failure-milestone.mjs` is the one exception: it asserts on this behavior directly, so it passes with or without the env var and needs neither.

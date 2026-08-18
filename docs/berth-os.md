@@ -6,7 +6,7 @@ If you've called `Computer.boot()` or `createAgent({apps: [...]})`, you've alrea
 
 ## What's actually inside one
 
-- **Resident apps.** Persistent, stateful processes loaded from a `berth.yml` manifest plus code, each exposing exports that become tools for whatever `Agent` is driving the OS. See [Resident apps](../README.md#resident-apps) in the README for how to build one, including the full list of available permissions.
+- **Resident apps.** Persistent, stateful processes loaded from a `berth.yml` manifest plus code, each exposing exports that become tools for whatever `Agent` is driving the OS. See [Resident apps](./resident-apps.md) for how to build one, including the full list of available permissions.
 - **Capability enforcement (Landlock).** Every app's declared `namespace:action:scope` capabilities become a real, kernel-enforced ruleset, applied by `agent-init` before the app's own code ever runs. An undeclared write isn't caught by a try/catch. The syscall itself gets refused. See the [capability tokens reference](./capability-tokens-reference.md).
 - **Context bus.** Pub/sub between apps sharing one OS, so one app's write can trigger another's reaction with zero direct wiring between them. See the [context bus reference](./context-bus-reference.md).
 - **Semantic FS.** A filesystem mounted at `/context` that carries metadata about why each file exists (`created_by`, `task`, `related_apps`), searchable by that metadata instead of by path alone, shared by every app in the OS. The search ranks over *tag text*, not file content, and only sees files something explicitly tagged. See the [semantic FS reference](./semantic-fs-reference.md#query-semantics--hybrid-keyword--embedding-similarity).

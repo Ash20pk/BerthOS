@@ -32,7 +32,7 @@ That takes two mechanisms, not one. Landlock stops the TCP connect; it has no ac
 
 ## The context-bus / semantic-fs pattern
 
-`write_file` publishes `fs.file_created` with `{ path, createdBy: "filesystem" }` after every write. [`apps/code-editor`](../code-editor/README.md) subscribes to that topic and reacts — no orchestration wires the two apps together; one just publishes and the other listens. This is the working example referenced from the root README's ["Talking to other apps"](../../README.md#talking-to-other-apps) section.
+`write_file` publishes `fs.file_created` with `{ path, createdBy: "filesystem" }` after every write. [`apps/code-editor`](../code-editor/README.md) subscribes to that topic and reacts — no orchestration wires the two apps together; one just publishes and the other listens. This is the working example referenced from ["Talking to other apps"](../../docs/resident-apps.md#talking-to-other-apps).
 
 `write_context_file` / `tag_context_file` / `query_context` are the semantic-fs half: write something to `/context`, tag it with a task and related apps, and any app in the sandbox can later find it by describing what it needs rather than knowing the exact path. The tag is load-bearing, not optional decoration — the search ranks over that tag text (plus the path and `created_by`), never over file content, so an untagged file is only findable by words that happen to appear in its path. `query_context` also returns metadata only; getting content still needs a `read_context_file` per hit. See [docs/semantic-fs-reference.md](../../docs/semantic-fs-reference.md#query-semantics--hybrid-keyword--embedding-similarity).
 

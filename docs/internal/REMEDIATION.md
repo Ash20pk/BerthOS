@@ -1,5 +1,13 @@
 # Remediation plan
 
+> **Which document is authoritative for what.** `REMEDIATION.md` — defects: what
+> is broken, the evidence, and what would prove it closed. `LAUNCH_PLAN.md` —
+> execution order: which of those defects gate a launch and in what sequence.
+> `PRIORITIES.md` — an opinionated filter over REMEDIATION, kept for its
+> reasoning; superseded on *ordering* by LAUNCH_PLAN. `ROADMAP.md` — the public
+> "is X real yet" page. `gaps.md` — **archived**; it validated that the substrate
+> is usable from a framework, and is not a roadmap.
+
 Ordered list of what to fix, derived from a full audit of the repo on 2026-08-07 (framework layer, OS/sandbox layer, enterprise posture, and an adversarial pass on the isolation model). Distinct from [gaps.md](./gaps.md), which tracks *feature parity*. This file tracks *correctness, security, and credibility* — the things that are claimed but not true, or true but unverified.
 
 Ordering principle: **make the existing claims true before adding new ones.** Phases 0–2 are the ones that decide whether Berth is a real product. Everything after is normal engineering.
@@ -11,6 +19,11 @@ Each item lists evidence (`file:line`), the fix, and a verification step that wo
 - 🔴 Open
 - 🟡 In progress
 - 🟢 Closed — with a verification artifact, not just a passing build
+- ⚪ Won't fix at this seam — the limitation is real, stated in the code, and
+  paired with a mitigation. Added because 3.5 sat amber indefinitely while
+  being, in one part, genuinely unfixable without work an order of magnitude
+  larger than the item; an entry that will never go green is more honestly
+  labelled than left in progress forever.
 
 ---
 
@@ -155,7 +168,7 @@ and executes with *filesystem's* capabilities. Per-app Landlock rulesets are rea
 
 > **Steps 0–3 of that migration have landed** — parts 1 and 2 below are closed; part 3 (`SO_PEERCRED`) is not, which is why this entry is still 🟡 rather than 🟢. Every app runs as its own uid (`10000 + index`) with a private group and a shared `berth` group, dropped irreversibly in `agent-init` after Landlock, the capability drop, and both seccomp filters. `/context` survives that via `allow_other` + `default_permissions` and `root:berth` backing files; the three daemon control sockets are `0660 root:berth`.
 >
-> **Designed, then built:** [docs/per-app-uid-design.md](./docs/per-app-uid-design.md) works out the uid scheme, the eight blockers, and a five-step migration for 1.4, 1.11, and 1.14 together. Two findings change this entry. First, **1.5 must land before 1.4**, not after — `on_install` as a boot-time root shell can `chown` its way around every boundary the uid split creates, and moving it to build time is also what keeps system-Python installs working for a non-root app. Second, part 1 cannot be replaced by a narrower Landlock policy: Landlock does not gate `connect()` to a pathname Unix socket (no `inode_permission` hook; ABI 6's scope right covers *abstract* sockets only), so `generate-capability-policy.ts:43-45`'s "connecting to a Unix socket requires write access to it" is a DAC fact, not a ruleset one. The design also records a strictly weaker one-day fallback for 1.4 alone, if the uid work proves too costly.
+> **Designed, then built:** [docs/per-app-uid-design.md](../per-app-uid-design.md) works out the uid scheme, the eight blockers, and a five-step migration for 1.4, 1.11, and 1.14 together. Two findings change this entry. First, **1.5 must land before 1.4**, not after — `on_install` as a boot-time root shell can `chown` its way around every boundary the uid split creates, and moving it to build time is also what keeps system-Python installs working for a non-root app. Second, part 1 cannot be replaced by a narrower Landlock policy: Landlock does not gate `connect()` to a pathname Unix socket (no `inode_permission` hook; ABI 6's scope right covers *abstract* sockets only), so `generate-capability-policy.ts:43-45`'s "connecting to a Unix socket requires write access to it" is a DAC fact, not a ruleset one. The design also records a strictly weaker one-day fallback for 1.4 alone, if the uid work proves too costly.
 2. Remove `/tmp` from the unconditional baseline write set; grant only the app's own socket dir plus a private `/tmp/<app>` scratch.
 3. Add `SO_PEERCRED` verification in `rpc.ts`'s `connectionHandler` so a socket connection's uid is checked against the expected app identity.
 
@@ -199,7 +212,7 @@ Note: `entrypoint.sh` itself has no injection surface — manifest `name` is `^[
 
 **Verify.** A test asserting an `on_install` entry cannot write outside the app's declared write paths.
 
-> **Was a prerequisite for 1.4/1.11**, which is why it jumped the queue — see [docs/per-app-uid-design.md § Blocker 4](./docs/per-app-uid-design.md#blocker-4--on_install-is-defined-as-a-root-shell--resolved). Leaving `on_install` at boot would have made the uid boundary decorative, and running it *as* the app's uid would have broken the `pip install` case `base.Dockerfile:101` deliberately enables. The build-time fix avoids both.
+> **Was a prerequisite for 1.4/1.11**, which is why it jumped the queue — see [docs/per-app-uid-design.md § Blocker 4](../per-app-uid-design.md#blocker-4--on_install-is-defined-as-a-root-shell--resolved). Leaving `on_install` at boot would have made the uid boundary decorative, and running it *as* the app's uid would have broken the `pip install` case `base.Dockerfile:101` deliberately enables. The build-time fix avoids both.
 
 **Closed.** `on_install` is a Docker build layer, for **both** targets, and nothing executes it at container boot.
 
@@ -389,7 +402,7 @@ Option (b) would have meant a minting daemon holding the secret outside every ap
 
 **Verify.** A test asserting app B cannot signal app A's process.
 
-> Step 5 of [docs/per-app-uid-design.md](./docs/per-app-uid-design.md#migration-order) — once uids differ, `kill(2)` between apps is refused by the kernel's ordinary permission check and no new mechanism is needed. `LANDLOCK_SCOPE_SIGNAL` stays optional rather than load-bearing.
+> Step 5 of [docs/per-app-uid-design.md](../per-app-uid-design.md#migration-order) — once uids differ, `kill(2)` between apps is refused by the kernel's ordinary permission check and no new mechanism is needed. `LANDLOCK_SCOPE_SIGNAL` stays optional rather than load-bearing.
 
 **Closed.** Two halves, and the second is the one that mattered more.
 
@@ -542,7 +555,7 @@ Killing semantic-fs is worse than a crash: `runtime.ts:44-46` silently falls bac
 
 **Verify.** A test sending an oversized length header and asserting the daemon survives; a test asserting app B cannot register as app A.
 
-> The frame cap is independent and can land any time. The identity half cannot: `SO_PEERCRED` returns uid 0 for every caller today, so it carries no information until [docs/per-app-uid-design.md](./docs/per-app-uid-design.md) Step 2 lands. Sequenced there as Step 4.
+> The frame cap is independent and can land any time. The identity half cannot: `SO_PEERCRED` returns uid 0 for every caller today, so it carries no information until [docs/per-app-uid-design.md](../per-app-uid-design.md) Step 2 lands. Sequenced there as Step 4.
 
 **Closed.**
 
@@ -550,7 +563,7 @@ Killing semantic-fs is worse than a crash: `runtime.ts:44-46` silently falls bac
 
 **Identity.** Both daemons now derive it from `SO_PEERCRED` — `tokio::net::UnixStream::peer_cred()` in the context bus, `syscall.GetsockoptUcred` in semantic-fs — read once at `accept()`, since the uid the kernel stamped on a connection cannot change for its lifetime and the client cannot influence it. The rules are three, and identical in both (deliberately duplicated implementations, `src/peer.rs` and `internal/control/peer.go`, each with the other named in its header and the same cases in its tests):
 
-1. **uid 0 keeps its own claim.** The host relay, the daemons themselves, anything that already has full authority in this container — see [Blocker 7](./docs/per-app-uid-design.md). A root caller could set that uid anyway.
+1. **uid 0 keeps its own claim.** The host relay, the daemons themselves, anything that already has full authority in this container — see [Blocker 7](../per-app-uid-design.md). A root caller could set that uid anyway.
 2. **A uid that resolves to a `berth-<app>` account *is* that app**, whatever the frame says. A contradicting claim is overridden and logged.
 3. **Any other uid gets `uid-<n>`.** Not an error, but its claim about an app name is worth nothing. A system account whose name merely lacks the prefix is deliberately not an app, or adding any user to the image would hand it an identity.
 
@@ -680,9 +693,9 @@ Real defects in shipped code, independent of security.
 | 3.2 | Truncated responses returned as final answers | 🟢 | 4h |
 | 3.3 | `Crew.parallel` shares one `runId` across concurrent agents | 🟢 | 4h |
 | 3.4 | Denied human approval doesn't stop the run | 🟢 | 4h |
-| 3.5 | Checkpoints written per turn, not per tool call | 🟡 | 1d |
+| 3.5 | Checkpoints written per turn, not per tool call | ⚪ | 1d |
 | 3.6 | Anthropic empty-content messages rejected by the API | 🟢 | 2h |
-| 3.7 | No provider adapter has a unit test | 🟡 | 2d |
+| 3.7 | No provider adapter has a unit test | 🟢 | 2d |
 
 ### 3.1 — `tools: []` breaks every OpenAI-family LLM judge
 
@@ -750,13 +763,13 @@ The positive control matters more than usual: an ordinary tool failure must stil
 
 **Fix.** Checkpoint after each tool call. Make `save()` atomic (temp file + rename). Distinguish "no checkpoint" from "read failed" in `load()`.
 
-**Two of three closed; `save()` atomicity is not, which is why this is 🟡.**
+**Two of three closed; `save()` atomicity is not, and won't be at this seam — hence ⚪ rather than a permanent 🟡.**
 
 **Per-tool-call checkpointing needed a second half nobody asked for.** Writing a checkpoint mid-turn is easy; it's worthless unless resume can *use* one. A partial turn is an assistant message whose later tool calls have no results, and every vendor rejects that outright — so a naive fix would have turned "loses work on resume" into "cannot resume at all". `Agent.loop()` now completes the outstanding calls first and only then asks the model, with a test asserting no unanswered tool call ever reaches a provider. The last call of a turn skips its own save, since the turn-end checkpoint records the same state one line later.
 
 **`load()` no longer swallows failures.** Only a genuine `ENOENT` returns null; a timed-out RPC, a permission error, or unparseable content throws the new `CheckpointReadError`. Before this a transient read failure was indistinguishable from a fresh run, so `resume()` silently restarted and re-executed everything the checkpoint existed to avoid. Resident-app errors cross the wire as plain strings rather than typed codes, so this matches on message text — not pretty, and the reason the test asserts both directions: guessing wrong toward "absent" resurrects the original bug, and guessing wrong the other way makes every first run throw.
 
-**`save()` is still not atomic, and can't be at this seam.** It's a write followed by a tag, and there is no rename primitive in the `write_context_file`/`read_context_file`/`tag_context_file` contract a store reaches Semantic FS through — a temp-file-plus-rename would need a new resident-app export *and* FUSE-level rename support in `semantic-fs-daemon`. What's done instead is to make a torn write loud rather than silent: `load()`'s parse failure is now an error instead of a null that quietly restarts the run. The tag half is separately harmless — `load()` reads by exact path, so an untagged checkpoint still loads and only discoverability suffers. Stated in `checkpoint.ts` rather than implied.
+**`save()` is still not atomic, and can't be at this seam — recorded as a won't-fix rather than left open.** Making it atomic needs a rename primitive that does not exist anywhere in the path: a new resident-app export *and* FUSE-level rename support in `semantic-fs-daemon` (Go), which is a larger piece of work than everything else in Phase 3 combined, to close a window that a torn write now makes loud rather than silent. Revisit it if and when Semantic FS grows rename for its own reasons; do not carry it as in-progress in the meantime. It's a write followed by a tag, and there is no rename primitive in the `write_context_file`/`read_context_file`/`tag_context_file` contract a store reaches Semantic FS through — a temp-file-plus-rename would need a new resident-app export *and* FUSE-level rename support in `semantic-fs-daemon`. What's done instead is to make a torn write loud rather than silent: `load()`'s parse failure is now an error instead of a null that quietly restarts the run. The tag half is separately harmless — `load()` reads by exact path, so an untagged checkpoint still loads and only discoverability suffers. Stated in `checkpoint.ts` rather than implied.
 
 **Verify.** `packages/agents/src/checkpoint-durability.test.ts`, 8 tests, 5 of which fail against the unfixed code. The one that matters asserts a resumed run re-executes *only* the outstanding calls, not the side-effecting ones that already completed; the positive control asserts a fully-complete history re-runs nothing, since getting that wrong would double-run every ordinary resume.
 
@@ -768,7 +781,7 @@ The positive control matters more than usual: an ordinary tool failure must stil
 
 `packages/agents/src/providers/` contains eight implementation files and no test files; the only provider test is `fallback.test.ts`, which uses stubs. That absence is why 3.1, 3.2, and 3.6 are all live. Same on the Python side (618 lines, no tests). Add mock-server-backed tests per provider covering message mapping, tool-call round trips, empty tool lists, streaming deltas, and finish reasons.
 
-**TypeScript closed; Python not yet, which is why this is 🟡.**
+**Closed in both languages.**
 
 `packages/agents/src/providers/mock-server.ts` stands up a real HTTP server on an ephemeral port and records what arrived. **A real server rather than a stubbed vendor client, deliberately**: all three bugs this was meant to catch were about the request body an adapter *builds* or the response field it fails to *read*. A stub of `client.chat.completions.create` asserts the arguments this repo passes to the SDK — the half that was never wrong. Every provider already takes a base URL for production reasons, so this needs no seam that didn't exist.
 
@@ -778,7 +791,14 @@ Coverage: `openai.test.ts` (14) — empty tool lists, message mapping including 
 
 **Also added: a `baseUrl` option on the Google provider.** Its absence was why that adapter was the one nothing could be stood in front of — and it's plain parity with the `baseURL` the other two already took.
 
-**Still open:** the Python provider adapters, which remain untested at the unit level. `docs/agents-python-reference.md` justified that with a claim about the TypeScript side that 2.4 corrected and this item now makes obsolete — the convention it appealed to no longer exists.
+**The Python half now matches**, on the same design: `tests/mock_llm_server.py` stands up a real `ThreadingHTTPServer` on an ephemeral port and records what arrived, rather than stubbing the vendor client. Every Python provider already took a `base_url` for production reasons, so this needed no new seam either. 15 tests across the OpenAI family and Anthropic — message mapping including the JSON-string encoding of tool-call arguments and `tool_call_id` correlation, empty tool lists, a tool-call round trip, streaming text deltas, reassembly of a tool call fragmented across frames, the usage-only final frame, 3.6's empty-content rules in both directions, and transport failures surfacing rather than becoming an empty turn.
+
+**It found a live bug on the first run, which is the entire argument for the item.** `providers/openai.py` still sent `tools=[]` — REMEDIATION 3.1, fixed in `openai.ts` and never ported. So `create_llm_guardrail()` and `llm_judge()` were broken against OpenAI, Azure, Bedrock and Ollama in Python for exactly as long as the adapters went untested. Now a `_tools_param()` splat, mirroring the TypeScript helper. `google.py` already guarded it, same as `google.ts`.
+
+**Two Python gaps this surfaced and did *not* close**, recorded here rather than left to be rediscovered:
+
+- **3.2 has no Python half.** `LLMTurn` in `berth_agents/types.py` has no `stop_reason` field, nothing reads `finish_reason`/`stop_reason`, and there is no `TruncatedResponseError`. A response cut off at the token cap is still returned to a Python caller as a final answer — the exact defect 3.2 describes. 3.2 is marked 🟢 on the strength of the TypeScript work; that closure is narrower than its status implies.
+- **`google.py` has no `base_url`.** The same absence 3.7 had to fix in `google.ts` before that adapter could be tested, which is why the Gemini adapter is the one provider with no coverage here.
 
 ---
 
@@ -788,18 +808,42 @@ Not bugs — capabilities the loop doesn't have. Prioritized by how quickly a us
 
 | # | Item | Status | Effort |
 |---|------|--------|--------|
-| 4.1 | No context-window management; sessions grow unboundedly | 🔴 | 3d |
-| 4.2 | No cancellation (`AbortSignal`) or timeouts anywhere | 🔴 | 2d |
+| 4.1 | No context-window management; sessions grow unboundedly | 🟢 | 3d |
+| 4.2 | No cancellation (`AbortSignal`) or timeouts anywhere | 🟢 | 2d |
 | 4.3 | Tool calls in one turn run sequentially | 🔴 | 1d |
 | 4.4 | No `tool_choice`, temperature, top_p, or reasoning budget | 🔴 | 2d |
 | 4.5 | No prompt caching; no cost tracking; usage never reaches the caller | 🔴 | 2d |
 | 4.6 | Text-only — no image content parts | 🔴 | 3d |
 | 4.7 | Streaming is text deltas only; `/chat` emits no tool events | 🔴 | 2d |
-| 4.8 | Error taxonomy: core-loop failures are bare `Error` | 🔴 | 1d |
+| 4.8 | Error taxonomy: core-loop failures are bare `Error` | 🟢 | 1d |
 
 **4.1** — `agent.ts:172` copies and only ever appends; nothing trims or summarizes. No token budget; a provider context-length error isn't detected (`:213-221` traces and rethrows). `session.ts:14` says outright there's no trimming, and `run()` prepends every prior item (`:120-122`) then persists every tool-call and tool-result message (`:192`). A long-lived session eventually makes every subsequent `run()` fail with no recovery. Needs: a token-budget option, a trim/summarize hook before the model call, and detection of context-length errors with a trim-and-retry.
 
+**Closed** (`d527c92`), in two halves, and the reactive half matters more because it helps callers who configure nothing. `packages/agents/src/context.ts` compacts against a budget before each call when `maxInputTokens` is set; trim-and-retry fires on `ContextLengthExceededError` regardless, which is why this landed adjacent to 4.8 — that classification is what makes the condition detectable at all.
+
+Three decisions worth naming, because each is a place a plausible design would be wrong:
+
+1. **The retry's budget comes from halving the request that was just rejected**, not from a guess at the model's real context window. No API exposes that number and the error text doesn't reliably carry it. Bounded to one attempt per run, so a provider reporting an overflow for some other reason can't drive an endless shrink loop.
+2. **Compaction drops whole groups and never splits an assistant turn from the tool results answering it.** Every vendor rejects both halves of that pairing, so a naive `slice()` would convert a context-length error into a hard 400 on every later turn. It is the same adjacency invariant 3.5 enforces from the other direction.
+3. **Token counting is chars/4, and is documented as an estimate at every surface.** It counts tool-call arguments and tool-result payloads, which dominate an agentic history and which a text-only count misses entirely.
+
+Also fixed here: `otel-tracer.ts`'s two-way ternary, which classified any non-`llm-turn` event as a tool call and would have reported the new compaction events to every tracing backend as phantom calls to a tool named `"unknown"`.
+
+**Verify.** `packages/agents/src/context.test.ts` — 13 tests, 335 green at the time.
+
 **4.2** — Zero `AbortSignal` in either package. `Tool.invoke(input)` takes no signal (`types.ts:7`); `LLMProvider.chat` takes no signal (`:39`). No per-tool timeout (`agent.ts:271` awaits unboundedly), no wall-clock deadline — only `maxTurns`. `server.ts:153-206` never listens for client disconnect, so a closed tab keeps burning tokens. `approval.ts:70-80` blocks 10 minutes uncancellably.
+
+**Closed** (`8504106`). `Tool.invoke` gains an optional second argument and `LLMProvider.chat` gains `signal` — both optional, and both safely ignored by anything written before this. `Agent` gains `timeoutMs` and `toolTimeoutMs`; `run()` takes a `signal` and forwards it to the LLM call, to every tool call, and — via `asTool()` — to delegated sub-agents, so cancelling a manager stops the workers it is waiting on. `server.ts` listens for client disconnect; `approval.ts` is interruptible.
+
+Three findings changed the design:
+
+1. **`AbortSignal.timeout()` is the obvious primitive and the wrong one.** Its timer is unref'd, so a run whose only pending work is its own deadline lets Node exit before the deadline can fire — the run ends by the process quietly going away rather than by raising `RunTimeoutError`, which is backwards for a feature that exists to turn a hang into a legible error. Found by a test dying with "Promise resolution is still pending but the event loop has already resolved", not by reasoning about it. It's a ref'd `setTimeout` instead, which is why `RunCancellation` has the `dispose()` an earlier draft had removed.
+2. **A tool call has to be raced even when no per-tool timeout is set.** Every tool written before this ignores its signal, so without the race neither an abort nor the run deadline could interrupt a hanging tool — the one case the feature exists for.
+3. **Cancellation is keyed on the run's signal, not the error's shape.** A tool that honours its signal rejects with `AbortError` whether the run or just that call was cancelled; a run deadline rejects with `RunTimeoutError`, which deliberately isn't an `AbortError`.
+
+A tool timeout is fed back to the model rather than ending the run; a run cancellation ends it. An abort in `approval.ts` is no longer converted into a `HumanApprovalDeniedError` — that would record a denial nobody made.
+
+**Verify.** `packages/agents/src/cancellation.test.ts` — 15 tests, 322 green at the time.
 
 **4.3** — `agent.ts:261-289` awaits each call in sequence. Add a concurrency option with an opt-out for side-effecting tools.
 
@@ -813,6 +857,19 @@ Not bugs — capabilities the loop doesn't have. Prioritized by how quickly a us
 
 **4.8** — Typed errors exist only at the edges (`StructuredOutputError`, `GuardrailTripwireError`, `GovernanceDeniedError`, `HumanApprovalDeniedError`). Max-turns, missing checkpoint, and unknown tool are all bare `Error` (`agent.ts:295`, `:149`, `:153`, `:267`). No `RateLimitError`/`ContextLengthExceededError` wrapper, so `createFallbackProvider` falls through on *any* error with no retriable classification (`fallback.ts:33-45`).
 
+**Closed** (`0aa8f87`). The cost here was concrete rather than cosmetic: `createFallbackProvider()` fell through on *any* thrown error because it had nothing to branch on, so a malformed request burned the whole chain to arrive at the last provider's version of the same complaint, and an oversized context did the same when the actionable response is to send less.
+
+`packages/agents/src/errors.ts` adds `BerthAgentError` plus the loop errors (max-turns, missing store, unknown `runId`, unknown tool), and classifies vendor failures into rate-limit / context-length / auth / unavailable / invalid-request. Classification happens at the provider seam (`wrapProviderErrors`), so one wrapping covers all four OpenAI-family providers.
+
+Two calls worth naming:
+
+1. **Auth is marked retriable**, which reads wrong until you note that retriable here means "is another provider worth trying" — a dead key on A is exactly what a fallback chain is for.
+2. **An unrecognized error stays retriable**, so classification can only ever narrow what falls through, never break a chain that worked before.
+
+Context-length is matched on message prose ahead of the generic 400 branch, because no vendor gives it a distinct status code. That match is also the hook 4.1's trim-and-retry needs, which is why the two landed together.
+
+**Verify.** `packages/agents/src/errors.test.ts` — 23 tests, 3 of which fail against the old fall-through-on-anything default.
+
 ---
 
 ## Phase 5 — Enterprise foundations (~4–6 weeks)
@@ -821,20 +878,43 @@ Only start this once Phases 0–2 are done; there is no point adding SSO to a sy
 
 | # | Item | Status | Effort |
 |---|------|--------|--------|
-| 5.1 | No audit trail with a verifiable actor | 🔴 | 1w |
+| 5.1 | No audit trail with a verifiable actor | 🟢 | 1w |
 | 5.2 | No identity, tenancy, or RBAC anywhere | 🔴 | 2w |
-| 5.3 | No TLS on anything, no option to enable it | 🔴 | 3d |
+| 5.3 | No TLS on anything, no option to enable it | 🟢 | 3d |
 | 5.4 | Nothing encrypted at rest; conversation history plaintext 0644 | 🔴 | 1w |
 | 5.5 | Secrets management: plaintext in `~/.berthrc`, `docker inspect`, snapshots | 🔴 | 1w |
 | 5.6 | No health/metrics/graceful shutdown/rate limiting on any server | 🔴 | 3d |
 | 5.7 | No data-schema migrations for any of the four SQLite DBs | 🔴 | 2d |
 | 5.8 | SQLite: no WAL, no busy_timeout, synchronous driver blocks the event loop | 🔴 | 1d |
 
-**5.1** — Governance denials are logged **nowhere** (`governance.ts:159-161` throws silently; the only log line is the fail-open warning at `:156`). No HTTP access logs on any server — all three Fastify instances are constructed without a `logger` (`grants-server/src/index.ts:29`, `registry-server/src/index.ts:22`, `mesh-coordinator/src/index.ts:19`). `AgentStepEvent` (`tracing.ts:4-17`) records tool *names* but never arguments or outputs, and no actor. `decided_by` on a grant is free text from the request body (`grants-server/src/routes.ts:91-92`). The `[agent-init] {...}` JSON lines are good content but aren't parseable JSON because of the prefix. No file sink, rotation, retention, or integrity chaining anywhere.
+**5.1** — **Closed.** `@berth/audit` is the shared record: one JSON object per line, hash-chained, 0600, resuming its chain across restarts and carrying it across rotation. Every record has an `actor` whose `verifiedBy` field states how the identity was established — `peer-socket` (the kernel said so), `token` (someone held a secret), or `self-asserted` (nobody checked). Self-asserted actors are recorded rather than rejected, since not knowing who did something is itself a finding, but the field means nothing downstream can mistake one for an identity.
+
+What each half of the original finding got:
+
+- **Governance denials** now reach the sink, and so do allows and the `unavailable` case — a trail of only refusals cannot answer "what did this agent do", and under `mode: "fail-open"` an unreachable governor is an allow that no policy approved. `applyGovernanceGate` and `resolveGovernanceGate` were collapsed onto one `enforce()` first; they had drifted apart once already, and auditing only one of them would have done it again.
+- **`decided_by`** is derived from the presented token via a named-operator registry (`operators.json`, hashes only, 0600), and the request body's field is ignored outright. `berth grants approve --by` is gone. An existing plaintext `operator.token` is adopted rather than invalidated, attributed to `operator` — which is all a shared secret can honestly claim. Failed authentication attempts are recorded too: someone probing for a valid operator token was previously a bare 401 with no trace.
+- **`AgentStepEvent`** gained an optional `actor`, plus `input`/`output` under the opt-in `tracePayloads`. Redaction happens in the Agent, so every backend gets the already-safe value rather than each tracer having to remember. `createAuditStepTracer` puts steps in the same chained trail as the verdicts that gated them.
+- **HTTP access logs** exist on all three Fastify servers, off by default so tests stay quiet, on in each binary.
+- **`[agent-init] {...}`** lines dropped the prefix and carry `"source":"agent-init"` inside the object instead, so they survive `JSON.parse`.
+- **File sink, rotation, integrity chaining** are the sink's own behaviour. `berth audit list` and `berth audit verify` read and check a trail, the latter walking rotated segments oldest-first.
+
+**Deliberately not claimed.** The chain is tamper-*evident*, not tamper-proof: anyone who can write the file can recompute every hash after the line they edited. Fixing that needs the hashes somewhere the editor cannot reach — an append-only or remote sink, external anchoring — and none of that is built; `berth audit verify` prints the caveat rather than implying a guarantee. Payload capture is off by default in both places because records are plaintext (5.4). Retention is size-based rotation only. `POST /grants` is still unauthenticated, so `grant.request` records are `self-asserted` by construction. And none of this is identity in 5.2's sense: no user directory, no tenancy, no RBAC, revocation means editing a file.
+
+See `docs/audit-reference.md`.
 
 **5.2** — No user, tenant, org, or role concept exists. One shared operator secret for grants-server, per-name tokens for registry, per-peer tokens for mesh. Anyone with the operator token can approve any team's escalation and attribute it to any name. The context bus performs no identity check at all. Two teams cannot share an installation.
 
-**5.3** — Every server is plain HTTP with no `https` option. The CLI hardcodes `http://127.0.0.1:4874` (`commands/grants/{list,approve,deny}.ts:3-4`) and sends the operator token in cleartext. `berth deploy --grants-server` requires a URL reachable from the fleet — capability approvals crossing a network over HTTP. `http-rpc.ts:49` binds `0.0.0.0` plain HTTP. `docs/mesh-reference.md:51` states the assumption repo-wide.
+**5.3** — **Closed.** `@berth/tls` plus wiring in all three Fastify servers, the SDK's HTTP RPC bridge, and every CLI client that talks to one.
+
+- **Servers**: `<PREFIX>_TLS_CERT`/`_KEY`/`_CA`/`_REQUIRE_CLIENT_CERT` per server (`BERTH_GRANTS`, `BERTH_REGISTRY`, `BERTH_MESH_COORDINATOR`), or `tls:` when embedding. Off by default, so existing deployments are unchanged. A half-configured pair — cert without key, or an unreadable path — refuses to start rather than falling back, since a deployment that thinks it has TLS and doesn't is worse than one that never offered it.
+- **CLI**: `--ca` and `--insecure` on the grants, publish, and init commands; `--insecure` warns every time. Commands carrying a credential (`grants approve/deny`, `publish`, `deploy --grants-server`) warn when the target is plain HTTP on a non-loopback host. Loopback is exempt on purpose — nothing crosses a network there, and a warning that fires constantly is one people learn to skip.
+- **`berth tls init`** mints a local CA and server cert (keys 0600 in a 0700 directory, SAN entries correctly tagged `DNS:` vs `IP:`) and prints the env vars and `--ca` invocation to use them.
+- **RPC bridge**: `BERTH_HTTP_RPC_TLS_CERT`/`_KEY`, read as paths rather than PEMs in the environment, where they would sit in `docker inspect` next to the bearer token (5.5). Its doc comment now distinguishes the exposures that already have TLS in front (E2B `getHost`, Daytona preview links) from the ones that don't (NodePort, raw port mappings) — only the latter was ever the real exposure.
+- **`docs/mesh-reference.md`'s repo-wide "no TLS anywhere" statement** is corrected rather than deleted: TLS is available, it is still off unless configured, and the owner token crosses plaintext until it is.
+
+**Verified** by a real handshake, not by config-shape assertions: `generate.test.ts` and `grants-server/src/tls.test.ts` stand up listening servers and drive them through undici with the generated CA, confirm a client that doesn't trust the CA is refused (checking `err.cause`, since undici reports every transport failure as a bare "fetch failed"), and confirm the bearer token is still enforced over TLS. `app.inject()` was deliberately not used for these — it skips the network stack, so it would pass identically whether TLS was configured or silently dropped. Also driven by hand end to end: `berth-grants` over HTTPS, the CLI refused without `--ca` and accepted with it, a grant approved over TLS.
+
+**Still open.** mTLS works server-side but no first-party client presents a certificate, and turning it on today locks all of them out — there is no CA to issue from until 5.2. No HTTPS-by-default, no HTTP→HTTPS redirect, no certificate reload without a restart, no cipher/version pinning beyond Node's defaults. `POST /grants` stays unauthenticated regardless of transport. See `docs/tls-reference.md`.
 
 **5.4** — No encryption anywhere (grep for `encrypt|aes-|cipher|kms|vault` finds only MITM comments). `CheckpointedRun` persists full `messages` to `/context/agent-runs/<runId>.json` (`checkpoint.ts:5-15`) and `Session` persists conversation history to `/context/agent-sessions/<id>.json` (`session.ts:42-50`) — both 0644, both captured verbatim into snapshot tarballs. For PHI/PII this is a non-starter on its own.
 
@@ -856,7 +936,7 @@ Only start this once Phases 0–2 are done; there is no point adding SSO to a sy
 | 6.2 | `providers/auto.ts` — the quickstart's defining feature — is untested | 🔴 | 4h |
 | 6.3 | CI runs one Node, one Python, one OS | 🔴 | 4h |
 | 6.4 | Eleven documented features have no runnable example | 🔴 | 2d |
-| 6.5 | No `berth doctor`; no Docker preflight; no troubleshooting docs | 🔴 | 1d |
+| 6.5 | No `berth doctor`; no Docker preflight; no troubleshooting docs | 🟡 | 1d |
 | 6.6 | Pin GitHub Actions by SHA; add SBOM and license scanning | 🔴 | 1d |
 | 6.7 | `berth fleet scale` drops the alias's env and region | 🔴 | 4h |
 | 6.8 | `berth deploy --fleet=daytona` cannot work as written | 🔴 | 1d |
@@ -871,6 +951,24 @@ Only start this once Phases 0–2 are done; there is no point adding SSO to a sy
 **6.4** — Guardrails, checkpointing, sessions, retrieval, MCP client, structured output, evals, tracing, A2A, declarative YAML, and four of the seven Crew shapes all have full doc sections and no runnable example. Also: examples live in two roots (`examples/agents/` and `packages/agents/examples/`) and `README.md:406-408` documents only the first, so a reader following the README's own map never finds the crew examples.
 
 **6.5** — `Computer.boot()` constructs `new Docker()` bare (`computer.ts:164`); no `docker.ping()` anywhere. With Docker stopped, a first run fails with a raw dockerode socket error. There is no `doctor`/`preflight` command among the 17. `README.md:411` — the section titled "Something not working?" contains three issue-template links and no troubleshooting. Zero Windows/WSL guidance anywhere. Build time is never stated, so a first-timer can't distinguish a slow cold build from a hang.
+
+**Mostly closed** (LAUNCH_PLAN WS1.2). `berth doctor` exists, with `--json` documented as a versioned contract in [docs/doctor-reference.md](../doctor-reference.md), and `docker.ping()` now runs there as the gating first check. "Something not working?" leads with the command instead of three issue templates.
+
+**The interesting part is what the probe had to be.** Landlock can be missing two ways that look identical from outside: the syscalls absent (`ENOSYS`), or the syscalls present while `landlock` is not in the kernel's active LSM stack — in which case `restrict_self()` returns 0 and *nothing is ever denied*. The second is the dangerous one, because every call Berth makes succeeds. So the check is behavioural rather than a feature query: it builds a ruleset granting nothing and tries to open a file for writing, inside a container, against the daemon's kernel. Reading `/sys/kernel/security/lsm` would also separate them but needs a `--privileged` container to mount securityfs (verified: the path does not exist unprivileged), and a diagnostic should not have to ask for that. Landlock is unprivileged by design, so the probe needs no privilege.
+
+**Which kernel is the whole point.** On macOS and Windows the apps run in Docker's Linux VM, so a host-side check answers a question nobody asked — on macOS `/sys/kernel/security/lsm` does not even exist, and its absence says nothing about whether Berth can enforce. Every kernel check therefore runs in a container.
+
+**A false claim in the boot output is fixed at its source.** When enforcement is not *required* — every `berth dev`, the primary workflow — `agent-init` printed `restricted "<app>" — write access allowed only under: …` regardless of whether the ruleset had bound. On a kernel without Landlock that sentence was simply untrue, and it was the only thing the boot said about enforcement. It now follows `ruleset_status` and says `NOT RESTRICTED … recorded but NOT enforced` when that is what happened.
+
+The host-side banner is wired into `startContainer()` rather than the three call sites, so `berth dev`, `berth os up` and `Computer.boot()` are covered by construction and a future entry point cannot miss it. Cached in `~/.berth/enforcement-cache.json` keyed by kernel version and arch, because this is a property of a kernel and not of a boot; a failed probe is never cached, since it established nothing.
+
+**`unknown` is not `off`, in both directions.** A skipped or failed probe reports `enforcement: UNKNOWN`, not `NOT ACTIVE` — asserting a host is unenforced when it was never checked is the same overclaim this command exists to prevent, made by the command itself. Both still exit non-zero: a preflight that exits 0 on "I couldn't tell" is worse than none, because it gets trusted.
+
+**Verify.** `packages/docker-orchestrator/src/doctor.test.ts` — 31 tests. The `enforcing` branch is covered through an injected probe **because it cannot be reached on a macOS developer machine at all**, and a verdict table exercised only in its failing half is exactly the thing that looks verified while being untested. One test earned its keep immediately: `probeKernel` awaited `container.wait()` but not the attached stream draining, so the probe could read as having printed nothing — a real race that a fake daemon exposed deterministically and a real one would have hit intermittently.
+
+**The injected probe hid a real bug, exactly where it was predicted to.** The first run against a kernel with `landlock` in its LSM stack (WS1.3's Colima recipe) reported `UNKNOWN`, not `ACTIVE`: the probe resolved its scratch path with `tempfile.gettempdir()` *after* `restrict_self()` on a ruleset granting nothing, and `gettempdir()` looks for a writable directory by creating a file in each candidate — so on an enforcing kernel it raised and the probe printed a traceback instead of JSON. The single class of host where the answer was `ACTIVE` was the class that could not report it, and all 20 unit tests stayed green throughout, because they inject a fake probe rather than executing the Python. Fixed by resolving the path before restricting. Worth keeping as evidence for how much an injected-probe test is and isn't worth.
+
+**Not closed by this.** Still open from the original entry: no Windows/WSL guidance, and build time is still never stated, so a first-timer cannot tell a slow cold build from a hang. `berth doctor --fix` does not exist — every failing check carries a `remedy` string, but nothing acts on it. ~~The `enforcing` verdict has not been observed on real hardware~~ — **observed 2026-08-18** on macOS via Colima (guest kernel 6.8.0-117-generic, Ubuntu 24.04, Landlock ABI 4): `berth doctor` → `enforcement: ACTIVE`, exit 0, all four checks green, recorded in [docs/mac-enforcement.md](../mac-enforcement.md) (WS1.3). A CI run on `ubuntu-latest` is still worth having as a regression gate, but it is no longer what the claim rests on.
 
 **6.6** — No action is SHA-pinned; all use floating tags, and `pypa/gh-action-pypi-publish@release/v1` is a mutable *branch* ref on the workflow holding `id-token: write`. `.github/dependabot.yml:52-56` claims actions are "pinned for supply-chain safety" — pinned to tags, not digests. No SBOM, no CI license scan, no digest-pinned base images (`base.Dockerfile:16, 27, 39, 46, 58, 62`), unpinned `apk`/`pip` installs (`:64-107`, including `rm -f /usr/lib/python3*/EXTERNALLY-MANAGED`), and `image.ts:92-96` falls back to `npm install` rather than `ci`. No Cargo.toml declares a `license` field. Two dependency risks worth tracking: `@xenova/transformers@2.17.2` (superseded, single-maintainer, critical path for Semantic FS) and a workspace-wide `onnxruntime-web@1.14.0` override.
 
@@ -887,7 +985,7 @@ Only start this once Phases 0–2 are done; there is no point adding SSO to a sy
 ## Suggested sequencing
 
 1. **Week 1** — Phase 0 (both items), then 1.1, 1.2, 1.12, and 2.2. Small, high-signal; ends with a Mac-runnable framework and a README that doesn't overclaim.
-2. **Weeks 2–4** — the rest of Phase 1, with 2.1 (threat model) written *first* so it drives the design decisions in 1.4 and 1.5. Per-app uids are the shared unlock for 1.4, 1.11, and 1.14's identity half — that design is now written down once, in [docs/per-app-uid-design.md](./docs/per-app-uid-design.md), and it reorders this list: **1.5 comes before 1.4**. It also argues *against* using the uid split to drop Chromium's `--no-sandbox` (1.7), since Chromium's own sandbox needs the `CLONE_NEWUSER` that 1.3 deliberately refuses — so 1.7 gains nothing here after all.
+2. **Weeks 2–4** — the rest of Phase 1, with 2.1 (threat model) written *first* so it drives the design decisions in 1.4 and 1.5. Per-app uids are the shared unlock for 1.4, 1.11, and 1.14's identity half — that design is now written down once, in [docs/per-app-uid-design.md](../per-app-uid-design.md), and it reorders this list: **1.5 comes before 1.4**. It also argues *against* using the uid split to drop Chromium's `--no-sandbox` (1.7), since Chromium's own sandbox needs the `CLONE_NEWUSER` that 1.3 deliberately refuses — so 1.7 gains nothing here after all.
 3. **Week 5** — Phase 3, plus 6.1/6.2/6.3 so the fixes are actually verified.
 4. **Weeks 6–7** — Phase 4, prioritizing 4.1 and 4.2 (the two most likely to bite a real user).
 5. **Ongoing** — Phase 6 items alongside everything else.

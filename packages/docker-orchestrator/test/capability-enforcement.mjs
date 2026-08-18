@@ -26,6 +26,12 @@
 // or CI runner with Landlock active (most modern distros, GitHub Actions
 // ubuntu-latest, real cloud VMs), this test should hard-fail if enforcement
 // regresses — see docs/capability-tokens-reference.md.
+//
+// On macOS you can get a hard-failing run without leaving the laptop:
+// docs/mac-enforcement.md swaps the daemon for Colima, whose default Ubuntu
+// guest has landlock in its LSM stack. This script was run there on
+// 2026-08-18 and reported ruleset=FullyEnforced, which is the first time its
+// landlock-conditional assertions ran as assertions on a Mac.
 import Docker from "dockerode";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";

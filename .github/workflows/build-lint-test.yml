@@ -56,6 +56,31 @@ jobs:
           cargo test --manifest-path packages/mesh-daemon/Cargo.toml
           cargo test --manifest-path packages/context-bus-daemon/Cargo.toml
 
+      # The positive control for `berth doctor`. Every enforcement check in this
+      # repo can only be *disproved* on a developer's Mac: Docker Desktop's
+      # linuxkit kernel has no Landlock, so doctor's `enforcing` verdict is
+      # unreachable there and its unit tests have to inject a fake probe to
+      # cover that branch. This runner's kernel does have Landlock, so this is
+      # the one place the real probe can be seen returning `enforcing` against a
+      # real kernel through a real container.
+      #
+      # Asserted on `enforcementActive`, not on the exit code alone, so a doctor
+      # that started reporting UNKNOWN (a probe that silently stopped running)
+      # fails here instead of looking like a pass.
+      - name: berth doctor reports ACTIVE on a Landlock kernel
+        run: |
+          docker pull -q python:3.12-alpine
+          node packages/cli/bin/berth.js doctor --image python:3.12-alpine --json > doctor.json || true
+          cat doctor.json
+          node -e '
+            const r = JSON.parse(require("node:fs").readFileSync("doctor.json", "utf8"));
+            const landlock = r.checks.find((c) => c.id === "landlock");
+            if (!r.enforcementDetermined) throw new Error("doctor could not determine enforcement: " + landlock.detail);
+            if (!r.enforcementActive) throw new Error("expected ACTIVE on this runner, got: " + r.verdict);
+            if (landlock.status !== "ok") throw new Error("landlock check was " + landlock.status);
+            console.log("OK —", r.verdict, "|", landlock.detail);
+          '
+
       # Same reasoning as the Rust crates above, and the same gap: semantic-fs
       # is Linux-only (bazil.org/fuse doesn't build on darwin at all), so its
       # tests could never run on a developer's Mac and nothing ran them here

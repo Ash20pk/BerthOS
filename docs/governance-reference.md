@@ -1,6 +1,8 @@
 # Governance gate reference
 
-Lets a resident app put itself in front of every other app's tool calls in a Computer: evaluate, then allow or deny. Berth defines the extension point and wires it in by default — the actual policy, verdict logic, human-in-the-loop, and audit trail belong entirely to whatever app you load. Berth ships no first-party governance app.
+Lets a resident app put itself in front of every other app's tool calls in a Computer: evaluate, then allow or deny. Berth defines the extension point and wires it in by default — the actual policy, verdict logic, and human-in-the-loop belong entirely to whatever app you load. Berth ships no first-party governance app.
+
+Berth does record the verdicts, though. Pass an `AuditSink` and every allow, deny, and could-not-reach-the-governor is written to a hash-chained trail with an actor on it — see the [audit trail reference](./audit-reference.md). That is a record of what the gate *decided*, which is a different thing from the richer, policy-aware trail a governance app may want to keep for itself.
 
 ## Why this lives in `@berth/agents`, not the kernel
 

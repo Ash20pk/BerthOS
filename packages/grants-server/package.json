@@ -15,7 +15,9 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "!dist/**/*.test.*",
+    "!dist/**/mock-server.*"
   ],
   "license": "Apache-2.0",
   "repository": {
@@ -48,9 +50,12 @@
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
+    "@berth/audit": "workspace:*",
+    "@berth/tls": "workspace:*",
     "fastify": "^5.11.2"
   },
   "devDependencies": {
+    "undici": "^8.10.0",
     "typescript": "^7.0.2",
     "@types/node": "^26.1.2"
   }

@@ -20,7 +20,7 @@ pnpm exec berth dev             # hot-reloading dev loop
 
 From there:
 
-- Edit `src/index.ts` and `berth.yml` — see [Resident apps](./README.md#resident-apps) in the README for the manifest/export/capability model, and [docs/sdk-reference.md](./docs/sdk-reference.md) for the full SDK surface.
+- Edit `src/index.ts` and `berth.yml` — see [Resident apps](./docs/resident-apps.md) for the manifest/export/capability model, and [docs/sdk-reference.md](./docs/sdk-reference.md) for the full SDK surface.
 - `pnpm exec berth test` builds the production image and validates your exports before you open a PR.
 - Open the PR against `main`. No need to touch anything under `packages/` for this path.
 

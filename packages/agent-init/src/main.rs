@@ -80,10 +80,17 @@ fn boot_id() -> String {
 /// One structured JSON line per boot — a real, greppable audit record of
 /// what was granted, since Landlock itself has no deny-notification hook to
 /// log individual denials from (see docs/capability-tokens-reference.md).
+///
+/// These lines carry no `[agent-init]` prefix, unlike the human-readable
+/// eprintln!s elsewhere in this file. The prefix made otherwise-valid JSON
+/// unparseable, so every log collector needed a bespoke strip-then-parse step
+/// before it could read a record that was already structured
+/// (REMEDIATION.md 5.1). `"source":"agent-init"` inside the object carries the
+/// same information and survives `JSON.parse`.
 fn log_audit_event(policy: &CapabilityPolicy, ruleset_status: &str) {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     eprintln!(
-        "[agent-init] {{\"event\":\"capability_policy_applied\",\"bootId\":{:?},\"app\":{:?},\"writePaths\":{:?},\"readPaths\":{:?},\"networkPorts\":{:?},\"networkUnrestricted\":{},\"bindPorts\":{:?},\"meshPeers\":{:?},\"ruleset\":{:?},\"timestamp\":{}}}",
+        "{{\"source\":\"agent-init\",\"event\":\"capability_policy_applied\",\"bootId\":{:?},\"app\":{:?},\"writePaths\":{:?},\"readPaths\":{:?},\"networkPorts\":{:?},\"networkUnrestricted\":{},\"bindPorts\":{:?},\"meshPeers\":{:?},\"ruleset\":{:?},\"timestamp\":{}}}",
         boot_id(), policy.app_name, policy.write_paths, policy.read_paths, policy.network_ports, policy.network_unrestricted, policy.bind_ports, policy.mesh_peers, ruleset_status, now
     );
 }
@@ -105,7 +112,7 @@ fn enforcement_required() -> bool {
 fn log_enforcement_refused_event(app_name: &str, reason: &str) {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     eprintln!(
-        "[agent-init] {{\"event\":\"capability_enforcement_refused\",\"app\":{app_name:?},\"reason\":{reason:?},\"timestamp\":{now}}}"
+        "{{\"source\":\"agent-init\",\"event\":\"capability_enforcement_refused\",\"app\":{app_name:?},\"reason\":{reason:?},\"timestamp\":{now}}}"
     );
 }
 
@@ -117,7 +124,7 @@ fn log_enforcement_refused_event(app_name: &str, reason: &str) {
 fn log_caps_dropped_event(app_name: &str, dropped: bool) {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     eprintln!(
-        "[agent-init] {{\"event\":\"capabilities_dropped\",\"bootId\":{:?},\"app\":{app_name:?},\"dropped\":{dropped},\"timestamp\":{now}}}",
+        "{{\"source\":\"agent-init\",\"event\":\"capabilities_dropped\",\"bootId\":{:?},\"app\":{app_name:?},\"dropped\":{dropped},\"timestamp\":{now}}}",
         boot_id()
     );
 }
@@ -131,7 +138,7 @@ fn log_caps_dropped_event(app_name: &str, dropped: bool) {
 fn log_seccomp_event(event: &str, app_name: &str, applied: bool, detail: &str) {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     eprintln!(
-        "[agent-init] {{\"event\":{event:?},\"bootId\":{:?},\"app\":{app_name:?},\"applied\":{applied},\"detail\":{detail:?},\"timestamp\":{now}}}",
+        "{{\"source\":\"agent-init\",\"event\":{event:?},\"bootId\":{:?},\"app\":{app_name:?},\"applied\":{applied},\"detail\":{detail:?},\"timestamp\":{now}}}",
         boot_id()
     );
 }
@@ -306,7 +313,7 @@ fn switch_to_app_identity(identity: &AppIdentity) -> Result<(), String> {
 fn log_uid_dropped_event(app_name: &str, uid: u32, gid: u32, dropped: bool, detail: &str) {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     eprintln!(
-        "[agent-init] {{\"event\":\"app_uid_applied\",\"bootId\":{:?},\"app\":{app_name:?},\"uid\":{uid},\"gid\":{gid},\"dropped\":{dropped},\"detail\":{detail:?},\"timestamp\":{now}}}",
+        "{{\"source\":\"agent-init\",\"event\":\"app_uid_applied\",\"bootId\":{:?},\"app\":{app_name:?},\"uid\":{uid},\"gid\":{gid},\"dropped\":{dropped},\"detail\":{detail:?},\"timestamp\":{now}}}",
         boot_id()
     );
 }
@@ -338,12 +345,29 @@ fn main() {
                 log_enforcement_refused_event(&policy.app_name, &reason);
                 std::process::exit(1);
             }
-            eprintln!(
-                "[agent-init] restricted \"{}\" — write access allowed only under: {} (declared capabilities: {})",
-                policy.app_name,
-                policy.write_paths.join(", "),
-                policy.declared_capabilities.join(", "),
-            );
+            // The wording follows the ruleset status rather than the intent.
+            // This used to say "restricted ..." unconditionally, which on a
+            // kernel without Landlock in its active LSM stack was simply false
+            // — nothing had been restricted — and it was the *only* thing the
+            // boot printed about enforcement when BERTH_REQUIRE_ENFORCEMENT
+            // was unset, i.e. on every `berth dev`. Claiming a boundary that
+            // isn't there is worse than saying nothing, because it is believed.
+            if ruleset_status == RulesetStatus::NotEnforced {
+                eprintln!(
+                    "[agent-init] NOT RESTRICTED \"{}\" — this kernel did not apply the Landlock ruleset (status {:?}), so the declared capabilities ({}) are recorded but NOT enforced. An undeclared write will succeed. Run `berth doctor` on the host.",
+                    policy.app_name,
+                    ruleset_status,
+                    policy.declared_capabilities.join(", "),
+                );
+            } else {
+                eprintln!(
+                    "[agent-init] restricted \"{}\" ({:?}) — write access allowed only under: {} (declared capabilities: {})",
+                    policy.app_name,
+                    ruleset_status,
+                    policy.write_paths.join(", "),
+                    policy.declared_capabilities.join(", "),
+                );
+            }
             // Only for apps with *no* declared outbound network at all. An
             // app that declared even one port needs DNS (UDP 53) for that
             // port to be reachable by name, and Landlock's per-port model

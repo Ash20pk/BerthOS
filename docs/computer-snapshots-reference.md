@@ -1,6 +1,6 @@
 # Computer Snapshots Reference
 
-See [What is a Berth OS?](./berth-os.md) and the README's [Resident apps](../README.md#resident-apps) section first if you're not yet familiar with those terms — a "snapshot" here is a snapshot of a Berth OS.
+See [What is a Berth OS?](./berth-os.md) and [Resident apps](./resident-apps.md) first if you're not yet familiar with those terms — a "snapshot" here is a snapshot of a Berth OS.
 
 `berth snapshot create/restore/list` is a real, if deliberately narrow, MVP of the "Computer Snapshots" primitive ("Checkpoint the entire OS state... Rollback or fork at any point. Git for agent computers.") — not the full vision, which spans browser tabs, active tokens, and fork-and-run-in-parallel. This primitive has no build phase in the original scope at all; it's vision/primitive-level language only, so this is a standalone addition.
 
@@ -41,7 +41,7 @@ node test/snapshot-crash-milestone.mjs
 ## What's explicitly deferred (named here, not silently promised)
 
 - **Browser tabs/sessions.** A Chromium profile directory is just files under the committed filesystem layer, so cookies/local storage are *incidentally* captured by `docker commit` — but this MVP never verifies or exercises that path. Don't rely on it without separately confirming it for whatever browser-native workflow you have in mind.
-- **"Active tokens."** Moot as of [REMEDIATION.md 1.10](../REMEDIATION.md#110--capability-tokens-are-never-verified-anywhere): capability tokens are gone, and `entrypoint.sh` no longer generates a `BERTH_TOKEN_SECRET` for a snapshot to capture or skip. The reasoning that used to sit here — that restoring a *stale* secret would be a security regression rather than a missing feature — still applies to any per-boot secret this container grows in future.
+- **"Active tokens."** Moot as of [REMEDIATION.md 1.10](./internal/REMEDIATION.md#110--capability-tokens-are-never-verified-anywhere): capability tokens are gone, and `entrypoint.sh` no longer generates a `BERTH_TOKEN_SECRET` for a snapshot to capture or skip. The reasoning that used to sit here — that restoring a *stale* secret would be a security regression rather than a missing feature — still applies to any per-boot secret this container grows in future.
 - **Context-bus in-flight state.** The Rust daemon's live subscriber list is process memory, not disk — a restored container boots a fresh daemon with zero subscribers, and each app re-subscribes via its own `on_agent_ready` hook, exactly as it would on any first boot. Nothing to restore here by design.
 - **"Fork and run in parallel," locally.** Two `berth snapshot restore` calls from the same snapshot are just two independent containers — no orchestration, family-tracking, or diffing between the resulting forks is attempted. (Daytona's real `fork()`, above, is a genuine remote exception — but still just one clone per call, no tree/orchestration on top of it either.)
 - **Storage efficiency.** Each snapshot is a full image export (`docker save`-equivalent tarball) plus a full context-data tarball — not layer-deduplicated or incremental. Snapshotting a large, long-lived sandbox repeatedly will use disk proportional to its full size each time.
