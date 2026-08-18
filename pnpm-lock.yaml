@@ -314,6 +314,9 @@ importers:
       '@berth/adapter-core':
         specifier: workspace:*
         version: link:../adapters/adapter-core
+      '@berth/audit':
+        specifier: workspace:*
+        version: link:../audit
       '@berth/docker-orchestrator':
         specifier: workspace:*
         version: link:../docker-orchestrator
@@ -402,6 +405,15 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
+  packages/audit:
+    devDependencies:
+      '@types/node':
+        specifier: ^26.1.2
+        version: 26.1.2
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
   packages/cli:
     dependencies:
       '@berth/adapter-core':
@@ -419,6 +431,9 @@ importers:
       '@berth/agents':
         specifier: workspace:*
         version: link:../agents
+      '@berth/audit':
+        specifier: workspace:*
+        version: link:../audit
       '@berth/docker-orchestrator':
         specifier: workspace:*
         version: link:../docker-orchestrator
@@ -620,6 +635,9 @@ importers:
 
   packages/grants-server:
     dependencies:
+      '@berth/audit':
+        specifier: workspace:*
+        version: link:../audit
       '@berth/tls':
         specifier: workspace:*
         version: link:../tls

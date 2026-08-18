@@ -7,6 +7,6 @@ const host = process.env.BERTH_REGISTRY_HOST ?? "127.0.0.1";
 const dataDir = process.env.BERTH_REGISTRY_DATA_DIR ?? "./.berth-registry-data";
 
 const tls = resolveServerTlsFromEnv("BERTH_REGISTRY");
-const app = await createRegistryServer({ dataDir, tls });
+const app = await createRegistryServer({ dataDir, logger: true, tls });
 await app.listen({ port, host });
 console.log(`[berth-registry] listening on ${schemeFor(tls)}://${host}:${port} (data: ${dataDir})`);

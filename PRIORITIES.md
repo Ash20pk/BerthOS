@@ -29,9 +29,15 @@ Phases 0–2 are closed, which means the security thesis is now true and verifie
 
 Three things surfaced while doing the work that weren't visible when this file was written, and are now recorded in `REMEDIATION.md` rather than here: **3.2 has no Python half at all** (no `stop_reason`, no `TruncatedResponseError` — a truncated response still returns as a final answer to a Python caller), **`google.py` has no `base_url`** so the Gemini adapter can't be stood behind a test server, and **`otel-tracer.ts` classified any non-`llm-turn` event as a tool call**, which the new compaction events would have surfaced in every backend as phantom calls to a tool named "unknown".
 
-**Tier 2 is now the top of the list.** T2.2 (TLS) is done — see `REMEDIATION.md` 5.3 and `docs/tls-reference.md`. **T2.1 (audit trail) and T2.3 (secrets) are what's left in this tier.**
+**Tier 2 is now the top of the list.** T2.1 (audit trail) is done — see `REMEDIATION.md` 5.1 and `docs/audit-reference.md`. T2.2 (TLS) is done — see `REMEDIATION.md` 5.3 and `docs/tls-reference.md`. **T2.3 (secrets) is what's left in this tier.**
 
-One thing T2.2 turned up that wasn't visible when this file was written: the mTLS half is cheap to build and impossible to use. The server side is a few lines of Fastify config, but no first-party client can present a certificate, because issuing one needs a CA and an identity to bind it to — which is 5.2, the item this file explicitly defers until someone asks. So mTLS ships as server-side support with no client, and that is worth knowing before promising it to a reviewer who asks for it by name.
+Three things surfaced while doing those two that weren't visible when this file was written.
+
+The `decided_by` fix could not stop at "record the name properly": the name arrived in the request body, so making it trustworthy meant replacing the single shared operator secret with named tokens and dropping `berth grants approve --by` — a small CLI break, and the first place the product has anything resembling a per-human credential.
+
+Payload capture turned out to need a switch rather than a decision: 5.4 (nothing encrypted at rest) is still open, so writing tool arguments into a plaintext file by default would have made the audit trail the leak. It is opt-in in both the sink and the Agent, which means the strongest forensic setting is one a deployment has to choose.
+
+And the mTLS half is cheap to build and impossible to use. The server side is a few lines of Fastify config, but no first-party client can present a certificate, because issuing one needs a CA and an identity to bind it to — which is 5.2, the item this file explicitly defers until someone asks. So mTLS ships as server-side support with no client, and that is worth knowing before promising it to a reviewer who asks for it by name.
 
 ---
 

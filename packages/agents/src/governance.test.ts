@@ -4,6 +4,7 @@ import type { BerthManifest } from "@berth/manifest-schema";
 import type { ComputerAppSpec } from "./resolve-apps.js";
 import type { Tool } from "./types.js";
 import { applyGovernanceGate, resolveGovernanceGate, GovernanceDeniedError, GovernanceUnavailableError } from "./governance.js";
+import { agentActor, createMemoryAuditSink } from "@berth/audit";
 
 function appSpec(name: string, opts: { governs?: boolean; exempt?: boolean; exports?: string[] } = {}): ComputerAppSpec {
   const exportNames = opts.exports ?? [`${name}_export`];
@@ -319,4 +320,147 @@ test("resolveGovernanceGate is undefined when no app governs — callers then pa
     }),
     undefined,
   );
+});
+
+// --- Audit trail (REMEDIATION.md 5.1) ------------------------------------
+//
+// The finding these cover is not "denials behave wrong" — they always threw
+// correctly. It is that they left no record, so an operator asking "was this
+// gate ever consulted, and what did it refuse" had nothing to read.
+
+test("records a denial with its reason and the gated target", async () => {
+  const governor = appSpec("gatekeeper", { governs: true, exports: ["evaluate_action"] });
+  const filesystem = appSpec("filesystem", { exports: ["write_file"] });
+  const call = async (appName: string, exportName: string) =>
+    appName === "gatekeeper" && exportName === "evaluate_action"
+      ? { allowed: false, reason: "no writes allowed" }
+      : "raw-result";
+
+  const audit = createMemoryAuditSink();
+  const tools = [toolFor("write_file")];
+  const gated = applyGovernanceGate([governor, filesystem], [filesystem], tools, call, { audit });
+
+  await assert.rejects(() => gated[0]!.invoke({ path: "/etc/passwd" }, {} as never), GovernanceDeniedError);
+
+  assert.equal(audit.records.length, 1);
+  const record = audit.records[0]!;
+  assert.equal(record.action, "governance.evaluate");
+  assert.equal(record.target, "filesystem.write_file");
+  assert.equal(record.decision, "denied");
+  assert.equal(record.reason, "no writes allowed");
+});
+
+test("records allowed calls too, so the trail can answer what an agent did", async () => {
+  const governor = appSpec("gatekeeper", { governs: true, exports: ["evaluate_action"] });
+  const filesystem = appSpec("filesystem", { exports: ["write_file"] });
+  const call = async (appName: string) => (appName === "gatekeeper" ? { allowed: true } : "raw-result");
+
+  const audit = createMemoryAuditSink();
+  const gated = applyGovernanceGate([governor, filesystem], [filesystem], [toolFor("write_file")], call, { audit });
+  await gated[0]!.invoke({ path: "/workspace/a.txt" }, {} as never);
+
+  assert.equal(audit.records.length, 1);
+  assert.equal(audit.records[0]!.decision, "allowed");
+});
+
+test("records an unreachable governor as unavailable, not as a denial", async () => {
+  const governor = appSpec("gatekeeper", { governs: true, exports: ["evaluate_action"] });
+  const filesystem = appSpec("filesystem", { exports: ["write_file"] });
+  const call = async (appName: string) => {
+    if (appName === "gatekeeper") throw new Error("governor crashed");
+    return "raw-result";
+  };
+
+  const audit = createMemoryAuditSink();
+  const gated = applyGovernanceGate([governor, filesystem], [filesystem], [toolFor("write_file")], call, {
+    mode: "fail-closed",
+    audit,
+  });
+  await assert.rejects(() => gated[0]!.invoke({}, {} as never), GovernanceUnavailableError);
+
+  assert.equal(audit.records[0]!.decision, "unavailable");
+  assert.match(audit.records[0]!.reason!, /governor crashed/);
+});
+
+test("records the fail-open case, where the call ran without a verdict", async () => {
+  const governor = appSpec("gatekeeper", { governs: true, exports: ["evaluate_action"] });
+  const filesystem = appSpec("filesystem", { exports: ["write_file"] });
+  const call = async (appName: string) => {
+    if (appName === "gatekeeper") throw new Error("governor crashed");
+    return "raw-result";
+  };
+
+  const audit = createMemoryAuditSink();
+  const gated = applyGovernanceGate([governor, filesystem], [filesystem], [toolFor("write_file")], call, {
+    mode: "fail-open",
+    audit,
+  });
+  // The call succeeds — which is exactly why the record has to exist.
+  assert.equal(await gated[0]!.invoke({}, {} as never), "raw-result");
+  assert.equal(audit.records[0]!.decision, "unavailable");
+  assert.equal(audit.records[0]!.meta?.mode, "fail-open");
+});
+
+test("attributes records to the configured actor", async () => {
+  const governor = appSpec("gatekeeper", { governs: true, exports: ["evaluate_action"] });
+  const filesystem = appSpec("filesystem", { exports: ["write_file"] });
+  const call = async (appName: string) => (appName === "gatekeeper" ? { allowed: true } : "raw-result");
+
+  const audit = createMemoryAuditSink();
+  const gated = applyGovernanceGate([governor, filesystem], [filesystem], [toolFor("write_file")], call, {
+    audit,
+    actor: agentActor("research-agent"),
+  });
+  await gated[0]!.invoke({}, {} as never);
+
+  assert.deepEqual(audit.records[0]!.actor, { kind: "agent", id: "research-agent", verifiedBy: "self-asserted" });
+});
+
+test("defaults to an anonymous actor rather than inventing a name", async () => {
+  const governor = appSpec("gatekeeper", { governs: true, exports: ["evaluate_action"] });
+  const filesystem = appSpec("filesystem", { exports: ["write_file"] });
+  const call = async (appName: string) => (appName === "gatekeeper" ? { allowed: true } : "raw-result");
+
+  const audit = createMemoryAuditSink();
+  const gated = applyGovernanceGate([governor, filesystem], [filesystem], [toolFor("write_file")], call, { audit });
+  await gated[0]!.invoke({}, {} as never);
+
+  assert.equal(audit.records[0]!.actor.kind, "anonymous");
+  assert.equal(audit.records[0]!.actor.verifiedBy, "self-asserted");
+});
+
+test("resolveGovernanceGate's dispatch path audits identically to the tool path", async () => {
+  const governor = appSpec("gatekeeper", { governs: true, exports: ["evaluate_action"] });
+  const filesystem = appSpec("filesystem", { exports: ["write_file"] });
+  const call = async (appName: string) =>
+    appName === "gatekeeper" ? { allowed: false, reason: "nope" } : "raw-result";
+
+  const audit = createMemoryAuditSink();
+  const gate = resolveGovernanceGate([governor, filesystem], call, { audit })!;
+  const dispatch = gate.gateDispatch(async () => "raw-result");
+
+  await assert.rejects(() => dispatch("filesystem", "write_file", {}), GovernanceDeniedError);
+  assert.equal(audit.records[0]!.target, "filesystem.write_file");
+  assert.equal(audit.records[0]!.decision, "denied");
+});
+
+test("an audit sink that throws never fails the gated call", async () => {
+  const governor = appSpec("gatekeeper", { governs: true, exports: ["evaluate_action"] });
+  const filesystem = appSpec("filesystem", { exports: ["write_file"] });
+  const call = async (appName: string) => (appName === "gatekeeper" ? { allowed: true } : "raw-result");
+
+  const audit = { record: async () => { throw new Error("audit backend down"); } };
+  const gated = applyGovernanceGate([governor, filesystem], [filesystem], [toolFor("write_file")], call, { audit });
+  assert.equal(await gated[0]!.invoke({}, {} as never), "raw-result");
+});
+
+test("exempt and governor apps are not audited — they were never gated", async () => {
+  const governor = appSpec("gatekeeper", { governs: true, exports: ["evaluate_action"] });
+  const trusted = appSpec("trusted", { exempt: true, exports: ["do_thing"] });
+  const call = async () => "raw-result";
+
+  const audit = createMemoryAuditSink();
+  const gated = applyGovernanceGate([governor, trusted], [trusted], [toolFor("do_thing")], call, { audit });
+  await gated[0]!.invoke({}, {} as never);
+  assert.equal(audit.records.length, 0);
 });

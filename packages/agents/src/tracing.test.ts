@@ -2,9 +2,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { ComputerHandle } from "./computer.js";
 import type { Tool } from "./types.js";
+import { agentActor, createMemoryAuditSink } from "@berth/audit";
 import {
   createAgentTracer,
   createContextBusStepTracer,
+  createAuditStepTracer,
+  combineStepTracers,
   createSemanticFsStepTracer,
   readAgentTrace,
   listAgentTraces,
@@ -201,4 +204,71 @@ test("listAgentTraces() respects limit", async () => {
   const traces = await listAgentTraces(computer, { limit: 2 });
 
   assert.equal(traces.length, 2);
+});
+
+// --- Audit-backed tracing and actors (REMEDIATION.md 5.1) ----------------
+
+function step(overrides: Partial<AgentStepEvent> = {}): AgentStepEvent {
+  return { runId: "run-1", agentName: "researcher", turn: 0, kind: "tool-call", toolName: "write_file", durationMs: 12, ...overrides };
+}
+
+test("createAuditStepTracer records a step against the agent as a self-asserted actor", async () => {
+  const audit = createMemoryAuditSink();
+  await createAuditStepTracer(audit).emit(step());
+
+  const record = audit.records[0]!;
+  assert.equal(record.action, "agent.tool-call");
+  assert.equal(record.target, "tool:write_file");
+  assert.deepEqual(record.actor, { kind: "agent", id: "researcher", verifiedBy: "self-asserted" });
+  assert.equal(record.meta?.runId, "run-1");
+});
+
+test("createAuditStepTracer prefers an explicit actor over the agent's own name", async () => {
+  const audit = createMemoryAuditSink();
+  await createAuditStepTracer(audit).emit(step({ actor: agentActor("caller-supplied") }));
+  assert.equal(audit.records[0]!.actor.id, "caller-supplied");
+});
+
+test("a failed step is recorded as an attempt that errored, not as a policy denial", async () => {
+  const audit = createMemoryAuditSink();
+  await createAuditStepTracer(audit).emit(step({ error: "ENOENT" }));
+
+  const record = audit.records[0]!;
+  // "denied" means something refused the action. Nothing refused this; it ran and broke.
+  assert.equal(record.decision, "allowed");
+  assert.equal(record.reason, "ENOENT");
+  assert.equal(record.meta?.failed, true);
+});
+
+test("an llm-turn step targets the run and carries usage", async () => {
+  const audit = createMemoryAuditSink();
+  await createAuditStepTracer(audit).emit(
+    step({ kind: "llm-turn", toolName: undefined, usage: { inputTokens: 100, outputTokens: 20 } }),
+  );
+  const record = audit.records[0]!;
+  assert.equal(record.action, "agent.llm-turn");
+  assert.equal(record.target, "run:run-1");
+  assert.deepEqual(record.meta?.usage, { inputTokens: 100, outputTokens: 20 });
+});
+
+test("an audit sink that throws never fails the step", async () => {
+  const tracer = createAuditStepTracer({ record: async () => { throw new Error("sink down"); } });
+  await tracer.emit(step()); // must not reject
+});
+
+test("combineStepTracers emits to every tracer and survives one failing", async () => {
+  const seen: string[] = [];
+  const ok = { emit: async (e: AgentStepEvent) => void seen.push(e.runId) };
+  const bad = { emit: async () => { throw new Error("tracer down"); } };
+
+  const errors: string[] = [];
+  const original = console.error;
+  console.error = (msg: unknown) => void errors.push(String(msg));
+  try {
+    await combineStepTracers(bad, ok).emit(step());
+  } finally {
+    console.error = original;
+  }
+  assert.deepEqual(seen, ["run-1"]);
+  assert.ok(errors.some((e) => e.includes("a step tracer failed")));
 });
