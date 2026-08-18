@@ -1,19 +1,51 @@
+import type { Actor, AuditSink } from "@berth/audit";
 import type { ComputerHandle } from "./computer.js";
 import { findExportTool } from "./checkpoint.js";
 
 export interface AgentStepEvent {
   runId: string;
   agentName: string;
+  /**
+   * Who the run is attributed to. Defaults to the agent itself, and is
+   * therefore self-asserted — an Agent names itself in its own process and
+   * nothing corroborates it. Set it explicitly to carry a real caller
+   * (the operator who started the run, the tenant it belongs to) through
+   * into the trace. REMEDIATION.md 5.1: a step event with no actor cannot
+   * answer "who did this", only "what happened".
+   */
+  actor?: Actor;
   /** Index of the turn this step happened in — same numbering as CheckpointedRun.turnCount. */
   turn: number;
-  kind: "llm-turn" | "tool-call";
+  kind: "llm-turn" | "tool-call" | "context-compaction";
   /** Set only on kind "tool-call". */
   toolName?: string;
   durationMs: number;
+  /**
+   * Set only on kind "context-compaction" — how many messages were dropped
+   * to fit the window. Emitted because compaction is otherwise invisible:
+   * the model quietly stops being able to refer to earlier turns, which is
+   * indistinguishable from the model just forgetting unless there's a record.
+   * See REMEDIATION 4.1.
+   */
+  droppedMessages?: number;
   /** Set when the LLM call or tool.invoke() threw — the same message Agent.run()'s {error} tool result carries for tool-calls. */
   error?: string;
   /** Set only on kind "llm-turn", when the LLMProvider reports it (LLMTurn.usage) — absent, not zero, for a provider that doesn't. */
   usage?: { inputTokens: number; outputTokens: number };
+  /**
+   * The arguments a tool was called with, redacted. Present only on
+   * kind "tool-call", and only when the Agent was built with
+   * `tracePayloads: true`.
+   *
+   * Off by default for the same reason the audit sink's capture is: traces
+   * land in Semantic FS as plaintext files (REMEDIATION.md 5.4), and a tool
+   * argument is the most likely place for a customer record to show up. The
+   * tool *name* alone was 5.1's complaint, so this closes it without making
+   * every run write its inputs to disk by default.
+   */
+  input?: unknown;
+  /** The tool's result, redacted. Same conditions as `input`. */
+  output?: unknown;
 }
 
 /**
@@ -136,6 +168,53 @@ export async function listAgentTraces(
 }
 
 /**
+ * Sends each step to an AuditSink, so an agent's own steps land in the same
+ * hash-chained trail as the governance verdicts and grant decisions that
+ * gated them.
+ *
+ * The two are genuinely different records and both are worth having: a
+ * Semantic FS trace is per-run and made for replaying one run, while the
+ * audit trail is append-only across every actor on the machine and made for
+ * the question "what happened here, in order". Reconstructing the second
+ * from a pile of the first is exactly the work a reviewer should not have to
+ * do.
+ *
+ * Payload capture obeys the sink's own setting, not the Agent's — a sink
+ * built without capturePayloads drops input/output whatever reaches it.
+ */
+export function createAuditStepTracer(audit: AuditSink): StepTracer {
+  return {
+    async emit(event) {
+      await audit
+        .record({
+          ts: new Date().toISOString(),
+          seq: 0,
+          actor: event.actor ?? { kind: "agent", id: event.agentName, verifiedBy: "self-asserted" },
+          action: `agent.${event.kind}`,
+          target: event.toolName ? `tool:${event.toolName}` : `run:${event.runId}`,
+          // A step that threw is not a policy denial — "denied" is reserved
+          // for something refusing the action. An errored step is an attempt
+          // that ran and failed.
+          decision: "allowed",
+          reason: event.error,
+          input: event.input,
+          output: event.output,
+          durationMs: event.durationMs,
+          meta: {
+            runId: event.runId,
+            agentName: event.agentName,
+            turn: event.turn,
+            ...(event.usage ? { usage: event.usage } : {}),
+            ...(event.droppedMessages !== undefined ? { droppedMessages: event.droppedMessages } : {}),
+            ...(event.error ? { failed: true } : {}),
+          },
+        })
+        .catch(() => {});
+    },
+  };
+}
+
+/**
  * gaps.md's chosen replacement for observability/tracing: both channels at
  * once — live tailing via Context Bus, durable replay via Semantic FS. Needs
  * a Computer whose apps expose all four of publish_context_event/
@@ -150,6 +229,25 @@ export function createAgentTracer(computer: ComputerHandle): StepTracer {
   return {
     async emit(event) {
       await Promise.all([contextBus.emit(event), semanticFs.emit(event)]);
+    },
+  };
+}
+
+/**
+ * Fans one step out to several tracers. A failing tracer never stops the
+ * others, and never fails the run — losing a trace is not worth losing the
+ * work that produced it.
+ */
+export function combineStepTracers(...tracers: StepTracer[]): StepTracer {
+  return {
+    async emit(event) {
+      await Promise.all(
+        tracers.map((tracer) =>
+          tracer.emit(event).catch((err) => {
+            console.error(`[berth-agents] WARNING: a step tracer failed (${err})`);
+          }),
+        ),
+      );
     },
   };
 }

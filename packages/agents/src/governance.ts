@@ -1,3 +1,4 @@
+import { anonymousActor, type Actor, type AuditSink } from "@berth/audit";
 import type { ComputerAppSpec } from "./resolve-apps.js";
 import { toolNameFor } from "./tools.js";
 import type { Tool } from "./types.js";
@@ -68,6 +69,25 @@ export interface GovernanceGateOptions {
    * See docs/governance-reference.md.
    */
   mode?: "fail-open" | "fail-closed";
+  /**
+   * Where every verdict is written down. REMEDIATION.md 5.1 opens on this
+   * file: denials threw and were logged nowhere, so a gate that blocked a
+   * hundred calls left the same trace as a gate that was never consulted.
+   *
+   * All three outcomes are recorded, not just refusals. A trail with only
+   * denials in it can't answer "what did this agent do", and the
+   * "unavailable" case is the one a reviewer most needs to see, since
+   * fail-open turns it into an allow.
+   *
+   * Optional: with no sink, behaviour is exactly what it was before.
+   */
+  audit?: AuditSink;
+  /**
+   * Who the gated calls are attributed to. Defaults to an anonymous actor —
+   * honest about the fact that a Computer, on its own, has no identity for
+   * whoever is driving it.
+   */
+  actor?: Actor;
 }
 
 const GOVERNANCE_CALL_TIMEOUT_MS = 10_000;
@@ -136,26 +156,63 @@ export interface GovernedAction {
  * The one place a verdict is obtained and enforced. Everything else in this
  * file is about deciding *what* to route through here.
  */
+/** Resolved once per gate so `enforce` doesn't re-read defaults per call. */
+interface EnforceContext {
+  askGovernor: (input: unknown) => Promise<unknown>;
+  mode: "fail-open" | "fail-closed";
+  audit?: AuditSink;
+  actor: Actor;
+}
+
 async function enforce<T>(
   action: GovernedAction,
   input: unknown,
   proceed: () => Promise<T>,
-  askGovernor: (input: unknown) => Promise<unknown>,
-  mode: "fail-open" | "fail-closed",
+  ctx: EnforceContext,
 ): Promise<T> {
+  const target = `${action.app}.${action.export}`;
+  const startedAt = Date.now();
+  // Never let the audit backend become a way to fail a call that the governor
+  // allowed — the sink's own contract says it swallows its errors, and this
+  // is the belt to that pair of braces.
+  const write = (decision: "allowed" | "denied" | "unavailable", reason?: string) =>
+    ctx.audit
+      ?.record({
+        ts: new Date().toISOString(),
+        seq: 0, // the sink assigns the real one
+        actor: ctx.actor,
+        action: "governance.evaluate",
+        target,
+        decision,
+        reason,
+        input,
+        durationMs: Date.now() - startedAt,
+        meta: { mode: ctx.mode },
+      })
+      .catch(() => {});
+
   let verdict: EvaluateActionResult;
   try {
     verdict = (await withTimeout(
-      askGovernor({ app: action.app, export: action.export, input }),
+      ctx.askGovernor({ app: action.app, export: action.export, input }),
       GOVERNANCE_CALL_TIMEOUT_MS,
     )) as EvaluateActionResult;
   } catch (err) {
     const cause = (err as Error).message;
-    if (mode === "fail-closed") throw new GovernanceUnavailableError(action.app, action.export, cause);
+    // Recorded before the throw and before the fail-open return alike: this
+    // branch is "the policy check did not happen", which is the single most
+    // important thing in the file for a reviewer to be able to find.
+    await write("unavailable", cause);
+    if (ctx.mode === "fail-closed") throw new GovernanceUnavailableError(action.app, action.export, cause);
     console.warn(`[governance] evaluate_action call failed (${cause}) — failing open for ${action.app}.${action.export}`);
     return proceed();
   }
-  if (!verdict.allowed) throw new GovernanceDeniedError(action.app, action.export, verdict.reason ?? "denied");
+  if (!verdict.allowed) {
+    const reason = verdict.reason ?? "denied";
+    await write("denied", reason);
+    throw new GovernanceDeniedError(action.app, action.export, reason);
+  }
+  await write("allowed", verdict.reason);
   return proceed();
 }
 
@@ -200,7 +257,12 @@ export function resolveGovernanceGate(
   }
   const governorName = governors[0]!.name;
   const exemptApps = new Set(allApps.filter((app) => app.manifest.governance.exempt).map((app) => app.name));
-  const askGovernor = (input: unknown) => call(governorName, "evaluate_action", input);
+  const enforceCtx: EnforceContext = {
+    askGovernor: (input: unknown) => call(governorName, "evaluate_action", input),
+    mode,
+    audit: options.audit,
+    actor: options.actor ?? anonymousActor(),
+  };
 
   return {
     governorName,
@@ -210,13 +272,13 @@ export function resolveGovernanceGate(
         // evaluate_action through the gate would recurse forever, and this
         // is the dispatch the gate itself calls.
         if (appName === governorName || exemptApps.has(appName)) return dispatch(appName, exportName, input);
-        return enforce({ app: appName, export: exportName }, input, () => dispatch(appName, exportName, input), askGovernor, mode);
+        return enforce({ app: appName, export: exportName }, input, () => dispatch(appName, exportName, input), enforceCtx);
       };
     },
     gateExternalTool(tool, action) {
       return {
         ...tool,
-        invoke: (input: unknown) => enforce(action, input, () => tool.invoke(input), askGovernor, mode),
+        invoke: (input: unknown, ctx) => enforce(action, input, () => tool.invoke(input, ctx), enforceCtx),
       };
     },
   };
@@ -239,6 +301,15 @@ export function applyGovernanceGate(
   }
   const governorName = governors[0]!.name;
   const namespaced = scopedApps.length > 1;
+  // Shares enforce() with resolveGovernanceGate rather than keeping its own
+  // copy of the verdict logic, which is how the two drifted apart in the
+  // first place — and would have again the moment only one of them audited.
+  const enforceCtx: EnforceContext = {
+    askGovernor: (input: unknown) => call(governorName, "evaluate_action", input),
+    mode,
+    audit: options.audit,
+    actor: options.actor ?? anonymousActor(),
+  };
 
   const ownerByToolName = new Map<string, { appName: string; exportName: string; exempt: boolean }>();
   for (const app of scopedApps) {
@@ -257,26 +328,8 @@ export function applyGovernanceGate(
 
     return {
       ...tool,
-      invoke: async (input: unknown) => {
-        let verdict: EvaluateActionResult;
-        try {
-          verdict = (await withTimeout(
-            call(governorName, "evaluate_action", { app: owner.appName, export: owner.exportName, input }),
-            GOVERNANCE_CALL_TIMEOUT_MS,
-          )) as EvaluateActionResult;
-        } catch (err) {
-          const cause = (err as Error).message;
-          if (mode === "fail-closed") {
-            throw new GovernanceUnavailableError(owner.appName, owner.exportName, cause);
-          }
-          console.warn(`[governance] evaluate_action call failed (${cause}) — failing open for ${owner.appName}.${owner.exportName}`);
-          return tool.invoke(input);
-        }
-        if (!verdict.allowed) {
-          throw new GovernanceDeniedError(owner.appName, owner.exportName, verdict.reason ?? "denied");
-        }
-        return tool.invoke(input);
-      },
+      invoke: (input: unknown, ctx) =>
+        enforce({ app: owner.appName, export: owner.exportName }, input, () => tool.invoke(input, ctx), enforceCtx),
     };
   });
 }

@@ -3,14 +3,15 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createGrantsServer } from "./index.js";
+import { createMemoryAuditSink, type AuditSink } from "@berth/audit";
+import { addOperator, createGrantsServer, loadOperatorRegistry } from "./index.js";
 
 const OPERATOR_TOKEN = "test-operator-token";
 const AUTH_HEADER = { authorization: `Bearer ${OPERATOR_TOKEN}` };
 
 async function withServer(
   fn: (app: Awaited<ReturnType<typeof createGrantsServer>>) => Promise<void>,
-  opts: { webhookUrl?: string } = {},
+  opts: { webhookUrl?: string; audit?: AuditSink } = {},
 ): Promise<void> {
   const dataDir = await mkdtemp(join(tmpdir(), "berth-grants-test-"));
   const app = await createGrantsServer({
@@ -18,6 +19,7 @@ async function withServer(
     now: () => "2026-01-01T00:00:00.000Z",
     webhookUrl: opts.webhookUrl,
     operatorToken: OPERATOR_TOKEN,
+    audit: opts.audit,
   });
   try {
     await fn(app);
@@ -183,4 +185,109 @@ test("notifies a configured webhook when a grant is requested", async () => {
   } finally {
     webhookServer.close();
   }
+});
+
+// --- Verifiable actor and audit trail (REMEDIATION.md 5.1) ---------------
+
+test("attributes a decision to the operator behind the token, ignoring the request body", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "berth-grants-test-"));
+  const { registry } = loadOperatorRegistry(dataDir);
+  const aliceToken = addOperator(dataDir, "alice");
+  const app = await createGrantsServer({ dataDir, operators: loadOperatorRegistry(dataDir).registry });
+  void registry;
+
+  try {
+    const created = await app.inject({ method: "POST", url: "/grants", payload: { appName: "my-app", capability: "network:connect:8080" } });
+    const grant = JSON.parse(created.body);
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/grants/${grant.id}/approve`,
+      headers: { authorization: `Bearer ${aliceToken}` },
+      // The old hole: claim to be someone else and the server wrote it down.
+      payload: { decidedBy: "mallory" },
+    });
+
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(JSON.parse(res.body).decidedBy, "alice");
+  } finally {
+    await app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("approve no longer needs decidedBy in the body at all", async () => {
+  await withServer(async (app) => {
+    const created = await app.inject({ method: "POST", url: "/grants", payload: { appName: "my-app", capability: "network:connect:8080" } });
+    const grant = JSON.parse(created.body);
+
+    const res = await app.inject({ method: "POST", url: `/grants/${grant.id}/approve`, headers: AUTH_HEADER, payload: {} });
+    assert.equal(res.statusCode, 200, res.body);
+    assert.equal(JSON.parse(res.body).decidedBy, "operator");
+  });
+});
+
+test("records the request, the approval, and who made it", async () => {
+  const audit = createMemoryAuditSink();
+  await withServer(
+    async (app) => {
+      const created = await app.inject({ method: "POST", url: "/grants", payload: { appName: "my-app", capability: "network:connect:8080" } });
+      const grant = JSON.parse(created.body);
+      await app.inject({ method: "POST", url: `/grants/${grant.id}/approve`, headers: AUTH_HEADER, payload: {} });
+
+      assert.deepEqual(audit.records.map((r) => r.action), ["grant.request", "grant.approve"]);
+
+      const request = audit.records[0]!;
+      assert.deepEqual(request.actor, { kind: "app", id: "my-app", verifiedBy: "self-asserted" });
+
+      const approval = audit.records[1]!;
+      assert.deepEqual(approval.actor, { kind: "operator", id: "operator", verifiedBy: "token" });
+      assert.equal(approval.target, `grant:${grant.id}`);
+      assert.equal(approval.meta?.capability, "network:connect:8080");
+    },
+    { audit },
+  );
+});
+
+test("records a denial with its reason", async () => {
+  const audit = createMemoryAuditSink();
+  await withServer(
+    async (app) => {
+      const created = await app.inject({ method: "POST", url: "/grants", payload: { appName: "my-app", capability: "filesystem:write:/" } });
+      const grant = JSON.parse(created.body);
+      await app.inject({ method: "POST", url: `/grants/${grant.id}/deny`, headers: AUTH_HEADER, payload: { reason: "too broad" } });
+
+      const denial = audit.records.at(-1)!;
+      assert.equal(denial.action, "grant.deny");
+      assert.equal(denial.decision, "denied");
+      assert.equal(denial.reason, "too broad");
+    },
+    { audit },
+  );
+});
+
+test("records a failed authentication attempt", async () => {
+  const audit = createMemoryAuditSink();
+  await withServer(
+    async (app) => {
+      const created = await app.inject({ method: "POST", url: "/grants", payload: { appName: "my-app", capability: "network:connect:8080" } });
+      const grant = JSON.parse(created.body);
+
+      const res = await app.inject({
+        method: "POST",
+        url: `/grants/${grant.id}/approve`,
+        headers: { authorization: "Bearer wrong-token" },
+        payload: {},
+      });
+      assert.equal(res.statusCode, 401);
+
+      // Someone probing for a valid operator token is precisely what an
+      // auditor is scanning for, so a rejected attempt has to leave a mark.
+      const attempt = audit.records.at(-1)!;
+      assert.equal(attempt.action, "grant.authenticate");
+      assert.equal(attempt.decision, "denied");
+      assert.equal(attempt.actor.kind, "anonymous");
+    },
+    { audit },
+  );
 });

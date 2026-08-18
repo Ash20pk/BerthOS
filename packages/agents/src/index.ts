@@ -2,6 +2,7 @@ export { Computer, type BootComputerOptions, type ConnectComputerOptions, type C
 export { HttpBridgeComputer, type DeployComputerOptions } from "./fleet-computer.js";
 export { resolveComputerApps, type ComputerAppSpec } from "./resolve-apps.js";
 export { computerToolsFor, toolNameFor } from "./tools.js";
+export { toAiSdkTools, toLangChainTools, toToolSpecs, type ToolSpec } from "./interop.js";
 export {
   createMcpClientTools,
   type McpClientHandle,
@@ -57,7 +58,9 @@ export {
   type LlmJudgeOptions,
 } from "./eval.js";
 export {
+  combineStepTracers,
   createAgentTracer,
+  createAuditStepTracer,
   createContextBusStepTracer,
   createSemanticFsStepTracer,
   readAgentTrace,
@@ -77,6 +80,15 @@ export {
   type LlmGuardrailOptions,
 } from "./guardrails.js";
 export { createInMemorySession, createSemanticFsSession, type Session } from "./session.js";
+export {
+  compactMessages,
+  estimateTokens,
+  estimateMessageTokens,
+  estimateFixedTokens,
+  SUMMARY_PREFIX,
+  type ContextPolicy,
+  type CompactionResult,
+} from "./context.js";
 export {
   createAgentRequestHandler,
   serveAgent,
@@ -118,6 +130,25 @@ export { createOllamaProvider, type OllamaProviderOptions } from "./providers/ol
 export { createGoogleProvider, type GoogleProviderOptions } from "./providers/google.js";
 export { createFallbackProvider, type FallbackProviderOptions } from "./providers/fallback.js";
 export { detectLLMProvider, resolveLLMProvider, type LLMProviderConfig } from "./providers/auto.js";
-export type { Tool, LLMProvider, LLMTurn, LLMStopReason, AgentMessage, AgentRole } from "./types.js";
+export type { Tool, ToolInvocationContext, LLMProvider, LLMCallParams, LLMTurn, LLMStopReason, AgentMessage, AgentRole } from "./types.js";
 export { TruncatedResponseError } from "./types.js";
 export { CheckpointReadError } from "./checkpoint.js";
+export {
+  BerthAgentError,
+  MaxTurnsExceededError,
+  UnknownToolError,
+  CheckpointNotFoundError,
+  CheckpointStoreMissingError,
+  ProviderError,
+  RateLimitError,
+  ContextLengthExceededError,
+  ProviderAuthError,
+  ProviderUnavailableError,
+  ProviderRequestInvalidError,
+  RunAbortedError,
+  RunTimeoutError,
+  ToolTimeoutError,
+  classifyProviderError,
+  isAbortError,
+  type BerthAgentErrorCode,
+} from "./errors.js";

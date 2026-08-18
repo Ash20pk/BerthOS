@@ -1,12 +1,29 @@
 # Berth
 
-**A real agent framework — with a real computer under every agent it runs.**
+**Give your agent a real computer, with permissions the kernel actually enforces.**
 
-`@berth/agents` is a real agent framework: bring your own LLM provider, define agents, compose them into multi-agent crews. Call `createAgent()` or `runAgent()` and get a working agent in one line. What makes it different is what its tools are actually made of: every agent's tools come from real, sandboxed resident apps running on a persistent, permissioned sandbox we call a **Berth OS** — a real filesystem, a real browser, a real shell — not bare functions glued together by hand.
+Your agent needs to write files, run code, drive a browser. Berth gives it a persistent, sandboxed computer to do that on — a **Berth OS** — where what it's allowed to touch is a line in a manifest compiled into a [Landlock](https://docs.kernel.org/userspace-api/landlock.html) policy, applied before the app's own code runs. `filesystem:write:/workspace` means a write anywhere else dies on `EACCES` in the kernel, not in a `try/catch` and not in a system prompt the model can be talked out of.
 
 > Agents are not functions. They are workers. Workers need desks.
 
-Most agent code looks the same underneath: a loop, a tool registry, and a pile of glue you wrote yourself so the agent can actually do something useful. Berth replaces that glue, and the desk it's missing. You don't install Berth as your laptop's operating system, and nobody expects you to understand container internals to use it — it's a library and CLI you add to your project like any other agent framework. It just happens to hand the agent it's driving a real, isolated computer to work on instead of a pile of disconnected API calls. We call that computer a Berth OS (more on exactly what that means in [What is a Berth OS?](#what-is-a-berth-os)), and you extend what one can do by building your own resident app (see [Resident apps](#resident-apps)), though you rarely need to. Every first-party app (filesystem, browser, notes, terminal) is ready to load into an agent the moment you clone and build this repo — see [Quickstart](#quickstart). `@berth/*` isn't published to npm yet; today you build it from source.
+**Keep the agent framework you already have.** A Berth OS's tools drop into whatever loop you're running:
+
+```ts
+import { Computer, toAiSdkTools } from "@berth/agents";
+
+const computer = await Computer.boot({ apps: ["apps/filesystem"] });
+const result = await generateText({          // Vercel AI SDK — or LangGraph, or your own loop
+  model: openai("gpt-4o"),
+  tools: await toAiSdkTools(computer.tools),
+  prompt: "summarize every file in /workspace",
+});
+```
+
+`toLangChainTools()` does the same for LangChain and LangGraph, `toToolSpecs()` for anything else, and `berth mcp` exposes a resident app over [MCP](https://modelcontextprotocol.io) to Claude Code, Cursor, and every other MCP client. See [Use it from your existing framework](#use-it-from-your-existing-framework) and [`examples/agents/with-vercel-ai-sdk`](./examples/agents/with-vercel-ai-sdk), whose second prompt asks the model to write outside its declared scope and prints what the kernel says back.
+
+**Or use the agent framework in the box.** `@berth/agents` is a full one — bring your own LLM provider, define agents, compose them into multi-agent crews, one call to `runAgent()` for the simple case. It's the reference consumer of everything above, and it's optional. See [Building a Berth Agent](#building-a-berth-agent).
+
+You don't install Berth as your laptop's operating system, and nobody expects you to understand container internals to use it — it's a library and CLI you add to your project. Every first-party app (filesystem, browser, notes, terminal) is ready to load the moment you clone and build this repo — see [Quickstart](#quickstart). `@berth/*` isn't published to npm yet; today you build it from source.
 
 This README is written for the person deciding whether to build on Berth. Already building? Jump straight to [Quickstart](#quickstart), or to [docs/getting-started.md](./docs/getting-started.md) for the longer, resident-app-focused walkthrough.
 
@@ -77,9 +94,22 @@ Declare `governs: true` in your `berth.yml` and export a fixed-contract `evaluat
 
 Worth being precise about: this gates what goes through `Computer`/`Agent` — an LLM-driven agent's tool use, including MCP tools (as `mcp:<server>`) and delegation to another agent (as `agent:<name>`). It is **not** kernel-level like Landlock's per-syscall capability enforcement, and it doesn't cover `berth rpc`, `berth mcp`, the HTTP RPC bridge, or direct `invokeAppExport()` calls — separate transports with no governance app on their path. It fails **closed** by default: if `evaluate_action` errors or times out, the call is refused rather than run, because "the policy check didn't happen" should not quietly become "the policy check passed." Pass `governance: { mode: "fail-open" }` where availability matters more. Full contract in [docs/governance-reference.md](./docs/governance-reference.md).
 
-## How Berth fits with what you already use
+## Use it from your existing framework
 
-Already have an agent stack you're happy with? Berth OS still slots in underneath it as the sandbox and permission substrate `@berth/agents` itself runs on — a permission boundary that's actually enforced, state that survives a run, apps that talk to each other without you wiring it, the same things most teams end up hand-building anyway. If you're already on E2B or Daytona directly, Berth is the app model and kernel-enforced permission layer on top of that.
+Berth's differentiator is what its tools are *made of*, and adopting a whole agent framework shouldn't be the price of reaching that. Boot a `Computer`, hand its tools to the loop you already run:
+
+| Your stack | The call |
+|---|---|
+| Vercel AI SDK | `await toAiSdkTools(computer.tools)` → pass as `tools` to `generateText`/`streamText`/`useChat` |
+| LangChain / LangGraph | `await toLangChainTools(computer.tools)` → pass to `createReactAgent({ tools })`, `ToolNode`, `bindTools` |
+| Claude Code, Cursor, any MCP client | `berth mcp --app=<name>` — a real MCP server, no adapter at all |
+| Anything else | `toToolSpecs(computer.tools)` — name, description, JSON Schema, and a call function |
+
+Both library adapters are **optional peer dependencies**, imported dynamically: neither is on the import path of `Computer` or `Agent`, so you install only the one you use, or neither. Both are tested against the real package rather than a hand-written idea of its shape — the AI SDK's test drives a full `generateText` tool-calling loop with no Berth `Agent` anywhere in it.
+
+What you get in that loop is the whole point: a filesystem tool whose write scope is enforced by the kernel, a shell whose blast radius is a manifest, a browser scoped by an egress broker, and state that survives the run. Cancellation composes too — an `abortSignal` from `generateText` reaches the resident-app call and stops it.
+
+If you're already on E2B or Daytona directly, Berth is the app model and kernel-enforced permission layer on top of that.
 
 ## Use cases
 

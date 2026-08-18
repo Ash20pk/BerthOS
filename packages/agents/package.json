@@ -12,7 +12,9 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "!dist/**/*.test.*",
+    "!dist/**/mock-server.*"
   ],
   "license": "Apache-2.0",
   "repository": {
@@ -32,7 +34,10 @@
     "mcp",
     "opentelemetry",
     "sandbox",
-    "multi-agent"
+    "multi-agent",
+    "vercel-ai-sdk",
+    "langchain",
+    "langgraph"
   ],
   "engines": {
     "node": ">=22"
@@ -51,6 +56,7 @@
     "@a2a-js/sdk": "^1.0.1",
     "@anthropic-ai/sdk": "^0.115.0",
     "@berth/adapter-core": "workspace:*",
+    "@berth/audit": "workspace:*",
     "@berth/docker-orchestrator": "workspace:*",
     "@berth/grants-server": "workspace:*",
     "@berth/manifest-schema": "workspace:*",
@@ -65,10 +71,23 @@
     "zod-to-json-schema": "^3.24.1"
   },
   "devDependencies": {
+    "@langchain/core": "^1.2.8",
     "@opentelemetry/sdk-trace-base": "^2.10.0",
     "@types/dockerode": "^4.0.1",
     "@types/node": "^26.1.2",
     "ai": "^7.0.55",
     "typescript": "^7.0.2"
+  },
+  "peerDependencies": {
+    "ai": ">=5",
+    "@langchain/core": ">=0.3"
+  },
+  "peerDependenciesMeta": {
+    "ai": {
+      "optional": true
+    },
+    "@langchain/core": {
+      "optional": true
+    }
   }
 }

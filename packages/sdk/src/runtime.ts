@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import * as path from "node:path";
+import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { loadManifest } from "@berth/manifest-schema";
 import type { BerthApp, AppContext } from "./app.js";
@@ -111,7 +112,17 @@ async function main(): Promise<void> {
     if (!process.env.BERTH_HTTP_RPC_TOKEN) {
       throw new Error("BERTH_HTTP_RPC_PORT is set but BERTH_HTTP_RPC_TOKEN is not — refusing to listen unauthenticated");
     }
-    startHttpRpcServer(app, { port: httpRpcPort, authToken: process.env.BERTH_HTTP_RPC_TOKEN });
+    // Cert and key arrive as paths into the container (a mounted secret, a
+    // file the deploy adapter wrote), read here rather than passed as env:
+    // a PEM in the environment is visible in `docker inspect` alongside the
+    // token, which is the thing 5.5 is about.
+    const certPath = process.env.BERTH_HTTP_RPC_TLS_CERT;
+    const keyPath = process.env.BERTH_HTTP_RPC_TLS_KEY;
+    if ((certPath && !keyPath) || (!certPath && keyPath)) {
+      throw new Error("BERTH_HTTP_RPC_TLS_CERT and BERTH_HTTP_RPC_TLS_KEY must both be set, or neither — refusing to start half-configured");
+    }
+    const tls = certPath && keyPath ? { cert: readFileSync(certPath, "utf-8"), key: readFileSync(keyPath, "utf-8") } : undefined;
+    startHttpRpcServer(app, { port: httpRpcPort, authToken: process.env.BERTH_HTTP_RPC_TOKEN, tls });
   }
 
   console.error(`[berth:runtime] "${manifest.name}" ready`);

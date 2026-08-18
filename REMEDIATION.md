@@ -11,6 +11,11 @@ Each item lists evidence (`file:line`), the fix, and a verification step that wo
 - 🔴 Open
 - 🟡 In progress
 - 🟢 Closed — with a verification artifact, not just a passing build
+- ⚪ Won't fix at this seam — the limitation is real, stated in the code, and
+  paired with a mitigation. Added because 3.5 sat amber indefinitely while
+  being, in one part, genuinely unfixable without work an order of magnitude
+  larger than the item; an entry that will never go green is more honestly
+  labelled than left in progress forever.
 
 ---
 
@@ -680,9 +685,9 @@ Real defects in shipped code, independent of security.
 | 3.2 | Truncated responses returned as final answers | 🟢 | 4h |
 | 3.3 | `Crew.parallel` shares one `runId` across concurrent agents | 🟢 | 4h |
 | 3.4 | Denied human approval doesn't stop the run | 🟢 | 4h |
-| 3.5 | Checkpoints written per turn, not per tool call | 🟡 | 1d |
+| 3.5 | Checkpoints written per turn, not per tool call | ⚪ | 1d |
 | 3.6 | Anthropic empty-content messages rejected by the API | 🟢 | 2h |
-| 3.7 | No provider adapter has a unit test | 🟡 | 2d |
+| 3.7 | No provider adapter has a unit test | 🟢 | 2d |
 
 ### 3.1 — `tools: []` breaks every OpenAI-family LLM judge
 
@@ -750,13 +755,13 @@ The positive control matters more than usual: an ordinary tool failure must stil
 
 **Fix.** Checkpoint after each tool call. Make `save()` atomic (temp file + rename). Distinguish "no checkpoint" from "read failed" in `load()`.
 
-**Two of three closed; `save()` atomicity is not, which is why this is 🟡.**
+**Two of three closed; `save()` atomicity is not, and won't be at this seam — hence ⚪ rather than a permanent 🟡.**
 
 **Per-tool-call checkpointing needed a second half nobody asked for.** Writing a checkpoint mid-turn is easy; it's worthless unless resume can *use* one. A partial turn is an assistant message whose later tool calls have no results, and every vendor rejects that outright — so a naive fix would have turned "loses work on resume" into "cannot resume at all". `Agent.loop()` now completes the outstanding calls first and only then asks the model, with a test asserting no unanswered tool call ever reaches a provider. The last call of a turn skips its own save, since the turn-end checkpoint records the same state one line later.
 
 **`load()` no longer swallows failures.** Only a genuine `ENOENT` returns null; a timed-out RPC, a permission error, or unparseable content throws the new `CheckpointReadError`. Before this a transient read failure was indistinguishable from a fresh run, so `resume()` silently restarted and re-executed everything the checkpoint existed to avoid. Resident-app errors cross the wire as plain strings rather than typed codes, so this matches on message text — not pretty, and the reason the test asserts both directions: guessing wrong toward "absent" resurrects the original bug, and guessing wrong the other way makes every first run throw.
 
-**`save()` is still not atomic, and can't be at this seam.** It's a write followed by a tag, and there is no rename primitive in the `write_context_file`/`read_context_file`/`tag_context_file` contract a store reaches Semantic FS through — a temp-file-plus-rename would need a new resident-app export *and* FUSE-level rename support in `semantic-fs-daemon`. What's done instead is to make a torn write loud rather than silent: `load()`'s parse failure is now an error instead of a null that quietly restarts the run. The tag half is separately harmless — `load()` reads by exact path, so an untagged checkpoint still loads and only discoverability suffers. Stated in `checkpoint.ts` rather than implied.
+**`save()` is still not atomic, and can't be at this seam — recorded as a won't-fix rather than left open.** Making it atomic needs a rename primitive that does not exist anywhere in the path: a new resident-app export *and* FUSE-level rename support in `semantic-fs-daemon` (Go), which is a larger piece of work than everything else in Phase 3 combined, to close a window that a torn write now makes loud rather than silent. Revisit it if and when Semantic FS grows rename for its own reasons; do not carry it as in-progress in the meantime. It's a write followed by a tag, and there is no rename primitive in the `write_context_file`/`read_context_file`/`tag_context_file` contract a store reaches Semantic FS through — a temp-file-plus-rename would need a new resident-app export *and* FUSE-level rename support in `semantic-fs-daemon`. What's done instead is to make a torn write loud rather than silent: `load()`'s parse failure is now an error instead of a null that quietly restarts the run. The tag half is separately harmless — `load()` reads by exact path, so an untagged checkpoint still loads and only discoverability suffers. Stated in `checkpoint.ts` rather than implied.
 
 **Verify.** `packages/agents/src/checkpoint-durability.test.ts`, 8 tests, 5 of which fail against the unfixed code. The one that matters asserts a resumed run re-executes *only* the outstanding calls, not the side-effecting ones that already completed; the positive control asserts a fully-complete history re-runs nothing, since getting that wrong would double-run every ordinary resume.
 
@@ -768,7 +773,7 @@ The positive control matters more than usual: an ordinary tool failure must stil
 
 `packages/agents/src/providers/` contains eight implementation files and no test files; the only provider test is `fallback.test.ts`, which uses stubs. That absence is why 3.1, 3.2, and 3.6 are all live. Same on the Python side (618 lines, no tests). Add mock-server-backed tests per provider covering message mapping, tool-call round trips, empty tool lists, streaming deltas, and finish reasons.
 
-**TypeScript closed; Python not yet, which is why this is 🟡.**
+**Closed in both languages.**
 
 `packages/agents/src/providers/mock-server.ts` stands up a real HTTP server on an ephemeral port and records what arrived. **A real server rather than a stubbed vendor client, deliberately**: all three bugs this was meant to catch were about the request body an adapter *builds* or the response field it fails to *read*. A stub of `client.chat.completions.create` asserts the arguments this repo passes to the SDK — the half that was never wrong. Every provider already takes a base URL for production reasons, so this needs no seam that didn't exist.
 
@@ -778,7 +783,14 @@ Coverage: `openai.test.ts` (14) — empty tool lists, message mapping including 
 
 **Also added: a `baseUrl` option on the Google provider.** Its absence was why that adapter was the one nothing could be stood in front of — and it's plain parity with the `baseURL` the other two already took.
 
-**Still open:** the Python provider adapters, which remain untested at the unit level. `docs/agents-python-reference.md` justified that with a claim about the TypeScript side that 2.4 corrected and this item now makes obsolete — the convention it appealed to no longer exists.
+**The Python half now matches**, on the same design: `tests/mock_llm_server.py` stands up a real `ThreadingHTTPServer` on an ephemeral port and records what arrived, rather than stubbing the vendor client. Every Python provider already took a `base_url` for production reasons, so this needed no new seam either. 15 tests across the OpenAI family and Anthropic — message mapping including the JSON-string encoding of tool-call arguments and `tool_call_id` correlation, empty tool lists, a tool-call round trip, streaming text deltas, reassembly of a tool call fragmented across frames, the usage-only final frame, 3.6's empty-content rules in both directions, and transport failures surfacing rather than becoming an empty turn.
+
+**It found a live bug on the first run, which is the entire argument for the item.** `providers/openai.py` still sent `tools=[]` — REMEDIATION 3.1, fixed in `openai.ts` and never ported. So `create_llm_guardrail()` and `llm_judge()` were broken against OpenAI, Azure, Bedrock and Ollama in Python for exactly as long as the adapters went untested. Now a `_tools_param()` splat, mirroring the TypeScript helper. `google.py` already guarded it, same as `google.ts`.
+
+**Two Python gaps this surfaced and did *not* close**, recorded here rather than left to be rediscovered:
+
+- **3.2 has no Python half.** `LLMTurn` in `berth_agents/types.py` has no `stop_reason` field, nothing reads `finish_reason`/`stop_reason`, and there is no `TruncatedResponseError`. A response cut off at the token cap is still returned to a Python caller as a final answer — the exact defect 3.2 describes. 3.2 is marked 🟢 on the strength of the TypeScript work; that closure is narrower than its status implies.
+- **`google.py` has no `base_url`.** The same absence 3.7 had to fix in `google.ts` before that adapter could be tested, which is why the Gemini adapter is the one provider with no coverage here.
 
 ---
 
@@ -821,20 +833,43 @@ Only start this once Phases 0–2 are done; there is no point adding SSO to a sy
 
 | # | Item | Status | Effort |
 |---|------|--------|--------|
-| 5.1 | No audit trail with a verifiable actor | 🔴 | 1w |
+| 5.1 | No audit trail with a verifiable actor | 🟢 | 1w |
 | 5.2 | No identity, tenancy, or RBAC anywhere | 🔴 | 2w |
-| 5.3 | No TLS on anything, no option to enable it | 🔴 | 3d |
+| 5.3 | No TLS on anything, no option to enable it | 🟢 | 3d |
 | 5.4 | Nothing encrypted at rest; conversation history plaintext 0644 | 🔴 | 1w |
 | 5.5 | Secrets management: plaintext in `~/.berthrc`, `docker inspect`, snapshots | 🔴 | 1w |
 | 5.6 | No health/metrics/graceful shutdown/rate limiting on any server | 🔴 | 3d |
 | 5.7 | No data-schema migrations for any of the four SQLite DBs | 🔴 | 2d |
 | 5.8 | SQLite: no WAL, no busy_timeout, synchronous driver blocks the event loop | 🔴 | 1d |
 
-**5.1** — Governance denials are logged **nowhere** (`governance.ts:159-161` throws silently; the only log line is the fail-open warning at `:156`). No HTTP access logs on any server — all three Fastify instances are constructed without a `logger` (`grants-server/src/index.ts:29`, `registry-server/src/index.ts:22`, `mesh-coordinator/src/index.ts:19`). `AgentStepEvent` (`tracing.ts:4-17`) records tool *names* but never arguments or outputs, and no actor. `decided_by` on a grant is free text from the request body (`grants-server/src/routes.ts:91-92`). The `[agent-init] {...}` JSON lines are good content but aren't parseable JSON because of the prefix. No file sink, rotation, retention, or integrity chaining anywhere.
+**5.1** — **Closed.** `@berth/audit` is the shared record: one JSON object per line, hash-chained, 0600, resuming its chain across restarts and carrying it across rotation. Every record has an `actor` whose `verifiedBy` field states how the identity was established — `peer-socket` (the kernel said so), `token` (someone held a secret), or `self-asserted` (nobody checked). Self-asserted actors are recorded rather than rejected, since not knowing who did something is itself a finding, but the field means nothing downstream can mistake one for an identity.
+
+What each half of the original finding got:
+
+- **Governance denials** now reach the sink, and so do allows and the `unavailable` case — a trail of only refusals cannot answer "what did this agent do", and under `mode: "fail-open"` an unreachable governor is an allow that no policy approved. `applyGovernanceGate` and `resolveGovernanceGate` were collapsed onto one `enforce()` first; they had drifted apart once already, and auditing only one of them would have done it again.
+- **`decided_by`** is derived from the presented token via a named-operator registry (`operators.json`, hashes only, 0600), and the request body's field is ignored outright. `berth grants approve --by` is gone. An existing plaintext `operator.token` is adopted rather than invalidated, attributed to `operator` — which is all a shared secret can honestly claim. Failed authentication attempts are recorded too: someone probing for a valid operator token was previously a bare 401 with no trace.
+- **`AgentStepEvent`** gained an optional `actor`, plus `input`/`output` under the opt-in `tracePayloads`. Redaction happens in the Agent, so every backend gets the already-safe value rather than each tracer having to remember. `createAuditStepTracer` puts steps in the same chained trail as the verdicts that gated them.
+- **HTTP access logs** exist on all three Fastify servers, off by default so tests stay quiet, on in each binary.
+- **`[agent-init] {...}`** lines dropped the prefix and carry `"source":"agent-init"` inside the object instead, so they survive `JSON.parse`.
+- **File sink, rotation, integrity chaining** are the sink's own behaviour. `berth audit list` and `berth audit verify` read and check a trail, the latter walking rotated segments oldest-first.
+
+**Deliberately not claimed.** The chain is tamper-*evident*, not tamper-proof: anyone who can write the file can recompute every hash after the line they edited. Fixing that needs the hashes somewhere the editor cannot reach — an append-only or remote sink, external anchoring — and none of that is built; `berth audit verify` prints the caveat rather than implying a guarantee. Payload capture is off by default in both places because records are plaintext (5.4). Retention is size-based rotation only. `POST /grants` is still unauthenticated, so `grant.request` records are `self-asserted` by construction. And none of this is identity in 5.2's sense: no user directory, no tenancy, no RBAC, revocation means editing a file.
+
+See `docs/audit-reference.md`.
 
 **5.2** — No user, tenant, org, or role concept exists. One shared operator secret for grants-server, per-name tokens for registry, per-peer tokens for mesh. Anyone with the operator token can approve any team's escalation and attribute it to any name. The context bus performs no identity check at all. Two teams cannot share an installation.
 
-**5.3** — Every server is plain HTTP with no `https` option. The CLI hardcodes `http://127.0.0.1:4874` (`commands/grants/{list,approve,deny}.ts:3-4`) and sends the operator token in cleartext. `berth deploy --grants-server` requires a URL reachable from the fleet — capability approvals crossing a network over HTTP. `http-rpc.ts:49` binds `0.0.0.0` plain HTTP. `docs/mesh-reference.md:51` states the assumption repo-wide.
+**5.3** — **Closed.** `@berth/tls` plus wiring in all three Fastify servers, the SDK's HTTP RPC bridge, and every CLI client that talks to one.
+
+- **Servers**: `<PREFIX>_TLS_CERT`/`_KEY`/`_CA`/`_REQUIRE_CLIENT_CERT` per server (`BERTH_GRANTS`, `BERTH_REGISTRY`, `BERTH_MESH_COORDINATOR`), or `tls:` when embedding. Off by default, so existing deployments are unchanged. A half-configured pair — cert without key, or an unreadable path — refuses to start rather than falling back, since a deployment that thinks it has TLS and doesn't is worse than one that never offered it.
+- **CLI**: `--ca` and `--insecure` on the grants, publish, and init commands; `--insecure` warns every time. Commands carrying a credential (`grants approve/deny`, `publish`, `deploy --grants-server`) warn when the target is plain HTTP on a non-loopback host. Loopback is exempt on purpose — nothing crosses a network there, and a warning that fires constantly is one people learn to skip.
+- **`berth tls init`** mints a local CA and server cert (keys 0600 in a 0700 directory, SAN entries correctly tagged `DNS:` vs `IP:`) and prints the env vars and `--ca` invocation to use them.
+- **RPC bridge**: `BERTH_HTTP_RPC_TLS_CERT`/`_KEY`, read as paths rather than PEMs in the environment, where they would sit in `docker inspect` next to the bearer token (5.5). Its doc comment now distinguishes the exposures that already have TLS in front (E2B `getHost`, Daytona preview links) from the ones that don't (NodePort, raw port mappings) — only the latter was ever the real exposure.
+- **`docs/mesh-reference.md`'s repo-wide "no TLS anywhere" statement** is corrected rather than deleted: TLS is available, it is still off unless configured, and the owner token crosses plaintext until it is.
+
+**Verified** by a real handshake, not by config-shape assertions: `generate.test.ts` and `grants-server/src/tls.test.ts` stand up listening servers and drive them through undici with the generated CA, confirm a client that doesn't trust the CA is refused (checking `err.cause`, since undici reports every transport failure as a bare "fetch failed"), and confirm the bearer token is still enforced over TLS. `app.inject()` was deliberately not used for these — it skips the network stack, so it would pass identically whether TLS was configured or silently dropped. Also driven by hand end to end: `berth-grants` over HTTPS, the CLI refused without `--ca` and accepted with it, a grant approved over TLS.
+
+**Still open.** mTLS works server-side but no first-party client presents a certificate, and turning it on today locks all of them out — there is no CA to issue from until 5.2. No HTTPS-by-default, no HTTP→HTTPS redirect, no certificate reload without a restart, no cipher/version pinning beyond Node's defaults. `POST /grants` stays unauthenticated regardless of transport. See `docs/tls-reference.md`.
 
 **5.4** — No encryption anywhere (grep for `encrypt|aes-|cipher|kms|vault` finds only MITM comments). `CheckpointedRun` persists full `messages` to `/context/agent-runs/<runId>.json` (`checkpoint.ts:5-15`) and `Session` persists conversation history to `/context/agent-sessions/<id>.json` (`session.ts:42-50`) — both 0644, both captured verbatim into snapshot tarballs. For PHI/PII this is a non-starter on its own.
 
