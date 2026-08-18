@@ -1,6 +1,6 @@
 # Per-app uid: design
 
-Every process in a Berth container runs as uid 0 today — the three daemons, both brokers, the display stack, and every resident app. This document is the design for changing that, written before any of it is built, because it is the shared unlock for three separate [remediation](../REMEDIATION.md) items and doing it three times partially would be worse than doing it once badly.
+Every process in a Berth container runs as uid 0 today — the three daemons, both brokers, the display stack, and every resident app. This document is the design for changing that, written before any of it is built, because it is the shared unlock for three separate [remediation](./internal/REMEDIATION.md) items and doing it three times partially would be worse than doing it once badly.
 
 It is a design, not a plan of record. Where a decision is still open it says so, and where the cost is real it states the cost rather than the benefit.
 
@@ -8,11 +8,11 @@ It is a design, not a plan of record. Where a decision is still open it says so,
 
 | Item | What per-app uid gives it |
 |---|---|
-| [1.4](../REMEDIATION.md#14--app-rpc-sockets-in-world-writable-tmp-unauthenticated) — cross-app RPC borrowing | The whole fix. A `0700` socket directory owned by the serving app's uid is what stops a sibling connecting; `SO_PEERCRED` is what lets the server say *which* sibling is calling |
-| [1.11](../REMEDIATION.md#111--signals-unrestricted-any-app-can-kill-the-governor) — unrestricted signals | The whole fix. `kill(2)` between different uids is refused by the kernel's ordinary permission check, with no new mechanism needed |
-| [1.14](../REMEDIATION.md#114--unbounded-frame-allocation-and-spoofable-identity-in-the-daemons) — spoofable daemon identity | The *precondition*. `SO_PEERCRED` on the context-bus and semantic-FS control sockets returns uid 0 for every caller today, so deriving identity from it carries exactly zero information until uids differ |
-| [1.5](../REMEDIATION.md#15--on_install-is-unsandboxed-root-shell-run-before-enforcement) — `on_install` as root | Nothing, and the dependency runs the other way — see [Blocker 4](#blocker-4--on_install-is-defined-as-a-root-shell) |
-| [1.7](../REMEDIATION.md#17--ttyd--vnc--cdp-unauthenticated-on-all-host-interfaces) — Chromium `--no-sandbox` | A possible removal, at a cost that may not be worth paying — see [Blocker 5](#blocker-5--chromiums-own-sandbox-wants-the-thing-13-just-took-away) |
+| [1.4](./internal/REMEDIATION.md#14--app-rpc-sockets-in-world-writable-tmp-unauthenticated) — cross-app RPC borrowing | The whole fix. A `0700` socket directory owned by the serving app's uid is what stops a sibling connecting; `SO_PEERCRED` is what lets the server say *which* sibling is calling |
+| [1.11](./internal/REMEDIATION.md#111--signals-unrestricted-any-app-can-kill-the-governor) — unrestricted signals | The whole fix. `kill(2)` between different uids is refused by the kernel's ordinary permission check, with no new mechanism needed |
+| [1.14](./internal/REMEDIATION.md#114--unbounded-frame-allocation-and-spoofable-identity-in-the-daemons) — spoofable daemon identity | The *precondition*. `SO_PEERCRED` on the context-bus and semantic-FS control sockets returns uid 0 for every caller today, so deriving identity from it carries exactly zero information until uids differ |
+| [1.5](./internal/REMEDIATION.md#15--on_install-is-unsandboxed-root-shell-run-before-enforcement) — `on_install` as root | Nothing, and the dependency runs the other way — see [Blocker 4](#blocker-4--on_install-is-defined-as-a-root-shell) |
+| [1.7](./internal/REMEDIATION.md#17--ttyd--vnc--cdp-unauthenticated-on-all-host-interfaces) — Chromium `--no-sandbox` | A possible removal, at a cost that may not be worth paying — see [Blocker 5](#blocker-5--chromiums-own-sandbox-wants-the-thing-13-just-took-away) |
 
 What it does **not** give: any defence on a kernel where Landlock is unenforced but DAC still works — this is DAC, so it holds on Docker Desktop too, which is a genuine advantage over the Landlock layer. And no defence against the `docker exec` path, which enters as root by design and must keep doing so ([Blocker 7](#blocker-7--the-host-relay-must-stay-root)).
 
@@ -79,7 +79,7 @@ Each of these is a thing that breaks the moment an app is not uid 0. They are or
 
 Four apps declare `filesystem:write:/workspace` (`code-interpreter`, `notes`, `terminal`, `filesystem`), so this is the common path, not an edge case.
 
-It also does not fail uniformly, which is worse than failing: Docker Desktop for Mac remaps ownership through virtiofs/gRPC-FUSE so almost anything appears to work, while a Linux host bind-mounts real inodes and enforces real ownership. A design validated only on a Mac would look finished and break in CI — the same shape as [0.1](../REMEDIATION.md#01--berthagents-cannot-run-on-macos-at-all) and [1.15](../REMEDIATION.md#115--appsterminal-is-non-functional-on-any-landlock-enforcing-kernel).
+It also does not fail uniformly, which is worse than failing: Docker Desktop for Mac remaps ownership through virtiofs/gRPC-FUSE so almost anything appears to work, while a Linux host bind-mounts real inodes and enforces real ownership. A design validated only on a Mac would look finished and break in CI — the same shape as [0.1](./internal/REMEDIATION.md#01--berthagents-cannot-run-on-macos-at-all) and [1.15](./internal/REMEDIATION.md#115--appsterminal-is-non-functional-on-any-landlock-enforcing-kernel).
 
 **Options, none free.**
 
@@ -111,7 +111,7 @@ It also does not fail uniformly, which is worse than failing: Docker Desktop for
 
 `run-lifecycle.ts:34` runs manifest `on_install` commands with `execSync`, before `agent-init` exists. The base image deliberately deletes `EXTERNALLY-MANAGED` (`base.Dockerfile:101`) so that `pip install -r requirements.txt` into the *system* Python is a supported `on_install` — which a non-root uid cannot do.
 
-So the uid split does not merely fail to fix [1.5](../REMEDIATION.md#15--on_install-is-unsandboxed-root-shell-run-before-enforcement) — it collides with it. Running `on_install` as the app's uid breaks the documented use case; leaving it as root leaves an unsandboxed root shell that can `chown` its way around every boundary below, making the rest of this design decorative.
+So the uid split does not merely fail to fix [1.5](./internal/REMEDIATION.md#15--on_install-is-unsandboxed-root-shell-run-before-enforcement) — it collides with it. Running `on_install` as the app's uid breaks the documented use case; leaving it as root leaves an unsandboxed root shell that can `chown` its way around every boundary below, making the rest of this design decorative.
 
 **Therefore: 1.5 lands first.** Its fix (move `on_install` into the image build as a `RUN` layer) resolves the collision by removing the boot-time root shell altogether, and system-Python installs keep working because they happen at build time. This ordering dependency is the single most important finding here, and it is not currently recorded in `REMEDIATION.md`'s sequencing, which lists 1.4 before 1.5.
 
@@ -119,13 +119,13 @@ So the uid split does not merely fail to fix [1.5](../REMEDIATION.md#15--on_inst
 
 `cdp-controller.ts:48` passes `--no-sandbox`, commented (since 1.7) as being there because Chromium refuses its own sandbox as uid 0. A per-app uid is what would let that come off — a real renderer sandbox, and the removal of the standing risk that a renderer RCE lands as root.
 
-Except Chromium's namespace sandbox calls `clone(CLONE_NEWUSER|CLONE_NEWPID)`, which [1.3](../REMEDIATION.md#13--bounding-set-drop-undone-by-unshareclone_newuser)'s seccomp filter now refuses for every app unconditionally, deliberately. Enabling one means punching a hole in the other.
+Except Chromium's namespace sandbox calls `clone(CLONE_NEWUSER|CLONE_NEWPID)`, which [1.3](./internal/REMEDIATION.md#13--bounding-set-drop-undone-by-unshareclone_newuser)'s seccomp filter now refuses for every app unconditionally, deliberately. Enabling one means punching a hole in the other.
 
 **Recommendation: do not attempt this as part of the uid work.** Note it, leave `--no-sandbox` in place with the comment updated to name both reasons, and treat "browser apps get a real renderer sandbox" as its own item with its own threat analysis. The alternative — `CLONE_NEWUSER` permitted for `browser-native` — reopens 1.3 for exactly the app with the largest remote attack surface, which is the wrong app to make the exception for.
 
 ### Blocker 6 — pty allocation becomes a DAC question too
 
-`apps/terminal` is already broken on any enforcing kernel ([1.15](../REMEDIATION.md#115--appsterminal-is-non-functional-on-any-landlock-enforcing-kernel), cause not fully established). Per-app uid adds a second, independent requirement: `/dev/ptmx` and the devpts mount are `root:tty`, so a non-root app needs the `tty` group to allocate a pty at all.
+`apps/terminal` is already broken on any enforcing kernel ([1.15](./internal/REMEDIATION.md#115--appsterminal-is-non-functional-on-any-landlock-enforcing-kernel), cause not fully established). Per-app uid adds a second, independent requirement: `/dev/ptmx` and the devpts mount are `root:tty`, so a non-root app needs the `tty` group to allocate a pty at all.
 
 This could genuinely *help* — a real uid and a `tty` supplementary group is how pty allocation is meant to work, and the current everything-as-root arrangement may be part of why 1.15's behaviour is confusing. But 1.15 must be diagnosed on its own first; adding a uid change on top of an undiagnosed failure makes both harder to reason about.
 
@@ -141,7 +141,7 @@ Worth stating explicitly because it is the same property as the documented `dock
 - The app directory itself, and `.berth/capability-policy.json` written into it by `generate-capability-policy.js` — the policy must be written before the uid switch, and must not be writable by the app afterward (`0640 root:<app>`), or an app can rewrite its own policy for the next boot.
 - No privileged ports are involved: ttyd, websockify, VNC, and both brokers all bind above 1024, so nothing needs `CAP_NET_BIND_SERVICE`.
 - `/root/.berth/vncpasswd` (`entrypoint.sh:44-48`) is already correctly out of app reach and stays root-owned.
-- ~~`BERTH_TOKEN_SECRET` is still exported into each app's environment.~~ **Resolved by [1.10](../REMEDIATION.md#110--capability-tokens-are-never-verified-anywhere), by deletion:** capability tokens are gone and `entrypoint.sh` generates no such secret. Exporting a signing key into the environment of the process it was meant to constrain is precisely why the tokens meant nothing — and the identity work in this document is what replaced them.
+- ~~`BERTH_TOKEN_SECRET` is still exported into each app's environment.~~ **Resolved by [1.10](./internal/REMEDIATION.md#110--capability-tokens-are-never-verified-anywhere), by deletion:** capability tokens are gone and `entrypoint.sh` generates no such secret. Exporting a signing key into the environment of the process it was meant to constrain is precisely why the tokens meant nothing — and the identity work in this document is what replaced them.
 
 ## Migration order
 
@@ -178,6 +178,6 @@ The Step 3 assertion is the one that matters, and it was confirmed against the p
 
 ## The alternative, if this proves too expensive
 
-If Blocker 1 or Blocker 2 turns out to cost more than the isolation is worth, the fallback for 1.4 alone is an application-layer secret: a per-app token generated by `entrypoint.sh`, exported only into that app's own environment, and required by `rpc.ts`'s `connectionHandler` on connect. It closes the specific exploit on every kernel, it is roughly a day, and it would give the capability-token machinery in [1.10](../REMEDIATION.md#110--capability-tokens-are-never-verified-anywhere) its first real enforcement point.
+If Blocker 1 or Blocker 2 turns out to cost more than the isolation is worth, the fallback for 1.4 alone is an application-layer secret: a per-app token generated by `entrypoint.sh`, exported only into that app's own environment, and required by `rpc.ts`'s `connectionHandler` on connect. It closes the specific exploit on every kernel, it is roughly a day, and it would give the capability-token machinery in [1.10](./internal/REMEDIATION.md#110--capability-tokens-are-never-verified-anywhere) its first real enforcement point.
 
 It is strictly weaker: it does nothing for 1.11 or 1.14, and it is a secret sitting in an environment the app itself can read, so any code-execution primitive that can read `/proc/<pid>/environ` of a sibling — which uid 0 can — defeats it. It is a mitigation, not a boundary. Recorded here so the trade is a decision rather than a drift.

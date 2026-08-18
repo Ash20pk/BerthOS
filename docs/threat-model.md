@@ -2,7 +2,7 @@
 
 Berth's pitch is that an agent's permissions are enforced by the kernel rather than by the model's good behaviour. That claim is only meaningful against a stated adversary, so this page states them: what Berth protects, who it protects it from, where the trust boundaries actually sit, which mechanism holds each one, and — at equal length — what it does not protect against today.
 
-Last reviewed **2026-08-08**, against the audit recorded in [REMEDIATION.md](../REMEDIATION.md). Where a gap is open, it's named here with its remediation ID (e.g. *1.4*) rather than softened. If this page and a feature reference disagree, this page is the one that was written to be adversarial; open an issue.
+Last reviewed **2026-08-08**, against the audit recorded in [REMEDIATION.md](./internal/REMEDIATION.md). Where a gap is open, it's named here with its remediation ID (e.g. *1.4*) rather than softened. If this page and a feature reference disagree, this page is the one that was written to be adversarial; open an issue.
 
 This is the consolidation point for the "what's deliberately out of scope" notes scattered across `docs/` — the [map at the end](#where-each-scope-note-lives) says which section of this page covers each one.
 
@@ -86,7 +86,7 @@ Full mechanics in [capability tokens reference](./capability-tokens-reference.md
 
 ### Open gaps
 
-Each is tracked with evidence, a fix, and a verification step in [REMEDIATION.md](../REMEDIATION.md). These change what you should be willing to run.
+Each is tracked with evidence, a fix, and a verification step in [REMEDIATION.md](./internal/REMEDIATION.md). These change what you should be willing to run.
 
 - **The container still holds `CAP_SYS_ADMIN`, and the daemons still run outside every filter (*1.3*, partially).** The reversibility of the capability drop is closed — `agent-init` refuses namespace creation outright — but that is a filter on the *app*, not a removal of the grant. `CAP_SYS_ADMIN` is added container-wide for the semantic-FS FUSE mount, and the context-bus, semantic-FS, and mesh daemons start before `agent-init` and so carry it with no seccomp filter and no Landlock domain. Mounting `/context` from a separate init step and dropping the cap before any app process exists is the real fix.
 - **Cross-app capability borrowing (*1.4*, closed).** An app's RPC socket is `0600` in a directory it owns; a sibling reaches it only by declaring `app:invoke:<name>`, which gets it a socket of its own that no other uid can traverse to — so the target knows which app called. Enforced by DAC, since Landlock does not gate `connect()` to a pathname Unix socket (see [per-app uid design](./per-app-uid-design.md)). What remains is that the grant is connect-time, so an authorized caller reaches the target's *whole* export surface (*1.13*). The context-bus, semantic-FS, and mesh control sockets stay reachable by every app by design, and are still served by root daemons outside any Landlock domain (B4) — though the first two now identify their callers by `SO_PEERCRED` rather than by what the caller says (*1.14*).

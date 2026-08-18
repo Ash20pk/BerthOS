@@ -168,7 +168,7 @@ and executes with *filesystem's* capabilities. Per-app Landlock rulesets are rea
 
 > **Steps 0–3 of that migration have landed** — parts 1 and 2 below are closed; part 3 (`SO_PEERCRED`) is not, which is why this entry is still 🟡 rather than 🟢. Every app runs as its own uid (`10000 + index`) with a private group and a shared `berth` group, dropped irreversibly in `agent-init` after Landlock, the capability drop, and both seccomp filters. `/context` survives that via `allow_other` + `default_permissions` and `root:berth` backing files; the three daemon control sockets are `0660 root:berth`.
 >
-> **Designed, then built:** [docs/per-app-uid-design.md](./docs/per-app-uid-design.md) works out the uid scheme, the eight blockers, and a five-step migration for 1.4, 1.11, and 1.14 together. Two findings change this entry. First, **1.5 must land before 1.4**, not after — `on_install` as a boot-time root shell can `chown` its way around every boundary the uid split creates, and moving it to build time is also what keeps system-Python installs working for a non-root app. Second, part 1 cannot be replaced by a narrower Landlock policy: Landlock does not gate `connect()` to a pathname Unix socket (no `inode_permission` hook; ABI 6's scope right covers *abstract* sockets only), so `generate-capability-policy.ts:43-45`'s "connecting to a Unix socket requires write access to it" is a DAC fact, not a ruleset one. The design also records a strictly weaker one-day fallback for 1.4 alone, if the uid work proves too costly.
+> **Designed, then built:** [docs/per-app-uid-design.md](../per-app-uid-design.md) works out the uid scheme, the eight blockers, and a five-step migration for 1.4, 1.11, and 1.14 together. Two findings change this entry. First, **1.5 must land before 1.4**, not after — `on_install` as a boot-time root shell can `chown` its way around every boundary the uid split creates, and moving it to build time is also what keeps system-Python installs working for a non-root app. Second, part 1 cannot be replaced by a narrower Landlock policy: Landlock does not gate `connect()` to a pathname Unix socket (no `inode_permission` hook; ABI 6's scope right covers *abstract* sockets only), so `generate-capability-policy.ts:43-45`'s "connecting to a Unix socket requires write access to it" is a DAC fact, not a ruleset one. The design also records a strictly weaker one-day fallback for 1.4 alone, if the uid work proves too costly.
 2. Remove `/tmp` from the unconditional baseline write set; grant only the app's own socket dir plus a private `/tmp/<app>` scratch.
 3. Add `SO_PEERCRED` verification in `rpc.ts`'s `connectionHandler` so a socket connection's uid is checked against the expected app identity.
 
@@ -212,7 +212,7 @@ Note: `entrypoint.sh` itself has no injection surface — manifest `name` is `^[
 
 **Verify.** A test asserting an `on_install` entry cannot write outside the app's declared write paths.
 
-> **Was a prerequisite for 1.4/1.11**, which is why it jumped the queue — see [docs/per-app-uid-design.md § Blocker 4](./docs/per-app-uid-design.md#blocker-4--on_install-is-defined-as-a-root-shell--resolved). Leaving `on_install` at boot would have made the uid boundary decorative, and running it *as* the app's uid would have broken the `pip install` case `base.Dockerfile:101` deliberately enables. The build-time fix avoids both.
+> **Was a prerequisite for 1.4/1.11**, which is why it jumped the queue — see [docs/per-app-uid-design.md § Blocker 4](../per-app-uid-design.md#blocker-4--on_install-is-defined-as-a-root-shell--resolved). Leaving `on_install` at boot would have made the uid boundary decorative, and running it *as* the app's uid would have broken the `pip install` case `base.Dockerfile:101` deliberately enables. The build-time fix avoids both.
 
 **Closed.** `on_install` is a Docker build layer, for **both** targets, and nothing executes it at container boot.
 
@@ -402,7 +402,7 @@ Option (b) would have meant a minting daemon holding the secret outside every ap
 
 **Verify.** A test asserting app B cannot signal app A's process.
 
-> Step 5 of [docs/per-app-uid-design.md](./docs/per-app-uid-design.md#migration-order) — once uids differ, `kill(2)` between apps is refused by the kernel's ordinary permission check and no new mechanism is needed. `LANDLOCK_SCOPE_SIGNAL` stays optional rather than load-bearing.
+> Step 5 of [docs/per-app-uid-design.md](../per-app-uid-design.md#migration-order) — once uids differ, `kill(2)` between apps is refused by the kernel's ordinary permission check and no new mechanism is needed. `LANDLOCK_SCOPE_SIGNAL` stays optional rather than load-bearing.
 
 **Closed.** Two halves, and the second is the one that mattered more.
 
@@ -555,7 +555,7 @@ Killing semantic-fs is worse than a crash: `runtime.ts:44-46` silently falls bac
 
 **Verify.** A test sending an oversized length header and asserting the daemon survives; a test asserting app B cannot register as app A.
 
-> The frame cap is independent and can land any time. The identity half cannot: `SO_PEERCRED` returns uid 0 for every caller today, so it carries no information until [docs/per-app-uid-design.md](./docs/per-app-uid-design.md) Step 2 lands. Sequenced there as Step 4.
+> The frame cap is independent and can land any time. The identity half cannot: `SO_PEERCRED` returns uid 0 for every caller today, so it carries no information until [docs/per-app-uid-design.md](../per-app-uid-design.md) Step 2 lands. Sequenced there as Step 4.
 
 **Closed.**
 
@@ -563,7 +563,7 @@ Killing semantic-fs is worse than a crash: `runtime.ts:44-46` silently falls bac
 
 **Identity.** Both daemons now derive it from `SO_PEERCRED` — `tokio::net::UnixStream::peer_cred()` in the context bus, `syscall.GetsockoptUcred` in semantic-fs — read once at `accept()`, since the uid the kernel stamped on a connection cannot change for its lifetime and the client cannot influence it. The rules are three, and identical in both (deliberately duplicated implementations, `src/peer.rs` and `internal/control/peer.go`, each with the other named in its header and the same cases in its tests):
 
-1. **uid 0 keeps its own claim.** The host relay, the daemons themselves, anything that already has full authority in this container — see [Blocker 7](./docs/per-app-uid-design.md). A root caller could set that uid anyway.
+1. **uid 0 keeps its own claim.** The host relay, the daemons themselves, anything that already has full authority in this container — see [Blocker 7](../per-app-uid-design.md). A root caller could set that uid anyway.
 2. **A uid that resolves to a `berth-<app>` account *is* that app**, whatever the frame says. A contradicting claim is overridden and logged.
 3. **Any other uid gets `uid-<n>`.** Not an error, but its claim about an app name is worth nothing. A system account whose name merely lacks the prefix is deliberately not an app, or adding any user to the image would hand it an identity.
 
@@ -967,7 +967,7 @@ See `docs/audit-reference.md`.
 ## Suggested sequencing
 
 1. **Week 1** — Phase 0 (both items), then 1.1, 1.2, 1.12, and 2.2. Small, high-signal; ends with a Mac-runnable framework and a README that doesn't overclaim.
-2. **Weeks 2–4** — the rest of Phase 1, with 2.1 (threat model) written *first* so it drives the design decisions in 1.4 and 1.5. Per-app uids are the shared unlock for 1.4, 1.11, and 1.14's identity half — that design is now written down once, in [docs/per-app-uid-design.md](./docs/per-app-uid-design.md), and it reorders this list: **1.5 comes before 1.4**. It also argues *against* using the uid split to drop Chromium's `--no-sandbox` (1.7), since Chromium's own sandbox needs the `CLONE_NEWUSER` that 1.3 deliberately refuses — so 1.7 gains nothing here after all.
+2. **Weeks 2–4** — the rest of Phase 1, with 2.1 (threat model) written *first* so it drives the design decisions in 1.4 and 1.5. Per-app uids are the shared unlock for 1.4, 1.11, and 1.14's identity half — that design is now written down once, in [docs/per-app-uid-design.md](../per-app-uid-design.md), and it reorders this list: **1.5 comes before 1.4**. It also argues *against* using the uid split to drop Chromium's `--no-sandbox` (1.7), since Chromium's own sandbox needs the `CLONE_NEWUSER` that 1.3 deliberately refuses — so 1.7 gains nothing here after all.
 3. **Week 5** — Phase 3, plus 6.1/6.2/6.3 so the fixes are actually verified.
 4. **Weeks 6–7** — Phase 4, prioritizing 4.1 and 4.2 (the two most likely to bite a real user).
 5. **Ongoing** — Phase 6 items alongside everything else.

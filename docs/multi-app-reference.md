@@ -33,7 +33,7 @@ berth dev --apps=apps/code-editor
 
 An app's own socket is not reachable by any sibling. A sibling that declares `app:invoke:<name>` gets a socket of its own under `peers/`, created at boot in a directory mode `2710` owned by the target and group-owned by the caller — so the caller is the only unprivileged uid that can traverse to it, and the connection's arrival there is the kernel's statement about who connected. That is what lets the target log which app invoked which export. Undeclared, `connect(2)` fails with `EACCES`. The host is unaffected: `invokeAppExport()` enters via `docker exec` as root, and the uid boundary is between apps, never between the host and an app.
 
-This replaced a `1777` `/tmp/berth-rpc/` directory that every app could bind and connect into, which is [REMEDIATION 1.4](../REMEDIATION.md#14--app-rpc-sockets-in-world-writable-tmp-unauthenticated). One limit remains, recorded there: the grant is connect-time, so it authorizes a *caller* and not a per-export subset.
+This replaced a `1777` `/tmp/berth-rpc/` directory that every app could bind and connect into, which is [REMEDIATION 1.4](./internal/REMEDIATION.md#14--app-rpc-sockets-in-world-writable-tmp-unauthenticated). One limit remains, recorded there: the grant is connect-time, so it authorizes a *caller* and not a per-export subset.
 
 ## Verification
 

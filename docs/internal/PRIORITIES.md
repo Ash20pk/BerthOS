@@ -8,7 +8,7 @@
 > "is X real yet" page. `gaps.md` — **archived**; it validated that the substrate
 > is usable from a framework, and is not a roadmap.
 
-Written 2026-08-15, after reading [REMEDIATION.md](./REMEDIATION.md) (25 items still open), [ROADMAP.md](./ROADMAP.md), and the README's positioning, against the state of the agent-runtime and agent-framework categories as of now.
+Written 2026-08-15, after reading [REMEDIATION.md](./REMEDIATION.md) (25 items still open), [ROADMAP.md](../../ROADMAP.md), and the README's positioning, against the state of the agent-runtime and agent-framework categories as of now.
 
 `REMEDIATION.md` is the exhaustive list: every defect found, ordered by phase, each with evidence and a verification step. It is deliberately complete. **This file is the opposite — an opinionated filter over it.** It answers a different question: of the 25 open items, which ones decide whether this product survives, which ones are ordinary engineering that can wait, and which ones should be *deleted* rather than fixed.
 
