@@ -1,0 +1,85 @@
+# Launch plan
+
+Written 2026-08-18. This is the execution plan for taking Berth to a public launch, written to be **executed by AI coding agents** working in this repo. It supersedes the *ordering* in [REMEDIATION.md](./REMEDIATION.md) and [PRIORITIES.md](./PRIORITIES.md) but not their findings — where this file says "skip," the defect is still real, it's just not launch-blocking.
+
+## The strategic decision this plan encodes
+
+Berth is two products sharing one repo:
+
+1. **The substrate** — Berth OS: manifest-declared capabilities compiled to Landlock, per-app UIDs, TLS-terminating scoped brokers, Semantic FS, Context Bus, snapshots, deploy adapters, MCP bridge, framework adapters. This is the company. Nobody else draws enforcement boundaries *inside* the sandbox.
+2. **`@berth/agents`** — a full agent framework (Agent, Crew, guardrails, evals, A2A, Python port). This is a **reference consumer**, kept working but **feature-frozen**. Racing LangGraph/Mastra/AI SDK on features is unwinnable and, in a 10x-coding-speed era, pointless — features are replicable in a week; verified enforcement and trust are not.
+
+**Separation is at the positioning/packaging level, not the repo level.** Do not split the monorepo: single maintainer, shared CI, shared milestone-test harness. The separation ships as: distinct npm scopes of emphasis, distinct docs entry points, a frozen-surface declaration on `@berth/agents`, and a README that never leads with the framework.
+
+## Rules for every agent working this plan
+
+- **One branch per work item** (`ws<N>/<slug>`), small commits, no Claude co-author trailer, never push or open PRs. (Repo-standing rule.)
+- **Verification is part of the task.** A task is done when its "Done when" check passes and is *recorded* (in the doc the task touches, or the item's row below marked with commit hash). This repo's brand is verified honesty — an overclaimed closure is worse than an open item.
+- **Never weaken an honesty caveat** in docs to make something look done. If enforcement/testing status is unclear, say so explicitly, as the existing docs do.
+- **Do not extend `@berth/agents`' feature surface** under any workstream. Bug fixes to existing behavior: yes. New capabilities, providers, Crew shapes, integrations: no — reject or file under Non-goals.
+- Before starting any REMEDIATION-numbered item, re-verify its status against the actual code — the status tables have drifted (e.g. Phase 4's 4.1/4.2/4.8 are marked 🔴 but shipped in commits `d527c92`, `8504106`, `0aa8f87`).
+
+---
+
+## WS0 — Truth and hygiene (do first, ~1 day)
+
+The repo must look like a security product and its status docs must be trustworthy before anything else, because every later workstream reads them.
+
+| # | Task | Done when |
+|---|------|-----------|
+| 0.1 | **Delete committed test artifacts** from repo root: `concurrent-inside-*.txt`, `escape-read-link`, `escape-write-link`, `multi-app-test.txt`, `allowed.txt`, `var/` if generated. Add patterns to `.gitignore`. Find what generates them and point it at a temp dir. | `git ls-files` at root shows only real product files; a fresh milestone-test run leaves the tree clean. |
+| 0.2 | **Reconcile status tables.** Sweep REMEDIATION.md against git history/code; fix every stale 🔴/🟡. Add a header line to REMEDIATION, PRIORITIES, ROADMAP, gaps.md declaring which file is authoritative for what (REMEDIATION = defects, this file = execution order). | No table row contradicts the code. Spot-check: 4.1–4.8 statuses match `packages/agents/src`. |
+| 0.3 | **Move internal planning docs** (`gaps.md`, `REMEDIATION.md`, `PRIORITIES.md`, this file) to `docs/internal/`, with a short `docs/internal/README.md` explaining they're working documents. Mark `gaps.md` **archived**: it validated that the substrate is usable from a framework; it is not a roadmap. | Repo root contains only: README, LICENSE, SECURITY, CONTRIBUTING, CODE_OF_CONDUCT, ROADMAP, config files, and directories. All inbound links updated. |
+
+## WS1 — Launch blockers (the actual gate, ~1 week)
+
+| # | Task | Done when |
+|---|------|-----------|
+| 1.1 | **Publish all packages to npm.** The workflow and dry run already pass end to end (PRIORITIES T1.3). *This is the one step that needs the human:* set `NPM_TOKEN`, run with `dry_run=false`. Agents: prepare a final pre-publish checklist (versions, `files` fields exclude tests, READMEs per package, provenance) and hand it to the maintainer. | `npm i @berth/sdk @berth/agents @berth/cli` works on a clean machine; Quickstart in README uses published packages, not build-from-source. |
+| 1.2 | **`berth doctor`** — a command that reports, loudly and machine-readably (`--json`), per host: Landlock available/active (`/sys/kernel/security/lsm`), Docker reachable, FUSE available, seccomp active, and a one-line verdict: `enforcement: ACTIVE` / `NOT ACTIVE (reasons)`. Also print an unmissable one-line banner at `Computer.boot()` / `berth dev` / `berth os up` when enforcement is NOT active. | On a Landlock-less host (Docker Desktop for Mac), boot output states enforcement is not active without the user reading any doc. `berth doctor --json` is stable and documented. |
+| 1.3 | **A supported Mac path where enforcement is real.** Document and script one recipe (Lima or Colima with a Landlock-enabled kernel) as `docs/mac-enforcement.md` + a `berth doctor --fix`-style pointer. Verify the recipe by actually running a capability-denial milestone test inside it. | Following the doc verbatim on macOS yields `berth doctor` → `enforcement: ACTIVE` and a real kernel `EACCES` on an undeclared write. |
+| 1.4 | **README compression + hero demo.** Cut to: one paragraph of thesis, one ≤15-line runnable block, then **the money demo** — an agent asks to write outside `/workspace` and the kernel refuses (`EACCES`). Everything else moves to docs/ with a link index. Keep every honesty caveat, relocated not deleted. | A cold reader reaches runnable code inside one screen. The denial demo is copy-paste runnable (uses 1.1's published packages) and exists as `examples/kernel-says-no/`. |
+| 1.5 | **MCP as the front door.** `npx @berth/cli mcp --app apps/filesystem` (or equivalent) working against Claude Code/Cursor in <5 min from zero, documented as the *first* integration path in README/getting-started. In the AI era the first user of Berth is another agent — docs and error messages must be machine-legible. | A fresh Claude Code session can add Berth as an MCP server following only the docs, and an undeclared write through it returns a self-explanatory capability error naming the manifest fix. |
+
+## WS2 — What the security buyer asks for next (~2 weeks, parallel to WS1 after WS0)
+
+These are the two Tier-2 items PRIORITIES already picked, plus the cheap operational floor. All in REMEDIATION Phase 5.
+
+| # | Task | Done when |
+|---|------|-----------|
+| 2.1 | **5.1 Audit trail.** Append-only, per-Berth-OS log of every capability decision, broker allow/deny, grant approve/deny, and governed tool call — with the *kernel-established* actor identity where available (per-app uid), timestamped, hash-chained. Readable via `berth audit`. | Every deny in a milestone run appears in the trail with actor + capability + decision; tampering with a line is detectable. |
+| 2.2 | **5.5 Secrets.** Stop plaintext secrets in `~/.berthrc`, `docker inspect`-visible env, and snapshots. Minimum bar: file mode 0600 store, secrets injected at runtime not baked into images/snapshots, snapshot scrubbing, and a documented "what we do / don't protect" section in the threat model. | `docker inspect` on a booted sandbox shows no provider API key; a snapshot restored on another machine contains no credentials; threat model updated. |
+| 2.3 | **5.6 + 5.8 (cheap ops floor).** Health endpoints + graceful shutdown on the four servers; SQLite WAL + `busy_timeout`. | Each server answers `/health`; SIGTERM drains; DBs opened WAL. |
+
+## WS3 — Product separation & framework freeze (~2 days)
+
+| # | Task | Done when |
+|---|------|-----------|
+| 3.1 | **Declare the freeze.** `packages/agents/README.md` (and `agents-python`) open with: "Reference consumer of the Berth substrate. Maintained for correctness; not accepting new framework features — use Berth from your existing framework via `toAiSdkTools`/`toLangChainTools`/`berth mcp`." Add the same to CONTRIBUTING's wishlist section. | A contributor proposing a new Crew shape can be pointed at one canonical paragraph. |
+| 3.2 | **Two docs entry points.** `docs/` index splits: "Berth OS (the substrate)" vs "`@berth/agents` (reference consumer)". Getting-started leads with substrate + adapters + MCP; framework quickstart is linked, not inlined. | Nav makes the hierarchy unmistakable; README links reflect it. |
+| 3.3 | **Roadmap rewrite.** ROADMAP.md's "where contributions help" and forward sections point at substrate work (apps, brokers, adapters, enforcement verification) — not framework parity. | ROADMAP contains no LangGraph-parity framing. |
+
+## WS4 — Adversarial verification (post-WS1, ongoing)
+
+The next audit is not "Berth vs LangGraph"; it is "Berth's enforcement claims vs a red team."
+
+| # | Task | Done when |
+|---|------|-----------|
+| 4.1 | **Claims inventory.** Extract every enforcement claim from README/threat-model/capability docs into `docs/internal/claims.md`, each tagged: kernel-enforced / broker-enforced / recorded-only / unenforced, with the test that proves it or `UNPROVEN`. | Every claim has a row; UNPROVEN rows become 4.2 targets. |
+| 4.2 | **Red-team milestone suite.** One milestone test per attack class from the threat model (escape via symlink, broker bypass via redirect/DNS rebinding, governance bypass via each transport, self-approval, snapshot credential leakage…), run on a real-Landlock CI host, each asserting the *denial*, with a positive control proving the harness can detect an allow. | Suite in CI on `ubuntu-latest`; a deliberately-introduced hole (mutation check) fails the suite. |
+| 4.3 | **External eyes.** Prepare a self-serve audit pack (threat model + claims inventory + how-to-run-the-suite) and hand the maintainer a shortlist of disclosure/audit venues. | Pack exists; maintainer decision requested. |
+
+## Non-goals for launch (cut lines, not corners)
+
+Explicitly out, and the launch notes must say so: Python feature parity; new Crew shapes or providers; vector-DB retrievers; autoscaling; hosted registry; k8s snapshot; live E2B/Daytona account verification; 5.2 identity/RBAC (which also keeps mTLS server-side-only — already documented); 5.4 encryption at rest (mitigated by 2.2's scoping of what's sensitive).
+
+## Sequencing
+
+```
+WS0 (1d) ──► WS1 (1w, human gate at 1.1) ──► launch
+        └──► WS2 (2w, parallel)          ──► fast-follow if not done
+        └──► WS3 (2d, parallel)
+launch ──► WS4 (ongoing)
+```
+
+Launch gate = WS0 + WS1 complete, WS3 complete, WS2 at least 2.2 done (secrets before public attention). WS4 starts the week after launch and never ends.
