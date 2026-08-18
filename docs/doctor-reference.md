@@ -117,3 +117,25 @@ That sentence was false: nothing had been restricted. It was also the only thing
 ## What a passing verdict does and doesn't tell you
 
 `enforcement: ACTIVE` means a Landlock ruleset **binds** on this kernel. It does not mean any particular app's policy is correct, that the brokers are scoped as intended, or that the boundaries hold under attack — those are separate claims with their own tests ([the threat model](./threat-model.md), and the milestone suite). It is a floor, not a proof.
+
+## Verdicts observed, and on what
+
+Both halves of the verdict table have now been seen on real hardware, which
+matters because until 2026-08-18 only the failing half had:
+
+| Host | Kernel | Verdict | Exit |
+|---|---|---|---|
+| Docker Desktop for Mac 28.0.1 | `6.10.14-linuxkit` | `NOT ACTIVE (the Landlock syscalls are not available in this kernel (Function not implemented))` | 1 |
+| Colima 0.10.3, default VM | `6.8.0-117-generic` (Ubuntu 24.04) | `ACTIVE` — "a ruleset granting nothing denied a write (ABI 4)" | 0 |
+
+The second row is the recipe in [mac-enforcement.md](./mac-enforcement.md), and
+running it found a bug in this command. The probe resolved its scratch path with
+`tempfile.gettempdir()` *after* calling `restrict_self()` on a ruleset that
+grants nothing — and `gettempdir()` finds a writable directory by creating a
+file in each candidate, so on a genuinely enforcing kernel it raised instead of
+returning a path. The probe died with a traceback and the report said `UNKNOWN`.
+The one class of host where the answer was `ACTIVE` was the one class that could
+not report it, and every unit test passed throughout, because the tests inject a
+fake probe rather than running the Python. Fixed by resolving the path first;
+recorded here because "the failing path is well tested and the passing path has
+never run" is the shape of the next bug too.

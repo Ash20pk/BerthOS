@@ -150,6 +150,7 @@ Berth's capability scoping is enforced by [Landlock](https://docs.kernel.org/use
 | Linux, kernel 5.13+ | Enforced | Everything, with real kernel enforcement |
 | Linux, kernel < 5.13 | Unavailable | `berth dev`; agent paths need the relaxed mode below |
 | macOS / Windows (Docker Desktop) | Unavailable — the linuxkit VM returns `ENOSYS` for `landlock_create_ruleset` | `berth dev`; agent paths need the relaxed mode below |
+| macOS, Docker daemon in Colima | Enforced — Colima's default Ubuntu 24.04 guest has Landlock ABI 4 in its active LSM stack | Everything, with real kernel enforcement — recipe and verification in [docs/mac-enforcement.md](docs/mac-enforcement.md) |
 
 `berth dev` builds the dev image, which never required enforcement, so resident-app development works on any host. `Computer.boot()` builds the production image, which refuses to run its app unrestricted — on a host without Landlock it exits rather than pretending to be sandboxed. To iterate locally there anyway:
 
@@ -161,6 +162,8 @@ await Computer.boot({ apps: ["../../../apps/filesystem"], enforcement: "warn" })
 ```
 
 Either one prints a warning on every boot. It is a local-iteration mode: the app runs with whatever the kernel managed to apply, which on Docker Desktop is nothing. Don't use it where the isolation boundary matters.
+
+On macOS you do not have to settle for that: swapping Docker Desktop for Colima gets you a kernel that really refuses an undeclared write, with no custom kernel build — `./scripts/mac-enforcement.sh` sets it up and `berth doctor` confirms it. See [docs/mac-enforcement.md](docs/mac-enforcement.md), which records the full capability-denial milestone passing on that host.
 
 ### Install and build
 

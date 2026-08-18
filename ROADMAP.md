@@ -18,7 +18,7 @@ Berth was built against an original 5-phase plan. All five phases have at least 
 |---|---|---|
 | 1 | Base runtime: `berth init` → `berth dev`, resident app model, manifest schema | Shipped. This is the pilot workflow — see the [Workflow feedback](./.github/ISSUE_TEMPLATE/workflow_feedback.md) template if you hit friction here |
 | 2 | Context bus: pub/sub between resident apps in one Berth OS | Shipped, milestone-tested. [docs/context-bus-reference.md](./docs/context-bus-reference.md) lists known Phase 2 scope limits |
-| 3 | Capability tokens: kernel-enforced (Landlock) permissions, denied by default | Shipped, milestone-tested — **with a caveat**: Landlock enforcement needs a real Linux LSM stack. Docker Desktop for Mac's linuxkit VM doesn't have it active, so a green local run isn't proof of enforcement. Read [docs/capability-tokens-reference.md](./docs/capability-tokens-reference.md)'s verification section before trusting this in any environment you haven't checked `cat /sys/kernel/security/lsm` in |
+| 3 | Capability tokens: kernel-enforced (Landlock) permissions, denied by default | Shipped, milestone-tested — **with a caveat**: Landlock enforcement needs a real Linux LSM stack. Docker Desktop for Mac's linuxkit VM doesn't have it active, so a green local run isn't proof of enforcement. Run `berth doctor`, which answers this per host in one line, and read [docs/capability-tokens-reference.md](./docs/capability-tokens-reference.md)'s verification section before trusting this anywhere you haven't checked. On macOS there is now a supported host where enforcement is real: [docs/mac-enforcement.md](./docs/mac-enforcement.md) — Colima's default kernel, verified `enforcement: ACTIVE` with the full capability-denial suite passing |
 | 4 | Semantic filesystem: search `/context` by what a file is *for*, not just by path | Shipped, milestone-tested — the search ranks over the `task`/`relatedApps`/`path` text you tag a file with, not over file content, and does a full table scan per query. [docs/semantic-fs-reference.md](./docs/semantic-fs-reference.md#query-semantics--hybrid-keyword--embedding-similarity) states both limits |
 | 5 | App registry: publish/discover/install resident apps (`berth publish`) | Shipped. `packages/cli/test/registry-milestone.mjs` is a real integration test, but unlike the phases above, it isn't wired into any `.github/workflows/*.yml` — it doesn't run in CI yet. Not yet paired with a public hosted registry either — `berth publish --registry=<url>` targets a registry you run yourself today |
 
@@ -42,7 +42,7 @@ Built after the initial 5 phases. Most have their own milestone test and CI work
 ## Known gaps
 
 - Nothing under `@berth/*` is published to npm yet. Today you build from source (see [Quickstart](./README.md#quickstart)).
-- Landlock verification has a real gap outside a genuine Linux LSM environment — see Phase 3 above. CI runs on `ubuntu-latest`, which has it; your local Docker Desktop on Mac likely doesn't.
+- Landlock verification has a real gap outside a genuine Linux LSM environment — see Phase 3 above. CI runs on `ubuntu-latest`, which has it; Docker Desktop for Mac's linuxkit kernel doesn't have it at all. On macOS, [docs/mac-enforcement.md](./docs/mac-enforcement.md) is the way out: swap the daemon to Colima and `berth doctor` reports `ACTIVE` rather than `NOT ACTIVE`.
 - No hosted/public app registry — `berth publish` targets a self-run instance.
 - Single maintainer, so review latency varies — see [CONTRIBUTING.md](./CONTRIBUTING.md).
 
