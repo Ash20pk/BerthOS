@@ -76,13 +76,30 @@ async function main() {
     // all, so no manifest can cause it to be published.
     check("9222/tcp has no host binding", !mapped["9222/tcp"], `bound to ${JSON.stringify(mapped["9222/tcp"])}`);
 
-    console.log("\n--- Test 3: a credential was generated and handed to the container ---");
+    console.log("\n--- Test 3: a credential was generated, and is NOT visible in docker inspect ---");
     check("startContainer returned a terminal credential", !!credentials.terminal, "none returned");
+    // This used to assert the opposite — that `BERTH_TERMINAL_CREDENTIAL=<the
+    // password>` appeared in the container's `Env`. It did, permanently, to
+    // anything that could reach the Docker socket, and into every commit and
+    // snapshot of the container (REMEDIATION.md 5.5). It now travels through a
+    // 0600 host file mounted at /run/berth/secrets.env that entrypoint.sh
+    // sources instead. Test 6 below is what proves it still actually arrives:
+    // ttyd cannot accept a password it never received.
     const containerEnv = inspect.Config.Env ?? [];
     check(
-      "the container received BERTH_TERMINAL_CREDENTIAL",
-      containerEnv.some((e) => e === `BERTH_TERMINAL_CREDENTIAL=${credentials.terminal}`),
-      "not present in the container's env",
+      "BERTH_TERMINAL_CREDENTIAL is absent from the container's Env",
+      !containerEnv.some((e) => e.startsWith("BERTH_TERMINAL_CREDENTIAL=")),
+      "the ttyd password is in `docker inspect` — 5.5 has regressed",
+    );
+    check(
+      "the credential's value appears nowhere in the container's Env",
+      !containerEnv.join("\n").includes(credentials.terminal),
+      "the ttyd password is in `docker inspect` under some other name",
+    );
+    check(
+      "the container was told where to read its secrets from",
+      containerEnv.includes("BERTH_SECRETS_FILE=/run/berth/secrets.env"),
+      `BERTH_SECRETS_FILE missing; env was ${JSON.stringify(containerEnv)}`,
     );
 
     // ttyd is started lazily by apps/terminal's ensureSession(), on the first
