@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir, unlink, readdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, unlink, readdir, chmod } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -55,9 +55,21 @@ export async function readOsState(name: string, osDir = DEFAULT_OS_DIR): Promise
   }
 }
 
+/**
+ * 0600 in a 0700 directory, not the umask's default 0644 — `httpRpc.token` is
+ * a bearer token that grants full RPC access to the named OS's exports
+ * (REMEDIATION.md 5.5), and this file is the only place it is persisted.
+ * `chmod` after `writeFile` rather than trusting the `mode` option, which is
+ * masked by the umask on creation and ignored entirely for a file that
+ * already exists — and this file already exists on every `berth os up` after
+ * the first.
+ */
 export async function writeOsState(state: OsStateFile, osDir = DEFAULT_OS_DIR): Promise<void> {
-  await mkdir(osDir, { recursive: true });
-  await writeFile(stateFilePath(state.name, osDir), JSON.stringify(state, null, 2));
+  await mkdir(osDir, { recursive: true, mode: 0o700 });
+  await chmod(osDir, 0o700);
+  const path = stateFilePath(state.name, osDir);
+  await writeFile(path, JSON.stringify(state, null, 2), { mode: 0o600 });
+  await chmod(path, 0o600);
 }
 
 export async function removeOsState(name: string, osDir = DEFAULT_OS_DIR): Promise<void> {

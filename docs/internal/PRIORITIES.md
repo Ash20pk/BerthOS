@@ -37,7 +37,7 @@ Phases 0–2 are closed, which means the security thesis is now true and verifie
 
 Three things surfaced while doing the work that weren't visible when this file was written, and are now recorded in `REMEDIATION.md` rather than here: **3.2 has no Python half at all** (no `stop_reason`, no `TruncatedResponseError` — a truncated response still returns as a final answer to a Python caller), **`google.py` has no `base_url`** so the Gemini adapter can't be stood behind a test server, and **`otel-tracer.ts` classified any non-`llm-turn` event as a tool call**, which the new compaction events would have surfaced in every backend as phantom calls to a tool named "unknown".
 
-**Tier 2 is now the top of the list.** T2.1 (audit trail) is done — see `REMEDIATION.md` 5.1 and `docs/audit-reference.md`. T2.2 (TLS) is done — see `REMEDIATION.md` 5.3 and `docs/tls-reference.md`. **T2.3 (secrets) is what's left in this tier.**
+**Tier 2 is done.** T2.1 (audit trail) — `REMEDIATION.md` 5.1, `docs/audit-reference.md`. T2.2 (TLS) — 5.3, `docs/tls-reference.md`. T2.3 (secrets) — 5.5, `docs/secrets-reference.md`. **What remains in Phase 5 is deferred by decision, not by backlog**: 5.2 (identity/tenancy) is a product question, and 5.4/5.6/5.7/5.8 are correct findings that can wait.
 
 Three things surfaced while doing those two that weren't visible when this file was written.
 
@@ -125,11 +125,11 @@ Every server is plain HTTP with no `https` option. The CLI hardcodes `http://127
 
 1.7 already made every published port loopback-by-default, which contains the local case. The deployed case is still open and is the one an enterprise reviewer will ask about first.
 
-### T2.3 — 5.5, secrets (1w)
+### T2.3 — 5.5, secrets (1w) — done
 
-Fleet credentials in `~/.berthrc` at 0644. API keys passed as `Env` on `createContainer`, so permanently visible in `docker inspect` — including `BERTH_HTTP_RPC_TOKEN`. `berth snapshot create` copies the whole container environment to `~/.berth/snapshots/.../env.json` with no mode, directly contradicting its own comment claiming secrets aren't captured. `~/.berth/os/<name>.json` holds the RPC bearer token at 0644.
+Fleet credentials in `~/.berthrc` at 0644. API keys passed as `Env` on `createContainer`, so permanently visible in `docker inspect` — including `BERTH_HTTP_RPC_TOKEN`. `berth snapshot create` copied the whole container environment to `~/.berth/snapshots/.../env.json` with no mode, directly contradicting its own comment claiming secrets aren't captured. `~/.berth/os/<name>.json` held the RPC bearer token at 0644.
 
-`grants-server/src/operator-token.ts:19` already does this correctly with `mode: 0o600`. Apply that pattern everywhere first (hours, not a week), then add the secret-store seam.
+The mode fixes were indeed hours. The part that was not: `Env` cannot be redacted after the fact, so credentials now travel through a 0600 host file mounted at `/run/berth/secrets.env` that `entrypoint.sh` sources, and never enter Docker's `Env` at all — which is also what keeps them out of `docker commit` and out of every snapshot. `secrets.ts` is the seam; there is still no store behind it. See `REMEDIATION.md` 5.5 and `docs/secrets-reference.md`, whose "what this does not protect against" section is the load-bearing half.
 
 **Defer the rest of Phase 5.** 5.2 (identity/tenancy/RBAC, 2w) is real but is a product decision about whether Berth is multi-tenant at all; don't build it before someone asks. 5.4, 5.6, 5.7, 5.8 are correct findings and can wait.
 

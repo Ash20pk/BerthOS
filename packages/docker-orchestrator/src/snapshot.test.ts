@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile, mkdir, readFile } from "node:fs/promises";
+import { mkdtemp, writeFile, mkdir, readFile, stat } from "node:fs/promises";
 import { createWriteStream } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,7 +9,7 @@ import { Readable } from "node:stream";
 import tarFs from "tar-fs";
 import type Docker from "dockerode";
 import type { BerthManifest } from "@berth/manifest-schema";
-import { restoreSnapshot, createSnapshot } from "./snapshot.js";
+import { restoreSnapshot, createSnapshot, type SnapshotMetadata } from "./snapshot.js";
 
 /**
  * Builds a snapshot directory on disk with the same shape createSnapshot()
@@ -169,4 +169,83 @@ test("createSnapshot() still succeeds even if removing the committed image fails
   });
 
   assert.ok(result.id);
+});
+
+/**
+ * REMEDIATION.md 5.5's snapshot half. env.json used to be the running
+ * container's entire environment, written at whatever mode the umask gave it —
+ * so a snapshot directory copied to another machine (which is the whole point
+ * of a snapshot) carried the RPC bearer token and every provider API key with
+ * it, while this module's own doc comment claimed secrets weren't captured.
+ */
+test("createSnapshot() writes no credential values into env.json, and records which names it withheld", async () => {
+  const snapshotsDir = await mkdtemp(join(tmpdir(), "berth-snapshot-secrets-test-"));
+  const docker = {
+    getImage: () => ({ get: async () => emptyReadable(), remove: async () => {} }),
+  } as unknown as Docker;
+
+  const { dir } = await createSnapshot({
+    container: fakeContainer(),
+    appName: "fixture-app",
+    manifest: { name: "fixture-app" } as unknown as BerthManifest,
+    env: {
+      BERTH_WORKSPACE_ROOT: "/workspace/.berth/dev-workspace",
+      ANTHROPIC_API_KEY: "sk-ant-must-not-be-in-a-snapshot",
+      BERTH_HTTP_RPC_TOKEN: "rpc-token-must-not-be-in-a-snapshot",
+    },
+    snapshotsDir,
+    docker,
+  });
+
+  const envJson = await readFile(join(dir, "env.json"), "utf-8");
+  assert.ok(!envJson.includes("sk-ant-must-not-be-in-a-snapshot"), `env.json carried a provider key: ${envJson}`);
+  assert.ok(!envJson.includes("rpc-token-must-not-be-in-a-snapshot"), `env.json carried the RPC token: ${envJson}`);
+  assert.deepEqual(JSON.parse(envJson), { BERTH_WORKSPACE_ROOT: "/workspace/.berth/dev-workspace" });
+
+  const metadata = JSON.parse(await readFile(join(dir, "metadata.json"), "utf-8")) as SnapshotMetadata;
+  assert.deepEqual(metadata.redactedEnvNames, ["ANTHROPIC_API_KEY", "BERTH_HTTP_RPC_TOKEN"]);
+
+  assert.equal((await stat(join(dir, "env.json"))).mode & 0o777, 0o600);
+  assert.equal((await stat(dir)).mode & 0o777, 0o700);
+});
+
+test("createSnapshot() records no redactedEnvNames when the captured environment holds no credentials", async () => {
+  const snapshotsDir = await mkdtemp(join(tmpdir(), "berth-snapshot-secrets-test-"));
+  const docker = {
+    getImage: () => ({ get: async () => emptyReadable(), remove: async () => {} }),
+  } as unknown as Docker;
+
+  const { dir } = await createSnapshot({
+    container: fakeContainer(),
+    appName: "fixture-app",
+    manifest: { name: "fixture-app" } as unknown as BerthManifest,
+    env: { BERTH_WORKSPACE_ROOT: "/workspace" },
+    snapshotsDir,
+    docker,
+  });
+
+  const metadata = JSON.parse(await readFile(join(dir, "metadata.json"), "utf-8")) as SnapshotMetadata;
+  assert.equal(metadata.redactedEnvNames, undefined);
+});
+
+/** restoreSnapshot() has to hand the withheld names to its caller, or `berth snapshot restore` can't tell an operator why the restored agent has no model access. */
+test("restoreSnapshot() surfaces the names the snapshot deliberately didn't capture", async () => {
+  const snapshotsDir = await mkdtemp(join(tmpdir(), "berth-snapshot-secrets-test-"));
+  const docker = {
+    getImage: () => ({ get: async () => emptyReadable(), remove: async () => {} }),
+    loadImage: async () => emptyReadable(),
+  } as unknown as Docker;
+
+  const { dir } = await createSnapshot({
+    container: fakeContainer(),
+    appName: "fixture-app",
+    manifest: { name: "fixture-app" } as unknown as BerthManifest,
+    env: { OPENAI_API_KEY: "sk-openai-test" },
+    snapshotsDir,
+    docker,
+  });
+
+  const restored = await restoreSnapshot(dir, docker);
+  assert.deepEqual(restored.redactedEnvNames, ["OPENAI_API_KEY"]);
+  assert.deepEqual(restored.env, {});
 });
