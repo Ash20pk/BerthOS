@@ -12,6 +12,7 @@ Expect them to be blunt about what is broken. That is their job.
 
 | Document | Authoritative for | Read it when |
 |---|---|---|
+| [STRATEGY.md](./STRATEGY.md) | **The category and the thesis.** What market Berth competes in (the agent trust layer), what "best" means on its five axes, the post-launch workstreams (WS5–WS7), and the evidence that would falsify the whole bet. | You are deciding *whether* something is worth building at all, or need the one-line product definition to test a proposal against. |
 | [REMEDIATION.md](./REMEDIATION.md) | **Defects.** Every known correctness/security/credibility problem, with `file:line` evidence, the fix, and what would prove it closed. | You want to know whether something is actually broken, and what closing it would take. |
 | [LAUNCH_PLAN.md](./LAUNCH_PLAN.md) | **Execution order.** Which defects gate a public launch, in what sequence, and what is explicitly out. | You are picking up work and need to know what to do next. |
 | [PRIORITIES.md](./PRIORITIES.md) | **The reasoning behind the filter** — why the substrate is the product and the framework is a reference consumer. Superseded on *ordering* by LAUNCH_PLAN. | You want to understand why the plan is shaped the way it is, or are tempted to argue with it. |
