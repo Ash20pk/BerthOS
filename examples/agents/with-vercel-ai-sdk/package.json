@@ -9,6 +9,6 @@
   "dependencies": {
     "@berth/agents": "workspace:*",
     "@ai-sdk/openai": "^4.0.0",
-    "ai": "^7.0.55"
+    "ai": "^7.0.66"
   }
 }
