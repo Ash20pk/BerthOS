@@ -2,7 +2,6 @@ import { Command, Flags } from "@oclif/core";
 import Docker from "dockerode";
 import {
   restartContainer,
-  startContainer,
   stopContainer,
   streamLogs,
   watchApp,
@@ -13,8 +12,7 @@ import {
 } from "@berth/docker-orchestrator";
 import type { BerthManifest } from "@berth/manifest-schema";
 import { loadManifestOrExit } from "../util/manifest.js";
-import { buildDevImage, devImageTag } from "../util/build.js";
-import { resolveDevBindMount, devStatePath } from "../util/workspace.js";
+import { bootDevContainer } from "../util/dev-boot.js";
 import {
   resolveApps,
   assertAtMostOneBrowserApp,
@@ -48,61 +46,14 @@ export default class Dev extends Command {
     assertAtMostOneEgressBrokerApp(apps);
     if (apps.length > 1) this.log(`Running with companion apps: ${apps.slice(1).map((a) => a.name).join(", ")}`);
 
-    this.log(`Building dev image for "${manifest.name}"...`);
-    await buildDevImage(appDir, manifest, apps.slice(1));
-
-    // The workspace root is mounted read-only (REMEDIATION.md 1.6), so every
-    // path that still needs writing gets a volume mounted back over it. Each
-    // app's `.berth` holds its generated capability policy; a shared
-    // dev-workspace directory holds app data. See resolveDevBindMount().
-    const { bindMount, extraBinds, workingDir, workspaceRoot } = resolveDevBindMount(
+    const running = await bootDevContainer({
       appDir,
-      apps.slice(1).map((a) => ({ appDir: a.appDir, relPath: a.relPath })),
-    );
-
-    // Renamed from -install-marker when on_install became a build layer
-    // (REMEDIATION.md 1.5): it holds .berth/ — today just the generated
-    // capability policy — not a marker. An old volume under the previous name
-    // is simply orphaned; nothing in it was worth carrying over, since the
-    // policy is regenerated on every boot.
-    const volumeName = `berth-${manifest.name}-app-state`;
-    await docker.createVolume({ Name: volumeName }).catch(() => {
-      /* already exists */
-    });
-    // Companions need the same treatment as the primary — without a writable
-    // .berth, generate-capability-policy.js fails on the read-only mount and
-    // agent-init has no policy to apply. The primary goes through
-    // appStateVolume above only because that option already exists and
-    // resolves to exactly this path.
-    for (const companion of apps.slice(1)) {
-      const companionVolume = `berth-${manifest.name}-${companion.name}-app-state`;
-      await docker.createVolume({ Name: companionVolume }).catch(() => {
-        /* already exists */
-      });
-      extraBinds.push(`${companionVolume}:${devStatePath("/workspace", companion.relPath)}`);
-    }
-
-    const running = await startContainer({
-      image: devImageTag(manifest),
-      name: `berth-dev-${manifest.name}`,
       manifest,
-      bindMount,
-      extraBinds,
-      workingDir,
-      appStateVolume: volumeName,
-      apps:
-        apps.length > 1
-          ? apps.map((a) => ({ name: a.name, workingDir: `/workspace/${a.relPath}`, manifest: a.manifest }))
-          : undefined,
-      env: {
-        // Every first-party app reads this before falling back to /workspace,
-        // which is now read-only. Without it, apps/notes and friends would get
-        // EROFS on their very first write.
-        BERTH_WORKSPACE_ROOT: workspaceRoot,
-        ...(flags["grants-server"] ? { BERTH_GRANTS_SERVER_URL: flags["grants-server"] } : {}),
-      },
-      meshCoordinatorUrl: flags["mesh-coordinator"],
+      apps,
       docker,
+      grantsServerUrl: flags["grants-server"],
+      meshCoordinatorUrl: flags["mesh-coordinator"],
+      log: (message) => this.log(message),
     });
 
     this.log(`Container started. Watching ${appDir}/src and berth.yml for changes...`);
