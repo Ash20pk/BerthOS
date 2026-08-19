@@ -4,7 +4,11 @@ name: MCP Bridge Milestone
 # packages/docker-orchestrator/test/mcp-milestone.mjs. Boots a real
 # apps/filesystem dev container, spawns `berth mcp --app=filesystem` as a
 # real child process, and drives it with the actual
-# @modelcontextprotocol/sdk Client over real stdio.
+# @modelcontextprotocol/sdk Client over real stdio. Since launch-plan 1.5 it
+# also covers the front-door path: `berth mcp` booting its own sandbox when
+# none is running, and a denied tool call coming back as an explanation that
+# names the berth.yml line which would allow it (Tests 3-5). Those add two more
+# container boots and one more image build, hence the raised timeout.
 on:
   push:
     branches: [main]
@@ -14,7 +18,7 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v7
 
