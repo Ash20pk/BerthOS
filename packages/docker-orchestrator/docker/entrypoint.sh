@@ -11,6 +11,35 @@ set -euo pipefail
 export BERTH_BOOT_ID="$(cat /proc/sys/kernel/random/uuid)"
 echo "[berth:entrypoint] boot id: ${BERTH_BOOT_ID}" >&2
 
+# Credentials do not travel in `docker inspect`. container.ts writes every
+# secret-named environment variable — the HTTP RPC bearer token, the ttyd and
+# VNC passwords, any provider API key the caller passed — to a 0600 host file
+# mounted read-only here, instead of putting it in the container's `Env`,
+# where it would be permanently readable to anyone who can inspect the
+# container and would be copied verbatim into every `docker commit` and every
+# `berth snapshot create` (REMEDIATION.md 5.5). Sourced here, before any
+# daemon or app starts, so every child process inherits these exactly as if
+# they had been passed as `Env` all along.
+#
+# `set -a` rather than relying on the file's own `export`s: it makes the
+# mechanism independent of how the file is rendered. Failing closed is
+# deliberate — an unreadable or malformed secrets file means the app boots
+# without a credential it asked for, which surfaces much later as an
+# unexplained 401 from something unrelated. BERTH_SECRETS_FILE is only set
+# when there is at least one secret to deliver, so a container without any is
+# unaffected.
+if [ -n "${BERTH_SECRETS_FILE:-}" ]; then
+  if [ ! -r "$BERTH_SECRETS_FILE" ]; then
+    echo "[berth:entrypoint] FATAL: BERTH_SECRETS_FILE=${BERTH_SECRETS_FILE} is not readable — this container's credentials (RPC token, terminal/VNC passwords, provider API keys) cannot be delivered. Refusing to boot without them." >&2
+    exit 1
+  fi
+  set -a
+  # shellcheck disable=SC1090
+  . "$BERTH_SECRETS_FILE"
+  set +a
+  echo "[berth:entrypoint] loaded container secrets from ${BERTH_SECRETS_FILE} (kept out of docker inspect — see docs/secrets-reference.md)" >&2
+fi
+
 # Starts the display stack a browser:* app needs: Xvfb for Chromium to draw
 # into, x11vnc to serve that display, and websockify/noVNC to put it in a
 # browser tab. Identical in single- and multi-app mode, so it lives here

@@ -1,5 +1,11 @@
 import Docker from "dockerode";
 import { warnIfEnforcementInactive } from "./doctor.js";
+import {
+  CONTAINER_SECRETS_PATH,
+  partitionSecretEnv,
+  removeContainerSecretsDir,
+  writeContainerSecretsFile,
+} from "./secrets.js";
 import { randomBytes } from "node:crypto";
 import type { BerthManifest } from "@berth/manifest-schema";
 
@@ -163,6 +169,12 @@ export interface StartContainerOptions {
    * silently widen the binding back to Docker's default.
    */
   publishHost?: string;
+  /**
+   * Where the per-container secrets file is written on the host — defaults to
+   * ~/.berth/run/<container name>/secrets.env. Overridable so tests don't
+   * touch the real one, the same way snapshotsDir and osDir are.
+   */
+  secretsRunDir?: string;
   docker?: Docker;
 }
 
@@ -328,11 +340,32 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
     ? [{ Driver: "nvidia", Count: resources.gpu, Capabilities: [["gpu"]] }]
     : undefined;
 
+  // The 5.5 split. Everything a name marks as a credential — the RPC bearer
+  // token and the terminal/VNC passwords generated above, plus whatever the
+  // caller passed (a provider API key reaching a networked agent's own
+  // container is the motivating case; see @berth/agents' bootNetworkedAgent)
+  // — leaves `Env` entirely and travels through a 0600 host file mounted
+  // read-only at CONTAINER_SECRETS_PATH, which entrypoint.sh sources before
+  // any daemon or app starts. Same process environment for the app either
+  // way; the difference is that `docker inspect`, every `docker commit` of
+  // this container, and every snapshot built from one now contain the names'
+  // absence rather than their values.
+  //
+  // No secrets, no mount: a container whose environment holds nothing
+  // sensitive is byte-for-byte what it was before this existed.
+  const { plain, secret } = partitionSecretEnv(env);
+  const secretNames = Object.keys(secret);
+  if (secretNames.length > 0) {
+    const secretsHostPath = await writeContainerSecretsFile(options.name, secret, options.secretsRunDir);
+    binds.push(`${secretsHostPath}:${CONTAINER_SECRETS_PATH}:ro`);
+    plain.BERTH_SECRETS_FILE = CONTAINER_SECRETS_PATH;
+  }
+
   const container = await docker.createContainer({
     name: options.name,
     Image: options.image,
     WorkingDir: workingDir,
-    Env: Object.entries(env).map(([k, v]) => `${k}=${v}`),
+    Env: Object.entries(plain).map(([k, v]) => `${k}=${v}`),
     ExposedPorts: exposedPorts,
     // The SDK runtime's RPC server listens on stdin to stay alive — without
     // an open stdin, Docker delivers immediate EOF to a non-interactive
@@ -525,7 +558,19 @@ function demultiplexLogs(buffer: Buffer): string {
   return offset === 0 ? buffer.toString("utf8") : chunks.join("");
 }
 
-export async function stopContainer(container: Docker.Container): Promise<void> {
+/**
+ * `secretsRunDir` must match the one `startContainer()` was given, since that
+ * is the only thing that says where this container's secrets file was written
+ * — the default is right for every caller that didn't override it, and the
+ * override exists for tests.
+ */
+export async function stopContainer(container: Docker.Container, options: { secretsRunDir?: string } = {}): Promise<void> {
+  // Before stopping, because inspect() is the only way back to the container
+  // *name* the secrets file was written under, and a removed container can no
+  // longer be inspected. Best-effort throughout: the file is 0600 in a 0700
+  // directory and is overwritten by the next boot of the same name, so
+  // failing to unlink it must not turn a successful teardown into an error.
+  await removeSecretsForContainer(container, options.secretsRunDir);
   try {
     await container.stop();
   } catch (err) {
@@ -535,6 +580,24 @@ export async function stopContainer(container: Docker.Container): Promise<void> 
     }
   }
   await container.remove({ force: true });
+}
+
+/**
+ * Deliberately not called from `restartContainer()`: a restart re-runs
+ * entrypoint.sh, which sources the secrets file again, so removing it there
+ * would leave the app's second life without the credentials its first one
+ * had.
+ */
+async function removeSecretsForContainer(container: Docker.Container, secretsRunDir?: string): Promise<void> {
+  try {
+    const info = await container.inspect();
+    // Docker reports names with a leading slash ("/berth-dev-app").
+    const name = info.Name?.replace(/^\//, "");
+    if (name) await removeContainerSecretsDir(name, secretsRunDir);
+  } catch {
+    // Already gone, or the daemon went away — nothing to clean up that the
+    // next boot of this name won't overwrite anyway.
+  }
 }
 
 /**

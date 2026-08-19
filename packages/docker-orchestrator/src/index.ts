@@ -48,3 +48,15 @@ export {
   type OsStateFile,
   type OsAppRecord,
 } from "./os-state.js";
+export {
+  isSecretEnvName,
+  partitionSecretEnv,
+  stripSecretEnv,
+  serializeSecretsEnvFile,
+  writeContainerSecretsFile,
+  removeContainerSecretsDir,
+  containerSecretsDir,
+  isGroupOrWorldReadable,
+  CONTAINER_SECRETS_PATH,
+  type PartitionedEnv,
+} from "./secrets.js";
