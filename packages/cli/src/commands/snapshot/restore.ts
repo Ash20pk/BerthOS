@@ -30,6 +30,19 @@ export default class SnapshotRestore extends Command {
     this.log(`Loading snapshot ${args.id} from ${dir}...`);
     const restored = await restoreSnapshot(dir, docker);
 
+    // A snapshot carries no credentials by construction (REMEDIATION.md 5.5),
+    // which means a restored sandbox boots without whatever the original had.
+    // Said here rather than left for the app to fail on: "the agent can't
+    // reach the model provider" is a much harder thing to diagnose from
+    // inside the container than from this line.
+    if (restored.redactedEnvNames.length > 0) {
+      this.warn(
+        `this snapshot deliberately did not capture ${restored.redactedEnvNames.length} credential-valued environment ` +
+          `variable(s): ${restored.redactedEnvNames.join(", ")}. The restored sandbox boots without them — set them in ` +
+          `the environment of whatever drives it (see docs/secrets-reference.md).`,
+      );
+    }
+
     const containerName = flags.name ?? `berth-restored-${manifest.name}-${args.id}`;
     this.log(`Starting a fresh sandbox from the restored image (${restored.metadata.imageTag})...`);
     const running = await startContainer({
