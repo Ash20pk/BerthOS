@@ -32,6 +32,26 @@ Nothing in that script, in `@berth/agents`, or in the app's own code inspects th
 
 **The honest part:** that denial needs a host kernel that provides Landlock. Docker Desktop for Mac does not, and the example says so and exits non-zero rather than printing a denial it can't attribute to the kernel. On macOS, [docs/mac-enforcement.md](./docs/mac-enforcement.md) is a four-flag Colima recipe (no kernel build) where it's real — verified on Apple silicon, Landlock ABI 4. Run [`berth doctor`](./docs/doctor-reference.md) to see which host you're on. What is and isn't enforced, per capability and per tier: [docs/kernel-enforcement.md](./docs/kernel-enforcement.md).
 
+## The fastest way in: point your agent at it over MCP
+
+No framework, no SDK call, no `Agent` class — Berth is an MCP server, so the agent you already use can hold the sandbox directly:
+
+```bash
+claude mcp add berth-filesystem -- node /abs/path/BerthOS/packages/cli/bin/berth.js \
+  mcp --app filesystem --app-dir /abs/path/BerthOS/apps/filesystem
+```
+
+`berth mcp` boots the sandbox itself, exposes exactly the exports `apps/filesystem`'s manifest declares, and stops the sandbox when your client disconnects. Ask your agent to write to `/etc` and it gets this back, rather than an errno:
+
+```
+BERTH CAPABILITY DENIAL
+denied: open(2) on /etc/berth-should-not-exist.txt (EACCES: permission denied)
+denied-by: the kernel — a Landlock ruleset compiled from "filesystem"'s berth.yml, applied before the app's first line ran
+fix: none available — a berth.yml filesystem scope may only name /workspace, /context, /tmp, /app
+```
+
+Denials name the manifest line that would allow them (or say honestly that none would), and `denied-by:` says `the kernel` only where the kernel really did it. Run `--warm` once first, then read [docs/mcp-quickstart.md](./docs/mcp-quickstart.md) — setup for Claude Desktop/Cursor, scoping with `--only`, and the `DOCKER_HOST` gotcha on Colima.
+
 ## Keep the agent framework you already have
 
 Berth's differentiator is what its tools are *made of*, so adopting a whole framework isn't the price of reaching it. Boot a `Computer`, hand its tools to the loop you already run:
@@ -40,7 +60,7 @@ Berth's differentiator is what its tools are *made of*, so adopting a whole fram
 |---|---|
 | Vercel AI SDK | `await toAiSdkTools(computer.tools)` → pass as `tools` to `generateText`/`streamText`/`useChat` |
 | LangChain / LangGraph | `await toLangChainTools(computer.tools)` → pass to `createReactAgent({ tools })`, `ToolNode`, `bindTools` |
-| Claude Code, Cursor, any MCP client | `berth mcp --app=<name>` — a real MCP server, no adapter at all |
+| Claude Code, Cursor, any MCP client | `berth mcp --app <name>` — a real MCP server, no adapter at all ([5-minute setup](./docs/mcp-quickstart.md)) |
 | Anything else | `toToolSpecs(computer.tools)` — name, description, JSON Schema, and a call function |
 
 [`examples/agents/with-vercel-ai-sdk`](./examples/agents/with-vercel-ai-sdk) is the demo above with a real model in the loop and no Berth `Agent` anywhere in the file. Details, and why both adapters are optional peer dependencies: [docs/why-berth.md](./docs/why-berth.md#use-it-from-your-existing-framework).
@@ -53,6 +73,7 @@ This README used to be 500 lines. It's a hub now; nothing was deleted, including
 
 | Read this | For |
 |---|---|
+| [MCP quickstart](./docs/mcp-quickstart.md) | Adding Berth to Claude Code, Claude Desktop, or Cursor; what a denial looks like and how to read it |
 | [Quickstart](./docs/quickstart.md) | Prerequisites, install and build, running an agent, running a resident app, the CLI reference, repository layout |
 | [Enforcement](./docs/kernel-enforcement.md) | Kernel enforcement by platform, every capability and what enforces it, the kernel/broker/recorded tiers, **what isn't enforced yet** |
 | [Threat model](./docs/threat-model.md) | Adversaries, trust boundaries, what holds each one, what's permanently out of scope |
