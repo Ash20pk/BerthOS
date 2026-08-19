@@ -210,7 +210,10 @@ becomes these five. Each row names where Berth is today (verified against
 ## 6. Workstreams (post-launch; extends LAUNCH_PLAN's numbering)
 
 LAUNCH_PLAN's WS0–WS4 are the on-ramp and remain authoritative for the
-launch gate. These start after (or, for WS5.1, during) launch week. Row
+launch gate. These start after (or, for WS5.1, during) launch week.
+**Task-level breakdown, sequencing, and the metric board live in
+[BUILD_PLAN.md](./BUILD_PLAN.md)** (its M1–M3 implement WS5–WS7); this
+section stays the workstream-level definition of done. Row
 numbers below are workstream items (WS5.1, WS6.2, …), not REMEDIATION
 numbers — REMEDIATION references are always written out as such.
 

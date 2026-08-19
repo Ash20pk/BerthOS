@@ -8,7 +8,9 @@
 > filter over REMEDIATION, kept for its reasoning; superseded on *ordering* by
 > LAUNCH_PLAN. `ROADMAP.md` — the public "is X real yet" page. `gaps.md` —
 > **archived**; it validated that the substrate is usable from a framework, and
-> is not a roadmap.
+> is not a roadmap. `BUILD_PLAN.md` — the live work queue: this plan's
+> unfinished rows (1.1, 2.3, WS3, WS4) are absorbed into its M0/M2, so pick up
+> work there, not here.
 
 Written 2026-08-18. This is the execution plan for taking Berth to a public launch, written to be **executed by AI coding agents** working in this repo. It supersedes the *ordering* in [REMEDIATION.md](./REMEDIATION.md) and [PRIORITIES.md](./PRIORITIES.md) but not their findings — where this file says "skip," the defect is still real, it's just not launch-blocking.
 
