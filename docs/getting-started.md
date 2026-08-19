@@ -1,6 +1,8 @@
 # Getting Started
 
-This walkthrough takes you from a clean checkout to a working resident app with a live browser you can watch over VNC. It should take under 10 minutes. It's the resident-app-building path. For the fastest way to see a working agent, try the [Quickstart](./quickstart.md) instead. Both feed into the same [Berth OS](./berth-os.md), the sandboxed computer a resident app runs in and an agent's tools come from.
+This walkthrough takes you from a clean checkout to a working resident app with a live browser you can watch over VNC. It should take under 10 minutes. It's the resident-app-building path.
+
+**If you only want to use Berth from an agent you already run, start with [the MCP quickstart](./mcp-quickstart.md) instead** — one command in your MCP client's config, no framework and no code. For the fastest way to see a working agent in this repo, try the [Quickstart](./quickstart.md). Both feed into the same [Berth OS](./berth-os.md), the sandboxed computer a resident app runs in and an agent's tools come from.
 
 ## Prerequisites
 
@@ -48,7 +50,7 @@ cd ../../../apps/notes
 pnpm exec berth dev
 ```
 
-Call an export (through `berth rpc`, or the MCP bridge, see [mcp-bridge-reference.md](./mcp-bridge-reference.md)) and watch `filesystem:write:/workspace` actually get enforced. Writing outside `/workspace` gets refused at the kernel level, not just by convention.
+Call an export (through `berth rpc`, or from your own MCP client — [mcp-quickstart.md](./mcp-quickstart.md), mechanics in [mcp-bridge-reference.md](./mcp-bridge-reference.md)) and watch `filesystem:write:/workspace` actually get enforced. Writing outside `/workspace` gets refused at the kernel level, not just by convention.
 
 ## 4. Run the browser-native example (with a live VNC view)
 

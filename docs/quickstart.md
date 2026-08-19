@@ -117,7 +117,7 @@ berth deploy --fleet=e2b          # or --fleet=daytona, --fleet=k8s, or an alias
 | `berth deploy --fleet=<e2b\|daytona\|k8s> [--region=<value>]` | Deploy to a remote sandbox provider — `--region` meaning differs per adapter (Daytona snapshot region, k8s node selector, no-op on E2B) |
 | `berth logs <app>` | Stream logs from an already-running dev or fleet container |
 | `berth rpc <app> --export=<name> --input=<json>` | Call a resident app's export directly from the host |
-| `berth mcp --app=<name> [--only=<export1>,<export2>]` | Bridge a running app's exports to MCP tools, for Claude Desktop/Code or any MCP client — `--only` scopes which exports get bridged instead of exposing everything |
+| `berth mcp --app=<name> [--only=<export1>,<export2>] [--warm] [--no-boot]` | Serve an app's exports as MCP tools, for Claude Code/Desktop/Cursor or any MCP client — boots the sandbox itself if none is running (`--no-boot` to attach only), `--only` scopes which exports get bridged, `--warm` pre-builds and exits. See [mcp-quickstart.md](./mcp-quickstart.md) |
 | `berth publish --registry=<url> [--token=<value>]` | Build and publish the app to a running app registry — `--token` is required to publish a new version of a name someone already published |
 | `berth snapshot create\|list\|restore [--fleet=<name>]` | Checkpoint and restore a container plus its semantic-fs context data — `--fleet` pauses/resumes (E2B) or snapshots (Daytona) a remote instance instead |
 | `berth snapshot fork <app> --fleet=<name>` | Fork a running remote instance into a new, independent clone (Daytona only) |
