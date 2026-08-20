@@ -73,11 +73,18 @@ not read Docker CLI contexts. Skip the export and `berth doctor` cheerfully
 probes Docker Desktop's linuxkit kernel and reports `NOT ACTIVE` while
 `docker info` two lines earlier said Ubuntu. Verified the hard way.
 
-Put it in your shell profile, or use the script:
+Put it in your shell profile, or let doctor do the whole thing:
 
 ```bash
-./scripts/mac-enforcement.sh          # install + start + export + berth doctor
+berth doctor --fix                    # install + start colima, then re-check against it
+./scripts/mac-enforcement.sh          # the same steps as a standalone script
 ```
+
+`--fix` runs exactly the steps this document describes (brew install if
+missing, `colima start --vm-type vz --mount-type virtiofs --mount "$HOME:w"`),
+then re-runs doctor against the Colima socket — it reports success only when
+the re-check observes enforcement, and prints the `DOCKER_HOST` export it
+cannot do for you.
 
 ### 4. Check
 

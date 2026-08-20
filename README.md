@@ -9,6 +9,20 @@ Your agent needs to write files, run code, drive a browser. Berth gives it a per
 ## Run it
 
 ```bash
+npm install -g @berth/cli
+berth doctor --fix      # macOS: provisions a Colima host whose kernel actually enforces
+berth init my-app && cd my-app && berth dev
+```
+
+`berth doctor --fix` is the honest step most sandboxes skip: it checks whether
+*your* Docker host's kernel can enforce Landlock, and on a default Mac (where
+Docker Desktop's kernel can't) it offers to install and start the
+[Colima host](./docs/mac-enforcement.md) that can — then re-checks and refuses
+to claim enforcement it didn't observe.
+
+Working from source instead:
+
+```bash
 git clone https://github.com/Ash20pk/BerthOS && cd BerthOS
 corepack enable && pnpm install && pnpm build
 cd examples/kernel-says-no && pnpm start        # no API key needed
