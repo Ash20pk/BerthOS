@@ -153,7 +153,7 @@ Update at each review; a number nobody updates is a claim nobody checked.
 | 1 Enforcement | REMEDIATION 1.3/B4/per-app-secrets closed with negative controls | 0 of 3 | 0 of 3 |
 | 2 Provability | benchmark harnesses covered / box days survived / attestation in CI | none exists | — |
 | 3 Universality | seams shipped (MCP, AI SDK, LangChain live) | 3 | 3 |
-| 4 Time-to-first-denial | minutes, clean default Mac | unreachable (not published) | — |
+| 4 Time-to-first-denial | minutes, clean default Mac | unreachable (not published) | ≈2m20s on a pre-provisioned Colima Mac (`verification/time-to-first-denial-2026-08-20.md`); clean-machine number pending publish |
 | 5 Standard | third-party spec implementations | 0 (no spec) | 0 |
 
 ## What is deliberately not in this plan
