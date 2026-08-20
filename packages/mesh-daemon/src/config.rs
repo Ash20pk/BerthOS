@@ -37,8 +37,16 @@ impl Config {
                 .unwrap_or_else(|_| "http://host.docker.internal:4875".to_string()),
             control_socket: env::var("BERTH_MESH_SOCKET").unwrap_or_else(|_| "/tmp/berth-mesh.sock".to_string()),
             listen_port: env::var("BERTH_MESH_LISTEN_PORT").ok().and_then(|v| v.parse().ok()).unwrap_or(51820),
-            key_path: env::var("BERTH_MESH_KEY_PATH").unwrap_or_else(|_| "/var/berth/mesh/privatekey".to_string()),
-            token_path: env::var("BERTH_MESH_TOKEN_PATH").unwrap_or_else(|_| "/var/berth/mesh/owner-token".to_string()),
+            // /run/berth/mesh, not /var/berth/mesh: since BUILD_PLAN M1.1 the
+            // sandbox mounts the sidecar's /var/berth read-only (the snapshot
+            // getArchive view), so the daemon's own keypair/token writes there
+            // fail with EROFS and disable the mesh. /run is ordinary writable
+            // container tmpfs; the key is regenerated and the token
+            // re-registered on each boot, which mesh-coordinator already
+            // handles, so losing cross-restart persistence here costs nothing
+            // the read-only mount hadn't already taken.
+            key_path: env::var("BERTH_MESH_KEY_PATH").unwrap_or_else(|_| "/run/berth/mesh/privatekey".to_string()),
+            token_path: env::var("BERTH_MESH_TOKEN_PATH").unwrap_or_else(|_| "/run/berth/mesh/owner-token".to_string()),
             mesh_peer_patterns,
         }
     }

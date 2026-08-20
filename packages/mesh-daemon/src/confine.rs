@@ -38,7 +38,7 @@ use crate::config::Config;
 /// Everything mesh-daemon (and the wg-quick/wg/ip children it spawns, which
 /// inherit the domain) legitimately writes:
 ///   /etc/wireguard      — wg0.conf, rewritten on every reconcile tick
-///   key/token dir       — /var/berth/mesh by default
+///   key/token dir       — /run/berth/mesh by default (config.rs)
 ///   control socket dir  — /tmp by default
 ///   /run/wireguard      — wg-quick's userspace-mode socket + name-list dir
 ///   /var/run/wireguard  — the same, on distros where /var/run isn't a
