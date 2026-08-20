@@ -12,6 +12,8 @@ import {
   removeContainerSecretsDir,
   containerSecretsDir,
   isGroupOrWorldReadable,
+  partitionSecretsPerApp,
+  writePerAppSecretsFiles,
 } from "./secrets.js";
 
 test("isSecretEnvName catches the credentials Berth itself sets", () => {
@@ -188,4 +190,56 @@ test("stripSecretEnv drops boot-scoped names without reporting them as withheld 
   });
   assert.deepEqual(env, { BERTH_WORKSPACE_ROOT: "/workspace" });
   assert.deepEqual(strippedNames, ["ANTHROPIC_API_KEY"]);
+});
+
+test("partitionSecretsPerApp: no declarations means everything stays shared — byte-identical boot", () => {
+  const secret = { ANTHROPIC_API_KEY: "sk-1", BERTH_HTTP_RPC_TOKEN: "t" };
+  const { shared, perApp, missing } = partitionSecretsPerApp(secret, [
+    { name: "filesystem", secrets: [] },
+    { name: "code-editor", secrets: [] },
+  ]);
+  assert.deepEqual(shared, secret);
+  assert.deepEqual(perApp, {});
+  assert.deepEqual(missing, []);
+});
+
+test("partitionSecretsPerApp: a declared name leaves the shared file and reaches only its declarer", () => {
+  const { shared, perApp } = partitionSecretsPerApp(
+    { A_API_KEY: "va", BERTH_HTTP_RPC_TOKEN: "t" },
+    [
+      { name: "app-a", secrets: ["A_API_KEY"] },
+      { name: "app-b", secrets: [] },
+    ],
+  );
+  assert.deepEqual(shared, { BERTH_HTTP_RPC_TOKEN: "t" });
+  assert.deepEqual(perApp, { "app-a": { A_API_KEY: "va" } });
+  assert.ok(!("app-b" in perApp));
+});
+
+test("partitionSecretsPerApp: two apps may both declare the same name; each gets it, shared does not", () => {
+  const { shared, perApp } = partitionSecretsPerApp({ SHARED_TOKEN: "v" }, [
+    { name: "app-a", secrets: ["SHARED_TOKEN"] },
+    { name: "app-b", secrets: ["SHARED_TOKEN"] },
+  ]);
+  assert.deepEqual(shared, {});
+  assert.deepEqual(perApp, { "app-a": { SHARED_TOKEN: "v" }, "app-b": { SHARED_TOKEN: "v" } });
+});
+
+test("partitionSecretsPerApp: a declared name with no value is reported missing, not invented", () => {
+  const { shared, perApp, missing } = partitionSecretsPerApp({}, [{ name: "app-a", secrets: ["ABSENT_KEY"] }]);
+  assert.deepEqual(shared, {});
+  assert.deepEqual(perApp, {});
+  assert.deepEqual(missing, [{ app: "app-a", name: "ABSENT_KEY" }]);
+});
+
+test("writePerAppSecretsFiles: 0600 files in a 0700 apps/ dir; nothing written and no dir when empty", async () => {
+  const runDir = await mkdtemp(join(tmpdir(), "berth-secrets-run-"));
+  assert.equal(await writePerAppSecretsFiles("berth-two-app", {}, runDir), undefined);
+
+  const dir = await writePerAppSecretsFiles("berth-two-app", { "app-a": { A_API_KEY: "va" } }, runDir);
+  assert.ok(dir);
+  assert.equal((await stat(dir)).mode & 0o777, 0o700);
+  const file = join(dir, "secrets.app-a.env");
+  assert.equal((await stat(file)).mode & 0o777, 0o600);
+  assert.ok((await readFile(file, "utf-8")).includes("A_API_KEY='va'"));
 });

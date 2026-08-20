@@ -336,6 +336,26 @@ export_app_environment() {
   export XDG_CONFIG_HOME="$TMPDIR/.config"
   export XDG_CACHE_HOME="$TMPDIR/.cache"
   export HOME="$TMPDIR"
+
+  # Per-app secrets (BUILD_PLAN M1.3): a name this app declared under
+  # `secrets:` in berth.yml arrives in a per-app file under the read-only
+  # staging mount, is copied to /run/berth/secrets.<app>.env at 0600 owned
+  # by this app's uid — the copy is what turns a host-owned read-only mount
+  # into a file whose DAC names the app — and is sourced *here*, inside this
+  # app's own subshell (run_app is backgrounded; the single-app path has no
+  # siblings), so no other app's process environment ever contains it.
+  # Fail-closed like the shared file above: the app declared it needs these,
+  # and booting without them fails later somewhere unrelated.
+  if [ -n "${BERTH_APP_SECRETS_DIR:-}" ] && [ -f "${BERTH_APP_SECRETS_DIR}/secrets.${app_name}.env" ]; then
+    local staged="/run/berth/secrets.${app_name}.env"
+    if ! install -m 0600 -o "${BERTH_APP_UID:-0}" -g "${BERTH_APP_GID:-0}" \
+        "${BERTH_APP_SECRETS_DIR}/secrets.${app_name}.env" "$staged"; then
+      echo "[berth:entrypoint] FATAL: could not stage ${app_name}'s declared secrets to ${staged} — refusing to start it without them." >&2
+      exit 1
+    fi
+    . "$staged"
+    echo "[berth:entrypoint] loaded ${app_name}'s declared secrets from ${staged} (0600, uid ${BERTH_APP_UID:-0} — see docs/secrets-reference.md)" >&2
+  fi
 }
 
 # The one host-owned directory a `berth dev` app still has to write, and the

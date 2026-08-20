@@ -1,10 +1,13 @@
 import Docker from "dockerode";
 import { warnIfEnforcementInactive } from "./doctor.js";
 import {
+  CONTAINER_APP_SECRETS_DIR,
   CONTAINER_SECRETS_PATH,
   partitionSecretEnv,
+  partitionSecretsPerApp,
   removeContainerSecretsDir,
   writeContainerSecretsFile,
+  writePerAppSecretsFiles,
 } from "./secrets.js";
 import { randomBytes } from "node:crypto";
 import type { BerthManifest } from "@berth/manifest-schema";
@@ -354,11 +357,31 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
   // No secrets, no mount: a container whose environment holds nothing
   // sensitive is byte-for-byte what it was before this existed.
   const { plain, secret } = partitionSecretEnv(env);
-  const secretNames = Object.keys(secret);
-  if (secretNames.length > 0) {
-    const secretsHostPath = await writeContainerSecretsFile(options.name, secret, options.secretsRunDir);
+
+  // The M1.3 split on top of the 5.5 one: a secret name declared by any
+  // app's `secrets:` list leaves the shared file and travels in that app's
+  // own file instead, delivered by entrypoint.sh as 0600 owned by that
+  // app's uid and sourced only in that app's subshell. Manifests with no
+  // `secrets:` partition everything into `shared`, so a container that
+  // declares nothing is byte-for-byte what it was before this existed.
+  const appDeclarations = (options.apps ?? [{ name: options.manifest.name, manifest: options.manifest }]).map(
+    (a) => ({ name: a.name, secrets: a.manifest.secrets ?? [] }),
+  );
+  const { shared, perApp, missing } = partitionSecretsPerApp(secret, appDeclarations);
+  for (const { app, name } of missing) {
+    // Names only, never values — and loudly, because the app declared it
+    // needs this and will otherwise fail somewhere unrelated later.
+    console.warn(`[berth] app "${app}" declares secret ${name} in berth.yml, but no value was provided for this boot`);
+  }
+  if (Object.keys(shared).length > 0) {
+    const secretsHostPath = await writeContainerSecretsFile(options.name, shared, options.secretsRunDir);
     binds.push(`${secretsHostPath}:${CONTAINER_SECRETS_PATH}:ro`);
     plain.BERTH_SECRETS_FILE = CONTAINER_SECRETS_PATH;
+  }
+  const perAppSecretsHostDir = await writePerAppSecretsFiles(options.name, perApp, options.secretsRunDir);
+  if (perAppSecretsHostDir) {
+    binds.push(`${perAppSecretsHostDir}:${CONTAINER_APP_SECRETS_DIR}:ro`);
+    plain.BERTH_APP_SECRETS_DIR = CONTAINER_APP_SECRETS_DIR;
   }
 
   const container = await docker.createContainer({

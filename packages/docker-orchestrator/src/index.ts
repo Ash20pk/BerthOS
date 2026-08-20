@@ -58,5 +58,10 @@ export {
   containerSecretsDir,
   isGroupOrWorldReadable,
   CONTAINER_SECRETS_PATH,
+  CONTAINER_APP_SECRETS_DIR,
+  partitionSecretsPerApp,
+  writePerAppSecretsFiles,
   type PartitionedEnv,
+  type AppSecretsDeclaration,
+  type PerAppSecretPartition,
 } from "./secrets.js";
