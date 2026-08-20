@@ -46,6 +46,10 @@ export class GrantsDb {
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
     this.#db = new DatabaseSync(dbPath);
+    // WAL keeps a reader (CLI status queries) from blocking the server's
+    // writes, and busy_timeout makes a second opener wait 5s instead of
+    // throwing SQLITE_BUSY the moment two processes touch the same file.
+    this.#db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
     this.#db.exec(`
       CREATE TABLE IF NOT EXISTS grants (
         id           TEXT PRIMARY KEY,

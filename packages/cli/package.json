@@ -9,7 +9,8 @@
   "files": [
     "dist",
     "bin",
-    "src/templates"
+    "src/templates",
+    "!dist/**/*.test.*"
   ],
   "license": "Apache-2.0",
   "repository": {
@@ -32,7 +33,8 @@
     "node": ">=22"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "provenance": true
   },
   "oclif": {
     "bin": "berth",

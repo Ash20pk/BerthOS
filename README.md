@@ -1,12 +1,28 @@
 # Berth
 
-**Give your agent a real computer, with permissions the kernel actually enforces.**
+**IAM for agents: declare what your agent may touch, and the kernel enforces it.**
 
-Your agent needs to write files, run code, drive a browser. Berth gives it a persistent, sandboxed computer to do that on — a **Berth OS** — where what it's allowed to touch is a line in a manifest compiled into a [Landlock](https://docs.kernel.org/userspace-api/landlock.html) policy, applied before the app's own code runs. `filesystem:write:/workspace` means a write anywhere else dies on `EACCES` in the kernel, not in a `try/catch` and not in a system prompt the model can be talked out of.
+The cloud solved this for humans and services decades ago — declared policy, enforced by the platform rather than the application, with an audit trail compliance can run on. Agents have none of that: frameworks trust the model, sandboxes are permission-blind *inside* the box, guardrails filter words rather than actions. Berth is the missing layer — the **agent trust layer**.
 
-> Agents are not functions. They are workers. Workers need desks.
+Your agent gets a persistent, sandboxed computer — a **Berth OS** — where what it's allowed to touch is a line in a manifest compiled into a [Landlock](https://docs.kernel.org/userspace-api/landlock.html) policy, applied before the app's own code runs. `filesystem:write:/workspace` means a write anywhere else dies on `EACCES` in the kernel, not in a `try/catch` and not in a system prompt the model can be talked out of. Every action lands in a hash-chained, actor-attributed [audit trail](./docs/audit-reference.md). (The third IAM leg — per-run *proof* that the policy was enforced — is in open development, and we won't claim it before it ships.)
+
+> Agents are not functions. They are workers. Workers need desks — and permissions.
 
 ## Run it
+
+```bash
+npm install -g @berth/cli
+berth doctor --fix      # macOS: provisions a Colima host whose kernel actually enforces
+berth init my-app && cd my-app && berth dev
+```
+
+`berth doctor --fix` is the honest step most sandboxes skip: it checks whether
+*your* Docker host's kernel can enforce Landlock, and on a default Mac (where
+Docker Desktop's kernel can't) it offers to install and start the
+[Colima host](./docs/mac-enforcement.md) that can — then re-checks and refuses
+to claim enforcement it didn't observe.
+
+Working from source instead:
 
 ```bash
 git clone https://github.com/Ash20pk/BerthOS && cd BerthOS

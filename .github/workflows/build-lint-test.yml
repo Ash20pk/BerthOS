@@ -17,16 +17,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         with:
           version: 10.21.0
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: pnpm
+
+      # Supply-chain gate (BUILD_PLAN M0.1): fails on any workflow action not
+      # pinned to a commit SHA or any registry base image without a digest.
+      - run: ./scripts/lint-workflows.sh
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
@@ -87,7 +91,7 @@ jobs:
       # either. This runner is Linux and non-root, which is exactly what the
       # ownership tests need — they chown to a group the process is already in,
       # since chowning to an arbitrary gid needs privilege.
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: packages/semantic-fs-daemon/go.mod
           cache-dependency-path: packages/semantic-fs-daemon/go.sum
@@ -95,7 +99,7 @@ jobs:
         working-directory: packages/semantic-fs-daemon
         run: go test ./...
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
 

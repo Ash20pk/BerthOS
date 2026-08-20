@@ -3,10 +3,14 @@
 > **Which document is authoritative for what.** `REMEDIATION.md` — defects: what
 > is broken, the evidence, and what would prove it closed. `LAUNCH_PLAN.md` —
 > execution order: which of those defects gate a launch and in what sequence.
-> `PRIORITIES.md` — an opinionated filter over REMEDIATION, kept for its
-> reasoning; superseded on *ordering* by LAUNCH_PLAN. `ROADMAP.md` — the public
-> "is X real yet" page. `gaps.md` — **archived**; it validated that the substrate
-> is usable from a framework, and is not a roadmap.
+> `STRATEGY.md` — the category thesis and the post-launch workstreams (WS5–WS7)
+> this plan's WS0–WS4 are the on-ramp to. `PRIORITIES.md` — an opinionated
+> filter over REMEDIATION, kept for its reasoning; superseded on *ordering* by
+> LAUNCH_PLAN. `ROADMAP.md` — the public "is X real yet" page. `gaps.md` —
+> **archived**; it validated that the substrate is usable from a framework, and
+> is not a roadmap. `BUILD_PLAN.md` — the live work queue: this plan's
+> unfinished rows (1.1, 2.3, WS3, WS4) are absorbed into its M0/M2, so pick up
+> work there, not here.
 
 Written 2026-08-18. This is the execution plan for taking Berth to a public launch, written to be **executed by AI coding agents** working in this repo. It supersedes the *ordering* in [REMEDIATION.md](./REMEDIATION.md) and [PRIORITIES.md](./PRIORITIES.md) but not their findings — where this file says "skip," the defect is still real, it's just not launch-blocking.
 

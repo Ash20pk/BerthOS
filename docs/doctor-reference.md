@@ -39,6 +39,20 @@ Reading `/sys/kernel/security/lsm` would also distinguish them, but securityfs i
 
 The probe tests the *kernel*, not Berth's policy. It deliberately does not rebuild what `agent-init` composes from a manifest; that would be a second implementation to drift.
 
+## `--fix`
+
+On macOS, when the verdict is anything but enforcement, `--fix` provisions
+the host this command already knows how to verify: it installs Colima via
+Homebrew if missing, starts the VM with the flags
+[docs/mac-enforcement.md](./mac-enforcement.md) documents (`--vm-type vz
+--mount-type virtiofs --mount "$HOME:w"`), and then **re-runs the same checks
+against the Colima socket** — success is only ever claimed from that second,
+observed run. It exits non-zero if the re-check still can't observe
+enforcement, and finishes by printing the `DOCKER_HOST` export line a child
+process cannot apply to your shell. On Linux it refuses with an explanation:
+enforcement there is a property of the running kernel's LSM stack, not
+something a VM swap fixes.
+
 ## `--json`
 
 Schema version `1`. Additive changes (new checks, new optional fields) keep `schemaVersion: 1`; anything that breaks a reader bumps it.

@@ -46,11 +46,11 @@ updates:
     schedule:
       interval: weekly
 
-  # The workflow files this same production-readiness effort just added
-  # (CodeQL, gitleaks, this file's own consumer) pin third-party actions by
-  # tag — those need updates tracked too, or "pinned for supply-chain
-  # safety" quietly turns into "pinned to a version that stopped getting
-  # security fixes years ago."
+  # Every workflow pins third-party actions to a full commit SHA (enforced
+  # by scripts/lint-workflows.sh in CI). Dependabot understands SHA pins and
+  # keeps the trailing `# vX.Y.Z` comment in sync — without this entry,
+  # "pinned for supply-chain safety" quietly turns into "pinned to a version
+  # that stopped getting security fixes years ago."
   - package-ecosystem: github-actions
     directory: "/"
     schedule:

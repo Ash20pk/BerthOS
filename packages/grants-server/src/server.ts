@@ -43,3 +43,19 @@ if (loaded.mintedToken) {
   console.log(`[berth-grants]   ${loaded.mintedToken}`);
   console.log(`[berth-grants] pass it to \`berth grants approve/deny\` via --token or BERTH_GRANTS_TOKEN`);
 }
+
+// Drain on SIGTERM/SIGINT (BUILD_PLAN M0.5): app.close() stops accepting,
+// waits for in-flight requests, then runs onClose hooks — which is where the
+// SQLite handle is closed — before the process exits.
+for (const signal of ["SIGTERM", "SIGINT"] as const) {
+  process.once(signal, () => {
+    console.log(`[berth-grants] ${signal} received, draining`);
+    app.close().then(
+      () => process.exit(0),
+      (err) => {
+        console.error(`[berth-grants] error during drain:`, err);
+        process.exit(1);
+      },
+    );
+  });
+}

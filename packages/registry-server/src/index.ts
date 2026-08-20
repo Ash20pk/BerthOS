@@ -39,6 +39,11 @@ export async function createRegistryServer(opts: CreateRegistryServerOptions): P
   // overload and the instance type stops matching FastifyInstance. `null` is
   // Fastify's own spelling for "no TLS" and resolves one overload cleanly.
   const app = Fastify({ bodyLimit: 100 * 1024 * 1024, https: opts.tls ?? null, logger: opts.logger ?? false });
+
+  // Liveness for process supervisors and the CLI's status checks
+  // (BUILD_PLAN M0.5). Deliberately unauthenticated and DB-free: it answers
+  // "is the process serving" and nothing else.
+  app.get("/health", async () => ({ status: "ok" }));
   await app.register(multipart, { limits: { fileSize: 100 * 1024 * 1024 } });
   await registerRegistryRoutes(app, { db, blobs, now: opts.now });
 
