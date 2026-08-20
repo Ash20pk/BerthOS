@@ -8,9 +8,11 @@ Part of [Berth](https://github.com/Ash20pk/BerthOS) — capability-scoped, kerne
 npm install @berth/agents
 ```
 
-> **Frozen surface.** The agents package is a reference consumer of the Berth
-> substrate, not a competing agent framework — its API shape is frozen.
-> Build on the substrate (SDK, manifest, orchestrator) directly.
+> **Frozen surface.** This package is a *reference consumer* of the Berth
+> substrate, not a competing agent framework. Its API is frozen: bug and
+> security fixes only — no new Crew shapes, providers, or parity features.
+> See [CONTRIBUTING.md — "The agents packages are frozen"](https://github.com/Ash20pk/BerthOS/blob/main/CONTRIBUTING.md#the-agents-packages-are-frozen)
+> for the canonical statement and the supported integration seams.
 
 ## Documentation
 

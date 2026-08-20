@@ -1,5 +1,10 @@
 # berth-agents
 
+> **Frozen surface.** Like `@berth/agents`, this package is a *reference
+> consumer* of the Berth substrate, not a competing agent framework. Its API
+> is frozen: bug and security fixes only. See
+> [CONTRIBUTING.md — "The agents packages are frozen"](https://github.com/Ash20pk/BerthOS/blob/main/CONTRIBUTING.md#the-agents-packages-are-frozen).
+
 The Python half of [Berth](https://github.com/Ash20pk/BerthOS)'s agent framework: a provider-agnostic `Agent` tool-use loop and six of `@berth/agents`' seven `Crew` composition shapes (all but `networked`), mirroring the TypeScript package field-for-field where it covers the same ground.
 
 ```bash

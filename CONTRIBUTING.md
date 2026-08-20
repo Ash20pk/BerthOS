@@ -45,6 +45,19 @@ Use the issue templates in `.github/ISSUE_TEMPLATE/`. The most useful reports ri
 - **Workflow feedback** — what was confusing, how long `init` → `dev` took end to end, where you got stuck
 - **Resident app proposal** — an app you want to build or want to exist, before or instead of a PR
 
+## The agents packages are frozen
+
+Berth is a **substrate** — capability-scoped, kernel-enforced sandboxes with a
+manifest grammar, an audit trail, and adapter seams — not an agent framework.
+`@berth/agents` and `berth-agents` (Python) exist as **reference consumers**:
+they prove the substrate is usable from an agent loop, and they stay exactly
+as capable as they are today. Their API surface is frozen — no new `Crew`
+shapes, no new providers, no framework-parity features will be accepted, and
+proposals for them will be redirected here. Bug fixes and security fixes are
+welcome. If you want a richer agent loop on top of Berth, the supported path
+is the substrate's seams: `berth mcp`, `toAiSdkTools`/`toLangChainTools`, the
+HTTP RPC bridge, or the SDK directly.
+
 ## Working on Berth's internals
 
 If you're touching `packages/` rather than building a resident app, a few invariants matter:
