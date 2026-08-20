@@ -13,7 +13,7 @@
 # toolchain — just the resulting static binary. Isolated in its own stage so
 # Docker's layer cache only recompiles it when the daemon's own source
 # changes, not on every app's dev/test/deploy build.
-FROM rust:1-alpine AS context-bus-builder
+FROM rust:1-alpine@sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900 AS context-bus-builder
 RUN apk add --no-cache build-base protobuf protobuf-dev
 WORKDIR /daemon
 COPY context-bus-daemon/ .
@@ -24,7 +24,7 @@ RUN cargo build --release
 # see docs/capability-tokens-reference.md) before exec-ing into whatever
 # command entrypoint.sh hands it. Landlock is Linux-only, so this can only
 # be built here, not on a macOS/Windows host — see that doc for why.
-FROM rust:1-alpine AS agent-init-builder
+FROM rust:1-alpine@sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900 AS agent-init-builder
 RUN apk add --no-cache build-base
 WORKDIR /agent-init
 COPY agent-init/ .
@@ -36,14 +36,14 @@ RUN cargo build --release
 # keeps it independent of Alpine's musl libc version the same way the Rust
 # binaries above are. Its own stage means Docker's layer cache only rebuilds
 # it when semantic-fs-daemon's own source changes.
-FROM golang:1-alpine AS semantic-fs-daemon-builder
+FROM golang:1-alpine@sha256:4c9fe60190a2a3350ddc51de80d0224b8a6698d12bdfc999fee45ea9d6c46dbc AS semantic-fs-daemon-builder
 WORKDIR /semantic-fs-daemon
 COPY semantic-fs-daemon/ .
 RUN CGO_ENABLED=0 go build -o semantic-fs-daemon .
 
 # Compiles mesh-daemon (packages/mesh-daemon) — the WireGuard mesh agent, same
 # shape as the other Rust stages above. See docs/mesh-reference.md.
-FROM rust:1-alpine AS mesh-daemon-builder
+FROM rust:1-alpine@sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900 AS mesh-daemon-builder
 RUN apk add --no-cache build-base
 WORKDIR /mesh-daemon
 COPY mesh-daemon/ .
@@ -55,11 +55,11 @@ RUN cargo build --release
 # WireGuard probe fails (e.g. a guest kernel with no `wireguard` module
 # loaded). Its own stage so it only rebuilds on a version bump, never on any
 # other package's changes.
-FROM rust:1-alpine AS boringtun-builder
+FROM rust:1-alpine@sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900 AS boringtun-builder
 RUN apk add --no-cache build-base
 RUN cargo install boringtun-cli --version 0.7.1 --root /out
 
-FROM node:22-alpine AS base
+FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS base
 
 RUN apk add --no-cache \
     bash curl ca-certificates tini \
