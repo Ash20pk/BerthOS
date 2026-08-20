@@ -36,6 +36,11 @@ export async function createMeshCoordinatorServer(opts: CreateMeshCoordinatorSer
   // overload and the instance type stops matching FastifyInstance. `null` is
   // Fastify's own spelling for "no TLS" and resolves one overload cleanly.
   const app = Fastify({ https: opts.tls ?? null, logger: opts.logger ?? false });
+
+  // Liveness for process supervisors and the CLI's status checks
+  // (BUILD_PLAN M0.5). Deliberately unauthenticated and DB-free: it answers
+  // "is the process serving" and nothing else.
+  app.get("/health", async () => ({ status: "ok" }));
   await registerMeshCoordinatorRoutes(app, { db, now: opts.now });
 
   app.addHook("onClose", async () => {

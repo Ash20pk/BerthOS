@@ -44,6 +44,14 @@ func Open(dbPath string) (*Index, error) {
 	// connections.
 	db.SetMaxOpenConns(1)
 
+	// WAL + busy_timeout: the daemon is the only writer today, but a host
+	// tool inspecting the index (or a crashed daemon's replacement starting
+	// while the old process winds down) should wait 5s rather than fail
+	// with SQLITE_BUSY, and WAL keeps any such reader from blocking writes.
+	if _, err := db.Exec(`PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;`); err != nil {
+		return nil, fmt.Errorf("set journal_mode/busy_timeout: %w", err)
+	}
+
 	if _, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS files (
 			path TEXT PRIMARY KEY,
