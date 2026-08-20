@@ -154,7 +154,7 @@ export default defineApp((app) => {
     output: z.object({ ok: z.boolean() }),
     handler: ({ app: claimed, pid }) =>
       new Promise((resolve) => {
-        const socket = createConnection("/tmp/berth-semantic-fs.sock");
+        const socket = createConnection(process.env.BERTH_SEMANTIC_FS_SOCKET ?? "/tmp/berth-semantic-fs.sock");
         socket.on("connect", () => {
           const body = Buffer.from(JSON.stringify({ id: "1", op: "register", app: claimed, pid }), "utf-8");
           const header = Buffer.alloc(4);

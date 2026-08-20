@@ -465,12 +465,21 @@ if [ -z "${BERTH_APPS:-}" ]; then
   # Resident apps that want to write through /context still need their own
   # filesystem:write:/context capability declared in berth.yml; only the
   # control socket (register/tag/query) is unconditionally reachable.
-  echo "[berth:entrypoint] starting semantic-fs daemon at ${BERTH_CONTEXT_MOUNT} (backed by ${BERTH_CONTEXT_DATA})" >&2
-  /usr/local/bin/semantic-fs-daemon &
+  if [ "${BERTH_SEMANTIC_FS_EXTERNAL:-0}" = "1" ]; then
+    # BUILD_PLAN M1.1: the FUSE mount is performed by the semantic-fs sidecar
+    # container and arrives here as a bind — this container holds no
+    # CAP_SYS_ADMIN and could not mount anything if it tried. The wait below
+    # is against the *propagated* mount becoming visible.
+    echo "[berth:entrypoint] /context is served by the semantic-fs sidecar (no CAP_SYS_ADMIN in this container)" >&2
+  else
+    echo "[berth:entrypoint] starting semantic-fs daemon at ${BERTH_CONTEXT_MOUNT} (backed by ${BERTH_CONTEXT_DATA})" >&2
+    /usr/local/bin/semantic-fs-daemon &
+  fi
 
   # Wait for the FUSE mount to actually appear in the mount table, not just for
   # the process to start — fuse.Mount() hands off to fusermount3 and the mount
-  # only becomes visible once that completes.
+  # only becomes visible once that completes. (Sidecar mode: the propagated
+  # mount shows up here with the same fuse fstype.)
   for _ in $(seq 1 50); do
     grep -q " ${BERTH_CONTEXT_MOUNT} fuse" /proc/mounts && break
     sleep 0.1
@@ -672,8 +681,14 @@ for _ in $(seq 1 50); do
   sleep 0.1
 done
 
-echo "[berth:entrypoint] starting semantic-fs daemon at ${BERTH_CONTEXT_MOUNT} (backed by ${BERTH_CONTEXT_DATA})" >&2
-/usr/local/bin/semantic-fs-daemon &
+if [ "${BERTH_SEMANTIC_FS_EXTERNAL:-0}" = "1" ]; then
+  # BUILD_PLAN M1.1 — same as the single-app path above: the mount comes from
+  # the sidecar; this container has no capability to make one.
+  echo "[berth:entrypoint] /context is served by the semantic-fs sidecar (no CAP_SYS_ADMIN in this container)" >&2
+else
+  echo "[berth:entrypoint] starting semantic-fs daemon at ${BERTH_CONTEXT_MOUNT} (backed by ${BERTH_CONTEXT_DATA})" >&2
+  /usr/local/bin/semantic-fs-daemon &
+fi
 for _ in $(seq 1 50); do
   grep -q " ${BERTH_CONTEXT_MOUNT} fuse" /proc/mounts && break
   sleep 0.1

@@ -65,3 +65,11 @@ export {
   type AppSecretsDeclaration,
   type PerAppSecretPartition,
 } from "./secrets.js";
+export {
+  startSemanticFsSidecar,
+  stopSemanticFsSidecar,
+  sidecarName,
+  sidecarHostDir,
+  SIDECAR_EXPORT_DIR,
+  type RunningSidecar,
+} from "./semantic-fs-sidecar.js";

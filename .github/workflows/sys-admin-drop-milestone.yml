@@ -1,0 +1,37 @@
+name: SYS_ADMIN Drop Milestone
+
+# BUILD_PLAN M1.1 — see
+# packages/docker-orchestrator/test/sys-admin-drop-milestone.mjs. A booted
+# sandbox's docker inspect shows no SYS_ADMIN, no /dev/fuse, no
+# apparmor:unconfined; /context arrives as a propagated FUSE mount from the
+# per-sandbox sidecar; mount(2) inside the sandbox fails EPERM even as root.
+# A legacy control boot (BERTH_DISABLE_FS_SIDECAR=1) shows the capability
+# back and the same mount succeeding — the negative control.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 10.21.0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Run sys-admin-drop-milestone.mjs
+        working-directory: packages/docker-orchestrator
+        run: node test/sys-admin-drop-milestone.mjs

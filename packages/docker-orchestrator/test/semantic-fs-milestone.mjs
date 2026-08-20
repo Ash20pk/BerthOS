@@ -178,7 +178,11 @@ async function main() {
     // both healthy, is exactly what made this assertion impossible to write
     // before (see stdio-rpc.ts).
     console.log("\n--- Killing semantic-fs-daemon and re-running the query that just worked ---");
-    await execOutput(running.container, ["pkill", "-9", "-f", "semantic-fs-daemon"]);
+    // The daemon lives in the per-sandbox sidecar since BUILD_PLAN M1.1;
+    // kill it where it actually runs. The in-sandbox pkill stays for the
+    // legacy (BERTH_DISABLE_FS_SIDECAR=1) path, where it is the daemon's home.
+    await docker.getContainer("berth-semantic-fs-milestone-filesystem-fs").kill().catch(() => {});
+    await execOutput(running.container, ["pkill", "-9", "-f", "semantic-fs-daemon"]).catch(() => {});
     await new Promise((resolve) => setTimeout(resolve, 1500));
 
     const resilientRpc = await createStdioRpcClient(running.container, docker);

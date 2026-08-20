@@ -154,5 +154,9 @@ test("startContainer mounts nothing extra for a container whose env holds no cre
 
   assert.ok(!(created.Env ?? []).some((e) => e.startsWith("BERTH_SECRETS_FILE=")));
   assert.ok(!(created.HostConfig?.Binds ?? []).some((b) => b.includes(CONTAINER_SECRETS_PATH)));
-  await assert.rejects(stat(containerSecretsDir("berth-test-no-secrets", runDir)), "no secrets means no file on the host either");
+  // The per-container run dir may exist (the semantic-fs sidecar keeps its
+  // mountpoint there since M1.1) — what must not exist is any secrets
+  // artifact in it.
+  await assert.rejects(stat(join(containerSecretsDir("berth-test-no-secrets", runDir), "secrets.env")), "no secrets means no file on the host either");
+  await assert.rejects(stat(join(containerSecretsDir("berth-test-no-secrets", runDir), "apps")), "no declared secrets means no per-app files either");
 });

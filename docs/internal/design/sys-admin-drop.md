@@ -1,7 +1,9 @@
 # Design: dropping container-wide `CAP_SYS_ADMIN` (BUILD_PLAN M1.1)
 
-Status: **proposed** — written 2026-08-20, before implementation, because
-this touches every boot path. REMEDIATION 1.3's remainder; threat model B4
+Status: **implemented** 2026-08-20 (`m1/drop-sys-admin`) as Option B, with
+two deviations found during implementation, recorded below. Originally
+proposed the same day, before implementation, because this touches every
+boot path. REMEDIATION 1.3's remainder; threat model B4
 adjacent.
 
 ## The problem
@@ -107,6 +109,23 @@ Docker Desktop can't enforce Landlock anyway, so the fallback is acceptable:
 mount and say so** (doctor check + boot banner), exactly the honesty pattern
 `berth doctor` already uses. The fallback keeps `CapAdd: [SYS_ADMIN]`, so
 `docker inspect` tells the truth in both modes.
+
+## Deviations found during implementation
+
+1. **The backing store and control socket live on named volumes, not the
+   host directory.** `chown`/`chmod` to `root:berth` (the entire access
+   model for /context and the control socket) does not survive a macOS
+   virtiofs share — apps got `EACCES` through the FUSE mount. Only `mnt/`
+   needs a host path (mount propagation requires a bind); `var` and `ctl`
+   moved to per-sandbox named volumes (`<name>-fs-var`, `<name>-fs-ctl`),
+   which the sandbox also mounts (read-only for `var`, so snapshot
+   getArchive paths still work).
+2. **created_by attribution is uid-based across the boundary.** The daemon
+   attributed FUSE writes by pid, which assumes a shared pid namespace. The
+   sidecar declares `BERTH_APP_UID_MAP` (the same `10000+index` assignment
+   entrypoint.sh makes) and `PidRegistry.Attribute` falls back from pid to
+   uid — pids don't translate across namespaces; uids do. The in-sandbox
+   legacy path keeps pid attribution unchanged.
 
 ## Migration and blast radius
 
