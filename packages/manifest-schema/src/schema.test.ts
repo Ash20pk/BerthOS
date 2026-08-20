@@ -204,3 +204,16 @@ test("filesystemScopeIssue is exported for callers that validate capabilities ou
   assert.ok(capabilityIssue("filesystem:write:/etc"));
   assert.equal(capabilityIssue("github:read:repos"), undefined);
 });
+
+test("secrets: defaults to empty and accepts valid env var names", () => {
+  const manifest = BerthManifestSchema.parse({ name: "app", version: "1.0.0" });
+  assert.deepEqual(manifest.secrets, []);
+  const declared = BerthManifestSchema.parse({ name: "app", version: "1.0.0", secrets: ["ANTHROPIC_API_KEY", "_PRIVATE"] });
+  assert.deepEqual(declared.secrets, ["ANTHROPIC_API_KEY", "_PRIVATE"]);
+});
+
+test("secrets: rejects names the shell cannot export", () => {
+  for (const bad of ["1LEADING_DIGIT", "HAS-DASH", "HAS SPACE", ""]) {
+    assert.throws(() => BerthManifestSchema.parse({ name: "app", version: "1.0.0", secrets: [bad] }), `expected "${bad}" to be rejected`);
+  }
+});

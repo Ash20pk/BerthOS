@@ -55,10 +55,54 @@ type response struct {
 type PidRegistry struct {
 	mu  sync.RWMutex
 	pid map[int]string
+	// uid -> app name, from BERTH_APP_UID_MAP. The sidecar deployment
+	// (BUILD_PLAN M1.1) runs this daemon in a different pid namespace from
+	// the apps, where a FUSE request's Pid is untranslatable — but uids are
+	// global, each app has its own (10000+index), and the orchestrator that
+	// assigns them passes the same mapping here. Empty in-sandbox, where the
+	// pid registry keeps working exactly as before.
+	uid map[uint32]string
 }
 
 func NewPidRegistry() *PidRegistry {
-	return &PidRegistry{pid: make(map[int]string)}
+	return &PidRegistry{pid: make(map[int]string), uid: ParseUidMap(os.Getenv("BERTH_APP_UID_MAP"))}
+}
+
+// ParseUidMap parses "app-a=10000,app-b=10001" — the orchestrator-declared
+// uid assignment, identical to entrypoint.sh's provision_app_identity math.
+func ParseUidMap(raw string) map[uint32]string {
+	out := make(map[uint32]string)
+	for _, pair := range strings.Split(raw, ",") {
+		name, uidStr, ok := strings.Cut(strings.TrimSpace(pair), "=")
+		if !ok || name == "" {
+			continue
+		}
+		uid, err := strconv.ParseUint(uidStr, 10, 32)
+		if err != nil {
+			continue
+		}
+		out[uint32(uid)] = name
+	}
+	return out
+}
+
+// Attribute resolves a FUSE request to an app name: by registered pid where
+// the pid namespace is shared (the in-sandbox deployment), by declared uid
+// where it is not (the sidecar). Empty when neither knows the caller.
+func (r *PidRegistry) Attribute(pid int, uid uint32) string {
+	if name := r.Lookup(pid); name != "" {
+		return name
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.uid[uid]
+}
+
+// AppNameForUid is Attribute's uid half, for peer identification.
+func (r *PidRegistry) AppNameForUid(uid uint32) string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.uid[uid]
 }
 
 func (r *PidRegistry) Register(pid int, app string) {

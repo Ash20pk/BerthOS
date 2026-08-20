@@ -1,11 +1,20 @@
 import Docker from "dockerode";
 import { warnIfEnforcementInactive } from "./doctor.js";
 import {
+  CONTAINER_APP_SECRETS_DIR,
   CONTAINER_SECRETS_PATH,
   partitionSecretEnv,
+  partitionSecretsPerApp,
   removeContainerSecretsDir,
   writeContainerSecretsFile,
+  writePerAppSecretsFiles,
 } from "./secrets.js";
+import {
+  SIDECAR_EXPORT_DIR,
+  startSemanticFsSidecar,
+  stopSemanticFsSidecar,
+  type RunningSidecar,
+} from "./semantic-fs-sidecar.js";
 import { randomBytes } from "node:crypto";
 import type { BerthManifest } from "@berth/manifest-schema";
 
@@ -316,17 +325,65 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
     await ensureNetwork(docker, options.network);
   }
 
-  // Every sandbox mounts /context via FUSE unconditionally (see the Devices/
-  // CapAdd comment below), so /dev/fuse + SYS_ADMIN are always present.
-  // /dev/net/tun + NET_ADMIN are added only when an app actually declares
-  // network:peer:* — a container-wide grant that would otherwise reach the
-  // resident app's own process too, if not for agent-init dropping the whole
-  // capability bounding set before exec-ing into it (see
-  // packages/agent-init/src/main.rs and docs/mesh-reference.md).
-  const devices: { PathOnHost: string; PathInContainer: string; CgroupPermissions: string }[] = [
-    { PathOnHost: "/dev/fuse", PathInContainer: "/dev/fuse", CgroupPermissions: "rwm" },
-  ];
-  const capAdd = ["SYS_ADMIN"];
+  // /context's FUSE mount comes from a per-sandbox sidecar container
+  // (BUILD_PLAN M1.1, docs/internal/design/sys-admin-drop.md), so the
+  // sandbox itself gets no SYS_ADMIN, no /dev/fuse, and no AppArmor
+  // exception — `mount(2)` inside it fails EPERM for every process, root
+  // daemons included. If the sidecar's mount cannot propagate on this host
+  // (or BERTH_DISABLE_FS_SIDECAR=1 forces it), fall back to the pre-M1.1
+  // in-sandbox mount — with the capability, and with a loud warning, so
+  // `docker inspect` always tells the truth about which posture this
+  // container has. /dev/net/tun + NET_ADMIN are added only when an app
+  // actually declares network:peer:* (see docs/mesh-reference.md).
+  const devices: { PathOnHost: string; PathInContainer: string; CgroupPermissions: string }[] = [];
+  const capAdd: string[] = [];
+  const securityOpt: string[] = [];
+  let sidecar: RunningSidecar | undefined;
+  if (process.env.BERTH_DISABLE_FS_SIDECAR !== "1") {
+    // `berth snapshot restore` pre-populates the daemon's backing paths via
+    // extraBinds targeting /var/berth/* — the daemon lives in the sidecar
+    // now, so those binds are re-aimed at its export dir. The sandbox keeps
+    // its own copies too (they land on top of the read-only /var/berth
+    // view), so snapshot *creation* from a restored sandbox still reads the
+    // same bytes.
+    const sidecarVarBinds = (options.extraBinds ?? [])
+      .filter((bind) => bind.split(":")[1]?.startsWith("/var/berth/"))
+      .map((bind) => {
+        const [host, target, ...rest] = bind.split(":");
+        const mapped = `${SIDECAR_EXPORT_DIR}/var/${target!.slice("/var/berth/".length)}`;
+        return [host, mapped, ...rest].join(":");
+      });
+    // The same 10000+index assignment entrypoint.sh makes — declared to the
+    // sidecar's daemon so it can attribute FUSE writes by uid across the
+    // pid-namespace boundary.
+    const appUidMap = (options.apps ?? [{ name: options.manifest.name }])
+      .map((app, index) => `${app.name}=${10000 + index}`)
+      .join(",");
+    try {
+      sidecar = await startSemanticFsSidecar({
+        sandboxName: options.name,
+        image: options.image,
+        docker,
+        runDir: options.secretsRunDir,
+        extraBinds: sidecarVarBinds,
+        appUidMap,
+      });
+    } catch (err) {
+      console.warn(
+        `[berth] WARNING: semantic-fs sidecar failed — falling back to the in-sandbox FUSE mount, which puts CAP_SYS_ADMIN back on this container (pre-M1.1 posture). ${(err as Error).message}`,
+      );
+    }
+  }
+  if (sidecar) {
+    binds.push(...sidecar.sandboxBinds);
+  } else {
+    devices.push({ PathOnHost: "/dev/fuse", PathInContainer: "/dev/fuse", CgroupPermissions: "rwm" });
+    capAdd.push("SYS_ADMIN");
+    // The default docker-default AppArmor profile denies the FUSE mount(2)
+    // syscall outright even with CAP_SYS_ADMIN + /dev/fuse (moby/moby#50013)
+    // — only needed on the legacy path, where the mount happens in here.
+    securityOpt.push("apparmor:unconfined");
+  }
   if (needsMesh) {
     devices.push({ PathOnHost: "/dev/net/tun", PathInContainer: "/dev/net/tun", CgroupPermissions: "rwm" });
     capAdd.push("NET_ADMIN");
@@ -354,12 +411,33 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
   // No secrets, no mount: a container whose environment holds nothing
   // sensitive is byte-for-byte what it was before this existed.
   const { plain, secret } = partitionSecretEnv(env);
-  const secretNames = Object.keys(secret);
-  if (secretNames.length > 0) {
-    const secretsHostPath = await writeContainerSecretsFile(options.name, secret, options.secretsRunDir);
+
+  // The M1.3 split on top of the 5.5 one: a secret name declared by any
+  // app's `secrets:` list leaves the shared file and travels in that app's
+  // own file instead, delivered by entrypoint.sh as 0600 owned by that
+  // app's uid and sourced only in that app's subshell. Manifests with no
+  // `secrets:` partition everything into `shared`, so a container that
+  // declares nothing is byte-for-byte what it was before this existed.
+  const appDeclarations = (options.apps ?? [{ name: options.manifest.name, manifest: options.manifest }]).map(
+    (a) => ({ name: a.name, secrets: a.manifest.secrets ?? [] }),
+  );
+  const { shared, perApp, missing } = partitionSecretsPerApp(secret, appDeclarations);
+  for (const { app, name } of missing) {
+    // Names only, never values — and loudly, because the app declared it
+    // needs this and will otherwise fail somewhere unrelated later.
+    console.warn(`[berth] app "${app}" declares secret ${name} in berth.yml, but no value was provided for this boot`);
+  }
+  if (Object.keys(shared).length > 0) {
+    const secretsHostPath = await writeContainerSecretsFile(options.name, shared, options.secretsRunDir);
     binds.push(`${secretsHostPath}:${CONTAINER_SECRETS_PATH}:ro`);
     plain.BERTH_SECRETS_FILE = CONTAINER_SECRETS_PATH;
   }
+  const perAppSecretsHostDir = await writePerAppSecretsFiles(options.name, perApp, options.secretsRunDir);
+  if (perAppSecretsHostDir) {
+    binds.push(`${perAppSecretsHostDir}:${CONTAINER_APP_SECRETS_DIR}:ro`);
+    plain.BERTH_APP_SECRETS_DIR = CONTAINER_APP_SECRETS_DIR;
+  }
+  if (sidecar) Object.assign(plain, sidecar.sandboxEnv);
 
   const container = await docker.createContainer({
     name: options.name,
@@ -387,24 +465,17 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
       // a Mac, masking the difference until the request itself times out.
       // A no-op wherever host.docker.internal already resolves.
       ExtraHosts: ["host.docker.internal:host-gateway"],
-      // Every sandbox mounts the Phase 4 semantic filesystem at /context via
-      // FUSE (see docker/entrypoint.sh), which needs the /dev/fuse device
-      // node plus CAP_SYS_ADMIN to call mount(2) — unconditional, the same
-      // way context-bus-daemon always starts, since /context isn't gated
-      // behind any manifest capability the way browser:* ports are.
-      Devices: devices,
-      CapAdd: capAdd,
+      // Empty on the sidecar path (BUILD_PLAN M1.1): /context's FUSE mount
+      // is performed by the per-sandbox sidecar, so this container needs no
+      // device node and no capability for it. Non-empty only on the legacy
+      // fallback (host without rshared propagation, or
+      // BERTH_DISABLE_FS_SIDECAR=1) and for the mesh's NET_ADMIN/tun.
+      ...(devices.length > 0 ? { Devices: devices } : {}),
+      ...(capAdd.length > 0 ? { CapAdd: capAdd } : {}),
       ...(resources.cpu !== undefined ? { NanoCpus: Math.round(resources.cpu * 1e9) } : {}),
       ...(resources.memoryMb !== undefined ? { Memory: resources.memoryMb * 1024 * 1024 } : {}),
       ...(deviceRequests ? { DeviceRequests: deviceRequests } : {}),
-      // The default docker-default AppArmor profile denies the FUSE
-      // mount(2) syscall outright even with CAP_SYS_ADMIN + /dev/fuse
-      // (moby/moby#50013) — a no-op on hosts with no AppArmor LSM active
-      // (e.g. Docker Desktop's LinuxKit VM), but on real-kernel Linux
-      // (GitHub Actions' ubuntu-latest) it silently kills semantic-fs-daemon's
-      // mount, which then falls back to a stub that always returns empty
-      // query results — passing locally while failing in CI.
-      SecurityOpt: ["apparmor:unconfined"],
+      ...(securityOpt.length > 0 ? { SecurityOpt: securityOpt } : {}),
     },
     ...(options.network
       ? { NetworkingConfig: { EndpointsConfig: { [options.network]: {} } } }
@@ -564,13 +635,25 @@ function demultiplexLogs(buffer: Buffer): string {
  * — the default is right for every caller that didn't override it, and the
  * override exists for tests.
  */
-export async function stopContainer(container: Docker.Container, options: { secretsRunDir?: string } = {}): Promise<void> {
+export async function stopContainer(
+  container: Docker.Container,
+  options: { secretsRunDir?: string; docker?: Docker } = {},
+): Promise<void> {
   // Before stopping, because inspect() is the only way back to the container
   // *name* the secrets file was written under, and a removed container can no
   // longer be inspected. Best-effort throughout: the file is 0600 in a 0700
   // directory and is overwritten by the next boot of the same name, so
   // failing to unlink it must not turn a successful teardown into an error.
   await removeSecretsForContainer(container, options.secretsRunDir);
+  // The semantic-fs sidecar lives and dies with its sandbox. Best-effort and
+  // before the stop, for the same inspect()-needs-a-live-container reason.
+  try {
+    const info = await container.inspect();
+    const name = info.Name?.replace(/^\//, "");
+    if (name) await stopSemanticFsSidecar(name, options.docker ?? new Docker());
+  } catch {
+    // No sidecar (legacy boot), or the container is already gone.
+  }
   try {
     await container.stop();
   } catch (err) {

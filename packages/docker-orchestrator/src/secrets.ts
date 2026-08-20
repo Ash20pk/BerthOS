@@ -119,6 +119,104 @@ export function partitionSecretEnv(env: Record<string, string>): PartitionedEnv 
 }
 
 /**
+ * Read-only staging directory where per-app secret files arrive in the
+ * container (one bind mount for the directory). entrypoint.sh copies each
+ * app's file from here to /run/berth/secrets.<app>.env at mode 0600 owned by
+ * that app's uid, then sources it inside that app's own (backgrounded)
+ * subshell — the copy is what turns a host-owned read-only mount into a file
+ * whose DAC names the app.
+ */
+export const CONTAINER_APP_SECRETS_DIR = "/run/berth-secrets.d";
+
+export interface AppSecretsDeclaration {
+  name: string;
+  /** The manifest's `secrets:` list — env var names, never values. */
+  secrets: readonly string[];
+}
+
+export interface PerAppSecretPartition {
+  /**
+   * Secrets no app declared — delivered exactly as before this existed:
+   * one shared file, sourced at boot, inherited by every process. Berth's
+   * own infrastructure credentials (RPC token, terminal/VNC passwords) live
+   * here because daemons need them before any app exists.
+   */
+  shared: Record<string, string>;
+  /** app name -> that app's declared secrets that actually have values. */
+  perApp: Record<string, Record<string, string>>;
+  /** Declared names with no value in the boot environment — the app will boot without them; callers should say so. */
+  missing: { app: string; name: string }[];
+}
+
+/**
+ * Splits a container's secret env by the apps' `secrets:` declarations
+ * (REMEDIATION per-app-secrets / BUILD_PLAN M1.3). The rule: a name declared
+ * by at least one app leaves the shared file entirely and is delivered only
+ * to the apps that declared it — otherwise declaring a secret would narrow
+ * nothing, since the shared file reaches every process. A name nobody
+ * declares keeps today's shared-file behavior, so a container whose
+ * manifests carry no `secrets:` at all partitions to { shared: everything,
+ * perApp: {} } — byte-identical to the pre-M1.3 boot.
+ */
+export function partitionSecretsPerApp(
+  secret: Record<string, string>,
+  apps: readonly AppSecretsDeclaration[],
+): PerAppSecretPartition {
+  const declaredBy = new Map<string, string[]>();
+  const missing: { app: string; name: string }[] = [];
+  for (const app of apps) {
+    for (const name of app.secrets) {
+      if (!(name in secret)) {
+        missing.push({ app: app.name, name });
+        continue;
+      }
+      const owners = declaredBy.get(name) ?? [];
+      owners.push(app.name);
+      declaredBy.set(name, owners);
+    }
+  }
+
+  const shared: Record<string, string> = {};
+  const perApp: Record<string, Record<string, string>> = {};
+  for (const [name, value] of Object.entries(secret)) {
+    const owners = declaredBy.get(name);
+    if (!owners) {
+      shared[name] = value;
+      continue;
+    }
+    for (const owner of owners) {
+      (perApp[owner] ??= {})[name] = value;
+    }
+  }
+  return { shared, perApp, missing };
+}
+
+/**
+ * Writes the per-app secret files next to the shared one, each 0600 in the
+ * same 0700 host directory, under an apps/ subdirectory that is bind-mounted
+ * read-only as a unit at CONTAINER_APP_SECRETS_DIR. Returns the host path of
+ * the apps/ directory, or undefined when there is nothing to write (so the
+ * caller adds no mount and the container is byte-identical to before).
+ */
+export async function writePerAppSecretsFiles(
+  containerName: string,
+  perApp: Record<string, Record<string, string>>,
+  runDir = DEFAULT_RUN_DIR,
+): Promise<string | undefined> {
+  const appNames = Object.keys(perApp);
+  if (appNames.length === 0) return undefined;
+  const dir = join(containerSecretsDir(containerName, runDir), "apps");
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  await chmod(dir, 0o700);
+  for (const app of appNames) {
+    const path = join(dir, `secrets.${app}.env`);
+    await writeFile(path, serializeSecretsEnvFile(perApp[app] ?? {}), { mode: 0o600 });
+    await chmod(path, 0o600);
+  }
+  return dir;
+}
+
+/**
  * Names that are valid only for the boot that set them, and so must never be
  * replayed into a later one. `BERTH_SECRETS_FILE` points at a bind mount that
  * exists only while this container is running: captured into a snapshot and
@@ -130,7 +228,7 @@ export function partitionSecretEnv(env: Record<string, string>): PartitionedEnv 
  * telling an operator that a restored snapshot is "missing BERTH_SECRETS_FILE"
  * would send them looking for a credential that does not exist.
  */
-const BOOT_SCOPED_ENV_NAMES = new Set(["BERTH_SECRETS_FILE"]);
+const BOOT_SCOPED_ENV_NAMES = new Set(["BERTH_SECRETS_FILE", "BERTH_APP_SECRETS_DIR"]);
 
 /**
  * Drops every secret value from a map, returning the non-secret entries plus

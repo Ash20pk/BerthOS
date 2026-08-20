@@ -100,6 +100,22 @@ export const BerthManifestSchema = z
     governs: z.boolean().default(false),
     governance: GovernanceSpec,
     resources: ResourcesSpec,
+    /**
+     * Env var names this app declares it needs delivered as credentials.
+     * Names, never values — values come from the caller's environment at
+     * boot. A name declared here (by any app in the container) is removed
+     * from the container-wide secrets file and delivered only to declaring
+     * apps, each through its own 0600 file owned by that app's uid
+     * (docs/secrets-reference.md). Absent/empty means no per-app scoping:
+     * the pre-existing shared-file behavior, byte-for-byte.
+     */
+    secrets: z
+      .array(
+        z
+          .string()
+          .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "secrets entries must be valid environment variable names"),
+      )
+      .default([]),
   })
   .superRefine((manifest, ctx) => {
     // Semantic capability validation, on top of CapabilityString's grammar:

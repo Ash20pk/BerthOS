@@ -518,6 +518,11 @@ async function main() {
     docker,
   });
   const boundaryLog = await startLogCapture(boundaryRunning.container);
+  // semantic-fs-daemon lives in the per-sandbox sidecar since BUILD_PLAN
+  // M1.1 — its control-socket log lines land there, not in the sandbox.
+  const boundaryFsLog = await startLogCapture(
+    docker.getContainer("berth-capability-enforcement-boundary-fs"),
+  ).catch(() => ({ text: () => "", stop: async () => {} }));
   try {
     // Dumped on timeout, because without it this failure says only "not ready"
     // and the container's own account of why is thrown away — which is exactly
@@ -777,7 +782,7 @@ async function main() {
     });
     assert(fsSpoof.result?.ok === true, `the semantic-fs register probe did not run: ${JSON.stringify(fsSpoof)}`);
     await waitFor(
-      () => /\[semantic-fs:control\].*registered as "boundary-app-b" but the kernel says "boundary-app-a"/.test(boundaryLog.text()),
+      () => /\[semantic-fs:control\].*registered as "boundary-app-b" but the kernel says "boundary-app-a"/.test(boundaryLog.text() + boundaryFsLog.text()),
       5000,
       "semantic-fs to override boundary-app-a's claim to be boundary-app-b",
     );
@@ -787,7 +792,7 @@ async function main() {
     // *other* connections — a daemon that died would fail the register below,
     // and one that allocated 4 GiB would likely take the container with it.
     console.log("\n--- App A sending an oversized frame header to both daemons ---");
-    for (const socketPath of ["/tmp/berth-context-bus.sock", "/tmp/berth-semantic-fs.sock"]) {
+    for (const socketPath of ["/tmp/berth-context-bus.sock", "/run/berth-fs/berth-semantic-fs.sock"]) {
       const oversized = await invokeAppExport(boundaryRunning.container, "boundary-app-a", {
         id: "15",
         export: "send_oversized_frame",

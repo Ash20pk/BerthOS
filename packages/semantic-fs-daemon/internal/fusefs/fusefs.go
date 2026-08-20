@@ -52,8 +52,8 @@ func (f *FS) relPath(real string) string {
 	return rel
 }
 
-func (f *FS) recordWrite(realPath string, pid uint32) {
-	createdBy := f.registry.Lookup(int(pid))
+func (f *FS) recordWrite(realPath string, pid uint32, uid uint32) {
+	createdBy := f.registry.Attribute(int(pid), uid)
 	rel := f.relPath(realPath)
 	if err := f.idx.RecordWrite(rel, createdBy); err != nil {
 		log.Printf("[semantic-fs] index write for %q failed: %v", rel, err)
@@ -122,7 +122,7 @@ func (d *Dir) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.Cr
 	}
 	d.fs.owner.apply(full, false)
 
-	d.fs.recordWrite(full, req.Pid)
+	d.fs.recordWrite(full, req.Pid, req.Uid)
 
 	node := &File{fs: d.fs, real: full}
 	return node, &FileHandle{fs: d.fs, file: osFile, node: node}, nil
@@ -201,7 +201,7 @@ func (f *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse
 		if err := os.Truncate(f.real, int64(req.Size)); err != nil {
 			return err
 		}
-		f.fs.recordWrite(f.real, req.Pid)
+		f.fs.recordWrite(f.real, req.Pid, req.Uid)
 	}
 	return statAttr(f.real, &resp.Attr)
 }
@@ -235,7 +235,7 @@ func (h *FileHandle) Write(ctx context.Context, req *fuse.WriteRequest, resp *fu
 		return err
 	}
 	resp.Size = n
-	h.fs.recordWrite(h.node.real, req.Pid)
+	h.fs.recordWrite(h.node.real, req.Pid, req.Uid)
 	return nil
 }
 

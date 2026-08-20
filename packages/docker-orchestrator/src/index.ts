@@ -58,5 +58,18 @@ export {
   containerSecretsDir,
   isGroupOrWorldReadable,
   CONTAINER_SECRETS_PATH,
+  CONTAINER_APP_SECRETS_DIR,
+  partitionSecretsPerApp,
+  writePerAppSecretsFiles,
   type PartitionedEnv,
+  type AppSecretsDeclaration,
+  type PerAppSecretPartition,
 } from "./secrets.js";
+export {
+  startSemanticFsSidecar,
+  stopSemanticFsSidecar,
+  sidecarName,
+  sidecarHostDir,
+  SIDECAR_EXPORT_DIR,
+  type RunningSidecar,
+} from "./semantic-fs-sidecar.js";

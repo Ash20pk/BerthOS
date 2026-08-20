@@ -65,7 +65,7 @@ Modes are set with an explicit `chmod` after the write, not with `writeFile`'s `
 Stated plainly, because a partial protection sold as a complete one is worse than none.
 
 - **Anyone who can reach the Docker socket.** They can `docker exec` into the container, read `/run/berth/secrets.env` as root, or read the host file directly — the bind mount's host path is right there in `docker inspect`. Docker socket access is root-equivalent on the host; this change does not pretend otherwise. What it closes is the far weaker requirement of *merely being able to inspect metadata*, or of receiving a snapshot someone else made.
-- **Anything running inside the container.** The credentials are in the process environment of every daemon and app in it, readable via `/proc/<pid>/environ` by any process with the same uid, and the resident app is *meant* to have the provider key. There is no per-app secret scoping: a companion app in an `--apps` sandbox sees the primary's keys. That needs per-app secret declarations in `berth.yml` and is not built.
+- **Anything running inside the container — with one boundary that is now real.** A secret an app declares under `secrets:` in `berth.yml` is delivered only to that app: it leaves the shared file, arrives as `/run/berth/secrets.<app>.env` (0600, owned by that app's uid), and is sourced only in that app's own process tree — a sibling cannot read it by env, by `/proc/<pid>/environ` (per-app uids; container root itself lacks `CAP_SYS_PTRACE`), or by the file's DAC. What per-app scoping does **not** cover: an *undeclared* secret still travels through the shared file to every app (backward compatibility is explicit — declare it to scope it); the pre-`agent-init` root daemons can still read anything (threat model B4, M1.2's territory); and root — `docker exec` — reads every file regardless.
 - **Encryption at rest.** Nothing here is encrypted (*5.4*). These are plaintext files protected by file modes; a host backup, a stolen disk, or root reads them.
 - **Remote fleets.** `berth deploy --fleet=…` passes `env` to the provider's own API (E2B, Daytona, a Kubernetes Pod spec). Those values live in that provider's control plane, on their terms — a K8s deployment puts them in the Pod spec, where `kubectl get pod -o yaml` shows them. Berth does not create Kubernetes `Secret` objects. The `~/.berthrc` warning is about the local copy; the remote copy is the provider's exposure surface, not one Berth can close.
 - **The audit log and logs generally.** Berth's audit records don't capture env, and payload capture is off by default (*5.1*) — but an app that prints its own key to stdout puts it in `docker logs`, and nothing intercepts that.
@@ -77,9 +77,22 @@ Stated plainly, because a partial protection sold as a complete one is worse tha
 - `published-port-security-milestone.mjs` — the same mechanism for two non-Node consumers started by `entrypoint.sh` rather than by the SDK: `BERTH_TERMINAL_CREDENTIAL` is absent from `Env`, and ttyd still refuses an unauthenticated request, refuses a wrong credential, and accepts the generated one. Same for x11vnc, asserted at the RFB protocol level. This file used to assert the exact opposite — that the password *was* in the container's `Env`.
 - Unit tests — the classifier against Berth's own names and real provider names in both directions; the serializer round-tripped through a real `bash` with values containing `$(…)`, backticks, single quotes and newlines (getting this wrong would make the shell *execute* part of a credential at boot); modes re-tightened on a file that already exists; `~/.berthrc`'s warning firing for a loose credential-carrying config, staying quiet for a 0600 one and for a loose one with no `env`, and never printing the credential it warns about.
 
+### Declaring per-app secrets
+
+```yaml
+# berth.yml
+name: github-assistant
+secrets:
+  - GITHUB_TOKEN        # names, never values — values come from the boot environment
+```
+
+A name declared by any app in the container leaves the shared file entirely and is delivered only to the apps that declared it. Two apps may declare the same name and each receives it. A declared name with no value at boot is warned about by name (never by value) and the app boots without it. A container in which no app declares `secrets:` boots byte-for-byte as it did before this existed.
+
+Verified by `per-app-secrets-milestone.mjs`: a two-app boot where app A declares a token — absent from `docker inspect`, absent from the shared file, present in A's process environment and absent from B's (each read as its own uid), unreadable by B through `/proc/<pidA>/environ` and through the 0600 file, readable by A (the positive control) — followed by a control boot with no declaration in which the token reaches both apps, proving the isolation assertions can fail.
+
 ## Still open
 
 - No secret store integration. There is a seam (`secrets.ts` is the one place that decides what a secret is and where it goes) and no Vault/KMS/1Password backend behind it. Values still come from the caller's own environment.
 - No rotation. A credential is delivered at boot; changing it means restarting the container.
-- No per-app scoping (above), and no `berth.yml` declaration of which secrets an app needs — which is what would make scoping expressible in the first place.
+- ~~No per-app scoping~~ **Per-app scoping shipped** (BUILD_PLAN M1.3): `secrets:` in `berth.yml` names the env vars an app needs; declared names are delivered only to declaring apps. Verified by `per-app-secrets-milestone.mjs` (see below). Undeclared secrets keep the shared-file behavior deliberately.
 - Nothing encrypted at rest (*5.4*), and no identity model to scope a secret to (*5.2*).

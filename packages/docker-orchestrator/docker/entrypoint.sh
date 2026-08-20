@@ -336,6 +336,26 @@ export_app_environment() {
   export XDG_CONFIG_HOME="$TMPDIR/.config"
   export XDG_CACHE_HOME="$TMPDIR/.cache"
   export HOME="$TMPDIR"
+
+  # Per-app secrets (BUILD_PLAN M1.3): a name this app declared under
+  # `secrets:` in berth.yml arrives in a per-app file under the read-only
+  # staging mount, is copied to /run/berth/secrets.<app>.env at 0600 owned
+  # by this app's uid — the copy is what turns a host-owned read-only mount
+  # into a file whose DAC names the app — and is sourced *here*, inside this
+  # app's own subshell (run_app is backgrounded; the single-app path has no
+  # siblings), so no other app's process environment ever contains it.
+  # Fail-closed like the shared file above: the app declared it needs these,
+  # and booting without them fails later somewhere unrelated.
+  if [ -n "${BERTH_APP_SECRETS_DIR:-}" ] && [ -f "${BERTH_APP_SECRETS_DIR}/secrets.${app_name}.env" ]; then
+    local staged="/run/berth/secrets.${app_name}.env"
+    if ! install -m 0600 -o "${BERTH_APP_UID:-0}" -g "${BERTH_APP_GID:-0}" \
+        "${BERTH_APP_SECRETS_DIR}/secrets.${app_name}.env" "$staged"; then
+      echo "[berth:entrypoint] FATAL: could not stage ${app_name}'s declared secrets to ${staged} — refusing to start it without them." >&2
+      exit 1
+    fi
+    . "$staged"
+    echo "[berth:entrypoint] loaded ${app_name}'s declared secrets from ${staged} (0600, uid ${BERTH_APP_UID:-0} — see docs/secrets-reference.md)" >&2
+  fi
 }
 
 # The one host-owned directory a `berth dev` app still has to write, and the
@@ -445,12 +465,21 @@ if [ -z "${BERTH_APPS:-}" ]; then
   # Resident apps that want to write through /context still need their own
   # filesystem:write:/context capability declared in berth.yml; only the
   # control socket (register/tag/query) is unconditionally reachable.
-  echo "[berth:entrypoint] starting semantic-fs daemon at ${BERTH_CONTEXT_MOUNT} (backed by ${BERTH_CONTEXT_DATA})" >&2
-  /usr/local/bin/semantic-fs-daemon &
+  if [ "${BERTH_SEMANTIC_FS_EXTERNAL:-0}" = "1" ]; then
+    # BUILD_PLAN M1.1: the FUSE mount is performed by the semantic-fs sidecar
+    # container and arrives here as a bind — this container holds no
+    # CAP_SYS_ADMIN and could not mount anything if it tried. The wait below
+    # is against the *propagated* mount becoming visible.
+    echo "[berth:entrypoint] /context is served by the semantic-fs sidecar (no CAP_SYS_ADMIN in this container)" >&2
+  else
+    echo "[berth:entrypoint] starting semantic-fs daemon at ${BERTH_CONTEXT_MOUNT} (backed by ${BERTH_CONTEXT_DATA})" >&2
+    /usr/local/bin/semantic-fs-daemon &
+  fi
 
   # Wait for the FUSE mount to actually appear in the mount table, not just for
   # the process to start — fuse.Mount() hands off to fusermount3 and the mount
-  # only becomes visible once that completes.
+  # only becomes visible once that completes. (Sidecar mode: the propagated
+  # mount shows up here with the same fuse fstype.)
   for _ in $(seq 1 50); do
     grep -q " ${BERTH_CONTEXT_MOUNT} fuse" /proc/mounts && break
     sleep 0.1
@@ -652,8 +681,14 @@ for _ in $(seq 1 50); do
   sleep 0.1
 done
 
-echo "[berth:entrypoint] starting semantic-fs daemon at ${BERTH_CONTEXT_MOUNT} (backed by ${BERTH_CONTEXT_DATA})" >&2
-/usr/local/bin/semantic-fs-daemon &
+if [ "${BERTH_SEMANTIC_FS_EXTERNAL:-0}" = "1" ]; then
+  # BUILD_PLAN M1.1 — same as the single-app path above: the mount comes from
+  # the sidecar; this container has no capability to make one.
+  echo "[berth:entrypoint] /context is served by the semantic-fs sidecar (no CAP_SYS_ADMIN in this container)" >&2
+else
+  echo "[berth:entrypoint] starting semantic-fs daemon at ${BERTH_CONTEXT_MOUNT} (backed by ${BERTH_CONTEXT_DATA})" >&2
+  /usr/local/bin/semantic-fs-daemon &
+fi
 for _ in $(seq 1 50); do
   grep -q " ${BERTH_CONTEXT_MOUNT} fuse" /proc/mounts && break
   sleep 0.1

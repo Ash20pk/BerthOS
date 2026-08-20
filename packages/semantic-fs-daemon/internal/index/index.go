@@ -44,11 +44,15 @@ func Open(dbPath string) (*Index, error) {
 	// connections.
 	db.SetMaxOpenConns(1)
 
-	// WAL + busy_timeout: the daemon is the only writer today, but a host
-	// tool inspecting the index (or a crashed daemon's replacement starting
-	// while the old process winds down) should wait 5s rather than fail
-	// with SQLITE_BUSY, and WAL keeps any such reader from blocking writes.
-	if _, err := db.Exec(`PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;`); err != nil {
+	// busy_timeout, deliberately WITHOUT WAL — the one SQLite open in this
+	// repo that must not use it. `berth snapshot create` archives the bare
+	// .db file (snapshot.ts's contextIndexDbPath): under WAL the most recent
+	// commits live in the -wal sidecar file, so a snapshot taken moments
+	// after a write restores an *empty-looking* index — silently. TRUNCATE
+	// keeps every commit in the single file the snapshot actually captures;
+	// the daemon is the sole writer (SetMaxOpenConns(1)), so WAL's
+	// concurrent-reader benefit had no customer here anyway.
+	if _, err := db.Exec(`PRAGMA journal_mode = TRUNCATE; PRAGMA busy_timeout = 5000;`); err != nil {
 		return nil, fmt.Errorf("set journal_mode/busy_timeout: %w", err)
 	}
 

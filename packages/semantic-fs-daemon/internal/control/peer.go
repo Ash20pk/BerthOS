@@ -3,9 +3,11 @@ package control
 import (
 	"fmt"
 	"net"
+	"os"
 	"os/user"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 )
 
@@ -105,8 +107,27 @@ func identityFor(pid int, uid uint32, lookup func(uint32) string) peerIdentity {
 
 func lookupUsername(uid uint32) string {
 	u, err := user.LookupId(strconv.FormatUint(uint64(uid), 10))
-	if err != nil {
-		return ""
+	if err == nil {
+		return u.Username
 	}
-	return u.Username
+	// Sidecar deployment (BUILD_PLAN M1.1): the daemon's own /etc/passwd has
+	// no berth-<app> users — those exist in the sandbox container. The
+	// orchestrator's BERTH_APP_UID_MAP declares the same uid assignment, so
+	// the kernel-reported uid still resolves to an app name.
+	if name, ok := envUidNames()[uid]; ok {
+		return appUserPrefix + name
+	}
+	return ""
+}
+
+var (
+	uidNamesOnce sync.Once
+	uidNames     map[uint32]string
+)
+
+func envUidNames() map[uint32]string {
+	uidNamesOnce.Do(func() {
+		uidNames = ParseUidMap(os.Getenv("BERTH_APP_UID_MAP"))
+	})
+	return uidNames
 }
