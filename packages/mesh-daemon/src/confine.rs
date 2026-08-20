@@ -40,12 +40,23 @@ use crate::config::Config;
 ///   /etc/wireguard      — wg0.conf, rewritten on every reconcile tick
 ///   key/token dir       — /var/berth/mesh by default
 ///   control socket dir  — /tmp by default
-///   /run, /var/run      — wg-quick's userspace-mode socket dir
-///                         (/var/run/wireguard) and its lock files
+///   /run/wireguard      — wg-quick's userspace-mode socket + name-list dir
+///   /var/run/wireguard  — the same, on distros where /var/run isn't a
+///                         symlink to /run (created explicitly so the rule
+///                         binds even before wg-quick would make it)
 ///   /dev/net/tun        — boringtun opens the tun device in userspace mode
 ///   /dev/null           — child stdio redirection
+///
+/// Deliberately NOT all of /run: /run/berth holds every app's socket
+/// directory, and a compromised mesh-daemon has no business there. Scoping
+/// to /run/wireguard keeps wg-quick working without handing the daemon the
+/// rest of /run.
 fn write_scoped_dirs(cfg: &Config) -> Vec<String> {
-    let mut dirs = vec!["/etc/wireguard".to_string(), "/run".to_string(), "/var/run".to_string()];
+    let mut dirs = vec![
+        "/etc/wireguard".to_string(),
+        "/run/wireguard".to_string(),
+        "/var/run/wireguard".to_string(),
+    ];
     for file in [&cfg.key_path, &cfg.token_path, &cfg.control_socket] {
         if let Some(parent) = Path::new(file).parent() {
             let parent = parent.to_string_lossy().to_string();
