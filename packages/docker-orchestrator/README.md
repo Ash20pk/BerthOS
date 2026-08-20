@@ -2,7 +2,7 @@
 
 Docker-based Agent OS stand-in: Alpine base image, container lifecycle, hot reload.
 
-Part of [Berth](https://github.com/Ash20pk/BerthOS) — capability-scoped, kernel-enforced sandboxes for AI agents. The `berth.yml` capability line is the boundary; Landlock + seccomp hold it.
+Part of [Berth](https://github.com/Ash20pk/BerthOS) — IAM for agents — declared capabilities, kernel-enforced, audit-trailed. The `berth.yml` capability line is the boundary; Landlock + seccomp hold it.
 
 ```sh
 npm install @berth/docker-orchestrator
