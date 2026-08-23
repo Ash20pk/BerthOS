@@ -13,7 +13,7 @@ export const CHAIN_GENESIS = "0".repeat(64);
  * — which round-trips through parse in practice for these shapes, but only by
  * accident. Sorting makes it a property of the data instead.
  */
-function canonicalize(value: unknown): string {
+export function canonicalize(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
   if (Array.isArray(value)) return `[${value.map(canonicalize).join(",")}]`;
   const entries = Object.entries(value as Record<string, unknown>)
