@@ -90,6 +90,7 @@ a positive control (a legitimate version of the action succeeding).
 | R4. The containment benchmark compares Docker/Berth/weakened-Berth; unmeasured rows never score as a pass | recorded | `bench/run.mjs`, `bench/checks.mjs` — the runner exits non-zero unless the weakened config scores worse | the weakened-Berth column is the negative control |
 | R5. The red-team suite proves each kernel-tier denial is falsifiable (flips when the mechanism is removed) | recorded | `redteam/redteam.mjs` — each attack DENIED shipped, ALLOWED mutated | the mutation boot is the control, per row |
 | R6. `browser:screenshot:*` and any unimplemented namespace are recorded-only, not a control | recorded | `UNPROVEN` by definition — there is nothing to deny | n/a |
+| R7. Berth's published enforcement-tier table matches the spec's vocabulary, and the manifest grammar it implements is the one written down | recorded | `spec/capability-manifest/conformance/run.mjs` — 87/87 against `spec/capability-manifest/conformance/adapters/berth.mjs`, which publishes the tier table | **negative**: `spec/capability-manifest/conformance/adapters/broken.mjs` must fail the same suite (`spec/capability-manifest/conformance/selftest.mjs`). Limit: a tier *claim* is not externally checkable — this row proves the table exists, is well-formed, and agrees with itself, not that a row is true; that is what every other row in this file is for |
 
 ## Unenforced — documented, not a boundary
 

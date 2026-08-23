@@ -13,3 +13,5 @@ packages:
   - "breakout"
   - "breakout/apps/*"
   - "redteam"
+  # The standalone spec + its conformance suite; versioned independently (spec/capability-manifest/VERSION).
+  - "spec/capability-manifest"

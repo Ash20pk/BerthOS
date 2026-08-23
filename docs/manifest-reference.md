@@ -1,5 +1,7 @@
 # berth.yml Reference
 
+> **The normative grammar now lives in a standalone spec.** [spec/capability-manifest](../spec/capability-manifest) is the `berth.yml` grammar extracted as an independently versioned document (currently 1.0.0) that a third party could implement without this repo, with a [conformance suite](../spec/capability-manifest/conformance) and a mandatory enforcement-tier declaration. This page stays the practical, Berth-specific reference — where the two disagree about what a field *means*, the spec is right and this page is stale.
+
 Every resident app has a `berth.yml` at its root. It's the single source of truth for what the app is called, what permissions it wants, and what it exposes — validated by `@berth/manifest-schema` (Zod is the source of truth; this document is hand-written prose, not auto-generated, because capability-string semantics need explanation Zod can't express on its own).
 
 ```yaml

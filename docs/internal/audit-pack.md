@@ -34,6 +34,7 @@ passes.
 | Containment benchmark | `node bench/run.mjs` | Berth vs plain Docker vs a deliberately weakened Berth, generated scorecard, unmeasured rows never scored |
 | Break-out box | `node breakout/test/breakout-milestone.mjs` | a stranger's code cannot reach two flags no capability grants; the weakened boot proves the flag leaks when enforcement is off |
 | Attestation | `node packages/docker-orchestrator/test/attestation-milestone.mjs` | a per-run record whose verdict is derived from live measurements, and a verifier that rejects a forged one |
+| Spec conformance | `node spec/capability-manifest/conformance/selftest.mjs` | the reference implementation matches the published [Capability Manifest Specification](../../spec/capability-manifest/SPEC.md), **and** a deliberately non-conforming adapter fails the same suite. It does *not* prove any tier claim is true — a tier is only as good as the denial test behind it in claims.md |
 
 Each of these runs in CI on every push — see `.github/workflows/`.
 

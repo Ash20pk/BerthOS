@@ -77,6 +77,22 @@ Three tiers. Treat the tier, not the capability name, as the security claim.
 
 Full mechanics in [capability tokens reference](./capability-tokens-reference.md); the per-capability table is in [docs/kernel-enforcement.md](./kernel-enforcement.md#available-capabilities).
 
+**The tier vocabulary above is now normative outside this repo.** [The Capability
+Manifest Specification](../spec/capability-manifest/SPEC.md) §5 requires *any*
+conforming implementation to publish a machine-readable kernel/broker/recorded/
+unenforced table for every capability it supports, and forbids reporting a
+capability above its weakest link. Berth's own table is published by
+`spec/capability-manifest/conformance/adapters/berth.mjs` and is asserted
+against this page and [claims.md](./internal/claims.md) — three places that can
+no longer drift apart quietly.
+
+Applying the spec's own rule to ourselves moved one row: **`terminal:attach` is
+published as *broker*, not kernel.** The Landlock pty rules in the table above
+are real, but they describe what the grant *enables*; no milestone yet asserts
+that pty allocation is *refused* without the grant (claims.md K20, marked weak).
+Under "never above the weakest link," a gate proven present but not proven
+denying is not a kernel claim. The row moves when the denial test exists.
+
 ### Platform dependency
 
 `agent-init` **fails open by default**: if the ruleset can't be verified as `FullyEnforced`, it logs a warning and execs the app unrestricted. That exists so a Docker Desktop for Mac linuxkit kernel (no Landlock) doesn't block local development, and for no other reason.
@@ -159,5 +175,6 @@ Every "what's deferred / out of scope" section in `docs/` maps to a section abov
 | [breakout/README.md](../breakout/README.md) — the break-out box's scope | `docker exec` out of scope; server is a disposable relay, not a boundary; unenforced host refused |
 | [internal/claims.md](./internal/claims.md) — every claim + its proving test | The whole tier table, made row-by-row checkable; the UNPROVEN list |
 | [internal/audit-pack.md](./internal/audit-pack.md) — the self-serve audit starting point | Reading order, runnable evidence, known-not-covered, reporting |
+| [spec/capability-manifest](../spec/capability-manifest/SPEC.md) — the standalone manifest spec | The tier vocabulary, exported as a conformance requirement (§5); `terminal:attach` published at the weaker tier; §8 security considerations (manifest as attacker-supplied input) |
 | [berth-os-reference.md](./berth-os-reference.md) / [agents-reference.md](./agents-reference.md) — scope boundaries | Non-security scope (local Docker only, YAML shapes, schema fidelity) — no threat-model impact |
 | [sdk-reference.md](./sdk-reference.md) / [sdk-python-reference.md](./sdk-python-reference.md) / [sdk-python-context-bus-reference.md](./sdk-python-context-bus-reference.md) | Non-security scope, except connector path/verb scoping → B5 |
