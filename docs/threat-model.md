@@ -130,6 +130,8 @@ Not gaps to be closed — decisions, with the reason.
 
 **Comparing the claim against the alternative** (BUILD_PLAN M2.2): `bench/` is a containment benchmark where one probe — the same file, unmodified — is run by plain Docker, by Berth, and by a deliberately weakened Berth, and the scorecard is generated rather than written. Measured 2026-08-23 on an enforcing host: plain Docker contained 2 of 11 measured rows, Berth 12 of 13, a Berth with its kernel tier switched off 8 of 12. Berth's one red cell is `docker exec` — a process injected through the host's container socket is not a descendant of the restricted workload, so nothing in this page's Kernel tier binds it, which is the same bypass named throughout this page stated as a measurement. Rows that could not be measured are never scored as passes. See [bench/README.md](../bench/README.md).
 
+**A standing invitation to disprove it** (BUILD_PLAN M2.3): [the break-out box](../breakout/README.md) is a Berth sandbox that hands strangers code execution and hides two flags no capability grants — one behind Landlock alone (a world-readable 0644 file, so only the compiled policy refuses the read), one behind the per-app uid split. It runs exactly what `berth dev` gives any app, with no added hardening, and its server refuses to start on a host that cannot enforce. `docker exec` is named out of scope in its rules for the same reason it is a residual here: root on the host bypasses the sandbox by construction.
+
 ## Reporting
 
 Found something not on this page? [SECURITY.md](../SECURITY.md) has the private disclosure path. A bypass of anything in the **Kernel** or **Broker** tier above is a vulnerability. A gap in something this page already names as unenforced is expected — but a *worse-than-documented* version of one is still worth reporting.
@@ -154,5 +156,6 @@ Every "what's deferred / out of scope" section in `docs/` maps to a section abov
 | [semantic-fs-reference.md](./semantic-fs-reference.md) — verification status | B4, *1.14* (silent-empty fallback) |
 | [attestation-reference.md](./attestation-reference.md) — what this does not prove | The **Recorded** tier: tamper-evident not tamper-proof, unsigned, host-trusting at emission |
 | [bench/README.md](../bench/README.md) — what the benchmark does and does not measure | Row selection is ours; `docker exec` red for every container harness; unmeasured rows never score |
+| [breakout/README.md](../breakout/README.md) — the break-out box's scope | `docker exec` out of scope; server is a disposable relay, not a boundary; unenforced host refused |
 | [berth-os-reference.md](./berth-os-reference.md) / [agents-reference.md](./agents-reference.md) — scope boundaries | Non-security scope (local Docker only, YAML shapes, schema fidelity) — no threat-model impact |
 | [sdk-reference.md](./sdk-reference.md) / [sdk-python-reference.md](./sdk-python-reference.md) / [sdk-python-context-bus-reference.md](./sdk-python-context-bus-reference.md) | Non-security scope, except connector path/verb scoping → B5 |
