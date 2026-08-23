@@ -104,7 +104,7 @@ Reference docs for individual subsystems live in [docs/](./docs): [manifest](./d
 ## Two things to know before you build on it
 
 - **`@berth/*` isn't on npm yet.** You build it from source — that's what `pnpm build` above is for. The publish pipeline is real and dry-run-verified; see [Releasing](./docs/quickstart.md#releasing).
-- **Kernel-enforced filesystem and network scoping is real and testable today; cross-app and in-container privilege isolation is in progress.** Berth is a strong boundary around what an agent's *code* can touch, and not yet one you should trust against a determined attacker who already has code execution inside the container. The open items, with evidence: [what isn't enforced yet](./docs/kernel-enforcement.md#what-isnt-enforced-yet) and [docs/threat-model.md](./docs/threat-model.md).
+- **Kernel-enforced filesystem and network scoping is real and testable today, and so is in-container privilege isolation.** Berth is a strong boundary around what an agent's *code* can touch — including code a determined attacker runs inside the container, who gets one app's uid, one Landlock domain, and no `CAP_SYS_ADMIN` anywhere in the sandbox. The residuals that bound that claim (the mesh daemon's retained root + `CAP_NET_ADMIN` is the largest), with evidence: [what isn't enforced yet](./docs/kernel-enforcement.md#what-isnt-enforced-yet) and [docs/threat-model.md](./docs/threat-model.md).
 
 ## Something not working?
 
