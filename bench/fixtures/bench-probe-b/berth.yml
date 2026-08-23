@@ -1,0 +1,35 @@
+name: bench-probe-b
+version: 0.1.0
+description: "Containment benchmark probe app b (bench/). Runs bench/probe/probe.mjs inside its own Landlock-restricted process; co-tenant of bench-probe-a, whose data it must not be able to reach."
+
+capabilities:
+  # Its own data directory — the granted hierarchy every escape row is
+  # measured against. The sibling's equivalent directory is deliberately NOT
+  # here, and the runner makes that directory group-writable so DAC cannot
+  # produce the denial on its own.
+  - filesystem:read:/workspace/.berth/dev-workspace/bench-probe-b
+  - filesystem:write:/workspace/.berth/dev-workspace/bench-probe-b
+  # Code, not data: the shared probe module, the app wrapper, and the SDK the
+  # runtime loads. Landlock resolves pnpm's symlinks to their real inodes, so
+  # without these the app cannot read its own entry point and dies at startup
+  # — invisible on a kernel where nothing is enforced.
+  - filesystem:read:/workspace/bench
+  - filesystem:read:/workspace/packages
+  - filesystem:read:/workspace/node_modules
+
+# Declares no network:* capability: the egress, host-reach and IMDS rows all
+# turn on that absence.
+
+# Per-app secret scoping (M1.3): each probe app declares its own, so the
+# foreign-secret row has a real secret belonging to a real co-tenant to fail
+# to read.
+secrets:
+  - BENCH_SECRET_B
+
+exports:
+  - name: run_probe
+    input: { check: string }
+    output: { json: string }
+
+on_install: []
+on_agent_ready: []

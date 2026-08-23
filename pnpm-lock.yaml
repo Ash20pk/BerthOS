@@ -158,6 +158,36 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
+  bench:
+    dependencies:
+      '@berth/docker-orchestrator':
+        specifier: workspace:*
+        version: link:../packages/docker-orchestrator
+      '@berth/manifest-schema':
+        specifier: workspace:*
+        version: link:../packages/manifest-schema
+      dockerode:
+        specifier: ^4.0.9
+        version: 4.0.12
+
+  bench/fixtures/bench-probe-a:
+    dependencies:
+      '@berth/sdk':
+        specifier: workspace:*
+        version: link:../../../packages/sdk
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+
+  bench/fixtures/bench-probe-b:
+    dependencies:
+      '@berth/sdk':
+        specifier: workspace:*
+        version: link:../../../packages/sdk
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+
   examples/agents/agent-server:
     dependencies:
       '@berth/agents':
@@ -2359,6 +2389,10 @@ packages:
 
   docker-modem@5.0.7:
     resolution: {integrity: sha512-XJgGhoR/CLpqshm4d3L7rzH6t8NgDFUIIpztYlLHIApeJjMZKYJMz2zxPsYxnejq5h3ELYSw/RBsi3t5h7gNTA==}
+    engines: {node: '>= 8.0'}
+
+  dockerode@4.0.12:
+    resolution: {integrity: sha512-/bCZd6KlGcjZO8Buqmi/vXuqEGVEZ0PNjx/biBNqJD3MhK9DmdiAuKxqfNhflgDESDIiBz3qF+0e55+CpnrUcw==}
     engines: {node: '>= 8.0'}
 
   dockerode@5.0.1:
@@ -5542,6 +5576,18 @@ snapshots:
       readable-stream: 3.6.2
       split-ca: 1.0.1
       ssh2: 1.17.0
+    transitivePeerDependencies:
+      - supports-color
+
+  dockerode@4.0.12:
+    dependencies:
+      '@balena/dockerignore': 1.0.2
+      '@grpc/grpc-js': 1.14.4
+      '@grpc/proto-loader': 0.7.15
+      docker-modem: 5.0.7
+      protobufjs: 8.7.2
+      tar-fs: 2.1.5
+      uuid: 11.1.1
     transitivePeerDependencies:
       - supports-color
 

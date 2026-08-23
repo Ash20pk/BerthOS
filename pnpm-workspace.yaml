@@ -8,3 +8,5 @@ packages:
   - "examples/kernel-says-no"
   - "packages/docker-orchestrator/test/fixtures/*"
   - "packages/agents/test/fixtures/*"
+  - "bench"
+  - "bench/fixtures/*"
