@@ -179,6 +179,21 @@ export interface StartContainerOptions {
    */
   publishHost?: string;
   /**
+   * Container runtime for the sandbox — Docker's `HostConfig.Runtime`, e.g.
+   * `runsc` for gVisor (BUILD_PLAN M1.4). Defaults to the daemon's default
+   * runtime, or to `BERTH_RUNTIME` when that's set (empty means unset, same
+   * rule as `BERTH_PUBLISH_HOST`). This is defense-in-depth for the one tier
+   * the threat model otherwise answers with "Docker is trusted" — a
+   * container-escape 0-day — and is NOT a substitute for the in-container
+   * enforcement (M1.1/M1.2): gVisor's sentry is a different kernel, so what
+   * Landlock/seccomp enforce there is *its* implementation of them, which the
+   * boot-time enforcement probe measures per runtime rather than assuming.
+   * The semantic-fs sidecar deliberately does not get this runtime: it must
+   * perform a FUSE mount that propagates through the host's mount table
+   * (rshared), which a gVisor-sandboxed mount namespace cannot do.
+   */
+  runtime?: string;
+  /**
    * Where the per-container secrets file is written on the host — defaults to
    * ~/.berth/run/<container name>/secrets.env. Overridable so tests don't
    * touch the real one, the same way snapshotsDir and osDir are.
@@ -225,14 +240,23 @@ function resolvePublishHost(explicit: string | undefined): string {
   return value;
 }
 
+/** Same empty-means-unset rule as resolvePublishHost, so a stray `BERTH_RUNTIME=` in a .env can't select a runtime named "". */
+function resolveRuntime(explicit: string | undefined): string | undefined {
+  const value = explicit ?? process.env.BERTH_RUNTIME;
+  return value === undefined || value === "" ? undefined : value;
+}
+
 export async function startContainer(options: StartContainerOptions): Promise<RunningContainer> {
   const docker = options.docker ?? new Docker();
+  const runtime = resolveRuntime(options.runtime);
 
   // Before anything else, because a banner printed after a screenful of app
-  // logs is a banner nobody reads. Cached per kernel, so this costs one probe
-  // container on the first boot after a kernel change and nothing after that.
-  // Best-effort by construction: it never throws and never blocks a boot.
-  await warnIfEnforcementInactive(docker, options.image);
+  // logs is a banner nobody reads. Cached per kernel (and per runtime — under
+  // gVisor the kernel being probed is the sentry, not the host's), so this
+  // costs one probe container on the first boot after a kernel change and
+  // nothing after that. Best-effort by construction: it never throws and
+  // never blocks a boot.
+  await warnIfEnforcementInactive(docker, options.image, runtime);
   const wantsBrowserPorts =
     options.apps && options.apps.length > 0
       ? options.apps.some((a) => needsBrowserPorts(a.manifest))
@@ -476,6 +500,10 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
       ...(resources.memoryMb !== undefined ? { Memory: resources.memoryMb * 1024 * 1024 } : {}),
       ...(deviceRequests ? { DeviceRequests: deviceRequests } : {}),
       ...(securityOpt.length > 0 ? { SecurityOpt: securityOpt } : {}),
+      // The hardened-runtime opt-in (BUILD_PLAN M1.4). Only the sandbox gets
+      // it — the sidecar's FUSE mount needs real host mount propagation, so
+      // startSemanticFsSidecar stays on the daemon's default runtime.
+      ...(runtime ? { Runtime: runtime } : {}),
     },
     ...(options.network
       ? { NetworkingConfig: { EndpointsConfig: { [options.network]: {} } } }

@@ -19,8 +19,8 @@ import Docker from "dockerode";
 export type CheckStatus = "ok" | "warn" | "fail" | "unknown";
 
 export interface DoctorCheck {
-  /** Stable machine-readable id. Part of the `--json` contract; do not rename. */
-  id: "docker" | "landlock" | "seccomp" | "fuse";
+  /** Stable machine-readable id. Part of the `--json` contract; do not rename. Additions (like `runtime`, BUILD_PLAN M1.4) are non-breaking — consumers must tolerate ids they don't know. */
+  id: "docker" | "landlock" | "seccomp" | "fuse" | "runtime";
   /** Human-readable one-liner. */
   title: string;
   status: CheckStatus;
@@ -181,7 +181,7 @@ export async function findProbeImage(docker: Docker): Promise<string | undefined
  * uses, so the FUSE answer describes a real Berth sandbox rather than a bare
  * `docker run`.
  */
-export async function probeKernel(docker: Docker, image: string): Promise<LandlockProbeResult> {
+export async function probeKernel(docker: Docker, image: string, runtime?: string): Promise<LandlockProbeResult> {
   const container = await docker.createContainer({
     Image: image,
     Entrypoint: ["python3"],
@@ -192,6 +192,11 @@ export async function probeKernel(docker: Docker, image: string): Promise<Landlo
       AutoRemove: false,
       Devices: [{ PathOnHost: "/dev/fuse", PathInContainer: "/dev/fuse", CgroupPermissions: "rwm" }],
       CapAdd: ["SYS_ADMIN"],
+      // When a hardened runtime is selected (BERTH_RUNTIME / M1.4), the kernel
+      // being probed is that runtime's — under gVisor the sentry, not the
+      // host's Linux. Probing the default runtime and booting under another
+      // would answer a question about a kernel the sandbox never runs on.
+      ...(runtime ? { Runtime: runtime } : {}),
     },
   });
 
@@ -249,7 +254,13 @@ export interface RunDoctorOptions {
    * that is only ever exercised in its failing half is exactly the kind of
    * thing that looks verified while being untested.
    */
-  probe?: (docker: Docker, image: string) => Promise<LandlockProbeResult>;
+  probe?: (docker: Docker, image: string, runtime?: string) => Promise<LandlockProbeResult>;
+  /**
+   * Runtime the sandbox would boot with (`HostConfig.Runtime`) — the probe
+   * runs under it, and the `runtime` check verifies the daemon has it.
+   * Defaults to `BERTH_RUNTIME`, same resolution `startContainer()` uses.
+   */
+  runtime?: string;
 }
 
 /**
@@ -261,6 +272,9 @@ export async function runDoctor(options: RunDoctorOptions = {}): Promise<DoctorR
   const docker = options.docker ?? new Docker();
   const checks: DoctorCheck[] = [];
   let daemon: DoctorReport["daemon"];
+  let daemonRuntimes: { names: string[]; default?: string } | undefined;
+  const envRuntime = process.env.BERTH_RUNTIME;
+  const runtime = options.runtime ?? (envRuntime === "" ? undefined : envRuntime);
 
   // --- Docker ------------------------------------------------------------
   // First, and gating: every kernel fact below comes from a container, so an
@@ -276,7 +290,10 @@ export async function runDoctor(options: RunDoctorOptions = {}): Promise<DoctorR
       ServerVersion?: string;
       Architecture?: string;
       SecurityOptions?: string[];
+      Runtimes?: Record<string, unknown>;
+      DefaultRuntime?: string;
     };
+    daemonRuntimes = { names: Object.keys(info.Runtimes ?? {}), default: info.DefaultRuntime };
     dockerReachable = true;
     daemon = {
       kernelVersion: info.KernelVersion ?? "unknown",
@@ -324,24 +341,61 @@ export async function runDoctor(options: RunDoctorOptions = {}): Promise<DoctorR
     });
   }
 
+  // --- runtime -------------------------------------------------------------
+  // The hardened-runtime check (BUILD_PLAN M1.4). Informational when nothing
+  // was requested; a hard failure when BERTH_RUNTIME names a runtime the
+  // daemon doesn't have, because every boot would then fail at createContainer.
+  if (daemonRuntimes) {
+    const available = daemonRuntimes.names.length > 0 ? daemonRuntimes.names.sort().join(", ") : "(daemon reported none)";
+    const gvisor = daemonRuntimes.names.includes("runsc");
+    if (runtime && !daemonRuntimes.names.includes(runtime)) {
+      checks.push({
+        id: "runtime",
+        title: "Container runtime for sandboxes",
+        status: "fail",
+        detail: `BERTH_RUNTIME=${runtime}, but the daemon has no runtime by that name — available: ${available}`,
+        remedy:
+          runtime === "runsc"
+            ? "Install gVisor and register it with the daemon (https://gvisor.dev/docs/user_guide/install/ — `runsc install` writes the daemon config), then restart Docker."
+            : `Register "${runtime}" in the daemon's runtimes config, or unset BERTH_RUNTIME.`,
+      });
+    } else {
+      checks.push({
+        id: "runtime",
+        title: "Container runtime for sandboxes",
+        status: "ok",
+        detail: runtime
+          ? `sandboxes boot with Runtime "${runtime}" (BERTH_RUNTIME); daemon default is "${daemonRuntimes.default ?? "unknown"}"`
+          : `daemon default "${daemonRuntimes.default ?? "unknown"}"; available: ${available}`,
+        remedy:
+          !runtime && gvisor
+            ? "gVisor (runsc) is registered — set BERTH_RUNTIME=runsc to boot sandboxes under it as defense-in-depth against container escape. It is not a substitute for the in-kernel enforcement; run `berth doctor` again with it set, since the probed kernel becomes gVisor's sentry."
+            : undefined,
+      });
+    }
+  }
+
   // --- the kernel probe --------------------------------------------------
   const probeImage = options.image ?? (dockerReachable ? await findProbeImage(docker).catch(() => undefined) : undefined);
 
-  if (options.skipProbe || !dockerReachable || !probeImage) {
+  const runtimeMissing = checks.find((c) => c.id === "runtime")?.status === "fail";
+  if (options.skipProbe || !dockerReachable || !probeImage || runtimeMissing) {
     const detail = !dockerReachable
       ? "not run — the Docker daemon is unreachable, and this check runs inside a container"
-      : options.skipProbe
-        ? "not run — probe skipped"
-        : "not run — no local image with python3 to probe in";
-    const remedy = !dockerReachable || options.skipProbe
+      : runtimeMissing
+        ? `not run — the requested runtime "${runtime}" is not registered with the daemon, so the probe container cannot start under it`
+        : options.skipProbe
+          ? "not run — probe skipped"
+          : "not run — no local image with python3 to probe in";
+    const remedy = !dockerReachable || options.skipProbe || runtimeMissing
       ? undefined
       : "Build any Berth app (`berth dev <app>` builds one), or pass `--image <image>` to probe a specific one.";
     checks.push({ id: "landlock", title: "Landlock enforcement in the container kernel", status: "unknown", detail, remedy });
     checks.push({ id: "fuse", title: "/dev/fuse available to a sandbox", status: "unknown", detail, remedy });
   } else {
     try {
-      const probe = await (options.probe ?? probeKernel)(docker, probeImage);
-      checks.push(landlockCheck(probe));
+      const probe = await (options.probe ?? probeKernel)(docker, probeImage, runtime);
+      checks.push(landlockCheck(probe, runtime));
       checks.push({
         id: "fuse",
         title: "/dev/fuse available to a sandbox",
@@ -392,8 +446,13 @@ export async function runDoctor(options: RunDoctorOptions = {}): Promise<DoctorR
  * nothing" need different remedies, and the second is the one that has fooled
  * people, because every call in the sandbox path succeeds.
  */
-function landlockCheck(probe: LandlockProbeResult): DoctorCheck {
-  const base = { id: "landlock" as const, title: "Landlock enforcement in the container kernel" };
+function landlockCheck(probe: LandlockProbeResult, runtime?: string): DoctorCheck {
+  // Under a hardened runtime the "container kernel" is that runtime's — for
+  // gVisor the sentry — so the title says which kernel actually answered.
+  const base = {
+    id: "landlock" as const,
+    title: `Landlock enforcement in the container kernel${runtime ? ` (runtime "${runtime}")` : ""}`,
+  };
   switch (probe.status) {
     case "enforcing":
       return {
@@ -423,7 +482,7 @@ function landlockCheck(probe: LandlockProbeResult): DoctorCheck {
 /** The `reasons` list, in the order a reader should act on them. */
 function collectReasons(checks: DoctorCheck[]): string[] {
   const reasons: string[] = [];
-  for (const id of ["docker", "landlock", "fuse", "seccomp"] as const) {
+  for (const id of ["docker", "runtime", "landlock", "fuse", "seccomp"] as const) {
     const check = checks.find((c) => c.id === id);
     if (!check) continue;
     if (check.status === "fail") reasons.push(check.detail);
@@ -511,11 +570,15 @@ export function unenforcedBanner(detail: string): string {
 export async function enforcementStatusForBoot(
   docker: Docker,
   image: string,
+  runtime?: string,
 ): Promise<{ status: LandlockProbeResult["status"] | "unknown"; reason?: string }> {
   let key: string;
   try {
     const info = (await docker.info()) as { KernelVersion?: string; Architecture?: string };
-    key = `${info.KernelVersion ?? "unknown"}|${info.Architecture ?? "unknown"}`;
+    // The runtime is part of the key because it is part of the answer: under
+    // gVisor the kernel doing (or not doing) the enforcing is the sentry, and
+    // a verdict cached for runc must not silence the banner under runsc.
+    key = `${info.KernelVersion ?? "unknown"}|${info.Architecture ?? "unknown"}${runtime ? `|${runtime}` : ""}`;
   } catch {
     return { status: "unknown" };
   }
@@ -525,7 +588,7 @@ export async function enforcementStatusForBoot(
   if (hit) return { status: hit.status, reason: hit.reason };
 
   try {
-    const probe = await probeKernel(docker, image);
+    const probe = await probeKernel(docker, image, runtime);
     cache[key] = { status: probe.status, reason: probe.reason, probedAt: new Date().toISOString() };
     writeCache(cache);
     return { status: probe.status, reason: probe.reason };
@@ -546,17 +609,19 @@ export async function enforcementStatusForBoot(
  * banner goes unread too. `berth doctor` is where `unknown` is reported as
  * `unknown`, because someone running it is asking the question directly.
  */
-export async function warnIfEnforcementInactive(docker: Docker, image: string): Promise<void> {
+export async function warnIfEnforcementInactive(docker: Docker, image: string, runtime?: string): Promise<void> {
   if (bannerPrinted) return;
   if (process.env.BERTH_NO_ENFORCEMENT_BANNER === "1") return;
 
   try {
-    const { status, reason } = await enforcementStatusForBoot(docker, image);
+    const { status, reason } = await enforcementStatusForBoot(docker, image, runtime);
     if (status === "unsupported") {
       bannerPrinted = true;
       console.warn(
         unenforcedBanner(
-          `This kernel has no Landlock support${reason ? ` (${reason})` : ""}. On macOS that is Docker Desktop's linuxkit kernel.`,
+          runtime
+            ? `The "${runtime}" runtime's kernel has no Landlock support${reason ? ` (${reason})` : ""} — under gVisor that kernel is the sentry, whatever the host kernel has. Unset BERTH_RUNTIME to get the host kernel's enforcement back.`
+            : `This kernel has no Landlock support${reason ? ` (${reason})` : ""}. On macOS that is Docker Desktop's linuxkit kernel.`,
         ),
       );
     } else if (status === "present_not_enforcing") {
