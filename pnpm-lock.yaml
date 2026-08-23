@@ -828,6 +828,15 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
+  redteam:
+    dependencies:
+      '@berth/breakout-box':
+        specifier: workspace:*
+        version: link:../breakout
+      '@berth/docker-orchestrator':
+        specifier: workspace:*
+        version: link:../packages/docker-orchestrator
+
 packages:
 
   '@a2a-js/sdk@1.0.1':
