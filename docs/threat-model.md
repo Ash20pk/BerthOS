@@ -126,6 +126,8 @@ Not gaps to be closed — decisions, with the reason.
 
 **If you're evaluating Berth as a security boundary**, the honest one-line summary: *kernel-enforced filesystem and network scoping is real and testable today, and — since BUILD_PLAN M1.1–M1.3 — so is in-container privilege isolation.* Berth is a strong boundary around what an agent's code can touch, and that now holds against an attacker who already has code execution inside the container: they get one app's uid, one Landlock domain, and no `CAP_SYS_ADMIN` anywhere in the sandbox to escape them with. The residuals that bound that claim, named rather than waved off: the mesh daemon keeps uid 0 and `CAP_NET_ADMIN` behind a control socket that still trusts self-declared identity (*1.14* — the largest remaining in-container escalation path), the daemons' length-prefixed protocols still allocate what the header claims (*1.14*), and `docker exec` bypasses everything by construction.
 
+**Checking the claim instead of trusting this page** (new in BUILD_PLAN M2.1): `berth attest <runId>` emits a per-run record binding the audit-chain head, enforcement *as measured* for that boot (agent-init's ruleset report + the doctor probe, per runtime), the enforced capability-policy hash, boot id, and image digest — with the verdict derived from the embedded measurements, never asserted, so a host where nothing enforces attests `NOT_ENFORCED`. Its trust model is stated inside every record: tamper-*evident*, not tamper-proof — whoever controls the emitting host could rewrite the chain and re-emit before the head leaves their reach, and nothing is key-signed yet. See [attestation-reference.md](./attestation-reference.md#what-this-does-not-prove).
+
 ## Reporting
 
 Found something not on this page? [SECURITY.md](../SECURITY.md) has the private disclosure path. A bypass of anything in the **Kernel** or **Broker** tier above is a vulnerability. A gap in something this page already names as unenforced is expected — but a *worse-than-documented* version of one is still worth reporting.
@@ -148,5 +150,6 @@ Every "what's deferred / out of scope" section in `docs/` maps to a section abov
 | [app-registry-reference.md](./app-registry-reference.md) — scope | T3, *5.2*, out-of-scope list |
 | [context-bus-reference.md](./context-bus-reference.md) — known limitations | B4, *1.14*, out-of-scope list |
 | [semantic-fs-reference.md](./semantic-fs-reference.md) — verification status | B4, *1.14* (silent-empty fallback) |
+| [attestation-reference.md](./attestation-reference.md) — what this does not prove | The **Recorded** tier: tamper-evident not tamper-proof, unsigned, host-trusting at emission |
 | [berth-os-reference.md](./berth-os-reference.md) / [agents-reference.md](./agents-reference.md) — scope boundaries | Non-security scope (local Docker only, YAML shapes, schema fidelity) — no threat-model impact |
 | [sdk-reference.md](./sdk-reference.md) / [sdk-python-reference.md](./sdk-python-reference.md) / [sdk-python-context-bus-reference.md](./sdk-python-context-bus-reference.md) | Non-security scope, except connector path/verb scoping → B5 |
