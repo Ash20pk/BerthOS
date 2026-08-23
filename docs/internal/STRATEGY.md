@@ -140,11 +140,13 @@ becomes these five. Each row names where Berth is today (verified against
 - **Today:** kernel-enforced filesystem/network scoping is real and tested
   (Landlock ABI 3+/4, seccomp, capability drop — threat-model tier table).
   Already ahead of every sandbox on this axis, because they don't have the
-  axis. But the threat model's own summary holds: *strong against a
-  prompt-injected agent; not yet a boundary against an attacker with code
-  execution inside the container.* The three named holes: container-wide
-  `CAP_SYS_ADMIN` (REMEDIATION 1.3 remainder), the root daemons outside every filter
-  (B4), no per-app secret scoping (secrets-reference "still open").
+  axis. The threat model's own summary upgraded with M1.1–M1.3 (re-baselined
+  2026-08-23, BUILD_PLAN M1.5): *strong against code execution inside the
+  container*, with the residuals named — chiefly the mesh daemon's retained
+  root + `CAP_NET_ADMIN` behind a self-asserted-identity control socket (1.14).
+  The three holes this bullet used to name (container-wide `CAP_SYS_ADMIN`,
+  the unconfined root daemons B4, no per-app secret scoping) are all closed,
+  each with a negative-control milestone test.
 - **Best:** the honest one-liner upgrades to "strong against code execution
   inside the box." Concretely: mount `/context` in an init step and drop
   `SYS_ADMIN` before any app process exists; give each daemon its own uid and
