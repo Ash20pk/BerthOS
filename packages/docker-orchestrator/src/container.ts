@@ -444,7 +444,13 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
   //
   // No secrets, no mount: a container whose environment holds nothing
   // sensitive is byte-for-byte what it was before this existed.
-  const { plain, secret } = partitionSecretEnv(env);
+  // Declared names first: a name any app lists under `secrets:` is a secret
+  // regardless of what it is called, so the split below cannot miss one whose
+  // name does not look like a credential (see partitionSecretEnv).
+  const appDeclarations = (options.apps ?? [{ name: options.manifest.name, manifest: options.manifest }]).map(
+    (a) => ({ name: a.name, secrets: a.manifest.secrets ?? [] }),
+  );
+  const { plain, secret } = partitionSecretEnv(env, appDeclarations.flatMap((d) => d.secrets));
 
   // The M1.3 split on top of the 5.5 one: a secret name declared by any
   // app's `secrets:` list leaves the shared file and travels in that app's
@@ -452,9 +458,6 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
   // app's uid and sourced only in that app's subshell. Manifests with no
   // `secrets:` partition everything into `shared`, so a container that
   // declares nothing is byte-for-byte what it was before this existed.
-  const appDeclarations = (options.apps ?? [{ name: options.manifest.name, manifest: options.manifest }]).map(
-    (a) => ({ name: a.name, secrets: a.manifest.secrets ?? [] }),
-  );
   const { shared, perApp, missing } = partitionSecretsPerApp(secret, appDeclarations);
   for (const { app, name } of missing) {
     // Names only, never values — and loudly, because the app declared it
