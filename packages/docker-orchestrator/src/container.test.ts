@@ -94,6 +94,7 @@ async function startWithFakeDocker(options: {
   httpRpc?: { authToken: string };
   secretsRunDir: string;
   runtime?: string;
+  extraSecurityOpt?: string[];
 }): Promise<Docker.ContainerCreateOptions> {
   // The enforcement banner runs a real probe container against the real
   // daemon, which has nothing to do with what's under test here.
@@ -107,6 +108,7 @@ async function startWithFakeDocker(options: {
     httpRpc: options.httpRpc,
     secretsRunDir: options.secretsRunDir,
     runtime: options.runtime,
+    extraSecurityOpt: options.extraSecurityOpt,
     docker: fakeDocker(captured),
   });
   assert.ok(captured.create, "startContainer never called createContainer");
@@ -190,4 +192,22 @@ test("BERTH_RUNTIME selects the runtime when the caller passes none, and empty m
   const created = await startWithFakeDocker({ name: "berth-test-runtime-env-empty", secretsRunDir: runDir });
   assert.ok(!("Runtime" in (created.HostConfig ?? {})));
   delete process.env.BERTH_RUNTIME;
+});
+
+/**
+ * BUILD_PLAN M2.1: extraSecurityOpt is appended to the computed SecurityOpt
+ * entries — how attestation-milestone.mjs's control boot pins a seccomp
+ * profile that ENOSYSes the landlock syscalls.
+ */
+test("startContainer appends extraSecurityOpt to HostConfig.SecurityOpt", async () => {
+  const runDir = await mkdtemp(join(tmpdir(), "berth-container-secopt-"));
+  const created = await startWithFakeDocker({
+    name: "berth-test-secopt",
+    secretsRunDir: runDir,
+    extraSecurityOpt: ["seccomp={\"defaultAction\":\"SCMP_ACT_ALLOW\"}"],
+  });
+  assert.ok((created.HostConfig?.SecurityOpt ?? []).some((o: string) => o.startsWith("seccomp=")));
+
+  const without = await startWithFakeDocker({ name: "berth-test-no-secopt", secretsRunDir: runDir });
+  assert.ok(!(without.HostConfig?.SecurityOpt ?? []).some((o: string) => o.startsWith("seccomp=")));
 });

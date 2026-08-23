@@ -194,6 +194,15 @@ export interface StartContainerOptions {
    */
   runtime?: string;
   /**
+   * Extra HostConfig.SecurityOpt entries, appended verbatim after the ones
+   * this module computes. The one in-repo consumer is
+   * attestation-milestone.mjs's control boot, which pins a seccomp profile
+   * that ENOSYSes the landlock syscalls so an enforcing host can produce a
+   * genuinely NOT_ENFORCED boot — but the shape is general operator config
+   * (a custom seccomp/AppArmor profile), same trust tier as BERTH_RUNTIME.
+   */
+  extraSecurityOpt?: string[];
+  /**
    * Where the per-container secrets file is written on the host — defaults to
    * ~/.berth/run/<container name>/secrets.env. Overridable so tests don't
    * touch the real one, the same way snapshotsDir and osDir are.
@@ -408,6 +417,7 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
     // — only needed on the legacy path, where the mount happens in here.
     securityOpt.push("apparmor:unconfined");
   }
+  if (options.extraSecurityOpt) securityOpt.push(...options.extraSecurityOpt);
   if (needsMesh) {
     devices.push({ PathOnHost: "/dev/net/tun", PathInContainer: "/dev/net/tun", CgroupPermissions: "rwm" });
     capAdd.push("NET_ADMIN");

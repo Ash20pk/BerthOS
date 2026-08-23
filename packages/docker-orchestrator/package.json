@@ -48,9 +48,10 @@
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
+    "@berth/audit": "workspace:*",
     "@berth/manifest-schema": "workspace:*",
-    "dockerode": "^5.0.1",
     "chokidar": "^5.0.0",
+    "dockerode": "^5.0.1",
     "tar-fs": "^3.0.6"
   },
   "devDependencies": {

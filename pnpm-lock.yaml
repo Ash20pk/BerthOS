@@ -498,6 +498,9 @@ importers:
 
   packages/docker-orchestrator:
     dependencies:
+      '@berth/audit':
+        specifier: workspace:*
+        version: link:../audit
       '@berth/manifest-schema':
         specifier: workspace:*
         version: link:../manifest-schema

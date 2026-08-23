@@ -28,6 +28,14 @@ export {
   unenforcedBanner,
   resetBannerState,
 } from "./doctor.js";
+export {
+  gatherBootEvidence,
+  demuxLogBuffer,
+  parseBootId,
+  parsePolicyLines,
+  parseRulesetReports,
+  type BootEvidence,
+} from "./attest.js";
 export { watchApp, type WatchHandle } from "./watch.js";
 export { invokeAppExport, rpcSocketPathFor, RPC_SOCKET_DIR, type RpcRequest, type RpcResponse } from "./relay.js";
 export { createStdioRpcClient, type StdioRpcClient } from "./stdio-rpc.js";
