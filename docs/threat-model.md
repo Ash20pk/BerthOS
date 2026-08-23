@@ -157,5 +157,7 @@ Every "what's deferred / out of scope" section in `docs/` maps to a section abov
 | [attestation-reference.md](./attestation-reference.md) — what this does not prove | The **Recorded** tier: tamper-evident not tamper-proof, unsigned, host-trusting at emission |
 | [bench/README.md](../bench/README.md) — what the benchmark does and does not measure | Row selection is ours; `docker exec` red for every container harness; unmeasured rows never score |
 | [breakout/README.md](../breakout/README.md) — the break-out box's scope | `docker exec` out of scope; server is a disposable relay, not a boundary; unenforced host refused |
+| [internal/claims.md](./internal/claims.md) — every claim + its proving test | The whole tier table, made row-by-row checkable; the UNPROVEN list |
+| [internal/audit-pack.md](./internal/audit-pack.md) — the self-serve audit starting point | Reading order, runnable evidence, known-not-covered, reporting |
 | [berth-os-reference.md](./berth-os-reference.md) / [agents-reference.md](./agents-reference.md) — scope boundaries | Non-security scope (local Docker only, YAML shapes, schema fidelity) — no threat-model impact |
 | [sdk-reference.md](./sdk-reference.md) / [sdk-python-reference.md](./sdk-python-reference.md) / [sdk-python-context-bus-reference.md](./sdk-python-context-bus-reference.md) | Non-security scope, except connector path/verb scoping → B5 |
