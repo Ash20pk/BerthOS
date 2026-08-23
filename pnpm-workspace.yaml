@@ -10,3 +10,5 @@ packages:
   - "packages/agents/test/fixtures/*"
   - "bench"
   - "bench/fixtures/*"
+  - "breakout"
+  - "breakout/apps/*"

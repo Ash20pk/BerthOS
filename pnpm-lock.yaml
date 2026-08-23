@@ -188,6 +188,39 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
 
+  breakout:
+    dependencies:
+      '@berth/audit':
+        specifier: workspace:*
+        version: link:../packages/audit
+      '@berth/docker-orchestrator':
+        specifier: workspace:*
+        version: link:../packages/docker-orchestrator
+      '@berth/manifest-schema':
+        specifier: workspace:*
+        version: link:../packages/manifest-schema
+      dockerode:
+        specifier: ^4.0.9
+        version: 4.0.12
+
+  breakout/apps/breakout-target:
+    dependencies:
+      '@berth/sdk':
+        specifier: workspace:*
+        version: link:../../../packages/sdk
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+
+  breakout/apps/flag-keeper:
+    dependencies:
+      '@berth/sdk':
+        specifier: workspace:*
+        version: link:../../../packages/sdk
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+
   examples/agents/agent-server:
     dependencies:
       '@berth/agents':

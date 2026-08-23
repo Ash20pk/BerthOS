@@ -1,0 +1,27 @@
+name: breakout-target
+version: 0.1.0
+description: "The public break-out box's target app: runs stranger-submitted code in its own process. Its capabilities are an ordinary app's — no special hardening, or the box proves nothing."
+
+# An ordinary, unremarkable app's declaration. This is the point: the flags are
+# protected by the same compiled policy any Berth app gets, not by anything
+# added for the challenge.
+capabilities:
+  # Its own scratch directory — somewhere a submission can legitimately write,
+  # so "nothing works" is never the explanation for a failed attempt.
+  - filesystem:read:/workspace/.berth/dev-workspace/breakout-target
+  - filesystem:write:/workspace/.berth/dev-workspace/breakout-target
+  # The code it boots from (Landlock resolves pnpm's symlinks to real inodes).
+  - filesystem:read:/workspace/breakout
+  - filesystem:read:/workspace/packages
+  - filesystem:read:/workspace/node_modules
+
+# Declares no network:* capability, and no read of /var/breakout — where the
+# kernel-tier flag lives. Both absences are what the challenge is about.
+
+exports:
+  - name: attempt
+    input: { code: string }
+    output: { ok: boolean, output: string }
+
+on_install: []
+on_agent_ready: []
