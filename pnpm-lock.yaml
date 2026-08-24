@@ -837,6 +837,12 @@ importers:
         specifier: workspace:*
         version: link:../packages/docker-orchestrator
 
+  spec/attestation-record:
+    dependencies:
+      '@berth/audit':
+        specifier: workspace:*
+        version: link:../../packages/audit
+
   spec/capability-manifest:
     dependencies:
       '@berth/manifest-schema':

@@ -15,3 +15,5 @@ packages:
   - "redteam"
   # The standalone spec + its conformance suite; versioned independently (spec/capability-manifest/VERSION).
   - "spec/capability-manifest"
+  # Same, for the attestation record (spec/attestation-record/VERSION).
+  - "spec/attestation-record"
