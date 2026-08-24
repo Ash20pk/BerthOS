@@ -12,6 +12,11 @@ actually implements it.
 - **[conformance/run.mjs](./conformance/run.mjs)** — the runner. No
   dependencies, no knowledge of any implementation.
 
+Its companion is [spec/attestation-record](../attestation-record) — a manifest
+says what an application intends to touch, an attestation record says what a
+run actually enforced. The two are separately versioned and share exactly one
+thing: the enforcement-tier vocabulary.
+
 It lives in this repository because Berth wrote it, not because Berth owns it.
 Nothing here imports Berth except the reference adapter, and where the
 specification and `@berth/manifest-schema` disagree, the specification is right

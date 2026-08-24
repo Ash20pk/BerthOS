@@ -56,6 +56,19 @@ The same checks exist as a library (`verifyAttestation` in `@berth/audit`),
 and `berth attest` runs them against its own output before writing anything —
 a record the shipped verifier would reject is never emitted.
 
+Each problem carries a machine-readable `code` from a closed vocabulary
+(`digest-mismatch`, `enforcement-status-underived`, `boot-id-inconsistent`, …)
+alongside its prose, so a caller in any language can act on the reason rather
+than grepping the message.
+
+The record format, the canonical digest, the derivation rule, the verifier
+algorithm, and that error vocabulary are written down as a standalone,
+independently versioned specification with its own conformance suite:
+**[spec/attestation-record](../spec/attestation-record)**. Both verifiers here
+are reference implementations of it, and CI runs the same 115-case corpus
+through each — which is how they are kept from drifting apart while each stays
+internally consistent.
+
 ## What this does not prove
 
 - **It does not prove the host told the truth.** Every input — the audit

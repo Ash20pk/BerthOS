@@ -620,7 +620,8 @@ A manifest states intent; an attestation record states what a specific run
 actually enforced. They are separate documents with separate versions, joined
 by the tier vocabulary of §5.1: a record that reports a capability as enforced
 MUST use the same four words. The attestation record has its own
-specification.
+specification, versioned independently of this one:
+[spec/attestation-record](../attestation-record/SPEC.md).
 
 ---
 

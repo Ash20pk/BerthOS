@@ -144,6 +144,20 @@ Not gaps to be closed — decisions, with the reason.
 
 **Checking the claim instead of trusting this page** (new in BUILD_PLAN M2.1): `berth attest <runId>` emits a per-run record binding the audit-chain head, enforcement *as measured* for that boot (agent-init's ruleset report + the doctor probe, per runtime), the enforced capability-policy hash, boot id, and image digest — with the verdict derived from the embedded measurements, never asserted, so a host where nothing enforces attests `NOT_ENFORCED`. Its trust model is stated inside every record: tamper-*evident*, not tamper-proof — whoever controls the emitting host could rewrite the chain and re-emit before the head leaves their reach, and nothing is key-signed yet. See [attestation-reference.md](./attestation-reference.md#what-this-does-not-prove).
 
+**And the record format is now normative outside this repo too** (BUILD_PLAN
+M3.2). [The Attestation Record Specification](../spec/attestation-record/SPEC.md)
+makes two of the properties above conformance requirements rather than Berth
+policy: a conforming record **MUST** carry a `trustModel` saying what trusting
+it requires (§4.3 — a record without one does not conform), and a conforming
+verifier **MUST** re-derive `enforcement.status` from the record's own
+measurements rather than reading it (§5.3). It also closes a gap this page
+previously only implied: every `rulesetReports[].bootId` must equal
+`boot.bootId`, so a record cannot attest a non-enforcing boot while carrying an
+enforcing one's evidence — the most attractive forgery the format permits, and
+the only one a verifier holding nothing but the record can catch. What no spec
+and no suite can check is whether the measurements were honestly obtained; that
+remains the Recorded tier's standing limit.
+
 **Comparing the claim against the alternative** (BUILD_PLAN M2.2): `bench/` is a containment benchmark where one probe — the same file, unmodified — is run by plain Docker, by Berth, and by a deliberately weakened Berth, and the scorecard is generated rather than written. Measured 2026-08-23 on an enforcing host: plain Docker contained 2 of 11 measured rows, Berth 12 of 13, a Berth with its kernel tier switched off 8 of 12. Berth's one red cell is `docker exec` — a process injected through the host's container socket is not a descendant of the restricted workload, so nothing in this page's Kernel tier binds it, which is the same bypass named throughout this page stated as a measurement. Rows that could not be measured are never scored as passes. See [bench/README.md](../bench/README.md).
 
 **A standing invitation to disprove it** (BUILD_PLAN M2.3): [the break-out box](../breakout/README.md) is a Berth sandbox that hands strangers code execution and hides two flags no capability grants — one behind Landlock alone (a world-readable 0644 file, so only the compiled policy refuses the read), one behind the per-app uid split. It runs exactly what `berth dev` gives any app, with no added hardening, and its server refuses to start on a host that cannot enforce. `docker exec` is named out of scope in its rules for the same reason it is a residual here: root on the host bypasses the sandbox by construction.
@@ -176,5 +190,6 @@ Every "what's deferred / out of scope" section in `docs/` maps to a section abov
 | [internal/claims.md](./internal/claims.md) — every claim + its proving test | The whole tier table, made row-by-row checkable; the UNPROVEN list |
 | [internal/audit-pack.md](./internal/audit-pack.md) — the self-serve audit starting point | Reading order, runnable evidence, known-not-covered, reporting |
 | [spec/capability-manifest](../spec/capability-manifest/SPEC.md) — the standalone manifest spec | The tier vocabulary, exported as a conformance requirement (§5); `terminal:attach` published at the weaker tier; §8 security considerations (manifest as attacker-supplied input) |
+| [spec/attestation-record](../spec/attestation-record/SPEC.md) — the standalone record spec | `trustModel` mandatory in-band (§4.3); verdicts MUST be derived from carried measurements, never asserted (§5.3); malformed input must degrade toward the weaker verdict (§5.3); §10 security considerations — not a signature, host-trusting at emission, evidence only once the digest leaves the writer's reach |
 | [berth-os-reference.md](./berth-os-reference.md) / [agents-reference.md](./agents-reference.md) — scope boundaries | Non-security scope (local Docker only, YAML shapes, schema fidelity) — no threat-model impact |
 | [sdk-reference.md](./sdk-reference.md) / [sdk-python-reference.md](./sdk-python-reference.md) / [sdk-python-context-bus-reference.md](./sdk-python-context-bus-reference.md) | Non-security scope, except connector path/verb scoping → B5 |
