@@ -168,47 +168,126 @@ export function finalizeAttestation(input: AttestationInput): AttestationRecord 
   return { ...body, recordSha256: attestationDigest(body) };
 }
 
+/**
+ * A verification failure, carrying a stable machine-readable `code` from the
+ * Attestation Record Specification's error contract (spec/attestation-record,
+ * SPEC.md §7) alongside the human sentence. The code is the part a conformance
+ * suite, a CI job, or another language's verifier can act on; the message is
+ * the part a person reads.
+ */
+export interface AttestationProblem {
+  code: AttestationProblemCode;
+  message: string;
+}
+
+export type AttestationProblemCode =
+  | "schema-version-unsupported"
+  | "kind-invalid"
+  | "run-id-missing"
+  | "trust-model-missing"
+  | "generated-at-invalid"
+  | "audit-chain-head-invalid"
+  | "boot-id-missing"
+  | "image-digest-missing"
+  | "policy-digest-invalid"
+  | "run-records-invalid"
+  | "digest-mismatch"
+  | "enforcement-missing"
+  | "enforcement-status-invalid"
+  | "ruleset-report-invalid"
+  | "doctor-probe-invalid"
+  | "boot-id-inconsistent"
+  | "enforcement-status-underived";
+
 export interface AttestationVerification {
   valid: boolean;
-  /** Every check that failed — empty when valid. */
-  problems: string[];
+  /** Every check that failed — empty when valid. Order is not significant. */
+  problems: AttestationProblem[];
 }
 
 const SHA256_HEX = /^[0-9a-f]{64}$/;
+/** RFC 3339 date-time. `generatedAt` is when the measurements were read, and a record that can't say when is not evidence of anything. */
+const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
+const ENFORCEMENT_STATUSES = new Set(["ACTIVE", "NOT_ENFORCED", "UNDETERMINED"]);
+const PROBE_STATUSES = new Set(["enforcing", "present_not_enforcing", "unsupported", "unknown"]);
 
 /**
  * The same checks scripts/verify-attestation.mjs performs, as a library:
  * shape, self-hash, and that the stated verdict actually follows from the
  * embedded measurements. Deliberately no I/O — the standalone script owns
  * "no Berth dependency", this owns "the emitter and its tests agree".
+ *
+ * Both are reference implementations of spec/attestation-record/SPEC.md §6
+ * (the verifier algorithm); the two are kept in sync by the conformance suite,
+ * which runs the same corpus through each.
  */
 export function verifyAttestation(record: AttestationRecord): AttestationVerification {
-  const problems: string[] = [];
+  const problems: AttestationProblem[] = [];
+  const fail = (code: AttestationProblemCode, message: string) => problems.push({ code, message });
 
-  if (record.schemaVersion !== ATTESTATION_SCHEMA_VERSION) problems.push(`unknown schemaVersion ${record.schemaVersion}`);
-  if (record.kind !== ATTESTATION_KIND) problems.push(`kind is ${JSON.stringify(record.kind)}, expected ${JSON.stringify(ATTESTATION_KIND)}`);
-  if (typeof record.runId !== "string" || record.runId.length === 0) problems.push("runId missing");
-  if (typeof record.trustModel !== "string" || record.trustModel.length === 0) problems.push("trustModel missing — the honesty constraint is part of the schema");
-  if (!SHA256_HEX.test(record.auditChain?.head ?? "")) problems.push("auditChain.head is not a sha256 hex digest");
-  if (typeof record.boot?.bootId !== "string" || record.boot.bootId.length === 0) problems.push("boot.bootId missing");
-  for (const p of record.policies ?? []) {
-    if (!SHA256_HEX.test(p.sha256 ?? "")) problems.push(`policy digest for app "${p.app}" is not a sha256 hex digest`);
+  if (record?.schemaVersion !== ATTESTATION_SCHEMA_VERSION) fail("schema-version-unsupported", `unknown schemaVersion ${record?.schemaVersion}`);
+  if (record?.kind !== ATTESTATION_KIND) fail("kind-invalid", `kind is ${JSON.stringify(record?.kind)}, expected ${JSON.stringify(ATTESTATION_KIND)}`);
+  if (typeof record?.runId !== "string" || record.runId.length === 0) fail("run-id-missing", "runId missing");
+  if (typeof record?.trustModel !== "string" || record.trustModel.length === 0) {
+    fail("trust-model-missing", "trustModel missing — the honesty constraint is part of the schema");
   }
-  if (!(record.run?.records > 0)) problems.push("run.records is not a positive count — an attestation must cite audit evidence of the run");
+  if (typeof record?.generatedAt !== "string" || !RFC3339.test(record.generatedAt)) {
+    fail("generated-at-invalid", `generatedAt is ${JSON.stringify(record?.generatedAt)}, expected an RFC 3339 timestamp`);
+  }
+  if (!SHA256_HEX.test(record?.auditChain?.head ?? "")) fail("audit-chain-head-invalid", "auditChain.head is not a sha256 hex digest");
+  if (typeof record?.boot?.bootId !== "string" || record.boot.bootId.length === 0) fail("boot-id-missing", "boot.bootId missing");
+  if (typeof record?.boot?.imageDigest !== "string" || record.boot.imageDigest.length === 0) {
+    fail("image-digest-missing", 'boot.imageDigest missing — a record names one boot of one image, and "unknown" must be said out loud');
+  }
+  if (!Array.isArray(record?.policies)) fail("policy-digest-invalid", "policies is not a list");
+  else {
+    for (const p of record.policies) {
+      if (!SHA256_HEX.test(p?.sha256 ?? "")) fail("policy-digest-invalid", `policy digest for app ${JSON.stringify(p?.app)} is not a sha256 hex digest`);
+    }
+  }
+  if (!(record?.run?.records > 0)) fail("run-records-invalid", "run.records is not a positive count — an attestation must cite audit evidence of the run");
 
-  if (typeof record.recordSha256 !== "string" || attestationDigest(record) !== record.recordSha256) {
-    problems.push("recordSha256 does not match the record's contents — the record was edited after emission");
+  // Totality (SPEC §2.3): a record that is not a mapping at all still has to
+  // produce problems rather than an exception, so the digest is only computed
+  // where computing it means something.
+  const isMapping = typeof record === "object" && record !== null && !Array.isArray(record);
+  if (!isMapping || typeof record.recordSha256 !== "string" || attestationDigest(record) !== record.recordSha256) {
+    fail("digest-mismatch", "recordSha256 does not match the record's contents — the record was edited after emission");
   }
 
-  if (record.enforcement) {
-    const derived = deriveEnforcementStatus(record.enforcement.rulesetReports ?? [], record.enforcement.doctorProbe ?? { status: "unknown" });
-    if (derived.status !== record.enforcement.status) {
-      problems.push(
-        `enforcement.status says ${record.enforcement.status} but the embedded measurements derive ${derived.status} — the verdict was edited independently of its evidence`,
+  if (!record?.enforcement || typeof record.enforcement !== "object") {
+    fail("enforcement-missing", "enforcement section missing");
+  } else {
+    const { status, rulesetReports, doctorProbe } = record.enforcement;
+    if (!ENFORCEMENT_STATUSES.has(status)) {
+      fail("enforcement-status-invalid", `enforcement.status is ${JSON.stringify(status)}, expected ACTIVE | NOT_ENFORCED | UNDETERMINED`);
+    }
+    if (!Array.isArray(rulesetReports)) fail("ruleset-report-invalid", "enforcement.rulesetReports is not a list");
+    else {
+      for (const r of rulesetReports) {
+        if (typeof r?.app !== "string" || typeof r?.ruleset !== "string" || typeof r?.bootId !== "string") {
+          fail("ruleset-report-invalid", `ruleset report ${JSON.stringify(r)} is missing app, ruleset, or bootId`);
+        } else if (r.bootId !== record.boot?.bootId) {
+          // Reports are filtered by boot ID precisely so a record cannot borrow
+          // an enforcing boot's evidence for a different, non-enforcing one.
+          fail("boot-id-inconsistent", `ruleset report for app "${r.app}" cites boot ${r.bootId}, but the record attests boot ${record.boot?.bootId}`);
+        }
+      }
+    }
+    if (!PROBE_STATUSES.has(doctorProbe?.status as string)) {
+      fail("doctor-probe-invalid", `enforcement.doctorProbe.status is ${JSON.stringify(doctorProbe?.status)}, not one of the four probe results`);
+    }
+
+    const derived = deriveEnforcementStatus(
+      Array.isArray(rulesetReports) ? rulesetReports : [],
+      PROBE_STATUSES.has(doctorProbe?.status as string) ? doctorProbe : { status: "unknown" },
+    );
+    if (derived.status !== status) {
+      fail(
+        "enforcement-status-underived",
+        `enforcement.status says ${status} but the embedded measurements derive ${derived.status} — the verdict was edited independently of its evidence`,
       );
     }
-  } else {
-    problems.push("enforcement section missing");
   }
 
   return { valid: problems.length === 0, problems };

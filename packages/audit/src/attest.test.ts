@@ -66,7 +66,7 @@ describe("finalizeAttestation + verifyAttestation", () => {
     const edited = { ...record, boot: { ...record.boot, imageDigest: "sha256:" + "d".repeat(64) } };
     const v = verifyAttestation(edited);
     assert.equal(v.valid, false);
-    assert.ok(v.problems.some((p) => p.includes("recordSha256")));
+    assert.ok(v.problems.some((p) => p.message.includes("recordSha256")));
   });
 
   it("upgrading the verdict is caught even when the editor recomputes the self-hash", () => {
@@ -78,13 +78,13 @@ describe("finalizeAttestation + verifyAttestation", () => {
     forged.recordSha256 = attestationDigest(forged);
     const v = verifyAttestation(forged);
     assert.equal(v.valid, false);
-    assert.ok(v.problems.some((p) => p.includes("edited independently of its evidence")));
+    assert.ok(v.problems.some((p) => p.message.includes("edited independently of its evidence")));
   });
 
   it("a record with no run evidence is rejected", () => {
     const record = finalizeAttestation(baseInput({ run: { records: 0 } }));
     const v = verifyAttestation(record);
     assert.equal(v.valid, false);
-    assert.ok(v.problems.some((p) => p.includes("run.records")));
+    assert.ok(v.problems.some((p) => p.message.includes("run.records")));
   });
 });

@@ -22,6 +22,8 @@ export {
   finalizeAttestation,
   verifyAttestation,
   type AttestationInput,
+  type AttestationProblem,
+  type AttestationProblemCode,
   type AttestationRecord,
   type AttestationVerification,
   type DoctorProbeResult,

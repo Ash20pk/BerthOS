@@ -110,7 +110,7 @@ export default class Attest extends Command {
     // Refuse to emit a record the shipped verifier would reject — a broken
     // emitter should fail here, not in a stranger's terminal.
     const check = verifyAttestation(record);
-    if (!check.valid) this.error(`emitted record fails self-verification: ${check.problems.join("; ")}`);
+    if (!check.valid) this.error(`emitted record fails self-verification: ${check.problems.map((p) => `${p.code}: ${p.message}`).join("; ")}`);
 
     const json = `${JSON.stringify(record, null, 2)}\n`;
     if (flags.out) {

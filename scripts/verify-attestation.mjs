@@ -17,9 +17,14 @@
 // tamper-*evident*, not tamper-proof, until the chain head leaves the
 // writer's reach.
 //
+// Problems carry a machine-readable `code` from the error contract of
+// spec/attestation-record/SPEC.md section 7, so a caller in any language can
+// act on the reason rather than grepping prose.
+//
 // The logic mirrors packages/audit/src/attest.ts (verifyAttestation); keep
 // the two in sync — attestation-milestone.mjs runs both against the same
-// records.
+// records, and the conformance suite in spec/attestation-record runs the same
+// corpus through each (--impl standalone | library).
 
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -27,6 +32,9 @@ import { readFileSync } from "node:fs";
 const SCHEMA_VERSION = 1;
 const KIND = "berth.attestation";
 const SHA256_HEX = /^[0-9a-f]{64}$/;
+const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
+const ENFORCEMENT_STATUSES = new Set(["ACTIVE", "NOT_ENFORCED", "UNDETERMINED"]);
+const PROBE_STATUSES = new Set(["enforcing", "present_not_enforcing", "unsupported", "unknown"]);
 
 /** Stable-key JSON — must byte-match @berth/audit's canonicalize(). */
 function canonicalize(value) {
@@ -38,13 +46,13 @@ function canonicalize(value) {
   return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalize(v)}`).join(",")}}`;
 }
 
-function digestOf(record) {
+export function digestOf(record) {
   const { recordSha256, ...rest } = record;
   return createHash("sha256").update(canonicalize(rest)).digest("hex");
 }
 
 /** The one derivation rule, restated: ACTIVE only when both measurements agree. */
-function deriveStatus(rulesetReports, probe) {
+export function deriveStatus(rulesetReports, probe) {
   const reasons = [];
   if (probe.status === "unsupported" || probe.status === "present_not_enforcing") reasons.push(`doctor probe: ${probe.status}`);
   for (const r of rulesetReports) {
@@ -57,28 +65,62 @@ function deriveStatus(rulesetReports, probe) {
 
 export function verify(record) {
   const problems = [];
-  if (record.schemaVersion !== SCHEMA_VERSION) problems.push(`unknown schemaVersion ${record.schemaVersion}`);
-  if (record.kind !== KIND) problems.push(`kind is ${JSON.stringify(record.kind)}, expected "${KIND}"`);
-  if (typeof record.runId !== "string" || record.runId.length === 0) problems.push("runId missing");
-  if (typeof record.trustModel !== "string" || record.trustModel.length === 0) problems.push("trustModel missing");
-  if (!SHA256_HEX.test(record.auditChain?.head ?? "")) problems.push("auditChain.head is not a sha256 hex digest");
-  if (typeof record.boot?.bootId !== "string" || record.boot.bootId.length === 0) problems.push("boot.bootId missing");
-  for (const p of record.policies ?? []) {
-    if (!SHA256_HEX.test(p.sha256 ?? "")) problems.push(`policy digest for app "${p.app}" is not a sha256 hex digest`);
-  }
-  if (!(record.run?.records > 0)) problems.push("run.records is not a positive count");
+  const fail = (code, message) => problems.push({ code, message });
 
-  if (typeof record.recordSha256 !== "string" || digestOf(record) !== record.recordSha256) {
-    problems.push("recordSha256 does not match the record's contents — the record was edited after emission");
+  if (record?.schemaVersion !== SCHEMA_VERSION) fail("schema-version-unsupported", `unknown schemaVersion ${record?.schemaVersion}`);
+  if (record?.kind !== KIND) fail("kind-invalid", `kind is ${JSON.stringify(record?.kind)}, expected "${KIND}"`);
+  if (typeof record?.runId !== "string" || record.runId.length === 0) fail("run-id-missing", "runId missing");
+  if (typeof record?.trustModel !== "string" || record.trustModel.length === 0) fail("trust-model-missing", "trustModel missing");
+  if (typeof record?.generatedAt !== "string" || !RFC3339.test(record.generatedAt)) {
+    fail("generated-at-invalid", `generatedAt is ${JSON.stringify(record?.generatedAt)}, expected an RFC 3339 timestamp`);
   }
-
-  if (record.enforcement) {
-    const derived = deriveStatus(record.enforcement.rulesetReports ?? [], record.enforcement.doctorProbe ?? { status: "unknown" });
-    if (derived !== record.enforcement.status) {
-      problems.push(`enforcement.status says ${record.enforcement.status} but the embedded measurements derive ${derived}`);
+  if (!SHA256_HEX.test(record?.auditChain?.head ?? "")) fail("audit-chain-head-invalid", "auditChain.head is not a sha256 hex digest");
+  if (typeof record?.boot?.bootId !== "string" || record.boot.bootId.length === 0) fail("boot-id-missing", "boot.bootId missing");
+  if (typeof record?.boot?.imageDigest !== "string" || record.boot.imageDigest.length === 0) {
+    fail("image-digest-missing", 'boot.imageDigest missing — "unknown" must be said out loud');
+  }
+  if (!Array.isArray(record?.policies)) fail("policy-digest-invalid", "policies is not a list");
+  else {
+    for (const p of record.policies) {
+      if (!SHA256_HEX.test(p?.sha256 ?? "")) fail("policy-digest-invalid", `policy digest for app ${JSON.stringify(p?.app)} is not a sha256 hex digest`);
     }
+  }
+  if (!(record?.run?.records > 0)) fail("run-records-invalid", "run.records is not a positive count");
+
+  // Totality (SPEC section 2.3): a non-mapping input must produce problems, not an exception.
+  const isMapping = typeof record === "object" && record !== null && !Array.isArray(record);
+  if (!isMapping || typeof record.recordSha256 !== "string" || digestOf(record) !== record.recordSha256) {
+    fail("digest-mismatch", "recordSha256 does not match the record's contents — the record was edited after emission");
+  }
+
+  if (!record?.enforcement || typeof record.enforcement !== "object") {
+    fail("enforcement-missing", "enforcement section missing");
   } else {
-    problems.push("enforcement section missing");
+    const { status, rulesetReports, doctorProbe } = record.enforcement;
+    if (!ENFORCEMENT_STATUSES.has(status)) {
+      fail("enforcement-status-invalid", `enforcement.status is ${JSON.stringify(status)}, expected ACTIVE | NOT_ENFORCED | UNDETERMINED`);
+    }
+    if (!Array.isArray(rulesetReports)) fail("ruleset-report-invalid", "enforcement.rulesetReports is not a list");
+    else {
+      for (const r of rulesetReports) {
+        if (typeof r?.app !== "string" || typeof r?.ruleset !== "string" || typeof r?.bootId !== "string") {
+          fail("ruleset-report-invalid", `ruleset report ${JSON.stringify(r)} is missing app, ruleset, or bootId`);
+        } else if (r.bootId !== record.boot?.bootId) {
+          fail("boot-id-inconsistent", `ruleset report for app "${r.app}" cites boot ${r.bootId}, but the record attests boot ${record.boot?.bootId}`);
+        }
+      }
+    }
+    if (!PROBE_STATUSES.has(doctorProbe?.status)) {
+      fail("doctor-probe-invalid", `enforcement.doctorProbe.status is ${JSON.stringify(doctorProbe?.status)}, not one of the four probe results`);
+    }
+
+    const derived = deriveStatus(
+      Array.isArray(rulesetReports) ? rulesetReports : [],
+      PROBE_STATUSES.has(doctorProbe?.status) ? doctorProbe : { status: "unknown" },
+    );
+    if (derived !== status) {
+      fail("enforcement-status-underived", `enforcement.status says ${status} but the embedded measurements derive ${derived}`);
+    }
   }
   return problems;
 }
@@ -100,7 +142,7 @@ if (isMain) {
   const problems = verify(record);
   if (problems.length > 0) {
     console.error(`FAIL: ${path} is not a valid attestation record:`);
-    for (const p of problems) console.error(`  - ${p}`);
+    for (const p of problems) console.error(`  - [${p.code}] ${p.message}`);
     process.exit(1);
   }
   console.log(`OK: record for run "${record.runId}" is internally consistent and unedited since emission.`);
