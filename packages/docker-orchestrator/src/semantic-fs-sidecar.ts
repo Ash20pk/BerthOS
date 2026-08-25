@@ -136,11 +136,6 @@ export async function startSemanticFsSidecar(options: StartSidecarOptions): Prom
       // crosses the container boundary intact.
       "BERTH_SHARED_GID=9999",
       ...(options.appUidMap ? [`BERTH_APP_UID_MAP=${options.appUidMap}`] : []),
-      // The daemon narrows its own post-mount privileges (BUILD_PLAN M1.2);
-      // this passthrough is the milestone test's negative control, same
-      // process-env convention as BERTH_DISABLE_FS_SIDECAR above it in
-      // container.ts.
-      ...(process.env.BERTH_DISABLE_DAEMON_CONFINEMENT === "1" ? ["BERTH_DISABLE_DAEMON_CONFINEMENT=1"] : []),
     ],
     HostConfig: {
       // rshared is the whole mechanism: the FUSE mount performed inside this

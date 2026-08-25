@@ -101,12 +101,7 @@ async function main() {
     const sidecarInspect = await docker.getContainer(sidecarName(CONTAINER_NAME)).inspect();
     check(
       "the privilege lives in the sidecar instead (SYS_ADMIN, one process)",
-      // The sidecar's entrypoint is a one-line sh wrapper that sweeps stale
-      // mountpoints and then `exec`s the daemon (see semantic-fs-sidecar.ts's
-      // mountId) — assert it ends in that exec rather than that the daemon is
-      // argv[0], which the wrapper means it no longer is.
-      (sidecarInspect.HostConfig?.CapAdd ?? []).includes("SYS_ADMIN") &&
-        (sidecarInspect.Config.Entrypoint ?? []).some((a) => a.includes("exec /usr/local/bin/semantic-fs-daemon")),
+      (sidecarInspect.HostConfig?.CapAdd ?? []).includes("SYS_ADMIN") && sidecarInspect.Config.Entrypoint?.[0] === "/usr/local/bin/semantic-fs-daemon",
     );
 
     console.log("\n--- 2: /context is a live, writable FUSE mount in the sandbox ---");

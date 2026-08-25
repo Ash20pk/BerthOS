@@ -179,30 +179,6 @@ export interface StartContainerOptions {
    */
   publishHost?: string;
   /**
-   * Container runtime for the sandbox — Docker's `HostConfig.Runtime`, e.g.
-   * `runsc` for gVisor (BUILD_PLAN M1.4). Defaults to the daemon's default
-   * runtime, or to `BERTH_RUNTIME` when that's set (empty means unset, same
-   * rule as `BERTH_PUBLISH_HOST`). This is defense-in-depth for the one tier
-   * the threat model otherwise answers with "Docker is trusted" — a
-   * container-escape 0-day — and is NOT a substitute for the in-container
-   * enforcement (M1.1/M1.2): gVisor's sentry is a different kernel, so what
-   * Landlock/seccomp enforce there is *its* implementation of them, which the
-   * boot-time enforcement probe measures per runtime rather than assuming.
-   * The semantic-fs sidecar deliberately does not get this runtime: it must
-   * perform a FUSE mount that propagates through the host's mount table
-   * (rshared), which a gVisor-sandboxed mount namespace cannot do.
-   */
-  runtime?: string;
-  /**
-   * Extra HostConfig.SecurityOpt entries, appended verbatim after the ones
-   * this module computes. The one in-repo consumer is
-   * attestation-milestone.mjs's control boot, which pins a seccomp profile
-   * that ENOSYSes the landlock syscalls so an enforcing host can produce a
-   * genuinely NOT_ENFORCED boot — but the shape is general operator config
-   * (a custom seccomp/AppArmor profile), same trust tier as BERTH_RUNTIME.
-   */
-  extraSecurityOpt?: string[];
-  /**
    * Where the per-container secrets file is written on the host — defaults to
    * ~/.berth/run/<container name>/secrets.env. Overridable so tests don't
    * touch the real one, the same way snapshotsDir and osDir are.
@@ -249,23 +225,14 @@ function resolvePublishHost(explicit: string | undefined): string {
   return value;
 }
 
-/** Same empty-means-unset rule as resolvePublishHost, so a stray `BERTH_RUNTIME=` in a .env can't select a runtime named "". */
-function resolveRuntime(explicit: string | undefined): string | undefined {
-  const value = explicit ?? process.env.BERTH_RUNTIME;
-  return value === undefined || value === "" ? undefined : value;
-}
-
 export async function startContainer(options: StartContainerOptions): Promise<RunningContainer> {
   const docker = options.docker ?? new Docker();
-  const runtime = resolveRuntime(options.runtime);
 
   // Before anything else, because a banner printed after a screenful of app
-  // logs is a banner nobody reads. Cached per kernel (and per runtime — under
-  // gVisor the kernel being probed is the sentry, not the host's), so this
-  // costs one probe container on the first boot after a kernel change and
-  // nothing after that. Best-effort by construction: it never throws and
-  // never blocks a boot.
-  await warnIfEnforcementInactive(docker, options.image, runtime);
+  // logs is a banner nobody reads. Cached per kernel, so this costs one probe
+  // container on the first boot after a kernel change and nothing after that.
+  // Best-effort by construction: it never throws and never blocks a boot.
+  await warnIfEnforcementInactive(docker, options.image);
   const wantsBrowserPorts =
     options.apps && options.apps.length > 0
       ? options.apps.some((a) => needsBrowserPorts(a.manifest))
@@ -417,7 +384,6 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
     // — only needed on the legacy path, where the mount happens in here.
     securityOpt.push("apparmor:unconfined");
   }
-  if (options.extraSecurityOpt) securityOpt.push(...options.extraSecurityOpt);
   if (needsMesh) {
     devices.push({ PathOnHost: "/dev/net/tun", PathInContainer: "/dev/net/tun", CgroupPermissions: "rwm" });
     capAdd.push("NET_ADMIN");
@@ -444,13 +410,7 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
   //
   // No secrets, no mount: a container whose environment holds nothing
   // sensitive is byte-for-byte what it was before this existed.
-  // Declared names first: a name any app lists under `secrets:` is a secret
-  // regardless of what it is called, so the split below cannot miss one whose
-  // name does not look like a credential (see partitionSecretEnv).
-  const appDeclarations = (options.apps ?? [{ name: options.manifest.name, manifest: options.manifest }]).map(
-    (a) => ({ name: a.name, secrets: a.manifest.secrets ?? [] }),
-  );
-  const { plain, secret } = partitionSecretEnv(env, appDeclarations.flatMap((d) => d.secrets));
+  const { plain, secret } = partitionSecretEnv(env);
 
   // The M1.3 split on top of the 5.5 one: a secret name declared by any
   // app's `secrets:` list leaves the shared file and travels in that app's
@@ -458,6 +418,9 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
   // app's uid and sourced only in that app's subshell. Manifests with no
   // `secrets:` partition everything into `shared`, so a container that
   // declares nothing is byte-for-byte what it was before this existed.
+  const appDeclarations = (options.apps ?? [{ name: options.manifest.name, manifest: options.manifest }]).map(
+    (a) => ({ name: a.name, secrets: a.manifest.secrets ?? [] }),
+  );
   const { shared, perApp, missing } = partitionSecretsPerApp(secret, appDeclarations);
   for (const { app, name } of missing) {
     // Names only, never values — and loudly, because the app declared it
@@ -513,10 +476,6 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
       ...(resources.memoryMb !== undefined ? { Memory: resources.memoryMb * 1024 * 1024 } : {}),
       ...(deviceRequests ? { DeviceRequests: deviceRequests } : {}),
       ...(securityOpt.length > 0 ? { SecurityOpt: securityOpt } : {}),
-      // The hardened-runtime opt-in (BUILD_PLAN M1.4). Only the sandbox gets
-      // it — the sidecar's FUSE mount needs real host mount propagation, so
-      // startSemanticFsSidecar stays on the daemon's default runtime.
-      ...(runtime ? { Runtime: runtime } : {}),
     },
     ...(options.network
       ? { NetworkingConfig: { EndpointsConfig: { [options.network]: {} } } }

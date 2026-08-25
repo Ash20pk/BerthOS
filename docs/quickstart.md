@@ -31,13 +31,6 @@ pnpm build
 
 ## See enforcement, with no API key
 
-> **On macOS or Windows, run `berth doctor` first.** These demos show a real
-> kernel denial, so they need a kernel with Landlock. Docker Desktop's VM
-> doesn't have it, and the demos exit non-zero rather than fake a pass — that's
-> intended, not a bug. [docs/mac-enforcement.md](./mac-enforcement.md) is a
-> four-flag Colima recipe (no kernel build) that gets `enforcement: ACTIVE`;
-> Linux 5.13+ works as-is.
-
 ```bash
 cd examples/kernel-says-no && pnpm start
 ```
@@ -46,11 +39,6 @@ Two writes through one resident app's `write_file` tool: one inside its declared
 `filesystem:write:/workspace`, one outside it. The second comes back `EACCES`
 from the kernel. Details, and what the example does on a host that can't enforce:
 [`examples/kernel-says-no`](../examples/kernel-says-no).
-
-Then work through the rest of the [examples catalog](../examples/README.md):
-`prompt-injection` (a compromised model, refused by the kernel),
-`no-egress` (code-exec with no network capability), and `audit-trail`
-(tamper-evident records — this one needs neither a kernel nor an API key).
 
 ## Run an agent
 

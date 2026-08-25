@@ -6,18 +6,5 @@ packages:
   - "examples/agents/*"
   # The hero demo, deliberately not under agents/: it has no agent and no LLM in it.
   - "examples/kernel-says-no"
-  # Standalone capability demos, each proving one boundary. See examples/README.md.
-  - "examples/prompt-injection"
-  - "examples/no-egress"
-  - "examples/audit-trail"
   - "packages/docker-orchestrator/test/fixtures/*"
   - "packages/agents/test/fixtures/*"
-  - "bench"
-  - "bench/fixtures/*"
-  - "breakout"
-  - "breakout/apps/*"
-  - "redteam"
-  # The standalone spec + its conformance suite; versioned independently (spec/capability-manifest/VERSION).
-  - "spec/capability-manifest"
-  # Same, for the attestation record (spec/attestation-record/VERSION).
-  - "spec/attestation-record"

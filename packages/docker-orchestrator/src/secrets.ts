@@ -107,23 +107,12 @@ export interface PartitionedEnv {
  * credential. Both halves reach the app's process environment identically
  * (entrypoint.sh sources the file before anything starts, so every child
  * inherits it) — what differs is where the value is durably recorded.
- *
- * `declaredNames` are names some app listed under `secrets:` in its
- * berth.yml, and they are treated as secret whatever they are called. Found
- * by breakout/test/breakout-milestone.mjs (BUILD_PLAN M2.3): before this,
- * scoping was decided *only* by the name-shape heuristic below, so declaring
- * a secret whose name does not look like a credential — `BREAKOUT_FLAG_COTENANT`,
- * say — silently did nothing. The value went into Docker's `Env` in plaintext
- * and reached every app in the container, while the operator got a warning
- * saying no value had been supplied. An explicit declaration in a manifest is
- * a stronger signal than a guess about the name, so it wins.
  */
-export function partitionSecretEnv(env: Record<string, string>, declaredNames: Iterable<string> = []): PartitionedEnv {
-  const declared = new Set([...declaredNames]);
+export function partitionSecretEnv(env: Record<string, string>): PartitionedEnv {
   const plain: Record<string, string> = {};
   const secret: Record<string, string> = {};
   for (const [name, value] of Object.entries(env)) {
-    if (declared.has(name) || isSecretEnvName(name)) secret[name] = value;
+    if (isSecretEnvName(name)) secret[name] = value;
     else plain[name] = value;
   }
   return { plain, secret };

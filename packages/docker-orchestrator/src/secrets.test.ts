@@ -77,23 +77,6 @@ test("partitionSecretEnv splits without losing or duplicating an entry", () => {
   assert.deepEqual(secret, { ANTHROPIC_API_KEY: "sk-ant-test", BERTH_HTTP_RPC_TOKEN: "deadbeef" });
 });
 
-/**
- * BUILD_PLAN M2.3, found by breakout/test/breakout-milestone.mjs: scoping used
- * to be decided only by the name-shape heuristic, so a manifest could declare
- * a secret whose name did not look like a credential and silently get nothing
- * — the value went to Docker's `Env` in plaintext and reached every app.
- */
-test("a name declared under secrets: is secret even when it looks nothing like a credential", () => {
-  const env = { BERTH_APPS: "[]", BREAKOUT_FLAG_COTENANT: "berth{flag}" };
-
-  const undeclared = partitionSecretEnv(env);
-  assert.equal(undeclared.plain.BREAKOUT_FLAG_COTENANT, "berth{flag}", "precondition: the heuristic alone does not catch this name");
-
-  const declared = partitionSecretEnv(env, ["BREAKOUT_FLAG_COTENANT"]);
-  assert.deepEqual(declared.plain, { BERTH_APPS: "[]" });
-  assert.deepEqual(declared.secret, { BREAKOUT_FLAG_COTENANT: "berth{flag}" });
-});
-
 test("stripSecretEnv keeps the withheld names but never their values", () => {
   const { env, strippedNames } = stripSecretEnv({
     BERTH_WORKSPACE_ROOT: "/workspace/.berth/dev-workspace",

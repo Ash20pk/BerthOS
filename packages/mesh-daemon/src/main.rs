@@ -8,7 +8,6 @@
 // introduction decides this peer is authorized to see. See
 // docs/mesh-reference.md for what's real vs. deferred.
 mod config;
-mod confine;
 mod control;
 mod coordinator;
 mod wg;
@@ -43,23 +42,8 @@ fn log_reconcile_failed_event(peer_name: &str, tick_n: u32, error: &str) {
     );
 }
 
-/// Structured companion to the human-readable confinement lines below, same
-/// shape as agent-init's capability_policy_applied record.
-fn log_confinement_event(applied: bool, status: &str, detail: &str) {
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-    let boot_id = boot_id();
-    eprintln!(
-        "{{\"source\":\"mesh-daemon\",\"event\":\"mesh_daemon_landlock_applied\",\"bootId\":{boot_id:?},\"applied\":{applied},\"ruleset\":{status:?},\"detail\":{detail:?},\"timestamp\":{now}}}"
-    );
-}
-
-fn main() {
-    let args: Vec<String> = env::args().collect();
-    if args.get(1).map(String::as_str) == Some("--confinement-probe") {
-        confine::run_probe(args.get(2));
-        return;
-    }
-
+#[tokio::main]
+async fn main() {
     // CI reproduces a freeze with ZERO output from the reconcile loop after
     // boot — not even its own first line, which runs before any .await. A
     // panic inside a tokio::spawn'd task whose JoinHandle is never awaited
@@ -74,40 +58,6 @@ fn main() {
     }));
 
     let cfg = Config::from_env();
-
-    // Before the tokio runtime exists, deliberately: Landlock's
-    // restrict_self() binds the calling thread and is inherited only by
-    // threads created afterwards. Applying it inside the async runtime would
-    // leave every already-spawned worker thread unrestricted — a domain that
-    // looks applied in the logs and isn't (see confine.rs).
-    if env::var("BERTH_DISABLE_DAEMON_CONFINEMENT").as_deref() == Ok("1") {
-        eprintln!("[mesh-daemon] WARNING: BERTH_DISABLE_DAEMON_CONFINEMENT=1 — running with no Landlock domain (pre-M1.2 posture)");
-        log_confinement_event(false, "Disabled", "BERTH_DISABLE_DAEMON_CONFINEMENT=1");
-    } else {
-        match confine::apply(&cfg) {
-            Ok(status) => {
-                eprintln!("[mesh-daemon] Landlock domain applied ({status:?}) — writes confined to the WireGuard/key/socket paths (BUILD_PLAN M1.2)");
-                log_confinement_event(true, &format!("{status:?}"), "");
-            }
-            Err(err) => {
-                // Same warn-don't-fail convention as every other degradation
-                // in this daemon — and the same honesty rule: the structured
-                // line says NOT applied, so nothing downstream can mistake
-                // intent for enforcement.
-                eprintln!("[mesh-daemon] WARNING: could not apply the Landlock domain ({err}) — continuing unconfined");
-                log_confinement_event(false, "Error", &err.to_string());
-            }
-        }
-    }
-
-    tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .expect("[mesh-daemon] could not build the tokio runtime")
-        .block_on(run(cfg));
-}
-
-async fn run(cfg: Config) {
     eprintln!("[mesh-daemon] starting for peer \"{}\"", cfg.peer_name);
 
     let keypair = match wg::load_or_generate_keypair(&cfg.key_path).await {

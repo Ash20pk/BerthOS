@@ -79,8 +79,6 @@ Each record's `hash` covers `prevHash` plus its own canonical JSON, so a record 
 
 **This is tamper-evident, not tamper-proof.** Anyone who can write the file can recompute every hash from the line they edited onwards and produce a chain that verifies cleanly. Getting past that needs the hashes somewhere the editor cannot reach — an append-only store, a remote sink, periodic external anchoring — none of which is built. `berth audit verify` says so in its own output rather than implying a guarantee it does not have.
 
-`berth attest <runId>` (BUILD_PLAN M2.1) builds on this chain: it binds a run's slice of it, plus the chain head and the boot's measured enforcement status, into one self-hashed record a stranger can check without Berth installed — same trust model, stated inside the record. See [attestation-reference.md](./attestation-reference.md).
-
 ## Operational notes
 
 - **Writes are synchronous.** A record buffered when the process dies is a record that does not exist, and these are the events a crash would otherwise erase. Volume is low: a line per governance verdict and grant decision, not per HTTP request.
