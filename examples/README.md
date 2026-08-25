@@ -25,6 +25,14 @@ None of the capability demos needs an API key: the point is the boundary, and a
 real model only ever reaches the same tool call the scripted one does. The
 interesting part is what happens *after* the call.
 
+These aren't just illustrations — they're regression gates. `prompt-injection`
+and `no-egress` each run in CI on `ubuntu-latest` (where Landlock is active) and
+exit non-zero if the kernel ever fails to refuse, so a weakening of enforcement
+fails the build: [`.github/workflows/prompt-injection-milestone.yml`](../.github/workflows/prompt-injection-milestone.yml),
+[`.github/workflows/no-egress-milestone.yml`](../.github/workflows/no-egress-milestone.yml).
+`kernel-says-no`'s equivalent assertion lives in
+[`capability-enforcement.yml`](../.github/workflows/capability-enforcement.yml).
+
 ## Framework demos — reach it from your stack
 
 | Demo | What it shows |
