@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	bazil.org/fuse v0.0.0-20230120002735-62a210ff1fd5
-	modernc.org/sqlite v1.56.0
+	modernc.org/sqlite v1.57.0
 )
 
 require (
