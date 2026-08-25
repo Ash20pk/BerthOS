@@ -1,0 +1,40 @@
+name: No Egress Milestone
+
+# Runs examples/no-egress against a real Linux kernel: apps/code-interpreter
+# runs attacker-chosen code that tries to exfiltrate a secret three ways (TCP
+# connect, DNS over UDP, and curl), and the demo exits non-zero unless every
+# outbound path was refused — because berth.yml declared no network capability.
+# The demo doubles as the milestone test: a regression in the Landlock net
+# scoping or the seccomp UDP filter fails this job. Only meaningful on a kernel
+# with Landlock active (ubuntu-latest has it; Docker Desktop for Mac does not).
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Report host LSM stack
+        run: cat /sys/kernel/security/lsm || echo "could not read /sys/kernel/security/lsm (non-fatal, diagnostic only)"
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 10.21.0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Run the no-egress demo (exits non-zero on a regression)
+        working-directory: examples/no-egress
+        run: node index.mjs
