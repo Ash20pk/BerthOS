@@ -2,7 +2,7 @@
 
 What Berth does with a credential you hand it, where each one is written, and — the part that matters for deciding whether to trust this — what it deliberately does not protect.
 
-Closes *5.5* in [REMEDIATION.md](./internal/REMEDIATION.md). Before it, a booted sandbox's provider API key and RPC bearer token were permanently readable from `docker inspect`, `~/.berthrc` and `~/.berth/os/<name>.json` were written at the umask's 0644, and `berth snapshot create` copied the whole container environment into a `env.json` that any snapshot copied to another machine carried with it — under a comment claiming snapshots captured no secrets.
+Closes *5.5* in REMEDIATION.md. Before it, a booted sandbox's provider API key and RPC bearer token were permanently readable from `docker inspect`, `~/.berthrc` and `~/.berth/os/<name>.json` were written at the umask's 0644, and `berth snapshot create` copied the whole container environment into a `env.json` that any snapshot copied to another machine carried with it — under a comment claiming snapshots captured no secrets.
 
 ## The one rule
 

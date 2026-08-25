@@ -1,0 +1,89 @@
+name: Spec Conformance
+
+# BUILD_PLAN M3.1 / M3.2 — the two standalone specifications under spec/ and
+# their conformance suites: the Capability Manifest (what an app declares) and
+# the Attestation Record (what a run enforced).
+#
+# Two kinds of job run here, and the second is the one that matters:
+#
+#   conformance — the reference implementation must pass every case in the
+#     corpus. An implementation change that drifts from the published spec fails
+#     this job rather than quietly making the document wrong. For the
+#     attestation record there are two reference implementations (the standalone
+#     verifier and the library), and both run the same corpus — which is also
+#     how they are kept from drifting apart from each other.
+#
+#   selftest — the same suite run against a deliberately non-conforming adapter,
+#     which MUST fail. A conformance suite nothing can fail proves nothing about
+#     the implementation that passes it (capability-manifest SPEC.md 7.5,
+#     attestation-record SPEC.md 8.5), so the falsification is asserted here,
+#     not assumed.
+#
+# No Docker, no kernel features: these test document contracts, not enforcement.
+# What actually stands behind a declared capability is asserted by the milestone
+# tests named in docs/internal/claims.md; whether an attestation's measurements
+# are honestly obtained is asserted by attestation-milestone.yml on a real host,
+# with a negative control.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  capability-manifest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 10.21.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @berth/manifest-schema build
+      - name: Reference implementation passes the conformance suite
+        run: node spec/capability-manifest/conformance/run.mjs
+             --adapter "node spec/capability-manifest/conformance/adapters/berth.mjs"
+             --json conformance-report.json
+      - name: The suite is falsifiable (broken adapter must fail)
+        run: node spec/capability-manifest/conformance/selftest.mjs
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: conformance-report
+          path: conformance-report.json
+          if-no-files-found: warn
+
+  attestation-record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 10.21.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @berth/audit build
+      - name: Standalone verifier passes the conformance suite
+        run: node spec/attestation-record/conformance/run.mjs
+             --adapter "node spec/attestation-record/conformance/adapters/berth.mjs --impl standalone"
+             --json attestation-conformance-report.json
+      - name: Library verifier passes the same corpus (the two must not drift)
+        run: node spec/attestation-record/conformance/run.mjs
+             --adapter "node spec/attestation-record/conformance/adapters/berth.mjs --impl library"
+      - name: The suite is falsifiable (broken adapter must fail)
+        run: node spec/attestation-record/conformance/selftest.mjs
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        if: always()
+        with:
+          name: attestation-conformance-report
+          path: attestation-conformance-report.json
+          if-no-files-found: warn

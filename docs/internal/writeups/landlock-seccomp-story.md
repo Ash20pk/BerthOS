@@ -24,7 +24,7 @@ publishing a claim that had been false from the moment we wrote it.
 Early Berth had per-app Landlock rulesets that were real and individually
 correct — and that didn't matter, because every app's RPC socket sat in
 world-writable `/tmp`, unauthenticated
-([REMEDIATION 1.4](https://github.com/Ash20pk/BerthOS/blob/main/docs/internal/REMEDIATION.md)).
+(REMEDIATION 1.4).
 A code-interpreter app declaring only `filesystem:write:/workspace` could do:
 
 ```bash
@@ -62,7 +62,7 @@ same property `SO_PEERCRED` gives, one layer up.
 
 ## The negative control, and what it actually found
 
-House rule ([BUILD_PLAN rule 2](https://github.com/Ash20pk/BerthOS/blob/main/docs/internal/BUILD_PLAN.md)):
+House rule (BUILD_PLAN rule 2):
 a security test isn't done until you've proven it *can* fail — reintroduce
 the hole, watch the test go red. So before closing REMEDIATION 1.4 we ran the
 original exploit against the pre-fix code, expecting to watch it succeed.
@@ -114,10 +114,13 @@ the environment.
 ## What this does not claim
 
 Honesty is the product here, so: the container-to-container story above is
-strong against a prompt-injected agent. It is **not yet** a boundary against
-an attacker with arbitrary code execution who targets the pre-`agent-init`
-daemons, and the container still carries `CAP_SYS_ADMIN` for the semantic-fs
-FUSE mount — both named in
-[docs/threat-model.md](https://github.com/Ash20pk/BerthOS/blob/main/docs/threat-model.md)
-and queued as the next milestone (BUILD_PLAN M1). When those close, this
-paragraph changes — and not before.
+strong against a prompt-injected agent — and, since BUILD_PLAN M1.1–M1.2
+closed both of the holes this paragraph used to name, against an attacker with
+arbitrary code execution inside the container as well. The sandbox no longer
+carries `CAP_SYS_ADMIN` (the FUSE mount moved to a sidecar that empties its own
+bounding set once the mount is up), and the pre-`agent-init` daemons are each
+confined. What remains is named in
+[docs/threat-model.md](https://github.com/Ash20pk/BerthOS/blob/main/docs/threat-model.md):
+the mesh daemon keeps uid 0 and `CAP_NET_ADMIN` behind a control socket that
+still trusts self-declared identity. This paragraph said it would change the
+day those fixes shipped with tests, and not before — this is that change.

@@ -14,6 +14,7 @@ export default class Doctor extends Command {
     "<%= config.bin %> doctor --json",
     "<%= config.bin %> doctor --image berth/filesystem:dev",
     "<%= config.bin %> doctor --no-probe",
+    "<%= config.bin %> doctor --runtime runsc",
     "<%= config.bin %> doctor --fix",
   ];
   static override flags = {
@@ -23,6 +24,10 @@ export default class Doctor extends Command {
     }),
     image: Flags.string({
       description: "image to run the kernel probe in (defaults to a local berth/* image)",
+    }),
+    runtime: Flags.string({
+      description:
+        "container runtime sandboxes would boot with, e.g. runsc for gVisor — verifies the daemon has it and runs the kernel probe under it (defaults to BERTH_RUNTIME)",
     }),
     "no-probe": Flags.boolean({
       description: "skip the container probe; kernel checks report `unknown` rather than being guessed at",
@@ -37,7 +42,7 @@ export default class Doctor extends Command {
 
   async run(): Promise<void> {
     const { flags } = await this.parse(Doctor);
-    const report = await runDoctor({ image: flags.image, skipProbe: flags["no-probe"] });
+    const report = await runDoctor({ image: flags.image, skipProbe: flags["no-probe"], runtime: flags.runtime });
 
     if (flags.json) {
       // Only the JSON, so `berth doctor --json | jq` works without a filter.
@@ -64,7 +69,7 @@ export default class Doctor extends Command {
    * with inherited stdio, then re-run the same checks against the new
    * daemon's socket — the fix has not happened until doctor itself says so.
    */
-  private async fixMac(flags: { image?: string; "no-probe": boolean }): Promise<boolean> {
+  private async fixMac(flags: { image?: string; "no-probe": boolean; runtime?: string }): Promise<boolean> {
     const profile = process.env.COLIMA_PROFILE ?? "default";
     const facts: MacFixFacts = {
       platform: process.platform,
@@ -105,6 +110,7 @@ export default class Doctor extends Command {
       docker: new Docker({ socketPath }),
       image: flags.image,
       skipProbe: flags["no-probe"],
+      runtime: flags.runtime,
     });
     this.log("");
     this.log(`Re-checked against ${plan.dockerHost}:`);

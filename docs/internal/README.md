@@ -12,12 +12,11 @@ Expect them to be blunt about what is broken. That is their job.
 
 | Document | Authoritative for | Read it when |
 |---|---|---|
-| [STRATEGY.md](./STRATEGY.md) | **The category and the thesis.** What market Berth competes in (the agent trust layer), what "best" means on its five axes, the post-launch workstreams (WS5–WS7), and the evidence that would falsify the whole bet. | You are deciding *whether* something is worth building at all, or need the one-line product definition to test a proposal against. |
-| [BUILD_PLAN.md](./BUILD_PLAN.md) | **The work queue.** Milestones M0–M4 from the current `main` to best-in-category, task by task with verification artifacts and the axis metric board. Absorbs LAUNCH_PLAN's unfinished rows so there is exactly one list of what to do next. | You are an agent picking up work. Start here. |
-| [REMEDIATION.md](./REMEDIATION.md) | **Defects.** Every known correctness/security/credibility problem, with `file:line` evidence, the fix, and what would prove it closed. | You want to know whether something is actually broken, and what closing it would take. |
-| [LAUNCH_PLAN.md](./LAUNCH_PLAN.md) | **Execution order.** Which defects gate a public launch, in what sequence, and what is explicitly out. | You are picking up work and need to know what to do next. |
-| [PRIORITIES.md](./PRIORITIES.md) | **The reasoning behind the filter** — why the substrate is the product and the framework is a reference consumer. Superseded on *ordering* by LAUNCH_PLAN. | You want to understand why the plan is shaped the way it is, or are tempted to argue with it. |
-| [gaps.md](./gaps.md) | **Nothing — archived.** It validated that the substrate is usable from a real agent framework, by building one. It is not a roadmap. | You are looking for historical context on `@berth/agents`. Never for planning. |
+| [claims.md](./claims.md) | **Every enforcement claim, tagged by tier** (kernel / broker / recorded / unenforced) with the test that proves it or an explicit `UNPROVEN`. Machine-checked: `redteam/claims-linter.mjs` fails CI on a citation that no longer resolves. | You want to know whether a specific claim is backed by something that can fail, and what that something is. |
+| [audit-pack.md](./audit-pack.md) | **The self-serve audit starting point** — reading order, what is runnable, what is known not covered, and how to report. | You are auditing Berth from outside, or preparing to be audited. |
+| [verification/](./verification/) | **What was actually run, once, on a named machine.** One record per milestone: the command, the real output, the negative control, and the residuals. | You want to check a claim against the run that produced it rather than against a summary of it. |
+| [writeups/](./writeups/) | **Publishable drafts.** One per shipped milestone, each with a pre-publish checklist naming what must be re-verified before it goes out. | You are publishing, or want the narrative behind a milestone. |
+| [design/](./design/) | **Designs written before the code.** Kept when the reasoning outlived the change. | You are about to redo something the design already rejected, and want to know why. |
 
 `ROADMAP.md` is deliberately *not* here: it is the public "is X real yet" page
 and lives at the repo root.
@@ -31,8 +30,8 @@ and lives at the repo root.
 2. **A closure names its verification artifact**, not just a passing build — and
    ideally names the negative control that proves the test can fail. Several
    entries here exist because a test passed against the unfixed code.
-3. **Verify status against `main`, not against a branch.** WS0.2 exists because
-   LAUNCH_PLAN once described three items as shipped while they sat on an
-   unmerged branch. `git merge-base --is-ancestor <sha> main` settles it.
+3. **Verify status against `main`, not against a branch.** More than one status
+   line here has described something as shipped while it sat on an unmerged
+   branch; `git merge-base --is-ancestor <sha> main` settles it.
 4. **A status marker is a claim about the code.** If you change one, say which
    file you read.

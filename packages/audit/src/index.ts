@@ -11,7 +11,26 @@ export {
   verifyAuditChain,
   type ChainVerification,
   type FileAuditSinkOptions,
+  canonicalize,
 } from "./sink.js";
+export {
+  ATTESTATION_KIND,
+  ATTESTATION_SCHEMA_VERSION,
+  ATTESTATION_TRUST_MODEL,
+  attestationDigest,
+  deriveEnforcementStatus,
+  finalizeAttestation,
+  verifyAttestation,
+  type AttestationInput,
+  type AttestationProblem,
+  type AttestationProblemCode,
+  type AttestationRecord,
+  type AttestationVerification,
+  type DoctorProbeResult,
+  type EnforcementStatus,
+  type PolicyDigest,
+  type RulesetReport,
+} from "./attest.js";
 
 import type { Actor } from "./types.js";
 

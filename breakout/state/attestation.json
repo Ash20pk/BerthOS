@@ -1,0 +1,37 @@
+{
+  "kind": "berth.breakout-box-boot",
+  "generatedAt": "2026-08-23T16:38:40.087Z",
+  "trustModel": "tamper-evident, not tamper-proof: this record was produced by software on the attested host. It becomes evidence only once challengers hold copies the host cannot reach. Nothing here is key-signed.",
+  "box": {
+    "container": "berth-breakout-box",
+    "bootId": "4dc67f4e-0811-47bd-848e-4244aa7faee8",
+    "imageDigest": "berth/bench-probe@sha256:f2a82f86f572c70e1c1890f3f486f3754a9fe769955adcfba8d0accf3e22adb5"
+  },
+  "enforcement": {
+    "doctorProbe": {
+      "status": "enforcing",
+      "reason": "write refused with Permission denied"
+    },
+    "rulesetReports": [
+      {
+        "app": "context-bus-daemon",
+        "ruleset": "FullyEnforced",
+        "bootId": "4dc67f4e-0811-47bd-848e-4244aa7faee8",
+        "timestamp": 1787503117
+      },
+      {
+        "app": "flag-keeper",
+        "ruleset": "FullyEnforced",
+        "bootId": "4dc67f4e-0811-47bd-848e-4244aa7faee8",
+        "timestamp": 1787503118
+      },
+      {
+        "app": "breakout-target",
+        "ruleset": "FullyEnforced",
+        "bootId": "4dc67f4e-0811-47bd-848e-4244aa7faee8",
+        "timestamp": 1787503118
+      }
+    ]
+  },
+  "note": "Per-run attestations for individual attempts are available via `berth attest` against this box's audit trail — see docs/attestation-reference.md."
+}

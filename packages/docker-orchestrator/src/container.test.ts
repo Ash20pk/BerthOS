@@ -93,6 +93,8 @@ async function startWithFakeDocker(options: {
   env?: Record<string, string>;
   httpRpc?: { authToken: string };
   secretsRunDir: string;
+  runtime?: string;
+  extraSecurityOpt?: string[];
 }): Promise<Docker.ContainerCreateOptions> {
   // The enforcement banner runs a real probe container against the real
   // daemon, which has nothing to do with what's under test here.
@@ -105,6 +107,8 @@ async function startWithFakeDocker(options: {
     env: options.env,
     httpRpc: options.httpRpc,
     secretsRunDir: options.secretsRunDir,
+    runtime: options.runtime,
+    extraSecurityOpt: options.extraSecurityOpt,
     docker: fakeDocker(captured),
   });
   assert.ok(captured.create, "startContainer never called createContainer");
@@ -159,4 +163,51 @@ test("startContainer mounts nothing extra for a container whose env holds no cre
   // artifact in it.
   await assert.rejects(stat(join(containerSecretsDir("berth-test-no-secrets", runDir), "secrets.env")), "no secrets means no file on the host either");
   await assert.rejects(stat(join(containerSecretsDir("berth-test-no-secrets", runDir), "apps")), "no declared secrets means no per-app files either");
+});
+
+/**
+ * BUILD_PLAN M1.4: the hardened-runtime opt-in is a passthrough to Docker's
+ * HostConfig.Runtime — observable only in what createContainer is sent. The
+ * empty-string case matters for the same reason BERTH_PUBLISH_HOST's does: a
+ * stray `BERTH_RUNTIME=` in a .env must not select a runtime named "".
+ */
+test("startContainer passes runtime through to HostConfig.Runtime, and omits it entirely when unset", async () => {
+  const runDir = await mkdtemp(join(tmpdir(), "berth-container-runtime-"));
+  const withRuntime = await startWithFakeDocker({ name: "berth-test-runtime", secretsRunDir: runDir, runtime: "runsc" });
+  assert.equal(withRuntime.HostConfig?.Runtime, "runsc");
+
+  const without = await startWithFakeDocker({ name: "berth-test-no-runtime", secretsRunDir: runDir });
+  assert.ok(!("Runtime" in (without.HostConfig ?? {})), "no runtime requested must mean no Runtime key at all — the daemon default, not an empty string");
+});
+
+test("BERTH_RUNTIME selects the runtime when the caller passes none, and empty means unset", async () => {
+  const runDir = await mkdtemp(join(tmpdir(), "berth-container-runtime-env-"));
+  process.env.BERTH_RUNTIME = "runsc";
+  try {
+    const created = await startWithFakeDocker({ name: "berth-test-runtime-env", secretsRunDir: runDir });
+    assert.equal(created.HostConfig?.Runtime, "runsc");
+  } finally {
+    process.env.BERTH_RUNTIME = "";
+  }
+  const created = await startWithFakeDocker({ name: "berth-test-runtime-env-empty", secretsRunDir: runDir });
+  assert.ok(!("Runtime" in (created.HostConfig ?? {})));
+  delete process.env.BERTH_RUNTIME;
+});
+
+/**
+ * BUILD_PLAN M2.1: extraSecurityOpt is appended to the computed SecurityOpt
+ * entries — how attestation-milestone.mjs's control boot pins a seccomp
+ * profile that ENOSYSes the landlock syscalls.
+ */
+test("startContainer appends extraSecurityOpt to HostConfig.SecurityOpt", async () => {
+  const runDir = await mkdtemp(join(tmpdir(), "berth-container-secopt-"));
+  const created = await startWithFakeDocker({
+    name: "berth-test-secopt",
+    secretsRunDir: runDir,
+    extraSecurityOpt: ["seccomp={\"defaultAction\":\"SCMP_ACT_ALLOW\"}"],
+  });
+  assert.ok((created.HostConfig?.SecurityOpt ?? []).some((o: string) => o.startsWith("seccomp=")));
+
+  const without = await startWithFakeDocker({ name: "berth-test-no-secopt", secretsRunDir: runDir });
+  assert.ok(!(without.HostConfig?.SecurityOpt ?? []).some((o: string) => o.startsWith("seccomp=")));
 });
