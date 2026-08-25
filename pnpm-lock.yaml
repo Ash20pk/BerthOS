@@ -182,11 +182,32 @@ importers:
         specifier: ^7.0.66
         version: 7.0.66(zod@4.4.3)
 
+  examples/audit-trail:
+    dependencies:
+      '@berth/audit':
+        specifier: workspace:*
+        version: link:../../packages/audit
+
   examples/kernel-says-no:
     dependencies:
       '@berth/agents':
         specifier: workspace:*
         version: link:../../packages/agents
+
+  examples/no-egress:
+    dependencies:
+      '@berth/agents':
+        specifier: workspace:*
+        version: link:../../packages/agents
+
+  examples/prompt-injection:
+    dependencies:
+      '@berth/agents':
+        specifier: workspace:*
+        version: link:../../packages/agents
+      '@berth/audit':
+        specifier: workspace:*
+        version: link:../../packages/audit
 
   examples/resident-apps/generic-connector:
     dependencies:
