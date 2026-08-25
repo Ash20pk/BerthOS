@@ -6,6 +6,10 @@ packages:
   - "examples/agents/*"
   # The hero demo, deliberately not under agents/: it has no agent and no LLM in it.
   - "examples/kernel-says-no"
+  # Standalone capability demos, each proving one boundary. See examples/README.md.
+  - "examples/prompt-injection"
+  - "examples/no-egress"
+  - "examples/audit-trail"
   - "packages/docker-orchestrator/test/fixtures/*"
   - "packages/agents/test/fixtures/*"
   - "bench"
