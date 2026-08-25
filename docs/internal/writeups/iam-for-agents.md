@@ -71,7 +71,7 @@ IAM earned its trust by being *checkable* — and by being honest about scope.
 So, in the same spirit, what this layer does **not** yet give you (all
 tracked publicly in the repo's
 [threat model](https://github.com/Ash20pk/BerthOS/blob/main/docs/threat-model.md)
-and [remediation log](https://github.com/Ash20pk/BerthOS/blob/main/docs/internal/REMEDIATION.md)):
+and remediation log):
 
 - It is strong against a prompt-injected agent — and, since the daemons were
   confined and `CAP_SYS_ADMIN` left the sandbox (BUILD_PLAN M1.1–M1.2), against

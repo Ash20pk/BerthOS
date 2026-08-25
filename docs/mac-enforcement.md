@@ -193,8 +193,8 @@ this doc documents the one that was. If you verify another, check
 An enforcing kernel closes the gap between what Berth's manifests declare and
 what the kernel refuses. It does not close the rest:
 
-- The in-container and cross-app residuals still open in
-  [internal/REMEDIATION.md](./internal/REMEDIATION.md) are unaffected by which
+- The in-container and cross-app residuals named in
+  [the threat model](./threat-model.md) are unaffected by which
   VM you run. Since the M1 hardening these are named residuals — the mesh
   daemon's retained root + `CAP_NET_ADMIN` behind a self-asserted-identity
   control socket, connect-time cross-app grants — not a general in-container
