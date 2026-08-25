@@ -27,8 +27,17 @@ Working from source instead:
 ```bash
 git clone https://github.com/Ash20pk/BerthOS && cd BerthOS
 corepack enable && pnpm install && pnpm build
-cd examples/kernel-says-no && pnpm start        # no API key needed
+node packages/cli/bin/berth.js doctor           # first: does your kernel enforce?
+cd examples/kernel-says-no && pnpm start         # no API key needed
 ```
+
+> **macOS/Windows: do the `doctor` step first.** The capability demos show a
+> *real kernel denial*, which needs a host kernel that provides Landlock —
+> Docker Desktop's VM does not, so on a stock Mac the demos exit non-zero and
+> tell you nothing was enforced (that refusal-to-pretend is the point). One
+> `brew install colima` + the [four-flag recipe in docs/mac-enforcement.md](./docs/mac-enforcement.md)
+> gets you an enforcing host with no kernel build; `berth doctor` then reports
+> `enforcement: ACTIVE`. Linux 5.13+ enforces out of the box.
 
 ## The demo
 
@@ -47,6 +56,8 @@ PASS — the capability line in berth.yml is the boundary, and the kernel is the
 Nothing in that script, in `@berth/agents`, or in the app's own code inspects the second path. The manifest's capability list was compiled into a Landlock ruleset and applied by `agent-init` before the app's first line ran, so the write dies in `open(2)`. An agent that gets prompt-injected into trying it gets the same answer.
 
 **The honest part:** that denial needs a host kernel that provides Landlock. Docker Desktop for Mac does not, and the example says so and exits non-zero rather than printing a denial it can't attribute to the kernel. On macOS, [docs/mac-enforcement.md](./docs/mac-enforcement.md) is a four-flag Colima recipe (no kernel build) where it's real — verified on Apple silicon, Landlock ABI 4. Run [`berth doctor`](./docs/doctor-reference.md) to see which host you're on. What is and isn't enforced, per capability and per tier: [docs/kernel-enforcement.md](./docs/kernel-enforcement.md).
+
+**More of the same, each proving one claim:** [`examples/prompt-injection`](./examples/prompt-injection) hands a *fully compromised* model an injected instruction to backdoor `/etc` and watches the kernel refuse it anyway; [`examples/no-egress`](./examples/no-egress) runs attacker-chosen code in the interpreter and shows every outbound path (TCP, DNS, `curl`) refused because no network was declared; [`examples/audit-trail`](./examples/audit-trail) catches a tampered audit record and then demonstrates its own tamper-evident-not-tamper-proof limit. The full catalog, with which demos need a kernel and which need an API key, is in [examples/README.md](./examples/README.md).
 
 ## The fastest way in: point your agent at it over MCP
 
