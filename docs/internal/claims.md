@@ -49,6 +49,7 @@ a positive control (a legitimate version of the action succeeding).
 | K19. Each app in a multi-app boot is its own independently-enforced agent-init process | kernel | `packages/docker-orchestrator/test/multi-app-milestone.mjs` — both processes log their own ruleset | implicit contrast with a `docker exec` passenger |
 | K20. `terminal:attach` pty access is Landlock-gated | kernel | `packages/docker-orchestrator/test/published-port-security-milestone.mjs` (+ agent-init Rust unit tests) — presence of the gate | **weak**: no milestone asserts pty allocation is refused *without* the grant — see gaps below |
 | K21. A Chromium renderer exploit lands with the app's own uid; its namespace sandbox `clone(NEWUSER)` is refused | kernel | covered transitively by K7 | **weak**: no browser-specific test — see gaps below |
+| K23. `bind(2)`/`listen(2)` is deny-by-default per port for **every** app, including one that declared `network:connect:*` | kernel | `packages/sdk/src/generate-capability-policy.test.ts` — the `network:bind:` suite asserts bind and connect grants are independent in both directions (unit) | **weak at the kernel tier**: the compiler side is unit-tested, but no milestone yet asserts `listen(2)` is refused on an undeclared port *inside a container* whose app declared `network:connect:*`. Before 2026-08-29 this claim was false: `network:connect:*` skipped `handle_access` for the whole `AccessNet` group, so it granted unrestricted bind as a side effect |
 
 ## Broker-tier claims
 

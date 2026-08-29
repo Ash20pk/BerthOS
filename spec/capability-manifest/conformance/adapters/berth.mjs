@@ -34,6 +34,7 @@ const TIERS = [
   { namespace: "filesystem", action: "read", tier: "kernel" },
   // Landlock AccessNet, deny-by-default, plus seccomp for UDP/raw. claims.md K5-K6.
   { namespace: "network", action: "connect", tier: "kernel" },
+  { namespace: "network", action: "bind", tier: "kernel" },
   // Mutual-consent mesh membership, decided by mesh-coordinator. The peer set
   // is a broker decision; the WireGuard interface itself is not a kernel refusal
   // of an undeclared peer.
