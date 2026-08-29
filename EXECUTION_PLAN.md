@@ -24,8 +24,14 @@ Three facts from reading the tree, which make the plan cheaper than the review a
    They cannot be "moved to experimental" the way a TS package can, and `agent-init` is
    the product. Demoting a *daemon* means not starting it by default, not relocating it.
 
+4. **The `@berth` npm scope belongs to someone else** — an abandoned project in the same
+   problem space, published five months before this repo existed. Chunk 7 is blocked on a
+   scope rename, and the review's "just publish to npm this week" was not actionable as
+   written. Full detail and the availability table are in Chunk 7.
+
 Consequence: **the split is a dependency cut in 3 files plus a workspace/CI reshuffle**, not
-a rewrite. That moves it earlier in the order than I first thought.
+a rewrite. That moves it earlier in the order than I first thought. The naming blocker is
+independent of everything else and can be resolved in parallel.
 
 ---
 
@@ -74,6 +80,7 @@ No code. These are not tasks I can do; they are inputs I need.
 | D2 | **Is `@berth/agents` frozen, deleted, or spun to its own repo?** | Freeze = `experimental/` in-tree (Chunk 4 as written). Separate repo = extra history-preserving `git filter-repo` step | Freeze in-tree; splitting history is work with no user benefit yet |
 | D3 | **Publish to npm before or after the restructure?** | Publishing first means the 11 demoted packages ship at 0.1.0 and then vanish from the scope — an ugly first impression for anyone who installed them | After Chunk 4, so the first published surface is the one you intend to support |
 | D4 | **Who are the 3 design-partner candidates?** (review change #5) | The competitive doc in Chunk 1 should answer *their* objections, not generic ones | I proceed with a generic platform/security-team reader |
+| D5 | **New npm scope, product rename, or ask for `@berth`?** | The `@berth` scope is owned by an abandoned project (see Chunk 7). Blocks all publishing | `@berthos/*` — matches the GitHub repo, no product rename, Python names already free |
 
 ---
 
@@ -206,20 +213,70 @@ reading `mac-enforcement.md`.
 
 ---
 
-## Chunk 7 — Publish to npm  *(blocked on D3; after Chunk 4)*
+## Chunk 7 — Publish to npm  *(BLOCKED: the `@berth` scope is not yours)*
 
 Review change #4 / gap #7. The pipeline already exists (`publish-npm.yml`, manual-only,
-dry-run default, SBOM, provenance) — the gap is that it has never been run for real.
+dry-run default, SBOM, provenance). **But the plan as originally written cannot run.**
 
-1. Confirm the published scope is the **core keep-set only**. Mark every demoted package
-   `"private": true` so `pnpm -r publish` skips them — the workflow already honors that.
-2. Run it with `dry_run=true`, read the pack list, verify no `experimental/` package appears.
-3. One-time prerequisite the workflow cannot do itself: the `NPM_TOKEN` org automation
-   token. That is on you.
-4. Publish `0.1.0`, then update the README's "isn't on npm yet" caveat — it is a
-   credibility line and should not outlive the fact.
+### The blocker, found 2026-08-29
 
-**Exit test:** `npm install -g @berth/cli && berth doctor` works on a clean machine.
+`npm view @berth/cli` returns **0.1.1**, published **2026-03-02** — five months before this
+repo's first commit. It is not yours:
+
+| Field | Value |
+|---|---|
+| maintainer | `schwimmbeck <dominik.schwimmbeck@outlook.de>` |
+| repo | `github.com/berth-mcp/berth` |
+| description | "The safe runtime & package manager for MCP servers" |
+| state | 0 stars, 0 forks, last push 2026-03-03; tarball is a stub — no README, no dependencies |
+
+Two separate problems, and the second is worse than the first:
+
+1. **The `@berth` npm scope is unavailable.** Every `@berth/*` name in this repo is
+   unpublishable. Unscoped `berth` is also taken (deprecated, different owner).
+2. **The name collides with an adjacent project in the same problem space.** "Safe runtime
+   for MCP servers" is approximately the repositioning Chunk 2 and Chunk 5 propose. Their
+   project is abandoned, so this is not a competitive threat — it is a *search and
+   attribution* problem: two Apache-2.0 projects called Berth, both about safely running
+   MCP servers, and theirs owns the npm name.
+
+### Availability, checked
+
+| Name | Status |
+|---|---|
+| npm `@berth/*` | taken (above) |
+| npm `berth` | taken, deprecated |
+| npm `@berthos/*` · `berthos` · `berth-os` · `@berth-os/*` | **available** |
+| PyPI `berth-sdk`, `berth-agents` (the repo's current names) | **available** |
+| PyPI `berth` | taken |
+
+### Resolution — new decision D5
+
+**Recommended: publish npm as `@berthos/*`.** It matches the GitHub repo (`Ash20pk/BerthOS`),
+needs no product rename, leaves the `berth` command name intact, and the Python names are
+already free. Cost is a scope rename across ~16 package.json files, the lockfile, every doc
+that shows an install line, and the `publish-npm.yml` provenance config.
+
+Alternatives, for completeness:
+- **Rename the product.** Cleanest long-term if you ever want the unscoped name, most
+  expensive now, and there is no evidence yet that the name carries value worth protecting.
+- **Ask them for the scope.** Free upside, unbounded latency, no leverage. Worth one email
+  in parallel; not worth blocking on. npm's dispute process rarely reassigns an actively
+  owned scope, abandoned or not.
+
+### Then, once D5 is answered
+
+1. Rename the scope repo-wide; `pnpm install` to resettle the lockfile.
+2. Confirm the published set is the **core keep-set only**. Mark every demoted package
+   `"private": true` so `pnpm -r publish` skips it — the workflow already honors that.
+3. Run with `dry_run=true`; verify no `experimental/` package appears in the pack list.
+4. One-time prerequisite the workflow cannot do itself: the `NPM_TOKEN` automation token
+   for the **new** scope. That is on you.
+5. Publish `0.1.0`, then delete the README's "isn't on npm yet" caveat.
+6. Add a one-line disambiguation note in the README — there is another Berth on npm, and a
+   confused user finding a dead stub is a worse first impression than no npm package at all.
+
+**Exit test:** `npm install -g @berthos/cli && berth doctor` works on a clean machine.
 
 ---
 
