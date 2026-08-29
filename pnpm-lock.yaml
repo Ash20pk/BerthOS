@@ -518,9 +518,6 @@ importers:
       '@berth/adapter-k8s':
         specifier: workspace:*
         version: link:../adapters/adapter-k8s
-      '@berth/agents':
-        specifier: workspace:*
-        version: link:../agents
       '@berth/audit':
         specifier: workspace:*
         version: link:../audit
@@ -561,6 +558,9 @@ importers:
         specifier: ^3.24.1
         version: 3.25.2(zod@4.4.3)
     devDependencies:
+      '@berth/agents':
+        specifier: workspace:*
+        version: link:../agents
       '@berth/registry-server':
         specifier: workspace:*
         version: link:../registry-server

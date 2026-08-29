@@ -1,6 +1,6 @@
 import { Args, Command } from "@oclif/core";
 import { resolve } from "node:path";
-import { createCrewFromYaml } from "@berth/agents";
+import { loadAgents } from "../../util/optional-agents.js";
 
 export default class CrewRun extends Command {
   static override description =
@@ -14,6 +14,7 @@ export default class CrewRun extends Command {
   async run(): Promise<void> {
     const { args } = await this.parse(CrewRun);
     const configPath = resolve(process.cwd(), args.file);
+    const { createCrewFromYaml } = await loadAgents("crew run");
 
     const { crew, computers } = await createCrewFromYaml(configPath);
     try {

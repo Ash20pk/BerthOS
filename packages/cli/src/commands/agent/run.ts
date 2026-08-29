@@ -1,6 +1,6 @@
 import { Args, Command, Flags } from "@oclif/core";
 import { resolve } from "node:path";
-import { createAgentFromYaml } from "@berth/agents";
+import { loadAgents } from "../../util/optional-agents.js";
 
 export default class AgentRun extends Command {
   static override description =
@@ -18,6 +18,7 @@ export default class AgentRun extends Command {
   async run(): Promise<void> {
     const { args, flags } = await this.parse(AgentRun);
     const configPath = resolve(process.cwd(), args.file);
+    const { createAgentFromYaml } = await loadAgents("agent run");
 
     const { agent, computer } = await createAgentFromYaml(configPath);
     try {
