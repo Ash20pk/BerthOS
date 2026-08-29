@@ -372,7 +372,31 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
   const capAdd: string[] = [];
   const securityOpt: string[] = [];
   let sidecar: RunningSidecar | undefined;
-  if (process.env.BERTH_DISABLE_FS_SIDECAR !== "1") {
+  // Three postures, not two. BERTH_DISABLE_FS_SIDECAR=1 does NOT mean "no
+  // semantic FS" — it means "mount it inside the sandbox instead", which puts
+  // CAP_SYS_ADMIN back on this container. There was no way to say "this boot
+  // does not need /context at all", so every boot paid for a second container
+  // and a transient SYS_ADMIN window even when nothing would ever read
+  // /context. BERTH_NO_SEMANTIC_FS=1 is that third option: no sidecar, no
+  // in-sandbox mount, no /dev/fuse, no SYS_ADMIN anywhere, and no boot wait
+  // for a socket nothing will use.
+  //
+  // Opt-in, and it stays opt-in: an app that does reach /context (or an agent
+  // using checkpointing, sessions, or trace, which are Semantic-FS-backed)
+  // gets @berth/sdk's loud "semantic-fs daemon not reachable" error rather
+  // than silently wrong results — see runtime.ts's createUnavailableSemanticFs.
+  // Defaulting this on would mean deciding for the caller which of those they
+  // use, and the failure is remote from the cause, so the caller declares it.
+  const semanticFsDisabled = process.env.BERTH_NO_SEMANTIC_FS === "1";
+  if (semanticFsDisabled) {
+    // The entrypoint needs to know too, or it starts the in-container daemon
+    // and then polls /proc/mounts for 5s waiting on a mount nobody will make.
+    env.BERTH_NO_SEMANTIC_FS = "1";
+    console.warn(
+      "[berth] semantic FS is off (BERTH_NO_SEMANTIC_FS=1): no /context mount, no sidecar, and no CAP_SYS_ADMIN anywhere in this boot. Anything that reads /context — including agent checkpointing, sessions, and trace — will fail loudly.",
+    );
+  }
+  if (!semanticFsDisabled && process.env.BERTH_DISABLE_FS_SIDECAR !== "1") {
     // `berth snapshot restore` pre-populates the daemon's backing paths via
     // extraBinds targeting /var/berth/* — the daemon lives in the sidecar
     // now, so those binds are re-aimed at its export dir. The sandbox keeps
@@ -409,6 +433,11 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
   }
   if (sidecar) {
     binds.push(...sidecar.sandboxBinds);
+  } else if (semanticFsDisabled) {
+    // Nothing to add: the whole point of this posture is that no mount is
+    // attempted, so neither the device nor the capability is needed. Falling
+    // through to the branch below would hand SYS_ADMIN to a boot that
+    // explicitly said it does not want a FUSE mount at all.
   } else {
     devices.push({ PathOnHost: "/dev/fuse", PathInContainer: "/dev/fuse", CgroupPermissions: "rwm" });
     capAdd.push("SYS_ADMIN");
