@@ -175,7 +175,12 @@ export async function gatherBootEvidence(docker: Docker, containerName: string, 
   // The same measurement `berth dev`'s banner is driven by, for the same
   // runtime this boot actually used (M1.4: under gVisor the kernel being
   // probed is the sentry).
-  const doctorProbe: DoctorProbeResult = await enforcementStatusForBoot(docker, imageTag, runtime);
+  // fresh: true — never read the on-disk enforcement cache here. That file is
+  // operator-writable, and doctorProbe is one of the two measurements
+  // deriveEnforcementStatus() needs to return ACTIVE, so a cached read would
+  // make one edit to one JSON file enough to forge half an ACTIVE verdict with
+  // no kernel probed. See enforcementStatusForBoot()'s note.
+  const doctorProbe: DoctorProbeResult = await enforcementStatusForBoot(docker, imageTag, runtime, { fresh: true });
 
   return {
     bootId,

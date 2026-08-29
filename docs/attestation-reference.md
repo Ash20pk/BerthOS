@@ -21,7 +21,7 @@ berth attest my-run-id --out my-run.attestation.json
 | `auditChain.head` | `verifyAuditChain` walked every rotated segment of the audit file; this is the chain head at attestation time. The walk **fails the command** if the chain is broken — a record is never emitted over a chain that fails its own verification. |
 | `run` | The count and seq/timestamp bounds of audit records whose `meta.runId` matches. Zero matching records is an error, not an empty attestation. |
 | `enforcement.rulesetReports` | agent-init's `capability_policy_applied` events, read back from the container's own log stream and filtered to the current boot ID. `ruleset` is what the kernel returned from `landlock_restrict_self` — `FullyEnforced`, `PartiallyEnforced`, or `NotEnforced`. |
-| `enforcement.doctorProbe` | The same behavioural probe `berth doctor` and the boot banner use, for the same runtime this boot ran under (under gVisor the kernel being measured is the sentry — see [kernel-enforcement.md](./kernel-enforcement.md#optional-hardened-runtime)). |
+| `enforcement.doctorProbe` | The same behavioural probe `berth doctor` and the boot banner use, run fresh (never read from the operator-writable enforcement cache — see [what this does not prove](#what-this-does-not-prove)), for the same runtime this boot ran under (under gVisor the kernel being measured is the sentry — see [kernel-enforcement.md](./kernel-enforcement.md#optional-hardened-runtime)). |
 | `enforcement.status` | **Derived, never asserted**: `ACTIVE` only when the probe says `enforcing` *and* every app's ruleset report says `FullyEnforced`. Any measured non-enforcement → `NOT_ENFORCED` with the reasons named. Missing measurements → `UNDETERMINED`, never quietly `ACTIVE`. |
 | `policies[]` | sha256 of each app's `.berth/capability-policy.json`, computed **inside the container** over the exact bytes agent-init enforced from (which include grants-server-approved additions, not just what `berth.yml` declares). |
 | `boot.bootId` | The entrypoint's per-boot UUID, from the container log. |
@@ -83,9 +83,19 @@ internally consistent.
   it exists and where that chain stood. Read the trail itself for the what
   ([audit-reference.md](./audit-reference.md)).
 - **It does not prove enforcement at any moment other than measurement.**
-  The ruleset report is from boot; the probe is per kernel+runtime and
-  cached. A kernel that changed under a running boot (it can't, but a
-  restarted container can) is why reports are filtered by boot ID.
+  The ruleset report is from boot; the probe is per kernel+runtime. A kernel
+  that changed under a running boot (it can't, but a restarted container can)
+  is why reports are filtered by boot ID.
+
+  `berth attest` runs that probe **fresh**, deliberately bypassing the
+  `$BERTH_HOME/enforcement-cache.json` cache that `berth dev`'s boot banner
+  reads. The cache is operator-writable, and `doctorProbe` is one of the two
+  measurements [`deriveEnforcementStatus()`](#the-derivation-rule) requires
+  before it will say `ACTIVE` — so reading it here would have meant one edit
+  to one JSON file could forge half an `ACTIVE` verdict with no kernel
+  probed. It is still a probe of the host *now* rather than of the attested
+  boot; what it rules out is a cached claim standing in for a measurement.
+  Fixed 2026-08-29; before that, attestation read the cache.
 - **It is not a signature.** Nothing here involves keys. `recordSha256`
   detects edits; it does not identify an author. Signing (and a
   counter-signed public chain head) is future work, deliberately not claimed.

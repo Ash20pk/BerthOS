@@ -1,11 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { PassThrough } from "node:stream";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   runDoctor,
   probeKernel,
   findProbeImage,
   unenforcedBanner,
+  enforcementStatusForBoot,
   type LandlockProbeResult,
 } from "./doctor.js";
 
@@ -326,4 +330,65 @@ test("with no runtime requested the check is informational, and points at runsc 
   assert.match(runtime?.detail ?? "", /default "runc"/);
   assert.match(runtime?.remedy ?? "", /BERTH_RUNTIME=runsc/);
   assert.equal(report.enforcementActive, true, "an informational runtime check must not affect the verdict");
+});
+
+// --- the enforcement cache is not an attestation input ----------------------
+// `$BERTH_HOME/enforcement-cache.json` is operator-writable, and doctorProbe is
+// one of the two measurements deriveEnforcementStatus() requires for ACTIVE.
+// Reading the cache during attestation would make one edit to one JSON file
+// enough to forge half that verdict with no kernel probed, so attestation
+// passes `fresh: true` and these pin that behaviour in both directions.
+
+function cacheHarness(cached: string, probeStatus: LandlockProbeResult["status"]) {
+  const home = mkdtempSync(join(tmpdir(), "berth-probe-cache-"));
+  const kernel = "6.8.0-generic";
+  writeFileSync(
+    join(home, "enforcement-cache.json"),
+    JSON.stringify({ [`${kernel}|x86_64`]: { status: cached, probedAt: "2026-01-01T00:00:00.000Z" } }),
+  );
+  let probes = 0;
+  // Reuses fakeProbeDocker's container so this exercises probeKernel's real
+  // attach()/drain path rather than a second, subtly-different stub.
+  const docker = {
+    info: async () => ({ KernelVersion: kernel, Architecture: "x86_64" }),
+    createContainer: async (...args: unknown[]) => {
+      probes++;
+      const inner = fakeProbeDocker(JSON.stringify({ status: probeStatus, abi: 4, fuse: true }));
+      return (inner.docker as unknown as { createContainer: (...a: unknown[]) => Promise<unknown> }).createContainer(...args);
+    },
+  } as never;
+  return { home, docker, probes: () => probes };
+}
+
+/** Runs `fn` with BERTH_HOME pointed at `home`, restoring whatever was there. */
+async function withBerthHome<T>(home: string, fn: () => Promise<T>): Promise<T> {
+  const prev = process.env.BERTH_HOME;
+  process.env.BERTH_HOME = home;
+  try {
+    return await fn();
+  } finally {
+    if (prev === undefined) delete process.env.BERTH_HOME;
+    else process.env.BERTH_HOME = prev;
+  }
+}
+
+test("the boot banner path trusts the cache — that is what it is for", async () => {
+  const { home, docker, probes } = cacheHarness("enforcing", "unsupported");
+  const result = await withBerthHome(home, () => enforcementStatusForBoot(docker, "img"));
+  assert.equal(result.status, "enforcing", "a cache hit should short-circuit the probe here");
+  assert.equal(probes(), 0, "no container should be started on a cache hit");
+});
+
+test("fresh: true ignores a poisoned cache and measures the kernel instead", async () => {
+  // The forgery: the cache claims "enforcing", the kernel says otherwise.
+  const { home, docker, probes } = cacheHarness("enforcing", "unsupported");
+  const result = await withBerthHome(home, () => enforcementStatusForBoot(docker, "img", undefined, { fresh: true }));
+  assert.equal(result.status, "unsupported", "attestation must report what the kernel does, not what the cache claims");
+  assert.equal(probes(), 1, "a fresh probe must actually run");
+});
+
+test("fresh: true does not invent enforcement either — an enforcing kernel still reads enforcing", async () => {
+  const { home, docker } = cacheHarness("unsupported", "enforcing");
+  const result = await withBerthHome(home, () => enforcementStatusForBoot(docker, "img", undefined, { fresh: true }));
+  assert.equal(result.status, "enforcing");
 });
