@@ -140,6 +140,19 @@ berth deploy --fleet=e2b          # or --fleet=daytona, --fleet=k8s, or an alias
 
 Run `berth <command> --help` to see the flags. A few of these deserve their own doc: [MCP bridge](./mcp-bridge-reference.md), [app registry](./app-registry-reference.md), [computer snapshots](./computer-snapshots-reference.md), [capability tokens and grants](./capability-tokens-reference.md), [K8s adapter](./k8s-adapter-reference.md), [what is a Berth OS](./berth-os.md), and [the `berth os` command reference for cold start](./berth-os-reference.md).
 
+`berth eval`, `berth agent run` and `berth crew run` are the only commands that need
+the agent framework, and `@berth/cli` does not depend on it. Installing the CLI
+gets you the sandbox and its evidence — `dev`, `mcp`, `doctor`, `attest`, `os`,
+`snapshot` — not an LLM framework and its provider tree. `@berth/agents` is an
+optional peer dependency:
+
+```bash
+npm install @berth/agents     # only for eval / agent run / crew run
+```
+
+Run one of those three without it and the CLI says exactly that, with the
+install line — not a module-resolution trace.
+
 ## Repository layout
 
 ```
