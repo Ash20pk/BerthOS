@@ -1,0 +1,17 @@
+name: governance-peer-caller
+version: 0.1.0
+description: "governance-gate-milestone.mjs fixture — an authorized sibling of apps/filesystem, so that /run/berth/filesystem/peers/governance-peer-caller/ exists to call over"
+
+# The whole point of this app. `app:invoke:filesystem` is what makes
+# entrypoint.sh's grant_invoke_access create the per-caller directory and
+# socket that the milestone dials — the sibling channel that, before the
+# SDK-dispatch gate, reached filesystem's exports with no governor on the path.
+capabilities:
+  - app:invoke:filesystem
+
+exports:
+  - name: ping
+    input: {}
+    output: { ok: boolean }
+
+on_install: []
