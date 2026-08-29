@@ -149,11 +149,33 @@ it is the least reversible and depends on Chunks 1 and 3 passing.
 
 Order matters inside the chunk — each step is its own commit:
 
-1. **Cut the CLI's 3 imports.** Move `commands/eval.ts`, `commands/agent/run.ts`,
-   `commands/crew/run.ts` behind a lazy dynamic `import()` that fails with a clear
-   "install @berth/agents" message, or relocate them out of core. After this,
-   `@berth/cli` no longer needs `@berth/agents` at build time. *This step alone delivers
-   most of the review's intent and is independently revertible.*
+1. **Cut the CLI's 3 imports.** Verified cheap by reading the files:
+
+   | File | Lines | Runtime symbols needed from `@berth/agents` |
+   |---|---|---|
+   | `commands/agent/run.ts` | 30 | 1 — `createAgentFromYaml` |
+   | `commands/crew/run.ts` | 26 | 1 — `createCrewFromYaml` |
+   | `commands/eval.ts` | 122 | 3 — `runEvalSuite`, `recordEvalRun`, `listEvalRuns` |
+
+   Five runtime symbols across three files, each used inside `run()`. oclif discovers
+   commands by directory (`oclif.commands: "./dist/commands"`), so **command modules are
+   already loaded lazily at runtime** — moving these five to `await import("@berth/agents")`
+   inside `run()` costs nothing and breaks the runtime dependency outright.
+
+   **The one real subtlety:** the four `type` imports in `eval.ts` are erased at runtime but
+   still needed at *build* time, so a naive lazy-import leaves `@berth/cli` needing
+   `@berth/agents` as a devDependency — a core-to-experimental build edge, backwards even
+   if harmless. Three ways out, in preference order:
+   1. **Relocate the three commands into the frozen package as an oclif plugin.** Core
+      `@berth/cli` then has zero reference to the framework, in either direction. Most work,
+      architecturally correct, and it makes "the framework is optional" literally true.
+   2. Keep `@berth/agents` as a devDependency-only for typecheck, `optionalDependencies` at
+      runtime. Cheapest; leaves the backwards build edge.
+   3. Type the boundary as `unknown` and validate at the call site. No new edge, loses
+      typechecking on exactly the surface most likely to drift.
+
+   Pick (1) if Chunk 4 proceeds at all; (2) is the acceptable shortcut if time is short.
+   *This step alone delivers most of the review's intent and is independently revertible.*
 2. **Cut the adapter imports** in `util/fleet.ts` and `commands/deploy.ts` the same way,
    dropping `adapter-{daytona,e2b,k8s}` and `registry-server` from core.
 3. **Create `experimental/` and move the 11 packages** in dependency order (leaves first:
