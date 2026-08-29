@@ -405,6 +405,111 @@ secure_capability_policy() {
   chmod 0640 "$policy_path" 2>/dev/null || true
 }
 
+# --- Daemon confinement (BUILD_PLAN M1.2; threat model B4). ---
+#
+# The pre-agent-init daemons used to run as root with no Landlock domain —
+# the exact posture B4 names. context-bus-daemon now gets the same treatment
+# an app gets: its own uid (9001, below the apps' 10000+index range and never
+# colliding with it), and a Landlock ruleset + seccomp filters + capability
+# drop applied by the very same agent-init binary, reading a policy this
+# script writes rather than one compiled from a berth.yml. What the policy
+# grants is exactly what the daemon does: create and serve one Unix socket.
+# No outbound TCP (networkUnrestricted false, zero ports), no UDP (the
+# no-network seccomp filter), no namespace creation, no write outside the
+# socket's directory.
+#
+# semantic-fs-daemon and mesh-daemon are NOT started this way, for reasons
+# each states at its own start site: semantic-fs needs mount(2), which a
+# Landlock domain refuses outright (it narrows itself post-mount, in-process
+# — see main.go); mesh needs CAP_NET_ADMIN netlink access for wg0's whole
+# lifetime (it applies its own Landlock ruleset in-process — see its main.rs).
+#
+# BERTH_DISABLE_DAEMON_CONFINEMENT=1 restores the pre-M1.2 posture for all
+# three — the milestone test's negative control, and a loud escape hatch if
+# confinement breaks something in the field. All three log which mode they
+# are in either way.
+BERTH_DAEMON_BUS_UID=9001
+
+# Same shape as provision_app_identity above, minus the app-specific parts
+# (no tty group, no RPC/peers directories, no .berth chown — a daemon has
+# none of those). Membership in the shared `berth` group is what lets the
+# daemon chgrp its own socket to BERTH_SHARED_GID after binding it: chown(2)
+# to a group the caller belongs to is permitted without CAP_CHOWN.
+provision_daemon_identity() {
+  local user="$1"
+  local id="$2"
+  if id "$user" >/dev/null 2>&1; then
+    return 0
+  fi
+  if ! addgroup -g "$id" "$user" 2>/dev/null; then
+    echo "[berth:entrypoint] WARNING: could not create group ${user} (gid ${id}) — this daemon will keep running as root" >&2
+    return 1
+  fi
+  if ! adduser -S -D -H -u "$id" -G "$user" -s /sbin/nologin "$user" 2>/dev/null; then
+    echo "[berth:entrypoint] WARNING: could not create user ${user} (uid ${id}) — this daemon will keep running as root" >&2
+    return 1
+  fi
+  addgroup "$user" berth 2>/dev/null || true
+  return 0
+}
+
+# Starts context-bus-daemon, confined. Shared by the single- and multi-app
+# paths below, which used to duplicate the bare `context-bus-daemon &` line.
+# The policy is written by this script, as root, to a file the daemon itself
+# can never rewrite (0600 root-owned; agent-init reads it before dropping),
+# and its write grant is the socket's own directory — nothing else.
+start_context_bus_daemon() {
+  # Before the daemon starts and before it stops being root: a stale socket
+  # file from a previous boot is root-owned, and /tmp's sticky bit would
+  # stop uid 9001 from unlinking it (the daemon's own remove_file would
+  # silently fail and the bind would then refuse).
+  rm -f "$BERTH_CONTEXT_BUS_SOCKET" 2>/dev/null || true
+
+  if [ "${BERTH_DISABLE_DAEMON_CONFINEMENT:-0}" = "1" ]; then
+    echo "[berth:entrypoint] WARNING: BERTH_DISABLE_DAEMON_CONFINEMENT=1 — context-bus-daemon runs as root with no Landlock domain (pre-M1.2 posture)" >&2
+    /usr/local/bin/context-bus-daemon &
+    return 0
+  fi
+
+  install -d -m 0755 -o 0 -g 0 /run/berth
+
+  local policy="/run/berth/daemon-policy.context-bus.json"
+  local socket_dir
+  socket_dir="$(dirname "$BERTH_CONTEXT_BUS_SOCKET")"
+  # agent-init re-validates every write path against its own allowlist
+  # (/tmp, /workspace, /context, /app, /run/berth/<appName>), so a socket
+  # relocated somewhere exotic degrades to a skipped grant and a loud bind
+  # failure, never to a wider one.
+  cat >"$policy" <<EOF
+{
+  "appName": "context-bus-daemon",
+  "declaredCapabilities": ["daemon:context-bus"],
+  "writePaths": ["${socket_dir}"],
+  "readPaths": [],
+  "networkPorts": [],
+  "networkUnrestricted": false,
+  "bindPorts": []
+}
+EOF
+  chmod 0600 "$policy" 2>/dev/null || true
+
+  local user="berth-context-bus"
+  if provision_daemon_identity "$user" "$BERTH_DAEMON_BUS_UID"; then
+    echo "[berth:entrypoint] context-bus-daemon confined: uid ${BERTH_DAEMON_BUS_UID}, Landlock write scope ${socket_dir} (BUILD_PLAN M1.2)" >&2
+    env BERTH_CAPABILITY_POLICY="$policy" \
+        BERTH_APP_UID="$BERTH_DAEMON_BUS_UID" \
+        BERTH_APP_GID="$BERTH_DAEMON_BUS_UID" \
+        BERTH_APP_SUPPLEMENTARY_GIDS="$(id -G "$user" 2>/dev/null | tr ' ' ',')" \
+        /usr/local/bin/agent-init /usr/local/bin/context-bus-daemon &
+  else
+    # Identity provisioning failed (warned above) — the Landlock ruleset,
+    # capability drop, and seccomp filters still apply; only the uid drop is
+    # lost, which is strictly better than the bare fallback.
+    env BERTH_CAPABILITY_POLICY="$policy" \
+        /usr/local/bin/agent-init /usr/local/bin/context-bus-daemon &
+  fi
+}
+
 if [ -z "${BERTH_APPS:-}" ]; then
   # --- Single-app mode. ---
   # BERTH_APPS is only ever set by container.ts when more than one app
@@ -450,7 +555,7 @@ if [ -z "${BERTH_APPS:-}" ]; then
   fi
 
   echo "[berth:entrypoint] starting context-bus daemon on ${BERTH_CONTEXT_BUS_SOCKET}" >&2
-  /usr/local/bin/context-bus-daemon &
+  start_context_bus_daemon
 
   # Wait briefly for the daemon's socket to appear before handing off, so the
   # SDK runtime's first connection attempt doesn't race the bind() call.
@@ -675,7 +780,7 @@ fi
 install -d -m 0755 -o 0 -g 0 /run/berth
 
 echo "[berth:entrypoint] starting context-bus daemon on ${BERTH_CONTEXT_BUS_SOCKET}" >&2
-/usr/local/bin/context-bus-daemon &
+start_context_bus_daemon
 for _ in $(seq 1 50); do
   [ -S "$BERTH_CONTEXT_BUS_SOCKET" ] && break
   sleep 0.1

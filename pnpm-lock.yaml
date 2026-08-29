@@ -158,6 +158,69 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
+  bench:
+    dependencies:
+      '@berth/docker-orchestrator':
+        specifier: workspace:*
+        version: link:../packages/docker-orchestrator
+      '@berth/manifest-schema':
+        specifier: workspace:*
+        version: link:../packages/manifest-schema
+      dockerode:
+        specifier: ^4.0.9
+        version: 4.0.12
+
+  bench/fixtures/bench-probe-a:
+    dependencies:
+      '@berth/sdk':
+        specifier: workspace:*
+        version: link:../../../packages/sdk
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+
+  bench/fixtures/bench-probe-b:
+    dependencies:
+      '@berth/sdk':
+        specifier: workspace:*
+        version: link:../../../packages/sdk
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+
+  breakout:
+    dependencies:
+      '@berth/audit':
+        specifier: workspace:*
+        version: link:../packages/audit
+      '@berth/docker-orchestrator':
+        specifier: workspace:*
+        version: link:../packages/docker-orchestrator
+      '@berth/manifest-schema':
+        specifier: workspace:*
+        version: link:../packages/manifest-schema
+      dockerode:
+        specifier: ^4.0.9
+        version: 4.0.12
+
+  breakout/apps/breakout-target:
+    dependencies:
+      '@berth/sdk':
+        specifier: workspace:*
+        version: link:../../../packages/sdk
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+
+  breakout/apps/flag-keeper:
+    dependencies:
+      '@berth/sdk':
+        specifier: workspace:*
+        version: link:../../../packages/sdk
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+
   examples/agents/agent-server:
     dependencies:
       '@berth/agents':
@@ -519,6 +582,9 @@ importers:
 
   packages/docker-orchestrator:
     dependencies:
+      '@berth/audit':
+        specifier: workspace:*
+        version: link:../audit
       '@berth/manifest-schema':
         specifier: workspace:*
         version: link:../manifest-schema
@@ -770,6 +836,34 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
+  packages/seam-claude-agent-sdk:
+    dependencies:
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@anthropic-ai/claude-agent-sdk':
+        specifier: ^0.3.0
+        version: 0.3.241(@anthropic-ai/sdk@0.117.1(zod@4.4.3))(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(zod@4.4.3))(zod@4.4.3)
+      '@types/node':
+        specifier: ^26.2.0
+        version: 26.2.0
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
+  packages/seam-openai-agents:
+    devDependencies:
+      '@openai/agents':
+        specifier: ^0.17.0
+        version: 0.17.0(@aws-sdk/credential-provider-node@3.972.78)(@smithy/signature-v4@5.6.12)(ws@8.21.3)(zod@4.4.3)
+      '@types/node':
+        specifier: ^26.2.0
+        version: 26.2.0
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
   packages/tls:
     dependencies:
       undici:
@@ -782,6 +876,27 @@ importers:
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
+
+  redteam:
+    dependencies:
+      '@berth/breakout-box':
+        specifier: workspace:*
+        version: link:../breakout
+      '@berth/docker-orchestrator':
+        specifier: workspace:*
+        version: link:../packages/docker-orchestrator
+
+  spec/attestation-record:
+    dependencies:
+      '@berth/audit':
+        specifier: workspace:*
+        version: link:../../packages/audit
+
+  spec/capability-manifest:
+    dependencies:
+      '@berth/manifest-schema':
+        specifier: workspace:*
+        version: link:../../packages/manifest-schema
 
 packages:
 
@@ -821,6 +936,54 @@ packages:
   '@ai-sdk/provider@4.0.7':
     resolution: {integrity: sha512-6or44XprPzKbr8zkmzosowSE0pxkvJcoojBL+mCZvPUt3kvXp3XSNqeVun9golb1acEfSo6yaEBRT18h2VU+1Q==}
     engines: {node: '>=22'}
+
+  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.241':
+    resolution: {integrity: sha512-v26ta54lKFMFEZzbOE+6p3YhKERWnDiEA6OmkSAg+3fAQHOa1+aLTKw222cfgzxgiVixwFtHMk8c63zsDd8aXQ==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.241':
+    resolution: {integrity: sha512-5jweT0vft1ZCaGSoxZHF9vJlHbx8Yxx4+x5aHAIXTd4lx7ZbT4o5buEF8kpmTeHUB+Fw9jtFIm4QDsRiBXgf+Q==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.241':
+    resolution: {integrity: sha512-GslvPvSzehfCZyzOaJAt4lgodznm5zpl/LMXN8ygD12z5qnpM+I9/eFnmAaISJ0L8/vyohtlAP1jjaeR2jz1AQ==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.241':
+    resolution: {integrity: sha512-SxszQGffXiLzMEnAv+pJXEmQbA8haijKyRjjH/jOt1CLeMIfpjKcO9WQDv8dEA8nREWS3zJ103zjgecAF7oOQQ==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.241':
+    resolution: {integrity: sha512-kZigJ5Ug2I2G/n7Cunmwy4TGr0lOGnWrz6TkzyWiDcUmJOodoTH6GZECNarWAtETfN03AAeLfrpiz8z3hOEDqA==}
+    cpu: [x64]
+    os: [linux]
+
+  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.241':
+    resolution: {integrity: sha512-gJRa922Qcm7loumHcXMDFEFg//tz1aOi7Nx0sQa9I9lC1JSN8yL6i7/idzOU5Hp193tEDFOgqIMFL/yRiXg+rw==}
+    cpu: [x64]
+    os: [linux]
+
+  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.241':
+    resolution: {integrity: sha512-/3yA9jQuCvHDVlILzhtslH6kFYOvydXyMZiKwnzqM8ZfvFTNO41w8TpiFpBLseyM+4A4E8QMeTKu3L01Xyb5IQ==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.241':
+    resolution: {integrity: sha512-cHYdAgORl9kynujMeYXyV1uj/hbmsBjRw9dRVkIW4/4sF7S6L4u/qDSzn1/wiNP7g2yWSJ4KbsvHDH2WWDnCBQ==}
+    cpu: [x64]
+    os: [win32]
+
+  '@anthropic-ai/claude-agent-sdk@0.3.241':
+    resolution: {integrity: sha512-pIHdCSTywFe30H0oWDCKZzC4ipBLtF5YMDRKjf6PHyARg57O4l/72v3b6QKnnefwtKKMe6uWJ1Y9lUJg/sKWyA==}
+    engines: {node: '>=18.0.0'}
+    peerDependencies:
+      '@anthropic-ai/sdk': '>=0.93.0'
+      '@modelcontextprotocol/sdk': ^1.29.0
+      zod: ^4.0.0
 
   '@anthropic-ai/sdk@0.117.1':
     resolution: {integrity: sha512-Yn2QlXfyCiKJ5YGCOOay7ZE78ISvII2XY621WMCiflmG8IYgwx59IBwPExxki3Xk9jKUtnD/Sj6UvplWr0rZxg==}
@@ -1546,6 +1709,14 @@ packages:
     resolution: {integrity: sha512-ppi2UaCYKqM4LEY8NWQ/JZ0Of0MAngHRvclceVeEQklcD/M6QKanlHPWblDnLO2m4vz7987b1Z4r33Ps6lf/ig==}
     engines: {node: '>=20'}
 
+  '@modelcontextprotocol/client@2.0.0':
+    resolution: {integrity: sha512-8f1OghQ2rjzIOfqgUCP+8GiUWqRs89njoWLNqAe8kWmDePv3s1fZXseej+QXemssEuuOvLLmLO/kqM3IQHtISw==}
+    engines: {node: '>=20'}
+
+  '@modelcontextprotocol/core@2.0.0':
+    resolution: {integrity: sha512-pJCEwGG7Lfr/+PQp9ZTwKXNeO5wzbfKL7H3MYpCorM4oFBoQrdjnBgEoqG+RjhsvS1FKrDbKux+M1HhlnGWqcA==}
+    engines: {node: '>=20'}
+
   '@modelcontextprotocol/sdk@1.30.0':
     resolution: {integrity: sha512-xKd8OIzlqNzcqcNumGAa6g+PW2kjD5vrpcKOnfldAUPP3j7lnqMPwlTXQm8gF+UwH72z0lqaRbjr9hqGz0eITA==}
     engines: {node: '>=18'}
@@ -1583,6 +1754,29 @@ packages:
   '@oclif/plugin-warn-if-update-available@3.1.72':
     resolution: {integrity: sha512-9bQH2Fxx6pYD9vtt7oMLicp1SIZWru11p6hWe4QVc/hpoWSFurRoclgqG8erxRYwqsTCsMiCPApRJ7FsXYUsEA==}
     engines: {node: '>=18.0.0'}
+
+  '@openai/agents-core@0.17.0':
+    resolution: {integrity: sha512-lyoF860313ypeKSPRsdmyNK1ypF8/ocShN2EwCcKUpF4VvRWa5AUVKL6VXO/keQMwNPZw5SACAf1siU9uMvUNg==}
+    peerDependencies:
+      zod: ^4.0.0
+    peerDependenciesMeta:
+      zod:
+        optional: true
+
+  '@openai/agents-openai@0.17.0':
+    resolution: {integrity: sha512-pMqXK7YtNI3U9KLAZIt+WzB9AReOWt/kiY8nhc9eXWcIZIpkmrzFd6dQgBpGLKWPfvEfgRCDeIVfHpWoXr7hEg==}
+    peerDependencies:
+      zod: ^4.0.0
+
+  '@openai/agents-realtime@0.17.0':
+    resolution: {integrity: sha512-spHgDIaWQIOJjwowjBTo0X9Jn3+CGX9fWgsyRUilsQ8SsnNrAre2km6sr8HwFnRiyQC0XpmTccieyfuXmzMfXg==}
+    peerDependencies:
+      zod: ^4.0.0
+
+  '@openai/agents@0.17.0':
+    resolution: {integrity: sha512-yzJ3tfHLO/6um9wsZ5IzEAQDaY7VcDBMxOPq7IgBaJkEPHrGX0vIXWGL0aqyreikHW4OpVmWwCaBBIOxxILXlA==}
+    peerDependencies:
+      zod: ^4.0.0
 
   '@opentelemetry/api-logs@0.220.0':
     resolution: {integrity: sha512-CmVa4ImJ+ynfrPMNaAXHET6Bhb44SwzmfyVJFq9ni2jgXJR/l7C6gfVFddNmHP+ZOkP9cf4f9DBe68qVLTHc9w==}
@@ -1921,6 +2115,9 @@ packages:
 
   '@types/wrap-ansi@3.0.0':
     resolution: {integrity: sha512-ltIpx+kM7g/MLRZfkbL7EsCEjfzCcScLpkg37eXEtx5kmrAKBkTJwd1GIAjDSL8wTpM6Hzn5YO4pSb91BEwu1g==}
+
+  '@types/ws@8.18.1':
+    resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
 
   '@typescript/typescript-aix-ppc64@7.0.2':
     resolution: {integrity: sha512-MTKKkWB7p/0E9xi1d1tHtZ5PiLkGEMIq88pK2CubZjOsLtYTLqhgIgi6zepFa+9GHZ6h05NMCkQxGKiPXMxXtQ==}
@@ -2377,6 +2574,10 @@ packages:
 
   docker-modem@5.0.7:
     resolution: {integrity: sha512-XJgGhoR/CLpqshm4d3L7rzH6t8NgDFUIIpztYlLHIApeJjMZKYJMz2zxPsYxnejq5h3ELYSw/RBsi3t5h7gNTA==}
+    engines: {node: '>= 8.0'}
+
+  dockerode@4.0.12:
+    resolution: {integrity: sha512-/bCZd6KlGcjZO8Buqmi/vXuqEGVEZ0PNjx/biBNqJD3MhK9DmdiAuKxqfNhflgDESDIiBz3qF+0e55+CpnrUcw==}
     engines: {node: '>= 8.0'}
 
   dockerode@5.0.1:
@@ -3759,6 +3960,45 @@ snapshots:
     dependencies:
       json-schema: 0.4.0
 
+  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.241':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.241':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.241':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.241':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.241':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.241':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.241':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.241':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk@0.3.241(@anthropic-ai/sdk@0.117.1(zod@4.4.3))(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(zod@4.4.3))(zod@4.4.3)':
+    dependencies:
+      '@anthropic-ai/sdk': 0.117.1(zod@4.4.3)
+      '@modelcontextprotocol/sdk': 1.30.0(@cfworker/json-schema@4.1.1)(zod@4.4.3)
+      zod: 4.4.3
+    optionalDependencies:
+      '@anthropic-ai/claude-agent-sdk-darwin-arm64': 0.3.241
+      '@anthropic-ai/claude-agent-sdk-darwin-x64': 0.3.241
+      '@anthropic-ai/claude-agent-sdk-linux-arm64': 0.3.241
+      '@anthropic-ai/claude-agent-sdk-linux-arm64-musl': 0.3.241
+      '@anthropic-ai/claude-agent-sdk-linux-x64': 0.3.241
+      '@anthropic-ai/claude-agent-sdk-linux-x64-musl': 0.3.241
+      '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.3.241
+      '@anthropic-ai/claude-agent-sdk-win32-x64': 0.3.241
+
   '@anthropic-ai/sdk@0.117.1(zod@4.4.3)':
     dependencies:
       json-schema-to-ts: 3.1.1
@@ -4666,6 +4906,22 @@ snapshots:
       - openai
       - ws
 
+  '@modelcontextprotocol/client@2.0.0':
+    dependencies:
+      '@modelcontextprotocol/core': 2.0.0
+      cross-spawn: 7.0.6
+      eventsource: 3.0.7
+      eventsource-parser: 3.1.1
+      jose: 6.2.6
+      pkce-challenge: 5.0.1
+      zod: 4.4.3
+    optional: true
+
+  '@modelcontextprotocol/core@2.0.0':
+    dependencies:
+      zod: 4.4.3
+    optional: true
+
   '@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(zod@4.4.3)':
     dependencies:
       '@hono/node-server': 2.0.12(hono@4.12.33)
@@ -4746,6 +5002,66 @@ snapshots:
       registry-auth-token: 5.1.1
     transitivePeerDependencies:
       - supports-color
+
+  '@openai/agents-core@0.17.0(@aws-sdk/credential-provider-node@3.972.78)(@smithy/signature-v4@5.6.12)(ws@8.21.3)(zod@4.4.3)':
+    dependencies:
+      '@standard-schema/spec': 1.1.0
+      debug: 4.4.3(supports-color@8.1.1)
+      openai: 7.4.0(@aws-sdk/credential-provider-node@3.972.78)(@smithy/signature-v4@5.6.12)(ws@8.21.3)(zod@4.4.3)
+    optionalDependencies:
+      '@modelcontextprotocol/client': 2.0.0
+      zod: 4.4.3
+    transitivePeerDependencies:
+      - '@aws-sdk/credential-provider-node'
+      - '@smithy/hash-node'
+      - '@smithy/signature-v4'
+      - supports-color
+      - ws
+
+  '@openai/agents-openai@0.17.0(@aws-sdk/credential-provider-node@3.972.78)(@smithy/signature-v4@5.6.12)(ws@8.21.3)(zod@4.4.3)':
+    dependencies:
+      '@openai/agents-core': 0.17.0(@aws-sdk/credential-provider-node@3.972.78)(@smithy/signature-v4@5.6.12)(ws@8.21.3)(zod@4.4.3)
+      debug: 4.4.3(supports-color@8.1.1)
+      openai: 7.4.0(@aws-sdk/credential-provider-node@3.972.78)(@smithy/signature-v4@5.6.12)(ws@8.21.3)(zod@4.4.3)
+      zod: 4.4.3
+    transitivePeerDependencies:
+      - '@aws-sdk/credential-provider-node'
+      - '@smithy/hash-node'
+      - '@smithy/signature-v4'
+      - supports-color
+      - ws
+
+  '@openai/agents-realtime@0.17.0(@aws-sdk/credential-provider-node@3.972.78)(@smithy/signature-v4@5.6.12)(zod@4.4.3)':
+    dependencies:
+      '@openai/agents-core': 0.17.0(@aws-sdk/credential-provider-node@3.972.78)(@smithy/signature-v4@5.6.12)(ws@8.21.3)(zod@4.4.3)
+      '@types/ws': 8.18.1
+      debug: 4.4.3(supports-color@8.1.1)
+      ws: 8.21.3
+      zod: 4.4.3
+    transitivePeerDependencies:
+      - '@aws-sdk/credential-provider-node'
+      - '@smithy/hash-node'
+      - '@smithy/signature-v4'
+      - bufferutil
+      - supports-color
+      - utf-8-validate
+
+  '@openai/agents@0.17.0(@aws-sdk/credential-provider-node@3.972.78)(@smithy/signature-v4@5.6.12)(ws@8.21.3)(zod@4.4.3)':
+    dependencies:
+      '@openai/agents-core': 0.17.0(@aws-sdk/credential-provider-node@3.972.78)(@smithy/signature-v4@5.6.12)(ws@8.21.3)(zod@4.4.3)
+      '@openai/agents-openai': 0.17.0(@aws-sdk/credential-provider-node@3.972.78)(@smithy/signature-v4@5.6.12)(ws@8.21.3)(zod@4.4.3)
+      '@openai/agents-realtime': 0.17.0(@aws-sdk/credential-provider-node@3.972.78)(@smithy/signature-v4@5.6.12)(zod@4.4.3)
+      debug: 4.4.3(supports-color@8.1.1)
+      openai: 7.4.0(@aws-sdk/credential-provider-node@3.972.78)(@smithy/signature-v4@5.6.12)(ws@8.21.3)(zod@4.4.3)
+      zod: 4.4.3
+    transitivePeerDependencies:
+      - '@aws-sdk/credential-provider-node'
+      - '@smithy/hash-node'
+      - '@smithy/signature-v4'
+      - bufferutil
+      - supports-color
+      - utf-8-validate
+      - ws
 
   '@opentelemetry/api-logs@0.220.0':
     dependencies:
@@ -5162,6 +5478,10 @@ snapshots:
 
   '@types/wrap-ansi@3.0.0': {}
 
+  '@types/ws@8.18.1':
+    dependencies:
+      '@types/node': 26.2.0
+
   '@typescript/typescript-aix-ppc64@7.0.2':
     optional: true
 
@@ -5560,6 +5880,18 @@ snapshots:
       readable-stream: 3.6.2
       split-ca: 1.0.1
       ssh2: 1.17.0
+    transitivePeerDependencies:
+      - supports-color
+
+  dockerode@4.0.12:
+    dependencies:
+      '@balena/dockerignore': 1.0.2
+      '@grpc/grpc-js': 1.14.4
+      '@grpc/proto-loader': 0.7.15
+      docker-modem: 5.0.7
+      protobufjs: 8.7.2
+      tar-fs: 2.1.5
+      uuid: 11.1.1
     transitivePeerDependencies:
       - supports-color
 

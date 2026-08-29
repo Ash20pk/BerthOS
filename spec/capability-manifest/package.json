@@ -1,0 +1,14 @@
+{
+  "name": "@berth/spec-capability-manifest",
+  "version": "1.0.0",
+  "private": true,
+  "description": "The Capability Manifest Specification and its conformance suite (versioned independently of Berth's packages — this version is the SPEC's, see VERSION)",
+  "type": "module",
+  "scripts": {
+    "conformance": "node conformance/run.mjs --adapter \"node conformance/adapters/berth.mjs\"",
+    "selftest": "node conformance/selftest.mjs"
+  },
+  "dependencies": {
+    "@berth/manifest-schema": "workspace:*"
+  }
+}

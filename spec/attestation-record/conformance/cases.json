@@ -1,0 +1,2369 @@
+{
+  "specVersion": "1.0.0",
+  "description": "Conformance corpus for the Attestation Record Specification. See SPEC.md section 8. Cases are built from the named base records below, mutated by `patch` (deep merge; a null leaf deletes the key), and sealed per the case's `seal` mode.",
+  "records": {
+    "active": {
+      "schemaVersion": 1,
+      "kind": "berth.attestation",
+      "trustModel": "tamper-evident, not tamper-proof: this record and the audit chain it cites are hashed, but both were produced by software running on the attested host. Anyone who controls that host could have rewritten the chain wholesale and re-emitted this record before its head left their reach. The record proves internal consistency and detects after-the-fact edits; it does not prove the host told the truth at emission time.",
+      "generatedAt": "2026-08-24T09:15:02.441Z",
+      "runId": "run-4f2a9c",
+      "run": {
+        "records": 214,
+        "firstSeq": 1180,
+        "lastSeq": 1393
+      },
+      "auditChain": {
+        "path": "/var/lib/berth/audit.jsonl",
+        "segments": 3,
+        "totalRecords": 4021,
+        "head": "9f2c1d7a3b5e8046c1d9f4a27b6e0358d2c9a1b4e7f036d5a8c2b9e14f7d0362"
+      },
+      "boot": {
+        "bootId": "b-7c1e44",
+        "containerName": "berth-os-default",
+        "imageTag": "berth/os:0.1.0",
+        "imageDigest": "sha256:3a7fc19e",
+        "runtime": "runsc"
+      },
+      "enforcement": {
+        "status": "ACTIVE",
+        "reasons": [],
+        "rulesetReports": [
+          {
+            "app": "indexer",
+            "ruleset": "FullyEnforced",
+            "bootId": "b-7c1e44"
+          },
+          {
+            "app": "assistant",
+            "ruleset": "FullyEnforced",
+            "bootId": "b-7c1e44"
+          }
+        ],
+        "doctorProbe": {
+          "status": "enforcing"
+        }
+      },
+      "policies": [
+        {
+          "app": "indexer",
+          "path": "/app/.berth/capability-policy.json",
+          "sha256": "1c4b8e0a5d3f7962b1e8c0a4d7f36529b8e1c4a70d3f6952b8e1c4a70d3f6952"
+        }
+      ],
+      "recordSha256": "741bfe3bf03e975db0e0f548b883c351b96c21c9921a45b531a87f900bc3d8a3"
+    },
+    "not-enforced": {
+      "schemaVersion": 1,
+      "kind": "berth.attestation",
+      "trustModel": "tamper-evident, not tamper-proof: this record and the audit chain it cites are hashed, but both were produced by software running on the attested host. Anyone who controls that host could have rewritten the chain wholesale and re-emitted this record before its head left their reach. The record proves internal consistency and detects after-the-fact edits; it does not prove the host told the truth at emission time.",
+      "generatedAt": "2026-08-24T09:15:02.441Z",
+      "runId": "run-4f2a9c",
+      "run": {
+        "records": 214,
+        "firstSeq": 1180,
+        "lastSeq": 1393
+      },
+      "auditChain": {
+        "path": "/var/lib/berth/audit.jsonl",
+        "segments": 3,
+        "totalRecords": 4021,
+        "head": "9f2c1d7a3b5e8046c1d9f4a27b6e0358d2c9a1b4e7f036d5a8c2b9e14f7d0362"
+      },
+      "boot": {
+        "bootId": "b-7c1e44",
+        "containerName": "berth-os-default",
+        "imageTag": "berth/os:0.1.0",
+        "imageDigest": "sha256:3a7fc19e",
+        "runtime": "runsc"
+      },
+      "enforcement": {
+        "status": "NOT_ENFORCED",
+        "reasons": [
+          "doctor probe: present_not_enforcing"
+        ],
+        "rulesetReports": [
+          {
+            "app": "indexer",
+            "ruleset": "FullyEnforced",
+            "bootId": "b-7c1e44"
+          }
+        ],
+        "doctorProbe": {
+          "status": "present_not_enforcing",
+          "reason": "landlock syscalls return ENOSYS"
+        }
+      },
+      "policies": [
+        {
+          "app": "indexer",
+          "path": "/app/.berth/capability-policy.json",
+          "sha256": "1c4b8e0a5d3f7962b1e8c0a4d7f36529b8e1c4a70d3f6952b8e1c4a70d3f6952"
+        }
+      ],
+      "recordSha256": "298a681893ed8f7cf9c313007fc30ddd0bf4a90ae84169d1f6edde1bdfda3fa8"
+    },
+    "undetermined": {
+      "schemaVersion": 1,
+      "kind": "berth.attestation",
+      "trustModel": "tamper-evident, not tamper-proof: this record and the audit chain it cites are hashed, but both were produced by software running on the attested host. Anyone who controls that host could have rewritten the chain wholesale and re-emitted this record before its head left their reach. The record proves internal consistency and detects after-the-fact edits; it does not prove the host told the truth at emission time.",
+      "generatedAt": "2026-08-24T09:15:02.441Z",
+      "runId": "run-4f2a9c",
+      "run": {
+        "records": 214,
+        "firstSeq": 1180,
+        "lastSeq": 1393
+      },
+      "auditChain": {
+        "path": "/var/lib/berth/audit.jsonl",
+        "segments": 3,
+        "totalRecords": 4021,
+        "head": "9f2c1d7a3b5e8046c1d9f4a27b6e0358d2c9a1b4e7f036d5a8c2b9e14f7d0362"
+      },
+      "boot": {
+        "bootId": "b-7c1e44",
+        "containerName": "berth-os-default",
+        "imageTag": "berth/os:0.1.0",
+        "imageDigest": "sha256:3a7fc19e",
+        "runtime": "runsc"
+      },
+      "enforcement": {
+        "status": "UNDETERMINED",
+        "reasons": [
+          "no capability_policy_applied report found for this boot"
+        ],
+        "rulesetReports": [],
+        "doctorProbe": {
+          "status": "enforcing"
+        }
+      },
+      "policies": [
+        {
+          "app": "indexer",
+          "path": "/app/.berth/capability-policy.json",
+          "sha256": "1c4b8e0a5d3f7962b1e8c0a4d7f36529b8e1c4a70d3f6952b8e1c4a70d3f6952"
+        }
+      ],
+      "recordSha256": "c38fc68f802bf1aa933ba9adb38a0524da9cc4e8c699294dccf31f8e0879c101"
+    }
+  },
+  "cases": [
+    {
+      "id": "describe-well-formed",
+      "tags": [
+        "core"
+      ],
+      "op": "describe"
+    },
+    {
+      "id": "valid-active",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "seal": "after",
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "valid-not-enforced",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "not-enforced",
+      "seal": "after",
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "valid-undetermined",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "undetermined",
+      "seal": "after",
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "valid-policies-empty",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "policies": []
+      },
+      "seal": "after",
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "valid-image-digest-unknown",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "boot": {
+          "imageDigest": "unknown"
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "valid-generated-at-offset",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "generatedAt": "2026-08-24T11:15:02+02:00"
+      },
+      "seal": "after",
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "valid-generated-at-whole-second",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "generatedAt": "2026-08-24T09:15:02Z"
+      },
+      "seal": "after",
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "valid-trust-model-vacuous-is-still-valid",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "seal": "after",
+      "patch": {
+        "trustModel": "trustworthy"
+      },
+      "note": "the uncatchable case: a verifier can check that a trust model exists, never that it is honest (SPEC 4.3, 8.1)",
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "invalid-schema-version-absent",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "schemaVersion": null
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "schema-version-unsupported"
+        ]
+      }
+    },
+    {
+      "id": "invalid-schema-version-future",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "schemaVersion": 2
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "schema-version-unsupported"
+        ]
+      }
+    },
+    {
+      "id": "invalid-schema-version-string",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "schemaVersion": "1"
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "schema-version-unsupported"
+        ]
+      }
+    },
+    {
+      "id": "invalid-kind-wrong",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "kind": "sbom.v1"
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "kind-invalid"
+        ]
+      }
+    },
+    {
+      "id": "invalid-kind-absent",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "kind": null
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "kind-invalid"
+        ]
+      }
+    },
+    {
+      "id": "invalid-trust-model-absent",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "trustModel": null
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "trust-model-missing"
+        ]
+      }
+    },
+    {
+      "id": "invalid-trust-model-empty",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "trustModel": ""
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "trust-model-missing"
+        ]
+      }
+    },
+    {
+      "id": "invalid-trust-model-not-a-string",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "trustModel": 42
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "trust-model-missing"
+        ]
+      }
+    },
+    {
+      "id": "invalid-generated-at-absent",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "generatedAt": null
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "generated-at-invalid"
+        ]
+      }
+    },
+    {
+      "id": "invalid-generated-at-prose",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "generatedAt": "yesterday afternoon"
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "generated-at-invalid"
+        ]
+      }
+    },
+    {
+      "id": "invalid-generated-at-date-only",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "generatedAt": "2026-08-24"
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "generated-at-invalid"
+        ]
+      }
+    },
+    {
+      "id": "invalid-generated-at-epoch-number",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "generatedAt": 1787654102
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "generated-at-invalid"
+        ]
+      }
+    },
+    {
+      "id": "invalid-run-id-absent",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "runId": null
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "run-id-missing"
+        ]
+      }
+    },
+    {
+      "id": "invalid-run-id-empty",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "runId": ""
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "run-id-missing"
+        ]
+      }
+    },
+    {
+      "id": "invalid-run-records-zero",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "run": {
+          "records": 0
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "run-records-invalid"
+        ]
+      }
+    },
+    {
+      "id": "invalid-run-records-negative",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "run": {
+          "records": -3
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "run-records-invalid"
+        ]
+      }
+    },
+    {
+      "id": "invalid-run-records-absent",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "run": {
+          "records": null
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "run-records-invalid"
+        ]
+      }
+    },
+    {
+      "id": "invalid-run-absent",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "run": null
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "run-records-invalid"
+        ]
+      }
+    },
+    {
+      "id": "invalid-chain-head-absent",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "auditChain": {
+          "head": null
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "audit-chain-head-invalid"
+        ]
+      }
+    },
+    {
+      "id": "invalid-chain-head-truncated",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "auditChain": {
+          "head": "9f2c1d7a"
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "audit-chain-head-invalid"
+        ]
+      }
+    },
+    {
+      "id": "invalid-chain-head-uppercase",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "auditChain": {
+          "head": "9F2C1D7A3B5E8046C1D9F4A27B6E0358D2C9A1B4E7F036D5A8C2B9E14F7D0362"
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "audit-chain-head-invalid"
+        ]
+      }
+    },
+    {
+      "id": "invalid-chain-head-prefixed",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "auditChain": {
+          "head": "sha256:9f2c1d7a3b5e8046c1d9f4a27b6e0358d2c9a1b4e7f036d5a8c2b9e14f7d0362"
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "audit-chain-head-invalid"
+        ]
+      }
+    },
+    {
+      "id": "invalid-chain-absent",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "auditChain": null
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "audit-chain-head-invalid"
+        ]
+      }
+    },
+    {
+      "id": "invalid-boot-id-empty",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "boot": {
+          "bootId": ""
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "boot-id-missing"
+        ]
+      }
+    },
+    {
+      "id": "invalid-boot-absent",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "boot": null
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "boot-id-missing",
+          "image-digest-missing"
+        ]
+      }
+    },
+    {
+      "id": "invalid-image-digest-absent",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "boot": {
+          "imageDigest": null
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "image-digest-missing"
+        ]
+      }
+    },
+    {
+      "id": "invalid-image-digest-empty",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "boot": {
+          "imageDigest": ""
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "image-digest-missing"
+        ]
+      }
+    },
+    {
+      "id": "invalid-policy-digest-truncated",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "policies": [
+          {
+            "app": "indexer",
+            "path": "/p",
+            "sha256": "1c4b8e0a"
+          }
+        ]
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "policy-digest-invalid"
+        ]
+      }
+    },
+    {
+      "id": "invalid-policy-digest-uppercase",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "policies": [
+          {
+            "app": "indexer",
+            "path": "/p",
+            "sha256": "1C4B8E0A5D3F7962B1E8C0A4D7F36529B8E1C4A70D3F6952B8E1C4A70D3F6952"
+          }
+        ]
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "policy-digest-invalid"
+        ]
+      }
+    },
+    {
+      "id": "invalid-policy-digest-absent",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "policies": [
+          {
+            "app": "indexer",
+            "path": "/p"
+          }
+        ]
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "policy-digest-invalid"
+        ]
+      }
+    },
+    {
+      "id": "invalid-policies-not-a-list",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "policies": {
+          "indexer": "1c4b8e0a5d3f7962b1e8c0a4d7f36529b8e1c4a70d3f6952b8e1c4a70d3f6952"
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "policy-digest-invalid"
+        ]
+      }
+    },
+    {
+      "id": "invalid-policies-absent",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "policies": null
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "policy-digest-invalid"
+        ]
+      }
+    },
+    {
+      "id": "invalid-enforcement-absent",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "enforcement": null
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "enforcement-missing"
+        ]
+      }
+    },
+    {
+      "id": "invalid-enforcement-not-a-mapping",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "enforcement": "ACTIVE"
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "enforcement-missing"
+        ]
+      }
+    },
+    {
+      "id": "invalid-status-unknown-word",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "enforcement": {
+          "status": "ENFORCED"
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "enforcement-status-invalid"
+        ]
+      }
+    },
+    {
+      "id": "invalid-status-lowercase",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "enforcement": {
+          "status": "active"
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "enforcement-status-invalid"
+        ]
+      }
+    },
+    {
+      "id": "invalid-status-absent",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "enforcement": {
+          "status": null
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "enforcement-status-invalid"
+        ]
+      }
+    },
+    {
+      "id": "invalid-ruleset-reports-not-a-list",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "enforcement": {
+          "rulesetReports": "FullyEnforced"
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "ruleset-report-invalid"
+        ]
+      }
+    },
+    {
+      "id": "invalid-ruleset-report-missing-boot-id",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "enforcement": {
+          "rulesetReports": [
+            {
+              "app": "indexer",
+              "ruleset": "FullyEnforced"
+            }
+          ]
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "ruleset-report-invalid"
+        ]
+      }
+    },
+    {
+      "id": "invalid-ruleset-report-missing-ruleset",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "enforcement": {
+          "rulesetReports": [
+            {
+              "app": "indexer",
+              "bootId": "b-7c1e44"
+            }
+          ]
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "ruleset-report-invalid"
+        ]
+      }
+    },
+    {
+      "id": "invalid-ruleset-report-missing-app",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "enforcement": {
+          "rulesetReports": [
+            {
+              "ruleset": "FullyEnforced",
+              "bootId": "b-7c1e44"
+            }
+          ]
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "ruleset-report-invalid"
+        ]
+      }
+    },
+    {
+      "id": "invalid-doctor-probe-unknown-word",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "enforcement": {
+          "doctorProbe": {
+            "status": "probably"
+          }
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "doctor-probe-invalid"
+        ]
+      }
+    },
+    {
+      "id": "invalid-doctor-probe-absent",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "enforcement": {
+          "doctorProbe": null
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "doctor-probe-invalid"
+        ]
+      }
+    },
+    {
+      "id": "invalid-report-cites-another-boot",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "enforcement": {
+          "rulesetReports": [
+            {
+              "app": "indexer",
+              "ruleset": "FullyEnforced",
+              "bootId": "b-other"
+            },
+            {
+              "app": "assistant",
+              "ruleset": "FullyEnforced",
+              "bootId": "b-7c1e44"
+            }
+          ]
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "boot-id-inconsistent"
+        ]
+      }
+    },
+    {
+      "id": "invalid-all-reports-cite-another-boot",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "enforcement": {
+          "rulesetReports": [
+            {
+              "app": "indexer",
+              "ruleset": "FullyEnforced",
+              "bootId": "b-other"
+            }
+          ]
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "boot-id-inconsistent"
+        ]
+      }
+    },
+    {
+      "id": "tamper-field-edited-after-sealing",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "runId": "run-someone-elses"
+      },
+      "seal": "before",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "digest-mismatch"
+        ]
+      }
+    },
+    {
+      "id": "tamper-nested-field-edited-after-sealing",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "boot": {
+          "imageTag": "berth/os:trusted"
+        }
+      },
+      "seal": "before",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "digest-mismatch"
+        ]
+      }
+    },
+    {
+      "id": "tamper-unknown-field-added-after-sealing",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "xNote": "added later"
+      },
+      "seal": "before",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "digest-mismatch"
+        ]
+      }
+    },
+    {
+      "id": "tamper-digest-absent",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "recordSha256": null
+      },
+      "seal": "none",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "digest-mismatch"
+        ]
+      }
+    },
+    {
+      "id": "tamper-digest-not-hex",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "recordSha256": "not-a-digest"
+      },
+      "seal": "none",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "digest-mismatch"
+        ]
+      }
+    },
+    {
+      "id": "tamper-digest-of-another-record",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "recordSha256": "1c4b8e0a5d3f7962b1e8c0a4d7f36529b8e1c4a70d3f6952b8e1c4a70d3f6952"
+      },
+      "seal": "none",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "digest-mismatch"
+        ]
+      }
+    },
+    {
+      "id": "tamper-verdict-upgraded-and-resealed",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "not-enforced",
+      "patch": {
+        "enforcement": {
+          "status": "ACTIVE"
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "enforcement-status-underived"
+        ]
+      }
+    },
+    {
+      "id": "tamper-verdict-upgraded-from-undetermined",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "undetermined",
+      "patch": {
+        "enforcement": {
+          "status": "ACTIVE"
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "enforcement-status-underived"
+        ]
+      }
+    },
+    {
+      "id": "tamper-verdict-downgraded",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "enforcement": {
+          "status": "NOT_ENFORCED"
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "enforcement-status-underived"
+        ]
+      }
+    },
+    {
+      "id": "tamper-probe-erased-to-keep-active",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "enforcement": {
+          "doctorProbe": {
+            "status": "unknown"
+          }
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "enforcement-status-underived"
+        ]
+      }
+    },
+    {
+      "id": "tamper-failing-report-deleted-but-probe-still-says-so",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "not-enforced",
+      "patch": {
+        "enforcement": {
+          "status": "ACTIVE",
+          "rulesetReports": []
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "enforcement-status-underived"
+        ]
+      }
+    },
+    {
+      "id": "tamper-reasons-cleared-verdict-kept",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "record": "not-enforced",
+      "patch": {
+        "enforcement": {
+          "status": "ACTIVE",
+          "reasons": []
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "enforcement-status-underived"
+        ]
+      }
+    },
+    {
+      "id": "malformed-probe-cannot-buy-active",
+      "tags": [
+        "core",
+        "derivation"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "enforcement": {
+          "doctorProbe": {
+            "status": "definitely-enforcing"
+          }
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "doctor-probe-invalid",
+          "enforcement-status-underived"
+        ]
+      }
+    },
+    {
+      "id": "malformed-reports-cannot-buy-active",
+      "tags": [
+        "core",
+        "derivation"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "enforcement": {
+          "rulesetReports": "all good"
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": false,
+        "codes": [
+          "ruleset-report-invalid",
+          "enforcement-status-underived"
+        ]
+      }
+    },
+    {
+      "id": "totality-null",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "literal": null,
+      "seal": "none",
+      "expect": {
+        "valid": false,
+        "codes": []
+      }
+    },
+    {
+      "id": "totality-a-string",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "literal": "berth.attestation",
+      "seal": "none",
+      "expect": {
+        "valid": false,
+        "codes": []
+      }
+    },
+    {
+      "id": "totality-a-number",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "literal": 7,
+      "seal": "none",
+      "expect": {
+        "valid": false,
+        "codes": []
+      }
+    },
+    {
+      "id": "totality-a-sequence",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "literal": [],
+      "seal": "none",
+      "expect": {
+        "valid": false,
+        "codes": []
+      }
+    },
+    {
+      "id": "totality-an-empty-mapping",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "literal": {},
+      "seal": "none",
+      "expect": {
+        "valid": false,
+        "codes": []
+      }
+    },
+    {
+      "id": "totality-a-boolean",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "literal": true,
+      "seal": "none",
+      "expect": {
+        "valid": false,
+        "codes": []
+      }
+    },
+    {
+      "id": "totality-deeply-nested",
+      "tags": [
+        "core"
+      ],
+      "op": "verify",
+      "literalDeep": 200,
+      "seal": "none",
+      "expect": {
+        "valid": false,
+        "codes": []
+      }
+    },
+    {
+      "id": "derive-enforcing-no-reports",
+      "tags": [
+        "derivation"
+      ],
+      "op": "derive",
+      "rulesetReports": [],
+      "doctorProbe": {
+        "status": "enforcing"
+      },
+      "expect": {
+        "status": "UNDETERMINED"
+      }
+    },
+    {
+      "id": "derive-enforcing-all-full",
+      "tags": [
+        "derivation"
+      ],
+      "op": "derive",
+      "rulesetReports": [
+        {
+          "app": "indexer",
+          "ruleset": "FullyEnforced",
+          "bootId": "b-7c1e44"
+        }
+      ],
+      "doctorProbe": {
+        "status": "enforcing"
+      },
+      "expect": {
+        "status": "ACTIVE"
+      }
+    },
+    {
+      "id": "derive-enforcing-one-not-full",
+      "tags": [
+        "derivation"
+      ],
+      "op": "derive",
+      "rulesetReports": [
+        {
+          "app": "indexer",
+          "ruleset": "PartiallyEnforced",
+          "bootId": "b-7c1e44"
+        }
+      ],
+      "doctorProbe": {
+        "status": "enforcing"
+      },
+      "expect": {
+        "status": "NOT_ENFORCED"
+      }
+    },
+    {
+      "id": "derive-unknown-no-reports",
+      "tags": [
+        "derivation"
+      ],
+      "op": "derive",
+      "rulesetReports": [],
+      "doctorProbe": {
+        "status": "unknown"
+      },
+      "expect": {
+        "status": "UNDETERMINED"
+      }
+    },
+    {
+      "id": "derive-unknown-all-full",
+      "tags": [
+        "derivation"
+      ],
+      "op": "derive",
+      "rulesetReports": [
+        {
+          "app": "indexer",
+          "ruleset": "FullyEnforced",
+          "bootId": "b-7c1e44"
+        }
+      ],
+      "doctorProbe": {
+        "status": "unknown"
+      },
+      "expect": {
+        "status": "UNDETERMINED"
+      }
+    },
+    {
+      "id": "derive-unknown-one-not-full",
+      "tags": [
+        "derivation"
+      ],
+      "op": "derive",
+      "rulesetReports": [
+        {
+          "app": "indexer",
+          "ruleset": "NotEnforced",
+          "bootId": "b-7c1e44"
+        }
+      ],
+      "doctorProbe": {
+        "status": "unknown"
+      },
+      "expect": {
+        "status": "NOT_ENFORCED"
+      }
+    },
+    {
+      "id": "derive-present-not-enforcing-no-reports",
+      "tags": [
+        "derivation"
+      ],
+      "op": "derive",
+      "rulesetReports": [],
+      "doctorProbe": {
+        "status": "present_not_enforcing"
+      },
+      "expect": {
+        "status": "NOT_ENFORCED"
+      }
+    },
+    {
+      "id": "derive-present-not-enforcing-all-full",
+      "tags": [
+        "derivation"
+      ],
+      "op": "derive",
+      "rulesetReports": [
+        {
+          "app": "indexer",
+          "ruleset": "FullyEnforced",
+          "bootId": "b-7c1e44"
+        }
+      ],
+      "doctorProbe": {
+        "status": "present_not_enforcing"
+      },
+      "expect": {
+        "status": "NOT_ENFORCED"
+      }
+    },
+    {
+      "id": "derive-present-not-enforcing-one-not-full",
+      "tags": [
+        "derivation"
+      ],
+      "op": "derive",
+      "rulesetReports": [
+        {
+          "app": "indexer",
+          "ruleset": "NotEnforced",
+          "bootId": "b-7c1e44"
+        }
+      ],
+      "doctorProbe": {
+        "status": "present_not_enforcing"
+      },
+      "expect": {
+        "status": "NOT_ENFORCED"
+      }
+    },
+    {
+      "id": "derive-unsupported-no-reports",
+      "tags": [
+        "derivation"
+      ],
+      "op": "derive",
+      "rulesetReports": [],
+      "doctorProbe": {
+        "status": "unsupported"
+      },
+      "expect": {
+        "status": "NOT_ENFORCED"
+      }
+    },
+    {
+      "id": "derive-unsupported-all-full",
+      "tags": [
+        "derivation"
+      ],
+      "op": "derive",
+      "rulesetReports": [
+        {
+          "app": "indexer",
+          "ruleset": "FullyEnforced",
+          "bootId": "b-7c1e44"
+        }
+      ],
+      "doctorProbe": {
+        "status": "unsupported"
+      },
+      "expect": {
+        "status": "NOT_ENFORCED"
+      }
+    },
+    {
+      "id": "derive-unsupported-one-not-full",
+      "tags": [
+        "derivation"
+      ],
+      "op": "derive",
+      "rulesetReports": [
+        {
+          "app": "indexer",
+          "ruleset": "NotEnforced",
+          "bootId": "b-7c1e44"
+        }
+      ],
+      "doctorProbe": {
+        "status": "unsupported"
+      },
+      "expect": {
+        "status": "NOT_ENFORCED"
+      }
+    },
+    {
+      "id": "derive-mixed-reports-one-bad",
+      "tags": [
+        "derivation"
+      ],
+      "op": "derive",
+      "rulesetReports": [
+        {
+          "app": "a",
+          "ruleset": "FullyEnforced",
+          "bootId": "b-7c1e44"
+        },
+        {
+          "app": "b",
+          "ruleset": "NotEnforced",
+          "bootId": "b-7c1e44"
+        }
+      ],
+      "doctorProbe": {
+        "status": "enforcing"
+      },
+      "expect": {
+        "status": "NOT_ENFORCED"
+      }
+    },
+    {
+      "id": "derive-ruleset-is-case-sensitive",
+      "tags": [
+        "derivation"
+      ],
+      "op": "derive",
+      "rulesetReports": [
+        {
+          "app": "indexer",
+          "ruleset": "fullyenforced",
+          "bootId": "b-7c1e44"
+        }
+      ],
+      "doctorProbe": {
+        "status": "enforcing"
+      },
+      "expect": {
+        "status": "NOT_ENFORCED"
+      }
+    },
+    {
+      "id": "derive-ruleset-unknown-word-is-not-full",
+      "tags": [
+        "derivation"
+      ],
+      "op": "derive",
+      "rulesetReports": [
+        {
+          "app": "indexer",
+          "ruleset": "Enforced",
+          "bootId": "b-7c1e44"
+        }
+      ],
+      "doctorProbe": {
+        "status": "enforcing"
+      },
+      "expect": {
+        "status": "NOT_ENFORCED"
+      }
+    },
+    {
+      "id": "derive-many-reports-all-full",
+      "tags": [
+        "derivation"
+      ],
+      "op": "derive",
+      "rulesetReports": [
+        {
+          "app": "a",
+          "ruleset": "FullyEnforced",
+          "bootId": "b-7c1e44"
+        },
+        {
+          "app": "b",
+          "ruleset": "FullyEnforced",
+          "bootId": "b-7c1e44"
+        },
+        {
+          "app": "c",
+          "ruleset": "FullyEnforced",
+          "bootId": "b-7c1e44"
+        }
+      ],
+      "doctorProbe": {
+        "status": "enforcing"
+      },
+      "expect": {
+        "status": "ACTIVE"
+      }
+    },
+    {
+      "id": "digest-empty-mapping",
+      "tags": [
+        "canonical"
+      ],
+      "op": "digest",
+      "record": {},
+      "note": "the degenerate case: sha256 of the two bytes {}",
+      "expect": {
+        "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      }
+    },
+    {
+      "id": "digest-key-order-declared",
+      "tags": [
+        "canonical"
+      ],
+      "op": "digest",
+      "record": {
+        "b": 1,
+        "a": 2
+      },
+      "note": "keys are sorted, so this must equal digest-key-order-reversed",
+      "expect": {
+        "sha256": "d3626ac30a87e6f7a6428233b3c68299976865fa5508e4267c5415c76af7a772"
+      }
+    },
+    {
+      "id": "digest-key-order-reversed",
+      "tags": [
+        "canonical"
+      ],
+      "op": "digest",
+      "record": {
+        "a": 2,
+        "b": 1
+      },
+      "note": "same mapping, different insertion order, same digest",
+      "expect": {
+        "sha256": "d3626ac30a87e6f7a6428233b3c68299976865fa5508e4267c5415c76af7a772"
+      }
+    },
+    {
+      "id": "digest-record-sha-is-removed-not-blanked",
+      "tags": [
+        "canonical"
+      ],
+      "op": "digest",
+      "record": {
+        "a": 1,
+        "recordSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "note": "must equal the digest of {\"a\":1}",
+      "expect": {
+        "sha256": "015abd7f5cc57a2dd94b7590f04ad8084273905ee33ec5cebeae62276a97f862"
+      }
+    },
+    {
+      "id": "digest-record-sha-absent",
+      "tags": [
+        "canonical"
+      ],
+      "op": "digest",
+      "record": {
+        "a": 1
+      },
+      "note": "the partner of digest-record-sha-is-removed-not-blanked",
+      "expect": {
+        "sha256": "015abd7f5cc57a2dd94b7590f04ad8084273905ee33ec5cebeae62276a97f862"
+      }
+    },
+    {
+      "id": "digest-nested-mappings-and-sequences",
+      "tags": [
+        "canonical"
+      ],
+      "op": "digest",
+      "record": {
+        "z": {
+          "b": [
+            1,
+            [
+              2,
+              3
+            ],
+            {
+              "d": 4,
+              "c": 5
+            }
+          ],
+          "a": "x"
+        },
+        "y": []
+      },
+      "note": "sorting is recursive; sequence order is not sorted",
+      "expect": {
+        "sha256": "8c82a03bda471fa36332867e9a85c44733e638eec5cb730326d39bc1e9be1f78"
+      }
+    },
+    {
+      "id": "digest-sequence-order-matters",
+      "tags": [
+        "canonical"
+      ],
+      "op": "digest",
+      "record": {
+        "a": [
+          3,
+          1,
+          2
+        ]
+      },
+      "note": "unlike keys, elements keep their order",
+      "expect": {
+        "sha256": "d934227f5a9f29b31bd6a8ceed3213dd498a07ce32bdfa9ae2488de0c0ab68f1"
+      }
+    },
+    {
+      "id": "digest-booleans",
+      "tags": [
+        "canonical"
+      ],
+      "op": "digest",
+      "record": {
+        "t": true,
+        "f": false
+      },
+      "note": null,
+      "expect": {
+        "sha256": "c22848c47426fcf4d27e55573c22f1d23546315c251e8e4bc384820ba5fae568"
+      }
+    },
+    {
+      "id": "digest-numbers",
+      "tags": [
+        "canonical"
+      ],
+      "op": "digest",
+      "record": {
+        "i": 1,
+        "negative": -17,
+        "fraction": 1.5,
+        "quarter": -0.25,
+        "exp": 1e+21,
+        "zero": 0
+      },
+      "note": "shortest round-tripping decimal form",
+      "expect": {
+        "sha256": "438fbbad9366c96ac5fd1935ff2f1f2518c3c88cbd0fb90861c44347d4050eac"
+      }
+    },
+    {
+      "id": "digest-string-escapes",
+      "tags": [
+        "canonical"
+      ],
+      "op": "digest",
+      "record": {
+        "k": "a\"b\\c\nd\tef"
+      },
+      "note": "shortest escape for each; \\u00XX only below U+0020",
+      "expect": {
+        "sha256": "b41642bd09f4587988d1ea46f8d97bacd43d4e85eb261ca6a83029387490cc67"
+      }
+    },
+    {
+      "id": "digest-unicode-not-escaped",
+      "tags": [
+        "canonical"
+      ],
+      "op": "digest",
+      "record": {
+        "k": "héllo — 🙂 日本語"
+      },
+      "note": "non-ASCII is emitted literally in UTF-8, never \\u-escaped",
+      "expect": {
+        "sha256": "9b7bd4c95fbeafe636be1559c0550916dc1dc42fd0183d76ca6de713d3c53eac"
+      }
+    },
+    {
+      "id": "digest-key-with-escapes",
+      "tags": [
+        "canonical"
+      ],
+      "op": "digest",
+      "record": {
+        "a\"b": 1,
+        "a\\b": 2
+      },
+      "note": "keys escape by the same rules",
+      "expect": {
+        "sha256": "0ca9681c00fb3d02cfa38d5742f1463f09ae944059d0f635169032a7d1e26162"
+      }
+    },
+    {
+      "id": "digest-full-active-record",
+      "tags": [
+        "canonical"
+      ],
+      "op": "digest",
+      "record": {
+        "schemaVersion": 1,
+        "kind": "berth.attestation",
+        "trustModel": "tamper-evident, not tamper-proof: this record and the audit chain it cites are hashed, but both were produced by software running on the attested host. Anyone who controls that host could have rewritten the chain wholesale and re-emitted this record before its head left their reach. The record proves internal consistency and detects after-the-fact edits; it does not prove the host told the truth at emission time.",
+        "generatedAt": "2026-08-24T09:15:02.441Z",
+        "runId": "run-4f2a9c",
+        "run": {
+          "records": 214,
+          "firstSeq": 1180,
+          "lastSeq": 1393
+        },
+        "auditChain": {
+          "path": "/var/lib/berth/audit.jsonl",
+          "segments": 3,
+          "totalRecords": 4021,
+          "head": "9f2c1d7a3b5e8046c1d9f4a27b6e0358d2c9a1b4e7f036d5a8c2b9e14f7d0362"
+        },
+        "boot": {
+          "bootId": "b-7c1e44",
+          "containerName": "berth-os-default",
+          "imageTag": "berth/os:0.1.0",
+          "imageDigest": "sha256:3a7fc19e",
+          "runtime": "runsc"
+        },
+        "enforcement": {
+          "status": "ACTIVE",
+          "reasons": [],
+          "rulesetReports": [
+            {
+              "app": "indexer",
+              "ruleset": "FullyEnforced",
+              "bootId": "b-7c1e44"
+            },
+            {
+              "app": "assistant",
+              "ruleset": "FullyEnforced",
+              "bootId": "b-7c1e44"
+            }
+          ],
+          "doctorProbe": {
+            "status": "enforcing"
+          }
+        },
+        "policies": [
+          {
+            "app": "indexer",
+            "path": "/app/.berth/capability-policy.json",
+            "sha256": "1c4b8e0a5d3f7962b1e8c0a4d7f36529b8e1c4a70d3f6952b8e1c4a70d3f6952"
+          }
+        ],
+        "recordSha256": "741bfe3bf03e975db0e0f548b883c351b96c21c9921a45b531a87f900bc3d8a3"
+      },
+      "note": "the whole worked example of SPEC Appendix A",
+      "expect": {
+        "sha256": "741bfe3bf03e975db0e0f548b883c351b96c21c9921a45b531a87f900bc3d8a3"
+      }
+    },
+    {
+      "id": "digest-full-not-enforced-record",
+      "tags": [
+        "canonical"
+      ],
+      "op": "digest",
+      "record": {
+        "schemaVersion": 1,
+        "kind": "berth.attestation",
+        "trustModel": "tamper-evident, not tamper-proof: this record and the audit chain it cites are hashed, but both were produced by software running on the attested host. Anyone who controls that host could have rewritten the chain wholesale and re-emitted this record before its head left their reach. The record proves internal consistency and detects after-the-fact edits; it does not prove the host told the truth at emission time.",
+        "generatedAt": "2026-08-24T09:15:02.441Z",
+        "runId": "run-4f2a9c",
+        "run": {
+          "records": 214,
+          "firstSeq": 1180,
+          "lastSeq": 1393
+        },
+        "auditChain": {
+          "path": "/var/lib/berth/audit.jsonl",
+          "segments": 3,
+          "totalRecords": 4021,
+          "head": "9f2c1d7a3b5e8046c1d9f4a27b6e0358d2c9a1b4e7f036d5a8c2b9e14f7d0362"
+        },
+        "boot": {
+          "bootId": "b-7c1e44",
+          "containerName": "berth-os-default",
+          "imageTag": "berth/os:0.1.0",
+          "imageDigest": "sha256:3a7fc19e",
+          "runtime": "runsc"
+        },
+        "enforcement": {
+          "status": "NOT_ENFORCED",
+          "reasons": [
+            "doctor probe: present_not_enforcing"
+          ],
+          "rulesetReports": [
+            {
+              "app": "indexer",
+              "ruleset": "FullyEnforced",
+              "bootId": "b-7c1e44"
+            }
+          ],
+          "doctorProbe": {
+            "status": "present_not_enforcing",
+            "reason": "landlock syscalls return ENOSYS"
+          }
+        },
+        "policies": [
+          {
+            "app": "indexer",
+            "path": "/app/.berth/capability-policy.json",
+            "sha256": "1c4b8e0a5d3f7962b1e8c0a4d7f36529b8e1c4a70d3f6952b8e1c4a70d3f6952"
+          }
+        ],
+        "recordSha256": "298a681893ed8f7cf9c313007fc30ddd0bf4a90ae84169d1f6edde1bdfda3fa8"
+      },
+      "note": null,
+      "expect": {
+        "sha256": "298a681893ed8f7cf9c313007fc30ddd0bf4a90ae84169d1f6edde1bdfda3fa8"
+      }
+    },
+    {
+      "id": "extended-unknown-top-level-field",
+      "tags": [
+        "extended"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "xNote": "an out-of-band extension",
+        "xCount": 3
+      },
+      "seal": "after",
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "extended-unknown-nested-field",
+      "tags": [
+        "extended"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "boot": {
+          "xKernel": "6.8.0"
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "extended-tiers-table-present",
+      "tags": [
+        "extended"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "tiers": [
+          {
+            "namespace": "filesystem",
+            "action": "write",
+            "tier": "kernel"
+          },
+          {
+            "namespace": "browser",
+            "action": "navigate",
+            "tier": "broker"
+          }
+        ]
+      },
+      "seal": "after",
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "extended-run-bounds-absent",
+      "tags": [
+        "extended"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "run": {
+          "firstSeq": null,
+          "lastSeq": null
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "extended-run-time-bounds-present",
+      "tags": [
+        "extended"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "run": {
+          "firstTs": "2026-08-24T09:00:00Z",
+          "lastTs": "2026-08-24T09:14:59Z"
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "extended-boot-optional-fields-absent",
+      "tags": [
+        "extended"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "boot": {
+          "containerName": null,
+          "imageTag": null,
+          "runtime": null
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "extended-reasons-absent",
+      "tags": [
+        "extended"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "enforcement": {
+          "reasons": null
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "extended-reasons-populated-on-active",
+      "tags": [
+        "extended"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "enforcement": {
+          "reasons": [
+            "advisory prose a verifier must not act on"
+          ]
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "extended-policy-optional-fields-absent",
+      "tags": [
+        "extended"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "policies": [
+          {
+            "sha256": "1c4b8e0a5d3f7962b1e8c0a4d7f36529b8e1c4a70d3f6952b8e1c4a70d3f6952"
+          }
+        ]
+      },
+      "seal": "after",
+      "expect": {
+        "valid": true
+      }
+    },
+    {
+      "id": "extended-probe-reason-present",
+      "tags": [
+        "extended"
+      ],
+      "op": "verify",
+      "record": "active",
+      "patch": {
+        "enforcement": {
+          "doctorProbe": {
+            "status": "enforcing",
+            "reason": "landlock ABI 4, write denied in probe"
+          }
+        }
+      },
+      "seal": "after",
+      "expect": {
+        "valid": true
+      }
+    }
+  ]
+}

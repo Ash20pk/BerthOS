@@ -7,9 +7,11 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"strconv"
+	"time"
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
@@ -17,6 +19,7 @@ import (
 	"berth/semantic-fs-daemon/internal/control"
 	"berth/semantic-fs-daemon/internal/fusefs"
 	"berth/semantic-fs-daemon/internal/index"
+	"berth/semantic-fs-daemon/internal/privs"
 )
 
 // Gid of the shared `berth` group every resident app joins (base.Dockerfile
@@ -108,6 +111,28 @@ func main() {
 	defer conn.Close()
 
 	log.Printf("[semantic-fs] mounted at %s (backing dir %s, shared gid %d), control socket %s", mountPoint, dataDir, gid, socketPath)
+
+	// The mount was the last thing needing CAP_SYS_ADMIN — narrow to the
+	// file-ownership set now, before the first FUSE or control-socket request
+	// is served (BUILD_PLAN M1.2; see internal/privs). One structured line
+	// either way, prefix-free like agent-init's, so a boot's actual privilege
+	// posture is greppable rather than assumed.
+	narrowed := false
+	var narrowErr error
+	if os.Getenv("BERTH_DISABLE_DAEMON_CONFINEMENT") == "1" {
+		log.Printf("[semantic-fs] WARNING: BERTH_DISABLE_DAEMON_CONFINEMENT=1 — keeping the boot-time capability set, CAP_SYS_ADMIN included (pre-M1.2 posture)")
+	} else if narrowErr = privs.NarrowPostMount(); narrowErr != nil {
+		log.Printf("[semantic-fs] WARNING: could not narrow post-mount privileges (%v) — continuing with the boot-time capability set", narrowErr)
+	} else {
+		narrowed = true
+		log.Printf("[semantic-fs] post-mount privileges narrowed: bounding set empty, effective set reduced to file-ownership caps, no_new_privs set")
+	}
+	detail := ""
+	if narrowErr != nil {
+		detail = narrowErr.Error()
+	}
+	fmt.Fprintf(os.Stderr, "{\"source\":\"semantic-fs-daemon\",\"event\":\"post_mount_caps_narrowed\",\"bootId\":%q,\"applied\":%t,\"detail\":%q,\"timestamp\":%d}\n",
+		getenv("BERTH_BOOT_ID", "unknown"), narrowed, detail, time.Now().Unix())
 
 	filesystem := fusefs.New(dataDir, idx, registry, gid)
 	if err := fs.Serve(conn, filesystem); err != nil {
