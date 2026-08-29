@@ -86,6 +86,19 @@ Each record's `hash` covers `prevHash` plus its own canonical JSON, so a record 
 - **Writes are synchronous.** A record buffered when the process dies is a record that does not exist, and these are the events a crash would otherwise erase. Volume is low: a line per governance verdict and grant decision, not per HTTP request.
 - **A failing sink never fails the audited action.** It reports on stderr and drops the record. Both the sink and every call site catch — a monitoring backend having a bad day must not become a failed tool call.
 - **Rotation** defaults to 16MB and 5 files. There is no retention policy beyond that; pruning older segments is left to whatever already manages the host.
+- **Once rotation has pruned the genesis segment, the chain no longer starts at genesis.** The
+  oldest segment still on disk begins with a record naming a predecessor that has been
+  deleted. `berth audit verify` and `berth attest` start the walk from that named
+  predecessor and **report that they did so** — verification of every record still held is
+  unaffected, but the boundary itself is not checkable. That is stated in the output rather
+  than passed over silently, because retention pruning and someone deleting the early
+  segments to hide something are indistinguishable from the files alone.
+
+  Until 2026-08-29 both commands seeded the walk with the genesis hash instead, so on any
+  install that had rotated past its retention window `audit verify` reported `BROKEN` at
+  record 0 and `attest` refused to emit at all — a routine rotation was indistinguishable
+  from tampering, in the direction that cries wolf. Fixed by `verifyAuditSegments()` in
+  `@berth/audit`, which both commands now share.
 - **`agent-init`'s boot events** are separate — they go to container stderr, not to this sink, since they run inside the sandbox before any of this exists. They are parseable JSON with a `"source":"agent-init"` field (the old `[agent-init] ` prefix made them unparseable, also 5.1).
 
 ## What is still open

@@ -9,7 +9,10 @@ export {
   defaultAuditPath,
   readAuditFile,
   verifyAuditChain,
+  verifyAuditSegments,
   type ChainVerification,
+  type SegmentInput,
+  type SegmentVerification,
   type FileAuditSinkOptions,
   canonicalize,
 } from "./sink.js";

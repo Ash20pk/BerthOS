@@ -3,12 +3,11 @@ import Docker from "dockerode";
 import { existsSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import {
-  CHAIN_GENESIS,
   defaultAuditPath,
   finalizeAttestation,
   readAuditFile,
   verifyAttestation,
-  verifyAuditChain,
+  verifyAuditSegments,
   type AuditRecord,
 } from "@berth/audit";
 import { gatherBootEvidence, listOsNames, readOsState } from "@berth/docker-orchestrator";
@@ -52,21 +51,31 @@ export default class Attest extends Command {
     const auditPath = flags.file ?? defaultAuditPath(homedir());
     if (!existsSync(auditPath)) this.error(`no audit file at ${auditPath} — a run that left no audit trail cannot be attested`);
 
-    const segments = segmentsFor(auditPath);
-    let head = CHAIN_GENESIS;
-    let totalRecords = 0;
+    const chain = verifyAuditSegments(
+      segmentsFor(auditPath).map((segment) => ({ segment, records: readAuditFile(segment) })),
+    );
+    if (!chain.valid && chain.failure) {
+      this.error(
+        `audit chain broken at ${chain.failure.segment}:${chain.failure.brokenAt} (${chain.failure.reason}) — refusing to attest against a chain that fails its own verification`,
+      );
+    }
+    if (chain.truncatedStart) {
+      // Not a refusal: on any install that has rotated past its retention
+      // window this is the normal state, and refusing here is what made
+      // `berth attest` unusable on a long-lived install. But it is also
+      // indistinguishable from someone deleting the early segments, so it is
+      // said out loud on stderr rather than passed over. The record itself
+      // cannot yet carry this — see docs/attestation-reference.md and the
+      // spec-field note in EXECUTION_PLAN.md.
+      this.warn(
+        `the audit chain's oldest held record names predecessor ${chain.startedFrom.slice(0, 16)}…, which is not on disk — earlier segments were pruned by rotation (or removed). The ${chain.totalRecords} records held verify cleanly from that point; the attestation covers only those.`,
+      );
+    }
+    const head = chain.head;
+    const totalRecords = chain.totalRecords;
     const runRecords: AuditRecord[] = [];
-    for (const segment of segments) {
-      const records = readAuditFile(segment);
-      const result = verifyAuditChain(records, head);
-      if (!result.valid) {
-        this.error(
-          `audit chain broken at ${segment}:${result.brokenAt} (${result.reason}) — refusing to attest against a chain that fails its own verification`,
-        );
-      }
-      head = result.endHash;
-      totalRecords += records.length;
-      for (const record of records) {
+    for (const { segment } of chain.perSegment) {
+      for (const record of readAuditFile(segment)) {
         if ((record.meta as { runId?: unknown } | undefined)?.runId === args.runId) runRecords.push(record);
       }
     }
@@ -95,7 +104,7 @@ export default class Attest extends Command {
     const record = finalizeAttestation({
       runId: args.runId,
       run: { records: runRecords.length, firstSeq: first.seq, lastSeq: last.seq, firstTs: first.ts, lastTs: last.ts },
-      auditChain: { path: auditPath, segments: segments.filter((s) => existsSync(s)).length, totalRecords, head },
+      auditChain: { path: auditPath, segments: chain.perSegment.length, totalRecords, head },
       boot: {
         bootId: evidence.bootId,
         containerName: evidence.containerName,

@@ -226,6 +226,80 @@ export function verifyAuditChain(records: AuditRecord[], startHash: string = CHA
   return { valid: true, brokenAt: -1, endHash: expectedPrev };
 }
 
+export interface SegmentInput {
+  /** How to name this segment in output — a path, usually. */
+  segment: string;
+  records: AuditRecord[];
+}
+
+export interface SegmentVerification {
+  valid: boolean;
+  /** The chain head after the newest verified record. */
+  head: string;
+  totalRecords: number;
+  perSegment: { segment: string; records: number }[];
+  /**
+   * True when the oldest segment we hold does NOT begin at genesis, i.e. its
+   * first record names a predecessor that isn't on disk any more.
+   *
+   * This is the normal, expected state of any install that has rotated more
+   * than `maxFiles` times — retention deleted the earlier segments. It is
+   * ALSO what deleting the early segments to hide something looks like, and
+   * the two are indistinguishable from the files alone. So this is surfaced
+   * rather than tolerated silently: callers must report it. Verification of
+   * everything from that record forward is unaffected and still sound.
+   */
+  truncatedStart: boolean;
+  /** The prevHash verification had to take on trust when `truncatedStart`. */
+  startedFrom: string;
+  failure?: { segment: string; brokenAt: number; reason: string };
+}
+
+/**
+ * Verifies a chain across rotated segments, oldest-first.
+ *
+ * Why this exists rather than each caller looping over `verifyAuditChain`:
+ * a caller that seeds the walk with `CHAIN_GENESIS` is correct only until
+ * retention prunes the first segment, after which it reports BROKEN at
+ * record 0 of the oldest *surviving* segment on every healthy install —
+ * making a routine rotation indistinguishable from tampering, and (in
+ * `berth attest`'s case) refusing to emit at all. This starts the walk from
+ * whatever the oldest held record claims as its predecessor and reports that
+ * it did so, which keeps rotation working without ever quietly accepting an
+ * unverified boundary.
+ */
+export function verifyAuditSegments(segments: SegmentInput[]): SegmentVerification {
+  const nonEmpty = segments.filter((s) => s.records.length > 0);
+  const perSegment = segments.map((s) => ({ segment: s.segment, records: s.records.length }));
+  const totalRecords = nonEmpty.reduce((n, s) => n + s.records.length, 0);
+
+  if (nonEmpty.length === 0) {
+    return { valid: true, head: CHAIN_GENESIS, totalRecords: 0, perSegment, truncatedStart: false, startedFrom: CHAIN_GENESIS };
+  }
+
+  const firstPrev = nonEmpty[0]!.records[0]!.prevHash;
+  const truncatedStart = firstPrev !== CHAIN_GENESIS;
+  let expected = firstPrev;
+
+  for (const { segment, records } of nonEmpty) {
+    const result = verifyAuditChain(records, expected);
+    if (!result.valid) {
+      return {
+        valid: false,
+        head: result.endHash,
+        totalRecords,
+        perSegment,
+        truncatedStart,
+        startedFrom: firstPrev,
+        failure: { segment, brokenAt: result.brokenAt, reason: result.reason ?? "unknown" },
+      };
+    }
+    expected = result.endHash;
+  }
+
+  return { valid: true, head: expected, totalRecords, perSegment, truncatedStart, startedFrom: firstPrev };
+}
+
 /** Reads a JSONL audit file back into records. Skips a torn final line rather than throwing. */
 export function readAuditFile(path: string): AuditRecord[] {
   if (!existsSync(path)) return [];
