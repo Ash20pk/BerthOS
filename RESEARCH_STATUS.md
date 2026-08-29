@@ -40,23 +40,37 @@ to save tokens; 14 of ~30 agents returned before the stop. Everything below mark
 
 This is where the research stopped being strategic and started finding real defects.
 
-**The finding that threatens the whole thesis:**
+**CORRECTED 2026-08-29 — the headline finding was overstated.** An agent reported that
+`ALLOWED_WRITE_PATH_PREFIXES` makes the manifest meaningless and that four `docker run` flags
+match Berth's guarantee. I checked the code directly and that is **wrong**:
 
-> `packages/agent-init/src/main.rs:574` —
-> `ALLOWED_WRITE_PATH_PREFIXES: [&str; 4] = ["/workspace", "/context", "/tmp", "/app"]`
->
-> A `berth.yml` cannot declare a writable path outside those four fixed top-level prefixes.
-> The agent checked every shipped manifest and none does. So the shipped filesystem
-> guarantee is **not** "the manifest line is the boundary" — it is a fixed four-directory
-> layout, which the adversarial agent showed is reproducible with **four `docker run`
-> flags**, or ~25 lines of CEL in a Kubernetes ValidatingAdmissionPolicy that additionally
-> makes it mandatory fleet-wide and unremovable.
+- `main.rs:622` matches with `path == *prefix || path.starts_with(&format!("{prefix}/"))` — a
+  **prefix** match. So `filesystem:write:/workspace/out` is declarable and valid.
+- `baselineWritePaths()` in `generate-capability-policy.ts` is only
+  `["/dev/null", appTmpDir, appRunDir]` — it does **not** include `/workspace`.
+- `generate-capability-policy.ts:249` puts the declared scope straight into `writePaths`.
+
+Therefore **sub-path write scoping genuinely works, and the manifest line really is the
+boundary**: an app declaring `filesystem:write:/workspace/out` gets a Landlock grant on
+`/workspace/out` and `/workspace/secrets` stays unwritable. Four `docker run` flags cannot
+express that — the same adversarial agent's own "what it would still lack" list conceded
+sub-path scoping as a docker gap, which contradicts its headline.
+
+**The real, much narrower limitation:** a `berth.yml` cannot declare a writable root *outside*
+`/workspace`, `/context`, `/tmp`, `/app` — so `/data` or `/var/lib/foo` are not expressible.
+That is a deliberate, documented safety choice (the README's own MCP denial message states
+it verbatim) and a defensible one, not a hole. It is worth revisiting only if a design
+partner needs a custom mount root.
 
 **Kernel tier, other verified gaps:**
-- `AccessFs::Execute` and `IoctlDev` are deliberately unhandled in `apply_policy()` — so
-  **execve is permitted everywhere**.
+- `AccessFs::Execute` and `IoctlDev` are unhandled, so the Execute *right* is unrestricted —
+  but **[corrected]** this is deliberate, documented at `main.rs:668-676` as "a real gap …
+  tracked separately", and materially mitigated: with read scoping on, `execve()` of a file
+  outside every read rule already fails `EACCES`. Real, known, lower severity than reported.
 - `network:connect:*` does not widen port scoping, it **removes** the
-  `handle_access(AccessNet::from_all(V4))` call entirely — no network scoping at all.
+  `handle_access(AccessNet::from_all(V4))` call entirely — no kernel network boundary at all
+  (`restrict_network = !policy.network_unrestricted`, `main.rs:688-694`). **[confirmed by me,
+  as stated.]** `apps/browser-native` declares it.
 - The compiled ruleset is **not** derived from the manifest alone:
   `generate-capability-policy.ts:177 fetchApprovedCapabilities()` widens it from an
   **unauthenticated plain-HTTP** grants server.
@@ -173,20 +187,27 @@ design partners. Chunk 3's *investigation* is now done (see 1.3) but no code has
 **D1** Mac vs Linux/CI · **D2** freeze in-tree vs separate repo · **D3** publish timing ·
 **D4** design-partner names · **D5** npm scope rename. Plus one the research forced:
 
-**D6 — Does the thesis survive 1.3?** If the manifest cannot express a boundary beyond four
-fixed directories, "IAM for agents, enforced by the kernel" is not yet true as stated. The
-options are to make it true (R5), or to lead with what *is* true and defensible (multi-app
-least privilege + verb-scoped API mediation + per-run evidence). That is a founder decision,
-not a research task.
+**D6 — [revised after the correction above] The thesis survives.** The manifest *is* the
+boundary, with real sub-path granularity, inside four permitted roots. So "make the thesis
+true" (R5) is largely unnecessary — it is already true, and R5 reduces to the optional
+question of whether a custom mount root is ever needed. What still needs deciding is
+narrower: whether to keep leading with the filesystem story (defensible, but its nearest
+competitor is cheap) or to lead with the things no competitor has at all — multi-app least
+privilege inside one box, verb-scoped API mediation, per-run evidence.
 
 ---
 
 ## The honest one-line summary
 
-The strategic critique in the review survived contact with the code, but the research found
-something sharper: **the specific guarantee the README leads with is weaker than advertised**
-(four hardcoded prefixes, `execve` unrestricted, `network:connect:*` disabling network
-scoping, an unconditional `SYS_ADMIN` sidecar, an attestation cache that forges half a
-verdict, and an audit chain that self-breaks on normal rotation) — while the things that are
-genuinely defensible are not what the project is selling. Fix the claims or change the pitch;
-either is survivable, but shipping the current pitch on the current code is not.
+**[revised]** The kernel thesis holds up better than the first pass of research claimed — the
+manifest really is the boundary, with genuine sub-path granularity. What does not hold up is
+a specific set of fixable defects around it: `network:connect:*` silently disabling the
+kernel network boundary, an unconditional `CAP_SYS_ADMIN` sidecar that contradicts the
+README, an attestation cache one `sed` away from forging half an `ACTIVE` verdict, and an
+audit chain that self-breaks on normal log rotation. None of those is thesis-fatal; all are
+credibility-fatal while they ship undocumented. Fix them, then argue positioning.
+
+**Process note worth keeping:** one adversarial agent produced a confident, well-cited
+headline that direct code reading falsified. Its supporting detail was accurate; its
+conclusion inverted the facts. Verify before acting on a finding like that — this file has
+been corrected in place rather than rewritten, so the error stays visible.
