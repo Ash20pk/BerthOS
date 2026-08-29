@@ -83,9 +83,27 @@ partner needs a custom mount root.
   `landlock_create_ruleset`).
 
 **Default boot — the surface-area audit (this was also Chunk 3's investigation):**
-- The **semantic-fs sidecar container starts unconditionally** (`container.ts:375`), holding
-  `CapAdd: ["SYS_ADMIN"]`, `/dev/fuse`, and `apparmor:unconfined`. The README claims "no
-  `CAP_SYS_ADMIN` anywhere in the sandbox". **These two statements conflict.**
+- **[CORRECTED 2026-08-29 — there is no contradiction.]** An agent reported that the
+  unconditional `SYS_ADMIN` sidecar contradicts the README's "no `CAP_SYS_ADMIN` anywhere in
+  the sandbox", and that `semantic-fs-daemon` "keeps uid 0 forever and applies no Landlock".
+  I read the code and the disclosure:
+  - The sidecar is a **separate container**; the app container is granted no `SYS_ADMIN`,
+    no `/dev/fuse` and no AppArmor exception — that was the point of BUILD_PLAN M1.1.
+  - `packages/semantic-fs-daemon/internal/privs/privs_linux.go` drops the **entire**
+    capability bounding set once `fuse.Mount` returns, reduces permitted/effective to four
+    file-ownership caps (`CAP_CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `FSETID`) across all
+    threads, and sets `no_new_privs`. `CAP_SYS_ADMIN` exists only in a transient boot window.
+  - uid 0 and those four caps are a **named, reasoned residual**, already disclosed in
+    `docs/threat-model.md:108` with a negative control (`sys-admin-drop-milestone.mjs`).
+
+  The agent's individual details were accurate; its framing — undisclosed contradiction —
+  was not. The README claim stands as written.
+
+  What *was* real is narrower and not a security-claim problem: the sidecar started
+  unconditionally, so a boot whose apps never touch `/context` still paid for a second
+  container and a 5s mount wait, and there was **no way to ask for no semantic FS at all**
+  (`BERTH_DISABLE_FS_SIDECAR=1` means "mount it in-sandbox instead", i.e. *more* privilege).
+  Fixed by `BERTH_NO_SEMANTIC_FS=1`.
 - `context-bus-daemon` also starts unconditionally (`entrypoint.sh:558`, `:783`).
 - `semantic-fs-daemon` keeps uid 0 forever and applies **no Landlock at all**.
 - `mesh-daemon` keeps uid 0 + `CAP_NET_ADMIN` for wg0's lifetime and is **not run under
@@ -169,7 +187,7 @@ Resumable: `Workflow({scriptPath: ".../berth-competitive-gate-wf_1a4957fb-642.js
 | # | Question | Why now |
 |---|---|---|
 | R5 | **Is the hardcoded `ALLOWED_WRITE_PATH_PREFIXES` a design constraint or an accident?** Can the manifest be made the real boundary (arbitrary declared subtrees), and what breaks? | This single answer decides whether the core pitch is true or marketing. Everything else is secondary |
-| R6 | **Is the unconditional `SYS_ADMIN` sidecar removable?** What does semantic-fs lose without FUSE? | The README makes a claim the boot contradicts. Either the boot changes or the claim does |
+| R6 | ~~Is the unconditional `SYS_ADMIN` sidecar removable?~~ **Answered and shipped.** The premise was wrong (see the correction in 1.3 — no contradiction; the cap is transient and in a separate container). The real gap was the missing "no semantic FS" posture, now `BERTH_NO_SEMANTIC_FS=1` | — |
 | R7 | **Can the audit rotation bug be fixed without breaking the chain contract?** | It is a confirmed functional bug in the flagship evidence feature |
 | R8 | **What would a real root of trust cost?** (TPM/KMS signing, key custody separable from host) | Decides whether attestation can ever be compliance evidence or stays engineering tooling |
 | R9 | **Who actually buys "multi-app least privilege inside one box"?** | This is where the agents said Berth genuinely wins — but it is not the current pitch, and no buyer has been identified |
@@ -207,7 +225,14 @@ README, an attestation cache one `sed` away from forging half an `ACTIVE` verdic
 audit chain that self-breaks on normal log rotation. None of those is thesis-fatal; all are
 credibility-fatal while they ship undocumented. Fix them, then argue positioning.
 
-**Process note worth keeping:** one adversarial agent produced a confident, well-cited
-headline that direct code reading falsified. Its supporting detail was accurate; its
-conclusion inverted the facts. Verify before acting on a finding like that — this file has
-been corrected in place rather than rewritten, so the error stays visible.
+**Process note worth keeping:** **two** adversarial agents produced confident, well-cited
+headlines that direct code reading falsified — the write-prefix finding and the `SYS_ADMIN`
+sidecar finding. In both cases the supporting *details* were accurate and the *conclusion*
+inverted the facts, which is the dangerous shape: the citations check out, so the claim reads
+as verified. Both corrections are in place rather than rewritten, so the errors stay visible.
+
+Scoreboard after verification: of the six defects the research reported, **three were real
+and are now fixed** (audit rotation, `network:connect:*` granting bind, the attestation
+probe cache), **two were overstated or wrong** (write prefixes, the `SYS_ADMIN`
+contradiction), and **one was real but milder than framed** (unhandled `Execute`, which is
+deliberate, documented, and mitigated by read scoping).
