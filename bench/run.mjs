@@ -19,7 +19,7 @@
 //      NOT RUN in its column.
 
 import { createServer } from "node:net";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
@@ -32,10 +32,11 @@ const REPO_ROOT = resolve(__dirname, "..");
 const PROBE_DIR = join(__dirname, "probe");
 
 function parseArgs(argv) {
-  const args = { harnesses: undefined, out: join(__dirname, "results", "results.json"), md: join(__dirname, "results", "table.md") };
+  const args = { harnesses: undefined, force: false, out: join(__dirname, "results", "results.json"), md: join(__dirname, "results", "table.md") };
   for (let i = 2; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--harness") args.harnesses = argv[++i].split(",").map((s) => s.trim());
+    else if (arg === "--force") args.force = true;
     else if (arg === "--out") args.out = resolve(argv[++i]);
     else if (arg === "--md") args.md = resolve(argv[++i]);
     else if (arg === "--help") args.help = true;
@@ -90,10 +91,26 @@ function normalizeResults(probeResults, observations) {
   return merged;
 }
 
+/**
+ * Harness ids already recorded in the results file we are about to replace,
+ * including skipped ones — a NOT RUN column is a deliberate statement about a
+ * harness and losing it silently is the same failure as losing a scored one.
+ * A missing or unreadable file means there is nothing to protect.
+ */
+function existingHarnessIds(outPath) {
+  if (!existsSync(outPath)) return [];
+  try {
+    const previous = JSON.parse(readFileSync(outPath, "utf-8"));
+    return Array.isArray(previous.harnesses) ? previous.harnesses.map((h) => h.id).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
 async function main() {
   const args = parseArgs(process.argv);
   if (args.help) {
-    console.log("usage: node bench/run.mjs [--harness docker,berth,berth-weakened,e2b] [--out results.json] [--md table.md]");
+    console.log("usage: node bench/run.mjs [--harness docker,berth,berth-weakened,e2b] [--out results.json] [--md table.md] [--force]");
     return;
   }
 
@@ -146,6 +163,24 @@ async function main() {
     checks: CHECKS.map(({ id, title, kind, question }) => ({ id, title, kind, question })),
     harnesses: results,
   };
+
+  // A partial run must not silently replace a fuller scorecard. The obvious
+  // way to lose the committed table is the reasonable-looking command
+  // `node bench/run.mjs --harness e2b` — one new column, and the Docker and
+  // Berth columns it was meant to sit beside are gone, with the file still
+  // looking authoritative. Refuse instead, and say what to run.
+  const dropped = existingHarnessIds(args.out).filter((id) => !results.some((r) => r.id === id));
+  if (dropped.length > 0 && !args.force) {
+    console.error(
+      `\nREFUSING TO OVERWRITE ${args.out}: it holds ${dropped.length} harness column(s) this run did not produce ` +
+        `(${dropped.join(", ")}). Writing now would drop them while leaving the file looking complete.\n\n` +
+        `  Run every column:   node bench/run.mjs --harness ${[...results.map((r) => r.id), ...dropped].join(",")}\n` +
+        `  Or write elsewhere: node bench/run.mjs --harness ${results.map((r) => r.id).join(",")} --out /tmp/partial.json --md /tmp/partial.md\n` +
+        `  Or overwrite anyway: add --force`,
+    );
+    process.exitCode = 1;
+    return;
+  }
 
   mkdirSync(dirname(args.out), { recursive: true });
   writeFileSync(args.out, `${JSON.stringify(report, null, 2)}\n`);
