@@ -1,10 +1,12 @@
 # App Registry Reference (Phase 5)
 
+> **Frozen subsystem.** This lives in [`experimental/`](../experimental/README.md) and is not part of the core artifact (a `berth.yml` compiled into a kernel-enforced policy, plus the evidence for it). It still builds, still runs its tests, and nothing was deleted — it simply is not what `npm install @berth/cli` gives you. See [`experimental/README.md`](../experimental/README.md) for why.
+
 Phase 5 opens the framework to external developers: a place to publish resident apps, discover what others have published, and scaffold a new project from a published one — plus making `@berth/sdk` itself something a genuinely external project can depend on. This phase's registry/marketplace and SDK-openness goals are in scope here; usage-based billing and a hosted, multi-tenant service are not — those remain longer-term goals, not a Phase 5 build item (see [Scope](#scope) below).
 
 ## Architecture
 
-`@berth/registry-server` (`packages/registry-server`) is a small Fastify HTTP API backed by `node:sqlite` (Node's built-in SQLite — same "real database, no ORM" instinct as Phase 4's sidecar index, minus an extra dependency) for metadata and a plain directory tree for blob storage.
+`@berth/registry-server` (`experimental/registry-server`) is a small Fastify HTTP API backed by `node:sqlite` (Node's built-in SQLite — same "real database, no ORM" instinct as Phase 4's sidecar index, minus an extra dependency) for metadata and a plain directory tree for blob storage.
 
 ```
 berth publish --registry=<url> ──► POST /apps (multipart: manifest + bundle.tar.gz)

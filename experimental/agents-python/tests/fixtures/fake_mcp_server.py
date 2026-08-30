@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """A real (if minimal) MCP server, spawned as a real subprocess by
 test_mcp_client.py — not a mock of the protocol. Mirrors
-packages/agents/src/mcp-client.test.ts's TypeScript fixture server."""
+experimental/agents/src/mcp-client.test.ts's TypeScript fixture server."""
 
 import asyncio
 

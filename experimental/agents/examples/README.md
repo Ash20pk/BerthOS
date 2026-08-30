@@ -22,7 +22,7 @@ exits cleanly if it's unset, rather than failing.
 ## Running
 
 ```bash
-cd packages/agents
+cd experimental/agents
 export OPENAI_API_KEY=sk-...
 
 node examples/single-agent.mjs      # one Computer (apps/filesystem), one Agent

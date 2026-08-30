@@ -1,5 +1,7 @@
 # Building with `@berth/agents`
 
+> **Frozen subsystem.** This lives in [`experimental/`](../experimental/README.md) and is not part of the core artifact (a `berth.yml` compiled into a kernel-enforced policy, plus the evidence for it). It still builds, still runs its tests, and nothing was deleted — it simply is not what `npm install @berth/cli` gives you. See [`experimental/README.md`](../experimental/README.md) for why.
+
 `@berth/agents` is the reference consumer of the Berth substrate: computer, then
 agent, then tool. It is optional — [using Berth from the framework you already
 have](./why-berth.md#use-it-from-your-existing-framework) is a first-class path,

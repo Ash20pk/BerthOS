@@ -4,7 +4,7 @@
 absence is exactly why 3.1, 3.2 and 3.6 were live in the TypeScript adapters
 until someone went looking; the Python ones have never been checked at all.
 
-Structured to mirror `packages/agents/src/providers/*.test.ts`, against a
+Structured to mirror `experimental/agents/src/providers/*.test.ts`, against a
 real HTTP server rather than a stubbed client — see mock_llm_server.py for
 why that distinction is load-bearing rather than stylistic.
 """

@@ -60,7 +60,7 @@ app.export({
 app.onAgentReady(async (ctx) => { contextBus = ctx.contextBus; });
 ```
 
-`packages/agents/src/tracing.ts`'s `createContextBusStepTracer()` calls this the same way any other host-to-sandbox call happens — as a tool invocation, resolved off `Computer.tools` by export name — to publish `agent.step` events for live tailing. See [`docs/agents-reference.md`](./agents-reference.md#tracing-a-run-agentstep-events-not-a-langsmith-style-tracer).
+`experimental/agents/src/tracing.ts`'s `createContextBusStepTracer()` calls this the same way any other host-to-sandbox call happens — as a tool invocation, resolved off `Computer.tools` by export name — to publish `agent.step` events for live tailing. See [`docs/agents-reference.md`](./agents-reference.md#tracing-a-run-agentstep-events-not-a-langsmith-style-tracer).
 
 ## Verifying it
 

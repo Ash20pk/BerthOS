@@ -37,7 +37,7 @@ The real documentation lives in the main [BerthOS](https://github.com/Ash20pk/Be
 
 - [`docs/agents-python-reference.md`](https://github.com/Ash20pk/BerthOS/blob/main/docs/agents-python-reference.md) — this package's full reference
 - [`docs/agents-reference.md`](https://github.com/Ash20pk/BerthOS/blob/main/docs/agents-reference.md) — the TypeScript sibling this mirrors
-- [`packages/agents-python/`](https://github.com/Ash20pk/BerthOS/tree/main/packages/agents-python) — source and tests
+- [`experimental/agents-python/`](https://github.com/Ash20pk/BerthOS/tree/main/experimental/agents-python) — source and tests
 
 ## License
 

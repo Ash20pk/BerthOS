@@ -1,5 +1,5 @@
 """A real HTTP server for provider-adapter tests — the Python counterpart to
-`packages/agents/src/providers/mock-server.ts`.
+`experimental/agents/src/providers/mock-server.ts`.
 
 **A real server rather than a stubbed vendor client, deliberately**, and for
 the reason REMEDIATION 3.7 records for the TypeScript side: every bug this

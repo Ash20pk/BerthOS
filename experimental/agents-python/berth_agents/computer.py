@@ -22,7 +22,7 @@ DEFAULT_OS_DIR = Path.home() / ".berth" / "os"
 
 # berth.yml's IOSpec is a flat map of field name -> one of these primitive
 # type names (see @berth/manifest-schema's JsonPrimitiveType) — the same
-# 5-case table packages/agents/src/tools.ts's zodFor()/inputSchemaFor()
+# 5-case table experimental/agents/src/tools.ts's zodFor()/inputSchemaFor()
 # mechanically walks to reach JSON Schema, just without zod as an
 # intermediate step, since the source data here is already plain YAML.
 _JSON_SCHEMA_TYPE_FOR = {
