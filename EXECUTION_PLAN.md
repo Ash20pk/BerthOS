@@ -200,6 +200,36 @@ milestones green; `examples/kernel-says-no` still runs.
 
 ---
 
+### Status — steps 1-3, 5-7 done (2026-08-30)
+
+On branch `fix/audit-chain-rotation`, off `main`, unpushed:
+
+| Step | State |
+|---|---|
+| 1. Cut the CLI’s 3 framework imports | Done. `util/optional-agents.ts`; `@berth/agents` is a devDependency + optional peer. Verified by hiding the package: `berth doctor` unaffected, `berth agent run` names the install |
+| 2. Cut the adapter imports | Done. `instantiate()` in `util/fleet.ts` is async and loads only the adapter named. All four adapter packages are optional peers. Verified: a hidden `adapter-k8s` fails `--fleet=k8s` with an actionable message while `--fleet=e2b` still resolves |
+| 3. Move the 11 packages | Done, `git mv`, 194 renames detected. `packages/` is now exactly the substrate (11 entries) |
+| 4. `pnpm-workspace.yaml` | Done — and see the trap below |
+| 5. CI | 16 paths across 5 workflows repointed. Workflows still run; removing them from *required checks* is a GitHub branch-protection setting, not a file here — that part is yours |
+| 6. Docs | 59 stale paths corrected across 21 files (docs, READMEs, Python docstrings), and six subsystem docs bannered. Zero stale references remain repo-wide |
+| 7. `examples/agents/*` | Left where they are: they are workspace members that depend on `@berth/agents`, resolve correctly to `experimental/agents`, and moving them buys nothing |
+
+**Result:** `@berth/cli`’s runtime `@berth` dependencies are now exactly
+`audit`, `docker-orchestrator`, `manifest-schema`, `sdk`, `tls`. No agent
+framework, no cloud SDKs. 36/36 build, 16/16 lint, 63/63 test.
+
+**The trap worth remembering.** `pnpm-workspace.yaml` had a
+`packages/agents/test/fixtures/*` glob. Those fixtures are workspace packages,
+so the stale glob silently dropped them: build went 36 → 34 tasks and the test
+suite 63 → 61, **and both still reported success**. Nothing failed; there were
+simply fewer tests. The only signal was the task count. Any future move of a
+package that owns workspace-member fixtures should check that count explicitly.
+
+**Not done, deliberately:** the `@berth` → `@berthos` scope rename (D5). It is
+334 files, and publishing is sequenced after this split, so doing it earlier
+means two large diffs churning the same files. It belongs immediately before
+Chunk 7.
+
 ## Chunk 5 — `berth wrap`  *(the repositioning made real)*
 
 Depends on Chunk 2's spec and Chunk 4's slimmed core.
