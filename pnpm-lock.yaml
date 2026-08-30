@@ -506,18 +506,6 @@ importers:
 
   packages/cli:
     dependencies:
-      '@berth/adapter-core':
-        specifier: workspace:*
-        version: link:../adapters/adapter-core
-      '@berth/adapter-daytona':
-        specifier: workspace:*
-        version: link:../adapters/adapter-daytona
-      '@berth/adapter-e2b':
-        specifier: workspace:*
-        version: link:../adapters/adapter-e2b
-      '@berth/adapter-k8s':
-        specifier: workspace:*
-        version: link:../adapters/adapter-k8s
       '@berth/audit':
         specifier: workspace:*
         version: link:../audit
@@ -558,6 +546,18 @@ importers:
         specifier: ^3.24.1
         version: 3.25.2(zod@4.4.3)
     devDependencies:
+      '@berth/adapter-core':
+        specifier: workspace:*
+        version: link:../adapters/adapter-core
+      '@berth/adapter-daytona':
+        specifier: workspace:*
+        version: link:../adapters/adapter-daytona
+      '@berth/adapter-e2b':
+        specifier: workspace:*
+        version: link:../adapters/adapter-e2b
+      '@berth/adapter-k8s':
+        specifier: workspace:*
+        version: link:../adapters/adapter-k8s
       '@berth/agents':
         specifier: workspace:*
         version: link:../agents
