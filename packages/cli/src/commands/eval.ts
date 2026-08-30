@@ -29,7 +29,7 @@ interface EvalModule {
 
 export default class Eval extends Command {
   static override description =
-    "Run an eval suite (packages/agents' runEvalSuite) against a real Agent/Crew — a regression check for agent *behavior*, distinct from `berth test`'s manifest/export shape check";
+    "Run an eval suite (experimental/agents' runEvalSuite) against a real Agent/Crew — a regression check for agent *behavior*, distinct from `berth test`'s manifest/export shape check";
   static override args = {
     file: Args.string({
       required: true,

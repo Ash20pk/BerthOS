@@ -29,7 +29,7 @@ export interface BootComputerOptions {
    * Also starts @berth/sdk's HTTP RPC bridge inside the container (see
    * container.ts's `httpRpc` option) and exposes it on the returned handle's
    * `httpRpc` field — the one way a process with no Docker API access (a
-   * Python client, see packages/agents-python's `Computer.connect()`) can
+   * Python client, see experimental/agents-python's `Computer.connect()`) can
    * reach this Computer's tools. `app` names which of `apps` should bind the
    * listener when there's more than one (defaults to the first); only that
    * one app's exports are reachable via the bridge, same
@@ -50,7 +50,7 @@ export interface BootComputerOptions {
    * nothing) and a warning is printed. This exists for one reason: Docker
    * Desktop's linuxkit VM returns ENOSYS for landlock_create_ruleset, so on
    * macOS and Windows *every* Computer.boot() otherwise fails, taking the
-   * README quickstart and all of packages/agents/test with it. It is a local
+   * README quickstart and all of experimental/agents/test with it. It is a local
    * iteration mode and nothing else — never use it where the isolation
    * boundary is load-bearing.
    *

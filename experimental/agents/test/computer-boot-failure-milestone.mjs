@@ -12,7 +12,7 @@
 //      Landlock. It must fail closed, naming agent-init's refusal — the same
 //      code path, and the reason this milestone exists.
 //   3. The same app in enforcement: "warn" must boot and serve a tool call,
-//      which is what makes packages/agents runnable on macOS at all.
+//      which is what makes experimental/agents runnable on macOS at all.
 //
 // Case 2 only asserts on a kernel where enforcement genuinely can't happen
 // (Docker Desktop's linuxkit VM); on an enforcing Linux kernel that boot

@@ -4,7 +4,7 @@ name: Build, Lint, Test
 # unit tests. No Docker, no containers — turbo run test only runs
 # *.test.ts-derived unit tests, never the Docker-based milestone scripts
 # under packages/docker-orchestrator/test/ (those have their own workflows).
-# Also runs packages/agents-python's pytest suite — same "fast, no Docker"
+# Also runs experimental/agents-python's pytest suite — same "fast, no Docker"
 # posture, just a second language turbo doesn't orchestrate.
 on:
   push:
@@ -103,8 +103,8 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Test packages/agents-python
-        working-directory: packages/agents-python
+      - name: Test experimental/agents-python
+        working-directory: experimental/agents-python
         run: |
           pip install -e ".[dev]"
           pytest

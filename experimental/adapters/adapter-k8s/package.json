@@ -1,7 +1,7 @@
 {
-  "name": "@berth/adapter-core",
+  "name": "@berth/adapter-k8s",
   "version": "0.1.0",
-  "description": "Shared DeployAdapter interface implemented by adapter-e2b and adapter-daytona",
+  "description": "DeployAdapter implementation targeting a Kubernetes cluster",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -19,7 +19,7 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/Ash20pk/BerthOS.git",
-    "directory": "packages/adapters/adapter-core"
+    "directory": "experimental/adapters/adapter-k8s"
   },
   "homepage": "https://github.com/Ash20pk/BerthOS#readme",
   "bugs": {
@@ -27,6 +27,7 @@
   },
   "author": "Berth Contributors",
   "keywords": [
+    "kubernetes",
     "deploy-adapter",
     "ai-agents"
   ],
@@ -40,15 +41,26 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
-    "test": "node --test dist/**/*.test.js",
+    "test": "node --experimental-test-module-mocks --test dist/**/*.test.js",
     "lint": "tsc -p tsconfig.json --noEmit",
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
+    "@berth/adapter-core": "workspace:*",
     "@berth/manifest-schema": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^7.0.2",
-    "@types/node": "^26.2.0"
+    "@types/node": "^26.2.0",
+    "@berth/docker-orchestrator": "workspace:*",
+    "dockerode": "^5.0.1"
+  },
+  "peerDependencies": {
+    "@kubernetes/client-node": "^1.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@kubernetes/client-node": {
+      "optional": true
+    }
   }
 }

@@ -2,7 +2,7 @@
 // Real, running verification that Computer.boot({ httpRpc }) exposes a live,
 // host-reachable HTTP RPC bridge into a resident app's exports — the
 // mechanism a process with no Docker API access (a Python client, see
-// packages/agents-python's Computer.connect()) uses instead of docker
+// experimental/agents-python's Computer.connect()) uses instead of docker
 // exec/attach. No mocking of Docker, the image build, the container port
 // mapping, or the RPC transport.
 import { fileURLToPath } from "node:url";

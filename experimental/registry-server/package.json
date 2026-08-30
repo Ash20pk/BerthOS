@@ -1,10 +1,13 @@
 {
-  "name": "@berth/adapter-e2b",
+  "name": "@berth/registry-server",
   "version": "0.1.0",
-  "description": "DeployAdapter implementation targeting E2B sandboxes",
+  "description": "Local app registry: publish/discover/install resident apps (Phase 5)",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "berth-registry": "./dist/server.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -13,13 +16,14 @@
   },
   "files": [
     "dist",
-    "!dist/**/*.test.*"
+    "!dist/**/*.test.*",
+    "!dist/**/mock-server.*"
   ],
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/Ash20pk/BerthOS.git",
-    "directory": "packages/adapters/adapter-e2b"
+    "directory": "experimental/registry-server"
   },
   "homepage": "https://github.com/Ash20pk/BerthOS#readme",
   "bugs": {
@@ -27,9 +31,9 @@
   },
   "author": "Berth Contributors",
   "keywords": [
-    "e2b",
-    "deploy-adapter",
-    "ai-agents"
+    "app-registry",
+    "ai-agents",
+    "plugin-registry"
   ],
   "engines": {
     "node": ">=22"
@@ -41,24 +45,19 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
-    "test": "node --experimental-test-module-mocks --test dist/**/*.test.js",
+    "test": "node --test dist/**/*.test.js",
     "lint": "tsc -p tsconfig.json --noEmit",
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
-    "@berth/adapter-core": "workspace:*",
-    "@berth/manifest-schema": "workspace:*"
+    "@berth/tls": "workspace:*",
+    "@berth/manifest-schema": "workspace:*",
+    "@fastify/multipart": "^10.1.1",
+    "fastify": "^5.12.0",
+    "yaml": "^2.7.0"
   },
   "devDependencies": {
     "typescript": "^7.0.2",
     "@types/node": "^26.2.0"
-  },
-  "peerDependencies": {
-    "e2b": "^1.0.0"
-  },
-  "peerDependenciesMeta": {
-    "e2b": {
-      "optional": true
-    }
   }
 }

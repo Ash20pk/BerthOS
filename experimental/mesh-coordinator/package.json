@@ -1,10 +1,13 @@
 {
-  "name": "@berth/adapter-daytona",
+  "name": "@berth/mesh-coordinator",
   "version": "0.1.0",
-  "description": "DeployAdapter implementation targeting Daytona workspaces",
+  "description": "Coordination service for Berth's WireGuard mesh: allocates stable mesh IPs, exchanges public keys, and mutually-matches peers before introducing them (see docs/mesh-reference.md)",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "berth-mesh-coordinator": "./dist/server.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -13,13 +16,14 @@
   },
   "files": [
     "dist",
-    "!dist/**/*.test.*"
+    "!dist/**/*.test.*",
+    "!dist/**/mock-server.*"
   ],
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/Ash20pk/BerthOS.git",
-    "directory": "packages/adapters/adapter-daytona"
+    "directory": "experimental/mesh-coordinator"
   },
   "homepage": "https://github.com/Ash20pk/BerthOS#readme",
   "bugs": {
@@ -27,8 +31,8 @@
   },
   "author": "Berth Contributors",
   "keywords": [
-    "daytona",
-    "deploy-adapter",
+    "wireguard",
+    "mesh-network",
     "ai-agents"
   ],
   "engines": {
@@ -41,24 +45,16 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
-    "test": "node --experimental-test-module-mocks --test dist/**/*.test.js",
+    "test": "node --test dist/**/*.test.js",
     "lint": "tsc -p tsconfig.json --noEmit",
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
-    "@berth/adapter-core": "workspace:*",
-    "@berth/manifest-schema": "workspace:*"
+    "@berth/tls": "workspace:*",
+    "fastify": "^5.12.0"
   },
   "devDependencies": {
     "typescript": "^7.0.2",
     "@types/node": "^26.2.0"
-  },
-  "peerDependencies": {
-    "@daytonaio/sdk": "^0.202.0"
-  },
-  "peerDependenciesMeta": {
-    "@daytonaio/sdk": {
-      "optional": true
-    }
   }
 }

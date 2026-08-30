@@ -1,13 +1,10 @@
 {
-  "name": "@berth/grants-server",
+  "name": "@berth/adapter-daytona",
   "version": "0.1.0",
-  "description": "Local human-approval service for Phase 3 capability grants: request/approve/deny, consulted by generate-capability-policy.ts on the app's next boot",
+  "description": "DeployAdapter implementation targeting Daytona workspaces",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "bin": {
-    "berth-grants": "./dist/server.js"
-  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -16,14 +13,13 @@
   },
   "files": [
     "dist",
-    "!dist/**/*.test.*",
-    "!dist/**/mock-server.*"
+    "!dist/**/*.test.*"
   ],
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/Ash20pk/BerthOS.git",
-    "directory": "packages/grants-server"
+    "directory": "experimental/adapters/adapter-daytona"
   },
   "homepage": "https://github.com/Ash20pk/BerthOS#readme",
   "bugs": {
@@ -31,9 +27,8 @@
   },
   "author": "Berth Contributors",
   "keywords": [
-    "human-in-the-loop",
-    "capability-tokens",
-    "approval",
+    "daytona",
+    "deploy-adapter",
     "ai-agents"
   ],
   "engines": {
@@ -46,18 +41,24 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
-    "test": "node --test dist/**/*.test.js",
+    "test": "node --experimental-test-module-mocks --test dist/**/*.test.js",
     "lint": "tsc -p tsconfig.json --noEmit",
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
-    "@berth/audit": "workspace:*",
-    "@berth/tls": "workspace:*",
-    "fastify": "^5.12.0"
+    "@berth/adapter-core": "workspace:*",
+    "@berth/manifest-schema": "workspace:*"
   },
   "devDependencies": {
-    "undici": "^8.10.0",
     "typescript": "^7.0.2",
     "@types/node": "^26.2.0"
+  },
+  "peerDependencies": {
+    "@daytonaio/sdk": "^0.202.0"
+  },
+  "peerDependenciesMeta": {
+    "@daytonaio/sdk": {
+      "optional": true
+    }
   }
 }
