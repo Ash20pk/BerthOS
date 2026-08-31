@@ -21,6 +21,25 @@ Expect them to be blunt about what is broken. That is their job.
 `ROADMAP.md` is deliberately *not* here: it is the public "is X real yet" page
 and lives at the repo root.
 
+## The `BUILD_PLAN M<n>` and `REMEDIATION <n.n>` labels you will see in prose
+
+Both documents are **gone**, deleted once the work queue they held was empty.
+Their identifiers survive across the docs — "BUILD_PLAN M1.2", "REMEDIATION
+1.13", "*1.14*" — because they are how a change, its threat-model row, its
+verification record and its commit message all refer to the same piece of work,
+and rewriting them would break that thread for no gain.
+
+Read them as **stable work-item names, not as live citations.** What each one
+actually did is recorded where it can be checked:
+
+| Label | Where the substance lives now |
+|---|---|
+| `BUILD_PLAN M<n>.<n>` | the [verification record](./verification/) dated to that milestone, and the [writeup](./writeups/) beside it |
+| `REMEDIATION <n>.<n>` / `*n.n*` | the [threat model](../threat-model.md) row that names it, and [claims.md](./claims.md)'s evidence column |
+
+If you are adding a *new* item, do not invent a new `M<n>` — there is no plan
+to add it to. Name the claim in `claims.md` and write the verification record.
+
 ## Rules that apply to edits in this directory
 
 1. **Never weaken an honesty caveat to make something look done.** If

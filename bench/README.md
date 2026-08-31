@@ -14,6 +14,13 @@ node bench/run.mjs --harness docker,berth,berth-weakened
 # → bench/results/table.md      (the scorecard, generated — never hand-edited)
 ```
 
+**A partial run will not overwrite a fuller scorecard.** The natural command
+the day an `E2B_API_KEY` arrives is `node bench/run.mjs --harness e2b` — which
+would leave a one-column file where the committed three-column table was, still
+looking authoritative. The runner refuses that and prints the command that
+includes the columns it was about to drop. `--force` overrides, and
+`--out`/`--md` write somewhere else.
+
 ## What makes this different from a vendor benchmark
 
 **One probe, not one per target.** [`probe/probe.mjs`](./probe/probe.mjs) is
