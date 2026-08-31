@@ -136,3 +136,31 @@ test("resolveFleet stays quiet for a 0600 config, and for a loose one that carri
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+/**
+ * The three provider adapters are optional peers: `@berth/cli` ships without
+ * them, because each pulls in a cloud SDK and a CLI used for local sandboxing
+ * needs none of them. They were static imports, which made all three a runtime
+ * dependency of every `berth` invocation — and would have meant a missing
+ * Kubernetes client breaking `--fleet=e2b`.
+ *
+ * These pin that each adapter is loaded only when named. The
+ * missing-adapter message itself is verified by hiding the package (see the
+ * commit for the manual run); what is asserted here is the property that
+ * matters day to day: naming one adapter must not load or require the others.
+ */
+test("resolveFleet loads only the adapter it was asked for", async () => {
+  for (const name of ["e2b", "daytona", "k8s"] as const) {
+    const resolved = await resolveFleet(name, "/nonexistent/.berthrc");
+    assert.ok(resolved.adapter, `${name} should resolve to an adapter`);
+    assert.equal(resolved.count, 1);
+  }
+});
+
+test("each adapter is a distinct instance, not a shared singleton", async () => {
+  // If instantiate() ever collapsed to one cached adapter, --fleet=e2b and
+  // --fleet=k8s in the same process would deploy to the same provider.
+  const e2b = await resolveFleet("e2b", "/nonexistent/.berthrc");
+  const k8s = await resolveFleet("k8s", "/nonexistent/.berthrc");
+  assert.notEqual(e2b.adapter, k8s.adapter);
+});

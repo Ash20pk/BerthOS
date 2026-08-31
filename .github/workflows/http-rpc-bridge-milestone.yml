@@ -4,7 +4,7 @@ name: HTTP RPC Bridge Milestone
 # produces a live, host-reachable, bearer-token-authenticated HTTP RPC
 # bridge — see packages/docker-orchestrator/test/http-rpc-bridge-milestone.mjs.
 # This is the mechanism a process with no Docker API access (a Python
-# client, see packages/agents-python's Computer.connect()) uses to call a
+# client, see experimental/agents-python's Computer.connect()) uses to call a
 # resident app's exports. Separate from Agents Milestone's
 # computer-http-rpc-milestone.mjs, which exercises the same feature through
 # @berth/agents' Computer.boot({httpRpc}) using a production-target image —

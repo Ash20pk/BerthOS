@@ -1,7 +1,7 @@
 import { Command, Flags } from "@oclif/core";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { CHAIN_GENESIS, defaultAuditPath, readAuditFile, verifyAuditChain } from "@berth/audit";
+import { defaultAuditPath, readAuditFile, verifyAuditSegments } from "@berth/audit";
 
 /**
  * Rotated segments oldest-first, so the chain can be walked in the order it
@@ -30,26 +30,39 @@ export default class AuditVerify extends Command {
 
     if (!existsSync(path)) this.error(`no audit file at ${path}`);
 
-    let expected = CHAIN_GENESIS;
-    let total = 0;
+    const result = verifyAuditSegments(
+      segmentsFor(path).map((segment) => ({ segment, records: readAuditFile(segment) })),
+    );
 
-    for (const segment of segmentsFor(path)) {
-      const records = readAuditFile(segment);
-      total += records.length;
-      const result = verifyAuditChain(records, expected);
-      if (!result.valid) {
-        this.log(`${segment}: BROKEN at record ${result.brokenAt} — ${result.reason}`);
-        // Named plainly, because the chain is tamper-evident and not
-        // tamper-proof: anyone able to write the file could have rewritten
-        // every hash after the line they changed, and a clean result past
-        // this point would mean nothing.
-        this.error(`audit chain verification failed — records at and after ${segment}:${result.brokenAt} cannot be trusted`);
+    for (const { segment, records } of result.perSegment) {
+      if (result.failure?.segment === segment) {
+        this.log(`${segment}: BROKEN at record ${result.failure.brokenAt} — ${result.failure.reason}`);
+        break;
       }
-      expected = result.endHash;
-      this.log(`${segment}: ${records.length} records OK`);
+      this.log(`${segment}: ${records} records OK`);
     }
 
-    this.log(`Chain intact across ${total} records. Head: ${expected.slice(0, 16)}…`);
+    if (!result.failure && result.truncatedStart) {
+      // Reported, never swallowed: retention pruning and someone deleting the
+      // early segments to hide something look identical from the files alone.
+      this.log(
+        `Note: the oldest segment held does not start at genesis — its first record names predecessor ${result.startedFrom.slice(0, 16)}…, which is not on disk. Expected once rotation has pruned earlier segments; also what deleting them would look like. Everything from that record forward is verified.`,
+      );
+    }
+
+    if (result.failure) {
+      // Named plainly, because the chain is tamper-evident and not
+      // tamper-proof: anyone able to write the file could have rewritten
+      // every hash after the line they changed, and a clean result past
+      // this point would mean nothing.
+      this.error(
+        `audit chain verification failed — records at and after ${result.failure.segment}:${result.failure.brokenAt} cannot be trusted`,
+      );
+    }
+
+    this.log(
+      `Chain intact across ${result.totalRecords} records${result.truncatedStart ? " held" : ""}. Head: ${result.head.slice(0, 16)}…`,
+    );
     this.log("Note: this proves no partial edit, not that nothing was rewritten wholesale by someone who could write the file.");
   }
 }

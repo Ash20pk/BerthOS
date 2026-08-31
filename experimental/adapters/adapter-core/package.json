@@ -1,0 +1,54 @@
+{
+  "name": "@berth/adapter-core",
+  "version": "0.1.0",
+  "description": "Shared DeployAdapter interface implemented by adapter-e2b and adapter-daytona",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.test.*"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Ash20pk/BerthOS.git",
+    "directory": "experimental/adapters/adapter-core"
+  },
+  "homepage": "https://github.com/Ash20pk/BerthOS#readme",
+  "bugs": {
+    "url": "https://github.com/Ash20pk/BerthOS/issues"
+  },
+  "author": "Berth Contributors",
+  "keywords": [
+    "deploy-adapter",
+    "ai-agents"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "test": "node --test dist/**/*.test.js",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "prepublishOnly": "pnpm run build"
+  },
+  "dependencies": {
+    "@berth/manifest-schema": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "@types/node": "^26.2.0"
+  }
+}

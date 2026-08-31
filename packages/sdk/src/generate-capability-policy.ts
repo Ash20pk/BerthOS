@@ -161,11 +161,15 @@ export interface CapabilityPolicy {
   meshPeers: string[];
   // Ports this app is allowed to bind()/listen() on — separate from
   // networkPorts (outbound AccessNet::ConnectTcp only) because Landlock
-  // denies AccessNet::BindTcp by default too the moment network access is
-  // restricted at all (see agent-init/src/main.rs's `AccessNet::from_all`),
-  // and no capability namespace/action exists for "this app needs to listen
-  // on a port" — it's not something a berth.yml author declares, it's an
-  // orchestration-level fact (see computeBindPorts()).
+  // separates AccessNet::BindTcp from ConnectTcp, and listening is a
+  // different privilege from dialling out.
+  //
+  // Two sources, unioned in main(): `network:bind:<port>` declared in a
+  // berth.yml, and the orchestration-level ports no manifest author knows
+  // about (the HTTP RPC bridge's port, ttyd's) from computeBindPorts().
+  // Before `network:bind:` existed, an app that needed to listen had to
+  // declare `network:connect:*` to switch network restriction off wholesale
+  // — which granted unrestricted connect as a side effect of wanting bind.
   bindPorts: number[];
 }
 
@@ -210,6 +214,7 @@ export function compileCapabilityPolicy(appName: string, rawCapabilities: string
   const networkPorts = new Set<number>();
   const meshPeers = new Set<string>();
   let networkUnrestricted = false;
+  const declaredBindPorts = new Set<number>();
   let needsGithubBrokerCa = false;
 
   for (const capability of rawCapabilities) {
@@ -260,6 +265,20 @@ export function compileCapabilityPolicy(appName: string, rawCapabilities: string
       } else {
         console.error(`[berth:capability-policy] WARNING: ignoring invalid network:connect scope "${parsed.scope}" (expected a port 1-65535, or "*")`);
       }
+    } else if (parsed.namespace === "network" && parsed.action === "bind") {
+      // Distinct from network:connect on purpose: listening on a port and
+      // dialling out on one are different privileges, and Landlock's
+      // AccessNet separates them (BindTcp vs ConnectTcp). Before this action
+      // existed, the only way to get bind permission under enforcement was
+      // to declare network:connect:* — which switched the whole network
+      // ruleset off, silently granting unrestricted connect AND bind. The
+      // mesh fixtures documented that workaround in their own manifests.
+      const bindPort = Number(parsed.scope);
+      if (Number.isInteger(bindPort) && bindPort > 0 && bindPort <= 65535) {
+        declaredBindPorts.add(bindPort);
+      } else {
+        console.error(`[berth:capability-policy] WARNING: ignoring invalid network:bind scope "${parsed.scope}" (expected a port 1-65535; "*" is deliberately not accepted — name the port you listen on)`);
+      }
     } else if (parsed.namespace === "network" && parsed.action === "peer") {
       meshPeers.add(parsed.scope);
       networkPorts.add(MESH_COORDINATOR_PORT);
@@ -299,7 +318,7 @@ export function compileCapabilityPolicy(appName: string, rawCapabilities: string
     networkPorts: [...networkPorts],
     networkUnrestricted,
     meshPeers: [...meshPeers],
-    bindPorts: [],
+    bindPorts: [...declaredBindPorts],
   };
 }
 
@@ -364,7 +383,12 @@ async function main(): Promise<void> {
   const manifest = await loadManifest(MANIFEST_PATH);
   const approved = await fetchApprovedCapabilities(manifest.name);
   const policy = compileCapabilityPolicy(manifest.name, [...manifest.capabilities, ...approved]);
-  policy.bindPorts = computeBindPorts(manifest.name, process.env, manifest.capabilities);
+  // Union, not overwrite: computeBindPorts() contributes the orchestration-level
+  // ports (the HTTP RPC bridge, ttyd) while compileCapabilityPolicy() contributes
+  // whatever the manifest declared with network:bind:<port>.
+  policy.bindPorts = [
+    ...new Set([...policy.bindPorts, ...computeBindPorts(manifest.name, process.env, manifest.capabilities)]),
+  ];
 
   await mkdir(dirname(POLICY_PATH), { recursive: true });
   await writeFile(POLICY_PATH, JSON.stringify(policy, null, 2));

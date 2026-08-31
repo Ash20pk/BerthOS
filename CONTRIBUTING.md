@@ -64,7 +64,7 @@ If you're touching `packages/` rather than building a resident app, a few invari
 
 - `packages/manifest-schema` has no dependency on anything else in the repo — start there if you're touching the `berth.yml` shape.
 - `packages/sdk` runs *inside* the sandboxed container — it must never import Docker, the CLI, or Node-host-only APIs.
-- `packages/cli` never imports E2B/Daytona SDKs directly — deploy adapters live behind `packages/adapters/adapter-core`'s `DeployAdapter` interface.
+- `packages/cli` never imports E2B/Daytona SDKs directly — deploy adapters live behind `experimental/adapters/adapter-core`'s `DeployAdapter` interface.
 - `packages/context-bus-daemon`'s `proto/context_bus.proto` is the canonical wire schema; `packages/sdk/proto/context_bus.proto` must be kept in sync by hand (see the comment at the top of either file).
 - Run `pnpm --filter <package> test` to scope a test run to one package, or `pnpm test` to run everything through Turborepo.
 - `node packages/docker-orchestrator/test/context-bus-milestone.mjs` is a real (Docker-backed, not mocked) integration test proving apps react to each other via the context bus — run it after touching `context-bus-daemon`, the SDK's context-bus client, or `apps/filesystem`/`apps/code-editor`.

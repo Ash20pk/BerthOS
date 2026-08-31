@@ -1,6 +1,11 @@
 packages:
   - "packages/*"
-  - "packages/adapters/*"
+  # Frozen subsystems: shipped, tested, and no longer part of the core
+  # artifact (the manifest -> kernel-policy substrate and its evidence).
+  # Still built and still tested; simply not what `npm install @berth/cli`
+  # is. See EXECUTION_PLAN.md.
+  - "experimental/*"
+  - "experimental/adapters/*"
   - "apps/*"
   - "examples/resident-apps/*"
   - "examples/agents/*"
@@ -11,7 +16,7 @@ packages:
   - "examples/no-egress"
   - "examples/audit-trail"
   - "packages/docker-orchestrator/test/fixtures/*"
-  - "packages/agents/test/fixtures/*"
+  - "experimental/agents/test/fixtures/*"
   - "bench"
   - "bench/fixtures/*"
   - "breakout"

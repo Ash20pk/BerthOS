@@ -2,9 +2,6 @@ import { readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { DeployAdapter } from "@berth/adapter-core";
-import { createE2bAdapter } from "@berth/adapter-e2b";
-import { createDaytonaAdapter } from "@berth/adapter-daytona";
-import { createK8sAdapter } from "@berth/adapter-k8s";
 
 interface FleetAlias {
   adapter: "e2b" | "daytona" | "k8s";
@@ -63,10 +60,35 @@ async function loadFleetConfig(configPath: string): Promise<FleetConfig> {
   return config;
 }
 
-function instantiate(adapterName: "e2b" | "daytona" | "k8s"): DeployAdapter {
-  if (adapterName === "e2b") return createE2bAdapter();
-  if (adapterName === "daytona") return createDaytonaAdapter();
-  return createK8sAdapter();
+/**
+ * Loads exactly the one adapter that was asked for.
+ *
+ * These were static imports, which made all three provider SDKs — and their
+ * transitive trees — a runtime dependency of every `berth` invocation,
+ * including `berth doctor` on a machine that will never deploy anywhere. They
+ * are also the packages most likely to be absent: each is an optional peer, so
+ * a CLI installed for local sandboxing does not carry three cloud SDKs.
+ *
+ * `--fleet=e2b` must not fail because the Kubernetes client is missing, which
+ * is exactly what one `import` per adapter at module scope would do.
+ */
+async function instantiate(adapterName: "e2b" | "daytona" | "k8s"): Promise<DeployAdapter> {
+  try {
+    if (adapterName === "e2b") return (await import("@berth/adapter-e2b")).createE2bAdapter();
+    if (adapterName === "daytona") return (await import("@berth/adapter-daytona")).createDaytonaAdapter();
+    return (await import("@berth/adapter-k8s")).createK8sAdapter();
+  } catch (err) {
+    const code = (err as { code?: string }).code;
+    if (code === "ERR_MODULE_NOT_FOUND" || code === "MODULE_NOT_FOUND") {
+      throw new Error(
+        `deploying to "${adapterName}" needs its adapter, which is not installed.\n\n` +
+          `  npm install @berth/adapter-${adapterName}\n\n` +
+          `@berth/cli ships without the cloud adapters: each pulls in a provider SDK, and a CLI ` +
+          `used for local sandboxing needs none of them. Install only the one you deploy to.`,
+      );
+    }
+    throw err;
+  }
 }
 
 /** `configPath` defaults to ~/.berthrc — overridable so tests don't touch the real one. */
@@ -75,7 +97,7 @@ export async function resolveFleet(
   configPath = DEFAULT_BERTHRC_PATH,
 ): Promise<{ adapter: DeployAdapter; env?: Record<string, string>; count: number; region?: string }> {
   if (fleetName === "e2b" || fleetName === "daytona" || fleetName === "k8s") {
-    return { adapter: instantiate(fleetName), count: 1 };
+    return { adapter: await instantiate(fleetName), count: 1 };
   }
 
   const config = await loadFleetConfig(configPath);
@@ -85,5 +107,5 @@ export async function resolveFleet(
       `unknown fleet "${fleetName}" — expected "e2b", "daytona", "k8s", or an alias defined in ~/.berthrc (e.g. {"prod": {"adapter": "e2b"}})`,
     );
   }
-  return { adapter: instantiate(alias.adapter), env: alias.env, count: alias.count ?? 1, region: alias.region };
+  return { adapter: await instantiate(alias.adapter), env: alias.env, count: alias.count ?? 1, region: alias.region };
 }

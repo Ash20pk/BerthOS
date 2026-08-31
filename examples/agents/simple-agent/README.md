@@ -44,4 +44,4 @@ See [`docs/berth-os-reference.md`](../../../docs/berth-os-reference.md).
 
 ## Multi-agent composition
 
-For `Crew.withManager()`/`Crew.networked()`, see [`packages/agents/examples`](../../../packages/agents/examples) and [`docs/agents-reference.md`](../../../docs/agents-reference.md).
+For `Crew.withManager()`/`Crew.networked()`, see [`experimental/agents/examples`](../../../experimental/agents/examples) and [`docs/agents-reference.md`](../../../docs/agents-reference.md).

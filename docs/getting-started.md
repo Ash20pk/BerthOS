@@ -107,7 +107,7 @@ Beyond the `hello-world` → `notes` → `browser-native` ladder above:
 
 ## 8. Build agents on top with `@berth/agents`
 
-Everything above is about authoring and running one resident app. To wire an LLM agent up to one or more resident apps' exports as tools, whether that's a single agent, a manager/worker crew, or independent agents networked across containers, start with [`examples/agents/simple-agent`](../examples/agents/simple-agent). It depends on `@berth/agents` as an ordinary `workspace:*` package dependency, the shape an external project's `package.json` would actually use. Then see [`packages/agents/examples/`](../packages/agents/examples/README.md) and [agents-reference.md](./agents-reference.md) for multi-agent composition.
+Everything above is about authoring and running one resident app. To wire an LLM agent up to one or more resident apps' exports as tools, whether that's a single agent, a manager/worker crew, or independent agents networked across containers, start with [`examples/agents/simple-agent`](../examples/agents/simple-agent). It depends on `@berth/agents` as an ordinary `workspace:*` package dependency, the shape an external project's `package.json` would actually use. Then see [`experimental/agents/examples/`](../experimental/agents/examples/README.md) and [agents-reference.md](./agents-reference.md) for multi-agent composition.
 
 ## Something not working?
 

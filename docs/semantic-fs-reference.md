@@ -27,6 +27,20 @@ A sidecar SQLite index was chosen over real extended attributes (the other optio
 
 **`task` and `related_apps` are explicit**, not inferred — the daemon has no way to know an app's task-level intent from raw POSIX writes, so `ctx.semanticFs.tag(path, { task, relatedApps })` is a deliberate, separate call after a write.
 
+### Where the mount comes from, and how to have none
+
+Three postures, selected by env var at boot:
+
+| Posture | Selected by | `/context` | `CAP_SYS_ADMIN` / `/dev/fuse` |
+|---|---|---|---|
+| **Sidecar** (default) | nothing — this is the default | Mounted by a per-sandbox sidecar container and propagated in as a bind | Held by the **sidecar**, and only until its `fuse.Mount` returns — then it empties its own capability bounding set ([M1.2](./threat-model.md)). Never on the app container |
+| **In-sandbox** (pre-M1.1 fallback) | `BERTH_DISABLE_FS_SIDECAR=1`, or automatically when the sidecar's mount cannot propagate on this host | Mounted by `semantic-fs-daemon` inside the app container | **On the app container**, for its whole life. Logged loudly, and visible in `docker inspect` |
+| **Off** | `BERTH_NO_SEMANTIC_FS=1` | Absent — no mount is attempted | Neither, anywhere in the boot |
+
+Note what `BERTH_DISABLE_FS_SIDECAR=1` does **not** mean: it is not "no semantic FS", it is "mount it here instead", which is the posture with *more* privilege, not less. Until 2026-08-29 those were the only two options, so every boot paid for either a second container or an in-sandbox `CAP_SYS_ADMIN` — including a boot whose apps would never read `/context`. `BERTH_NO_SEMANTIC_FS=1` is the third option: no sidecar, no mount, no capability, and no boot-time wait on a socket nothing will use.
+
+It is **opt-in and stays opt-in.** Deciding automatically would mean inferring whether a boot needs `/context`, and the manifest does not say: an app reaches the daemon over the control socket rather than by declaring a capability, and `@berth/agents`' checkpointing, sessions, and `trace` are all Semantic-FS-backed without any `berth.yml` line naming it. Guess wrong and the failure surfaces far from its cause. With it off, `@berth/sdk`'s runtime reports the socket as unreachable and `/context` operations **throw** rather than returning empty results (`createUnavailableSemanticFs`) — a loud failure is the point.
+
 ## Using it from a resident app
 
 ```ts

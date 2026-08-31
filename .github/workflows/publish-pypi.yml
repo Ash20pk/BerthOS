@@ -27,7 +27,7 @@ jobs:
       id-token: write # required by pypa/gh-action-pypi-publish's OIDC trusted-publishing flow
     defaults:
       run:
-        working-directory: packages/agents-python
+        working-directory: experimental/agents-python
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -49,4 +49,4 @@ jobs:
         if: ${{ !inputs.dry_run }}
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
-          packages-dir: packages/agents-python/dist
+          packages-dir: experimental/agents-python/dist

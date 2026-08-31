@@ -1,15 +1,8 @@
 import { Command, Args, Flags } from "@oclif/core";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import {
-  runEvalSuite,
-  recordEvalRun,
-  listEvalRuns,
-  type EvalRunnable,
-  type EvalCase,
-  type EvalSuiteResult,
-  type ComputerHandle,
-} from "@berth/agents";
+import type { EvalRunnable, EvalCase, EvalSuiteResult, ComputerHandle } from "@berth/agents";
+import { loadAgents } from "../util/optional-agents.js";
 
 /**
  * What an eval file must export: a default async factory, not a static
@@ -36,7 +29,7 @@ interface EvalModule {
 
 export default class Eval extends Command {
   static override description =
-    "Run an eval suite (packages/agents' runEvalSuite) against a real Agent/Crew — a regression check for agent *behavior*, distinct from `berth test`'s manifest/export shape check";
+    "Run an eval suite (experimental/agents' runEvalSuite) against a real Agent/Crew — a regression check for agent *behavior*, distinct from `berth test`'s manifest/export shape check";
   static override args = {
     file: Args.string({
       required: true,
@@ -53,6 +46,7 @@ export default class Eval extends Command {
 
   async run(): Promise<void> {
     const { args, flags } = await this.parse(Eval);
+    const { runEvalSuite, recordEvalRun } = await loadAgents("eval");
     const modulePath = path.resolve(process.cwd(), args.file);
     const mod = (await import(pathToFileURL(modulePath).href)) as Partial<EvalModule>;
 
@@ -92,6 +86,7 @@ export default class Eval extends Command {
     if (!computer) {
       this.error(`--history needs the eval module's default export to return a \`computer\` — this one didn't.`);
     }
+    const { listEvalRuns } = await loadAgents("eval");
     const runs = await listEvalRuns(computer, { suiteName, limit });
 
     if (json) {

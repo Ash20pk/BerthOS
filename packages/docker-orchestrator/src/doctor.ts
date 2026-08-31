@@ -566,11 +566,22 @@ export function unenforcedBanner(detail: string): string {
  * on every `berth dev` would add a container start to the primary workflow. The
  * key is the kernel version and architecture, so a kernel upgrade re-probes on
  * its own without anyone remembering to clear anything.
+ *
+ * `opts.fresh` bypasses the cache *read* (a fresh result is still written back).
+ * Attestation passes it, and must: the cache lives at
+ * `$BERTH_HOME/enforcement-cache.json`, which the operator can write, so a
+ * cached verdict is an operator-supplied input rather than a measurement. It is
+ * the right trade for a boot banner — the cost of a stale answer there is a
+ * missing warning — and the wrong one for an attestation record, where
+ * `doctorProbe` is one of the two measurements `deriveEnforcementStatus()`
+ * requires to say ACTIVE. Reading the cache there would let one edit to one
+ * JSON file forge half of that verdict without any kernel being probed.
  */
 export async function enforcementStatusForBoot(
   docker: Docker,
   image: string,
   runtime?: string,
+  opts: { fresh?: boolean } = {},
 ): Promise<{ status: LandlockProbeResult["status"] | "unknown"; reason?: string }> {
   let key: string;
   try {
@@ -584,8 +595,10 @@ export async function enforcementStatusForBoot(
   }
 
   const cache = readCache();
-  const hit = cache[key];
-  if (hit) return { status: hit.status, reason: hit.reason };
+  if (!opts.fresh) {
+    const hit = cache[key];
+    if (hit) return { status: hit.status, reason: hit.reason };
+  }
 
   try {
     const probe = await probeKernel(docker, image, runtime);
