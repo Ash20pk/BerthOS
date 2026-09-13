@@ -10,10 +10,10 @@
   },
   "dependencies": {
     "@berth/sdk": "workspace:*",
-    "zod": "^4.4.3"
+    "zod": "^4.6.1"
   },
   "devDependencies": {
     "typescript": "^7.0.2",
-    "@types/node": "^26.2.0"
+    "@types/node": "^26.5.1"
   }
 }

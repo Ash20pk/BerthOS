@@ -10,11 +10,11 @@
   },
   "dependencies": {
     "@berth/sdk": "workspace:*",
-    "playwright-core": "^1.49.1",
-    "zod": "^4.4.3"
+    "playwright-core": "^1.63.0",
+    "zod": "^4.6.1"
   },
   "devDependencies": {
     "typescript": "^7.0.2",
-    "@types/node": "^26.2.0"
+    "@types/node": "^26.5.1"
   }
 }
