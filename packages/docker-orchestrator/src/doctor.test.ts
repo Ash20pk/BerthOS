@@ -8,6 +8,7 @@ import {
   runDoctor,
   probeKernel,
   findProbeImage,
+  PROBE_FALLBACK_IMAGE,
   unenforcedBanner,
   enforcementStatusForBoot,
   type LandlockProbeResult,
@@ -106,8 +107,11 @@ test("an unreachable daemon fails the docker check and leaves the kernel unknowa
   assert.equal(report.checks.find((c) => c.id === "seccomp"), undefined);
 });
 
-test("no local image to probe in is reported as unknown with an actionable remedy", async () => {
-  const report = await runDoctor({ docker: fakeDocker({ images: [{ RepoTags: ["<none>:<none>"] }] }) });
+test("no local image to probe in, and no pull, is reported as unknown with an actionable remedy", async () => {
+  const report = await runDoctor({
+    docker: fakeDocker({ images: [{ RepoTags: ["<none>:<none>"] }] }),
+    pull: async () => undefined,
+  });
 
   const landlock = report.checks.find((c) => c.id === "landlock");
   assert.equal(landlock?.status, "unknown");
@@ -174,6 +178,39 @@ test("findProbeImage prefers a berth image over any other, and skips untagged on
 test("findProbeImage falls back to a python image when no berth image is present", async () => {
   const image = await findProbeImage(fakeDocker({ images: [{ RepoTags: ["python:3.12-alpine"] }] }));
   assert.equal(image, "python:3.12-alpine");
+});
+
+test("findProbeImage takes the berth-agent/ tag a Computer or demo boot builds", async () => {
+  const image = await findProbeImage(fakeDocker({ images: [{ RepoTags: ["redis:7"] }, { RepoTags: ["berth-agent/filesystem:1790420977203"] }] }));
+  assert.equal(image, "berth-agent/filesystem:1790420977203");
+});
+
+test("a fresh install with no local image pulls a python image and still gets a verdict", async () => {
+  let probedIn: string | undefined;
+  const report = await runDoctor({
+    docker: fakeDocker({ images: [] }),
+    pull: async () => PROBE_FALLBACK_IMAGE,
+    probe: async (_docker, image) => {
+      probedIn = image;
+      return { status: "enforcing", abi: 4, reason: "write refused with Permission denied", fuse: true };
+    },
+  });
+  assert.equal(probedIn, PROBE_FALLBACK_IMAGE);
+  assert.equal(report.enforcementActive, true);
+  assert.match(report.checks.find((c) => c.id === "landlock")?.detail ?? "", /pulled because no local Berth image/);
+});
+
+test("--no-probe never pulls", async () => {
+  let pulled = false;
+  await runDoctor({
+    docker: fakeDocker({ images: [] }),
+    skipProbe: true,
+    pull: async () => {
+      pulled = true;
+      return PROBE_FALLBACK_IMAGE;
+    },
+  });
+  assert.equal(pulled, false);
 });
 
 test("findProbeImage returns undefined rather than an unusable image", async () => {

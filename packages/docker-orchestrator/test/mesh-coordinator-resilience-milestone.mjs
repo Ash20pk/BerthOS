@@ -25,7 +25,7 @@ import { buildImage, startContainer, stopContainer } from "../dist/index.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");
 const FIXTURES_DIR = join(__dirname, "fixtures");
-const MESH_COORDINATOR_ENTRY = join(REPO_ROOT, "packages", "mesh-coordinator", "dist", "server.js");
+const MESH_COORDINATOR_ENTRY = join(REPO_ROOT, "experimental", "mesh-coordinator", "dist", "server.js");
 const MESH_COORDINATOR_PORT = 56516; // distinct from mesh-milestone.mjs's port — safe to run concurrently
 
 const FIXTURES = {

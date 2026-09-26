@@ -6,6 +6,7 @@ experimental/agents/src/mcp-client.test.ts's TypeScript fixture server."""
 import asyncio
 
 from mcp.server import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
 server = MCPServer("fake-mcp-server", version="1.0.0")
 
@@ -25,7 +26,10 @@ async def get_status() -> dict[str, object]:
 @server.tool()
 async def always_fails() -> str:
     """Always reports a tool-level error"""
-    raise RuntimeError("something went wrong")
+    # ToolError, not a bare exception: since mcp 2.2 the server treats any
+    # other exception as a crash and sends only "Error executing tool <name>",
+    # which is the right default and not what this fixture is testing.
+    raise ToolError("something went wrong")
 
 
 if __name__ == "__main__":

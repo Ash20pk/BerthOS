@@ -77,7 +77,7 @@ denied-by: the kernel — a Landlock ruleset compiled from "filesystem"'s berth.
 fix: none available — a berth.yml filesystem scope may only name /workspace, /context, /tmp, /app
 ```
 
-Denials name the manifest line that would allow them (or say honestly that none would), and `denied-by:` says `the kernel` only where the kernel really did it. Run `--warm` once first, then read [docs/mcp-quickstart.md](./docs/mcp-quickstart.md) — setup for Claude Desktop/Cursor, scoping with `--only`, and the `DOCKER_HOST` gotcha on Colima.
+Denials name the manifest line that would allow them (or say honestly that none would), and `denied-by:` says `the kernel` only where the kernel really did it. Run `--warm` once first, then read [docs/mcp-quickstart.md](./docs/mcp-quickstart.md) — setup for Claude Desktop/Cursor, scoping with `--only`, and pointing it at Colima.
 
 ## Keep the agent framework you already have
 

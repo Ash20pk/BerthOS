@@ -50,6 +50,14 @@ export const harness = {
   async run({ probeDir, hostEndpoint, secretValue, log }) {
     const docker = new Docker();
     await docker.getContainer(CONTAINER_NAME).remove({ force: true }).catch(() => {});
+    // `docker run` pulls a missing image; the API's createContainer does not.
+    // A dev machine has this one from building Berth's base image, a fresh
+    // CI runner doesn't, and the baseline failed there before running a check.
+    await docker.getImage(IMAGE).inspect().catch(async () => {
+      log(`pulling ${IMAGE}`);
+      const stream = await docker.pull(IMAGE);
+      await new Promise((resolve, reject) => docker.modem.followProgress(stream, (err) => (err ? reject(err) : resolve())));
+    });
 
     const dataDir = "/work/workload";
     const siblingDir = "/work/sibling";

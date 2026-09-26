@@ -118,8 +118,13 @@ export default class Doctor extends Command {
     if (!recheck.enforcementActive) return false;
 
     this.log("");
-    this.log("One thing --fix cannot do: export into your shell. Put this in every");
-    this.log("shell where you run Berth, or it will talk to Docker Desktop again:");
+    this.log("One thing --fix does not do for you: point Docker at Colima from now on.");
+    this.log("Berth follows the current Docker context, as the docker CLI does, so either");
+    this.log("select it once (for every shell, and for `docker` itself):");
+    this.log("");
+    this.log(`  docker context use ${plan.contextName}`);
+    this.log("");
+    this.log("or, per shell:");
     this.log("");
     this.log(`  ${plan.exportLine}`);
     return true;
