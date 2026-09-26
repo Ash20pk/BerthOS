@@ -1,10 +1,10 @@
 module berth/semantic-fs-daemon
 
-go 1.25.0
+go 1.26.0
 
 require (
 	bazil.org/fuse v0.0.0-20230120002735-62a210ff1fd5
-	golang.org/x/sys v0.47.0
+	golang.org/x/sys v0.48.0
 	modernc.org/sqlite v1.56.0
 )
 
