@@ -12,6 +12,6 @@
     "@berthos/audit": "workspace:*",
     "@berthos/docker-orchestrator": "workspace:*",
     "@berthos/manifest-schema": "workspace:*",
-    "dockerode": "^4.0.9"
+    "dockerode": "^5.0.1"
   }
 }
