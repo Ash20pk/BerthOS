@@ -55,3 +55,11 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    groups:
+      # CodeQL's init and analyze actions refuse to run at different
+      # versions ("Loaded a configuration file for version X, but running
+      # version Y"). Bumped as two separate PRs, each one fails CodeQL on its
+      # own and merging either breaks CodeQL on main until the other lands.
+      codeql-action:
+        patterns:
+          - "github/codeql-action*"
