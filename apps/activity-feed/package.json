@@ -10,10 +10,10 @@
   },
   "dependencies": {
     "@berthos/sdk": "workspace:*",
-    "zod": "^4.4.3"
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "typescript": "^7.0.2",
-    "@types/node": "^26.2.0"
+    "@types/node": "^26.6.2"
   }
 }
