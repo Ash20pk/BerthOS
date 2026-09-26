@@ -51,7 +51,7 @@
   },
   "devDependencies": {
     "typescript": "^7.0.2",
-    "@types/node": "^26.2.0",
+    "@types/node": "^26.6.2",
     "@berthos/docker-orchestrator": "workspace:*",
     "dockerode": "^5.0.1"
   },
