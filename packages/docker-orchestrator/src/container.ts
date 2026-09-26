@@ -362,11 +362,12 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
   // (BUILD_PLAN M1.1, docs/internal/design/sys-admin-drop.md), so the
   // sandbox itself gets no SYS_ADMIN, no /dev/fuse, and no AppArmor
   // exception — `mount(2)` inside it fails EPERM for every process, root
-  // daemons included. If the sidecar's mount cannot propagate on this host
-  // (or BERTH_DISABLE_FS_SIDECAR=1 forces it), fall back to the pre-M1.1
-  // in-sandbox mount — with the capability, and with a loud warning, so
-  // `docker inspect` always tells the truth about which posture this
-  // container has. /dev/net/tun + NET_ADMIN are added only when an app
+  // daemons included. If the sidecar's mount cannot propagate on this host,
+  // the boot goes on without /context rather than quietly taking the pre-M1.1
+  // in-sandbox mount; BERTH_DISABLE_FS_SIDECAR=1 asks for that posture
+  // explicitly, with the
+  // capability and a loud warning, so `docker inspect` always tells the
+  // truth about which posture this container has. /dev/net/tun + NET_ADMIN are added only when an app
   // actually declares network:peer:* (see docs/mesh-reference.md).
   const devices: { PathOnHost: string; PathInContainer: string; CgroupPermissions: string }[] = [];
   const capAdd: string[] = [];
@@ -387,7 +388,7 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
   // than silently wrong results — see runtime.ts's createUnavailableSemanticFs.
   // Defaulting this on would mean deciding for the caller which of those they
   // use, and the failure is remote from the cause, so the caller declares it.
-  const semanticFsDisabled = process.env.BERTH_NO_SEMANTIC_FS === "1";
+  let semanticFsDisabled = process.env.BERTH_NO_SEMANTIC_FS === "1";
   if (semanticFsDisabled) {
     // The entrypoint needs to know too, or it starts the in-container daemon
     // and then polls /proc/mounts for 5s waiting on a mount nobody will make.
@@ -426,8 +427,21 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
         appUidMap,
       });
     } catch (err) {
+      // Degrade to less, never to more. This used to fall through to the
+      // in-sandbox mount, so a host problem the caller never saw handed
+      // CAP_SYS_ADMIN to the app container — the one capability the
+      // sandbox's no-mount(2) claim rests on. It is always the case on
+      // Docker Desktop for Mac, whose file sharing isn't a shared mount.
+      // Now the boot takes the BERTH_NO_SEMANTIC_FS=1 posture instead: no
+      // /context, no capability, and @berthos/sdk's /context calls throw
+      // (createUnavailableSemanticFs) rather than return empty results.
+      semanticFsDisabled = true;
+      env.BERTH_NO_SEMANTIC_FS = "1";
       console.warn(
-        `[berth] WARNING: semantic-fs sidecar failed — falling back to the in-sandbox FUSE mount, which puts CAP_SYS_ADMIN back on this container (pre-M1.1 posture). ${(err as Error).message}`,
+        `[berth] WARNING: semantic-fs sidecar failed, so this boot has no /context (and no CAP_SYS_ADMIN): ` +
+          `/context reads, writes and queries will throw. ${(err as Error).message}\n` +
+          `  To mount /context inside the sandbox instead, accepting CAP_SYS_ADMIN on it: BERTH_DISABLE_FS_SIDECAR=1\n` +
+          `  To silence this on a host that never needs /context: BERTH_NO_SEMANTIC_FS=1`,
       );
     }
   }
@@ -439,6 +453,11 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
     // through to the branch below would hand SYS_ADMIN to a boot that
     // explicitly said it does not want a FUSE mount at all.
   } else {
+    // Only reachable by asking: BERTH_DISABLE_FS_SIDECAR=1. A failed sidecar
+    // no longer lands here (it turns semantic FS off above).
+    console.warn(
+      "[berth] WARNING: BERTH_DISABLE_FS_SIDECAR=1 — mounting /context inside the sandbox, which puts CAP_SYS_ADMIN, /dev/fuse and apparmor:unconfined on this container (pre-M1.1 posture).",
+    );
     devices.push({ PathOnHost: "/dev/fuse", PathInContainer: "/dev/fuse", CgroupPermissions: "rwm" });
     capAdd.push("SYS_ADMIN");
     // The default docker-default AppArmor profile denies the FUSE mount(2)
