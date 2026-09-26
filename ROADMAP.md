@@ -1,13 +1,5 @@
 # Roadmap
 
-> **Which document is authoritative for what.** `REMEDIATION.md` — defects: what
-> is broken, the evidence, and what would prove it closed. `LAUNCH_PLAN.md` —
-> execution order: which of those defects gate a launch and in what sequence.
-> `PRIORITIES.md` — an opinionated filter over REMEDIATION, kept for its
-> reasoning; superseded on *ordering* by LAUNCH_PLAN. `ROADMAP.md` — the public
-> "is X real yet" page. `gaps.md` — **archived**; it validated that the substrate
-> is usable from a framework, and is not a roadmap.
-
 Berth was built against an original 5-phase plan. All five phases have at least an initial, milestone-tested implementation today, plus several things beyond the original scope. This page is the one place to check "is X real yet" instead of piecing it together from commit history.
 
 "Milestone-tested" below means there's a Docker-backed integration test (`packages/*/test/*-milestone.mjs`) wired into its own CI workflow under `.github/workflows/`, not just a unit test. See [CONTRIBUTING.md](./CONTRIBUTING.md) for how to run them locally.
@@ -34,14 +26,14 @@ Built after the initial 5 phases. Most have their own milestone test and CI work
 - **Deploy adapters** — E2B, Daytona, and Kubernetes, behind one `DeployAdapter` interface
 - **MCP bridge** (`berth mcp`) — expose a resident app's exports as MCP tools, milestone-tested and CI-wired. It's the documented first way in ([docs/mcp-quickstart.md](./docs/mcp-quickstart.md)): one command in an MCP client's config, the sandbox booted by the bridge itself, and a denied tool call answered with the `berth.yml` line that would allow it — attributed to the kernel only where `agent-init` reported an enforced ruleset. No caller authentication yet, and one bridge serves one local app
 - **Python SDK** — wire-compatible with the TypeScript SDK
-- **`@berth/agents`** — the *reference consumer* of the substrate (`Computer`, `createAgent`, `runAgent`, `Crew`). **Frozen**: bug and security fixes only, no new framework features — Berth is a substrate, not an agent framework; see [CONTRIBUTING.md](./CONTRIBUTING.md#the-agents-packages-are-frozen). `Computer`'s milestone tests run in CI credential-free; `Crew`'s (`crew-manager-`, `crew-networked-`, `provider-swap-milestone.mjs`) need real LLM API keys and are intentionally not run there — see `docs/agents-reference.md`
-- **`bootNetworkedAgent({fleet})`** — a `Crew.networked()` peer deployed to a remote E2B/Daytona/K8s instance instead of a local Docker container, dispatched over a new per-boot-authenticated HTTP RPC bridge (`@berth/sdk`'s `startHttpRpcServer`) rather than the mesh or the local Docker-network path. Protocol-level and mocked-adapter coverage only, no live-account or `kind`-cluster milestone test yet — see `docs/agents-reference.md`'s "Networked Crew over a remote fleet" section for exactly what's verified versus reasoned-but-untested
-- **Framework interop** (`toAiSdkTools`, `toLangChainTools`, `toToolSpecs`) — a booted Computer's tools handed to the Vercel AI SDK, LangChain/LangGraph, or any other loop, so Berth's sandbox is reachable without adopting `@berth/agents`. Both libraries are optional peer dependencies imported dynamically; both adapters are unit-tested against the real package, and the AI SDK one drives a full `generateText` tool-calling loop. `berth mcp` covers the out-of-process case
+- **`@berthos/agents`** — the *reference consumer* of the substrate (`Computer`, `createAgent`, `runAgent`, `Crew`). **Frozen**: bug and security fixes only, no new framework features — Berth is a substrate, not an agent framework; see [CONTRIBUTING.md](./CONTRIBUTING.md#the-agents-packages-are-frozen). `Computer`'s milestone tests run in CI credential-free; `Crew`'s (`crew-manager-`, `crew-networked-`, `provider-swap-milestone.mjs`) need real LLM API keys and are intentionally not run there — see `docs/agents-reference.md`
+- **`bootNetworkedAgent({fleet})`** — a `Crew.networked()` peer deployed to a remote E2B/Daytona/K8s instance instead of a local Docker container, dispatched over a new per-boot-authenticated HTTP RPC bridge (`@berthos/sdk`'s `startHttpRpcServer`) rather than the mesh or the local Docker-network path. Protocol-level and mocked-adapter coverage only, no live-account or `kind`-cluster milestone test yet — see `docs/agents-reference.md`'s "Networked Crew over a remote fleet" section for exactly what's verified versus reasoned-but-untested
+- **Framework interop** (`toAiSdkTools`, `toLangChainTools`, `toToolSpecs`) — a booted Computer's tools handed to the Vercel AI SDK, LangChain/LangGraph, or any other loop, so Berth's sandbox is reachable without adopting `@berthos/agents`. Both libraries are optional peer dependencies imported dynamically; both adapters are unit-tested against the real package, and the AI SDK one drives a full `generateText` tool-calling loop. `berth mcp` covers the out-of-process case
 - **`berth os up`/`down`/`status`** — long-lived Berth OS with instant reconnect, instead of a fresh boot every dev-loop iteration. No milestone test or CI workflow exists for this one yet, unlike the rest of this list
 
 ## Known gaps
 
-- Nothing under `@berth/*` is published to npm yet. Today you build from source (see [Quickstart](./docs/quickstart.md)).
+- Nothing under `@berthos/*` is published to npm yet. Today you build from source (see [Quickstart](./docs/quickstart.md)).
 - Landlock verification has a real gap outside a genuine Linux LSM environment — see Phase 3 above. CI runs on `ubuntu-latest`, which has it; Docker Desktop for Mac's linuxkit kernel doesn't have it at all. On macOS, [docs/mac-enforcement.md](./docs/mac-enforcement.md) is the way out: swap the daemon to Colima and `berth doctor` reports `ACTIVE` rather than `NOT ACTIVE`.
 - No hosted/public app registry — `berth publish` targets a self-run instance.
 - Single maintainer, so review latency varies — see [CONTRIBUTING.md](./CONTRIBUTING.md).

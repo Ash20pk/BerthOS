@@ -14,7 +14,7 @@
 // other runs.
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { createAgent, createAnthropicProvider, createOpenAIProvider } from "@berth/agents";
+import { createAgent, createAnthropicProvider, createOpenAIProvider } from "@berthos/agents";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");
@@ -44,7 +44,7 @@ async function main() {
   try {
     console.log("Running: write hello.txt, then read it back...");
     const result = await agent.run(
-      "Write a file called hello.txt containing the text 'hi from @berth/agents', then read it back to me.",
+      "Write a file called hello.txt containing the text 'hi from @berthos/agents', then read it back to me.",
     );
 
     console.log("\nagent said:", result.text);

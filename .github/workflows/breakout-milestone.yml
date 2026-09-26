@@ -1,0 +1,47 @@
+name: Break-out Box Milestone
+
+# BUILD_PLAN M2.3 — see breakout/test/breakout-milestone.mjs. The public
+# break-out box holds two flags no capability grants; the only thing keeping a
+# stranger's submitted code away from them is the enforcement Berth ships to
+# every app. This test boots the box exactly as the public endpoint runs it
+# (breakout/box.mjs, shared with the server) and confirms:
+#
+#   - a submission can use its own scratch directory (positive control)
+#   - reading the 0644 kernel-tier flag, and the same read via a symlink, is
+#     refused by the compiled Landlock policy
+#   - the co-tenant's per-app secret flag is unreadable, and absent from the
+#     target app's environment
+#   - outbound TCP is refused
+#   - AND, as the negative control, that switching the kernel tier off makes
+#     the SAME submission read the flag — so the assertions above are about
+#     Landlock, not about a lucky file mode.
+#
+# ubuntu-latest has Landlock in its active LSM stack, so the enforced boot's
+# kernel-tier assertions run as assertions here.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          version: 10.21.0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Run breakout-milestone.mjs
+        run: node breakout/test/breakout-milestone.mjs

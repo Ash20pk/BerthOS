@@ -4,10 +4,10 @@ import { join } from "node:path";
 
 /**
  * A record of one `berth os up <name>` instance — written by the CLI, read by
- * `Computer.connect()` (@berth/agents) so a separate process can reattach to
+ * `Computer.connect()` (@berthos/agents) so a separate process can reattach to
  * an already-running container instead of paying build+boot cost again. Lives
  * under `~/.berth/os/`, the same "small local record keyed by name" shape as
- * `~/.berth/fleets/<fleet>.json` (@berth/cli's fleet-state.ts) and
+ * `~/.berth/fleets/<fleet>.json` (@berthos/cli's fleet-state.ts) and
  * `~/.berth/snapshots/` — global rather than project-local because an agent
  * script connecting to a named OS may run from any directory, not just the
  * one `berth os up` was invoked from.
@@ -28,9 +28,9 @@ export interface OsStateFile {
   startedAt: string;
   /**
    * Set only when started with `berth os up --http-rpc` — the host-reachable
-   * URL and bearer token for @berth/sdk's HTTP RPC bridge (see
+   * URL and bearer token for @berthos/sdk's HTTP RPC bridge (see
    * container.ts's `httpRpc` option), the one way a process with no Docker
-   * API access (e.g. a Python client — see packages/agents-python's
+   * API access (e.g. a Python client — see experimental/agents-python's
    * `Computer.connect()`) can call this OS's exports. `app` names which
    * loaded app is actually bound to the bridge (BERTH_HTTP_RPC_APP) — only
    * that one app's exports are reachable this way; omitted for a single-app

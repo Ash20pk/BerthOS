@@ -1,11 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { PassThrough } from "node:stream";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   runDoctor,
   probeKernel,
   findProbeImage,
+  PROBE_FALLBACK_IMAGE,
   unenforcedBanner,
+  enforcementStatusForBoot,
   type LandlockProbeResult,
 } from "./doctor.js";
 
@@ -102,8 +107,11 @@ test("an unreachable daemon fails the docker check and leaves the kernel unknowa
   assert.equal(report.checks.find((c) => c.id === "seccomp"), undefined);
 });
 
-test("no local image to probe in is reported as unknown with an actionable remedy", async () => {
-  const report = await runDoctor({ docker: fakeDocker({ images: [{ RepoTags: ["<none>:<none>"] }] }) });
+test("no local image to probe in, and no pull, is reported as unknown with an actionable remedy", async () => {
+  const report = await runDoctor({
+    docker: fakeDocker({ images: [{ RepoTags: ["<none>:<none>"] }] }),
+    pull: async () => undefined,
+  });
 
   const landlock = report.checks.find((c) => c.id === "landlock");
   assert.equal(landlock?.status, "unknown");
@@ -170,6 +178,39 @@ test("findProbeImage prefers a berth image over any other, and skips untagged on
 test("findProbeImage falls back to a python image when no berth image is present", async () => {
   const image = await findProbeImage(fakeDocker({ images: [{ RepoTags: ["python:3.12-alpine"] }] }));
   assert.equal(image, "python:3.12-alpine");
+});
+
+test("findProbeImage takes the berth-agent/ tag a Computer or demo boot builds", async () => {
+  const image = await findProbeImage(fakeDocker({ images: [{ RepoTags: ["redis:7"] }, { RepoTags: ["berth-agent/filesystem:1790420977203"] }] }));
+  assert.equal(image, "berth-agent/filesystem:1790420977203");
+});
+
+test("a fresh install with no local image pulls a python image and still gets a verdict", async () => {
+  let probedIn: string | undefined;
+  const report = await runDoctor({
+    docker: fakeDocker({ images: [] }),
+    pull: async () => PROBE_FALLBACK_IMAGE,
+    probe: async (_docker, image) => {
+      probedIn = image;
+      return { status: "enforcing", abi: 4, reason: "write refused with Permission denied", fuse: true };
+    },
+  });
+  assert.equal(probedIn, PROBE_FALLBACK_IMAGE);
+  assert.equal(report.enforcementActive, true);
+  assert.match(report.checks.find((c) => c.id === "landlock")?.detail ?? "", /pulled because no local Berth image/);
+});
+
+test("--no-probe never pulls", async () => {
+  let pulled = false;
+  await runDoctor({
+    docker: fakeDocker({ images: [] }),
+    skipProbe: true,
+    pull: async () => {
+      pulled = true;
+      return PROBE_FALLBACK_IMAGE;
+    },
+  });
+  assert.equal(pulled, false);
 });
 
 test("findProbeImage returns undefined rather than an unusable image", async () => {
@@ -264,4 +305,127 @@ test("an active kernel is both active and determined", async () => {
   const report = await runDoctor({ docker: fakeDocker(), probe: probeReturning({ status: "enforcing", fuse: true }) });
   assert.equal(report.enforcementActive, true);
   assert.equal(report.enforcementDetermined, true);
+});
+
+// --- the runtime check (BUILD_PLAN M1.4) -----------------------------------
+
+const infoWithRuntimes = {
+  KernelVersion: "6.8.0-generic",
+  Architecture: "x86_64",
+  SecurityOptions: ["name=seccomp,profile=builtin"],
+  Runtimes: { runc: {}, "io.containerd.runc.v2": {}, runsc: {} },
+  DefaultRuntime: "runc",
+};
+
+test("a requested runtime the daemon has: runtime check ok, and the probe runs under it", async () => {
+  let probedRuntime: string | undefined;
+  const report = await runDoctor({
+    docker: fakeDocker({ info: infoWithRuntimes }),
+    runtime: "runsc",
+    probe: async (_docker, _image, runtime) => {
+      probedRuntime = runtime;
+      return { status: "enforcing", abi: 5, reason: "write refused", fuse: true };
+    },
+  });
+
+  assert.equal(probedRuntime, "runsc", "the enforcement probe must run under the runtime the sandbox will boot with — under gVisor the kernel being probed is the sentry");
+  const runtime = report.checks.find((c) => c.id === "runtime");
+  assert.equal(runtime?.status, "ok");
+  assert.match(runtime?.detail ?? "", /"runsc"/);
+  const landlock = report.checks.find((c) => c.id === "landlock");
+  assert.match(landlock?.title ?? "", /runtime "runsc"/);
+});
+
+test("a requested runtime the daemon does not have fails the runtime check and skips the probe rather than guessing", async () => {
+  const report = await runDoctor({
+    docker: fakeDocker(), // default info: no Runtimes at all
+    runtime: "runsc",
+    probe: async () => {
+      throw new Error("the probe must not run — createContainer would refuse this runtime");
+    },
+  });
+
+  const runtime = report.checks.find((c) => c.id === "runtime");
+  assert.equal(runtime?.status, "fail");
+  assert.match(runtime?.remedy ?? "", /gvisor\.dev/);
+  // A probe that cannot start has not answered anything: landlock is unknown,
+  // and the verdict says UNKNOWN with the runtime failure as a reason.
+  assert.equal(report.checks.find((c) => c.id === "landlock")?.status, "unknown");
+  assert.equal(report.enforcementActive, false);
+  assert.equal(report.enforcementDetermined, false);
+  assert.ok(report.reasons.some((r) => r.includes("runsc")), `reasons must name the runtime failure, got: ${JSON.stringify(report.reasons)}`);
+});
+
+test("with no runtime requested the check is informational, and points at runsc when the daemon has it", async () => {
+  const report = await runDoctor({
+    docker: fakeDocker({ info: infoWithRuntimes }),
+    probe: probeReturning({ status: "enforcing", abi: 5, reason: "write refused", fuse: true }),
+  });
+
+  const runtime = report.checks.find((c) => c.id === "runtime");
+  assert.equal(runtime?.status, "ok");
+  assert.match(runtime?.detail ?? "", /default "runc"/);
+  assert.match(runtime?.remedy ?? "", /BERTH_RUNTIME=runsc/);
+  assert.equal(report.enforcementActive, true, "an informational runtime check must not affect the verdict");
+});
+
+// --- the enforcement cache is not an attestation input ----------------------
+// `$BERTH_HOME/enforcement-cache.json` is operator-writable, and doctorProbe is
+// one of the two measurements deriveEnforcementStatus() requires for ACTIVE.
+// Reading the cache during attestation would make one edit to one JSON file
+// enough to forge half that verdict with no kernel probed, so attestation
+// passes `fresh: true` and these pin that behaviour in both directions.
+
+function cacheHarness(cached: string, probeStatus: LandlockProbeResult["status"]) {
+  const home = mkdtempSync(join(tmpdir(), "berth-probe-cache-"));
+  const kernel = "6.8.0-generic";
+  writeFileSync(
+    join(home, "enforcement-cache.json"),
+    JSON.stringify({ [`${kernel}|x86_64`]: { status: cached, probedAt: "2026-01-01T00:00:00.000Z" } }),
+  );
+  let probes = 0;
+  // Reuses fakeProbeDocker's container so this exercises probeKernel's real
+  // attach()/drain path rather than a second, subtly-different stub.
+  const docker = {
+    info: async () => ({ KernelVersion: kernel, Architecture: "x86_64" }),
+    createContainer: async (...args: unknown[]) => {
+      probes++;
+      const inner = fakeProbeDocker(JSON.stringify({ status: probeStatus, abi: 4, fuse: true }));
+      return (inner.docker as unknown as { createContainer: (...a: unknown[]) => Promise<unknown> }).createContainer(...args);
+    },
+  } as never;
+  return { home, docker, probes: () => probes };
+}
+
+/** Runs `fn` with BERTH_HOME pointed at `home`, restoring whatever was there. */
+async function withBerthHome<T>(home: string, fn: () => Promise<T>): Promise<T> {
+  const prev = process.env.BERTH_HOME;
+  process.env.BERTH_HOME = home;
+  try {
+    return await fn();
+  } finally {
+    if (prev === undefined) delete process.env.BERTH_HOME;
+    else process.env.BERTH_HOME = prev;
+  }
+}
+
+test("the boot banner path trusts the cache — that is what it is for", async () => {
+  const { home, docker, probes } = cacheHarness("enforcing", "unsupported");
+  const result = await withBerthHome(home, () => enforcementStatusForBoot(docker, "img"));
+  assert.equal(result.status, "enforcing", "a cache hit should short-circuit the probe here");
+  assert.equal(probes(), 0, "no container should be started on a cache hit");
+});
+
+test("fresh: true ignores a poisoned cache and measures the kernel instead", async () => {
+  // The forgery: the cache claims "enforcing", the kernel says otherwise.
+  const { home, docker, probes } = cacheHarness("enforcing", "unsupported");
+  const result = await withBerthHome(home, () => enforcementStatusForBoot(docker, "img", undefined, { fresh: true }));
+  assert.equal(result.status, "unsupported", "attestation must report what the kernel does, not what the cache claims");
+  assert.equal(probes(), 1, "a fresh probe must actually run");
+});
+
+test("fresh: true does not invent enforcement either — an enforcing kernel still reads enforcing", async () => {
+  const { home, docker } = cacheHarness("unsupported", "enforcing");
+  const result = await withBerthHome(home, () => enforcementStatusForBoot(docker, "img", undefined, { fresh: true }));
+  assert.equal(result.status, "enforcing");
 });

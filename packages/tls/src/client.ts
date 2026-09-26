@@ -7,7 +7,7 @@ import { Agent, setGlobalDispatcher } from "undici";
  *
  * Node's global `fetch` and the npm `undici` package share a dispatcher
  * through the same well-known global symbol, so setting it here applies to
- * plain `fetch()` calls made anywhere afterwards. `@berth/sdk`'s
+ * plain `fetch()` calls made anywhere afterwards. `@berthos/sdk`'s
  * `egress-proxy.ts` relies on the same property.
  *
  * `NODE_EXTRA_CA_CERTS=/path/to/ca.crt` does the same thing without any code

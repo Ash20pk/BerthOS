@@ -1,6 +1,11 @@
 packages:
   - "packages/*"
-  - "packages/adapters/*"
+  # Frozen subsystems: shipped, tested, and no longer part of the core
+  # artifact (the manifest -> kernel-policy substrate and its evidence).
+  # Still built and still tested; simply not what `npm install @berthos/cli`
+  # is. See EXECUTION_PLAN.md.
+  - "experimental/*"
+  - "experimental/adapters/*"
   - "apps/*"
   - "examples/resident-apps/*"
   - "examples/agents/*"
@@ -11,4 +16,13 @@ packages:
   - "examples/no-egress"
   - "examples/audit-trail"
   - "packages/docker-orchestrator/test/fixtures/*"
-  - "packages/agents/test/fixtures/*"
+  - "experimental/agents/test/fixtures/*"
+  - "bench"
+  - "bench/fixtures/*"
+  - "breakout"
+  - "breakout/apps/*"
+  - "redteam"
+  # The standalone spec + its conformance suite; versioned independently (spec/capability-manifest/VERSION).
+  - "spec/capability-manifest"
+  # Same, for the attestation record (spec/attestation-record/VERSION).
+  - "spec/attestation-record"

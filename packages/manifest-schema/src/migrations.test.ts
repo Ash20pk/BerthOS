@@ -40,7 +40,7 @@ test("migrateToCurrent is a no-op when the declared version already equals curre
 test("a schema_version newer than this package supports fails with a clear, actionable error — never silent misinterpretation", () => {
   assert.throws(
     () => validateManifest({ name: "future-app", version: "1.0.0", schema_version: CURRENT_SCHEMA_VERSION + 1 }),
-    /schema_version: \d+, but this installed @berth\/manifest-schema only supports up to \d+.*Upgrade @berth\/manifest-schema/s,
+    /schema_version: \d+, but this installed @berthos\/manifest-schema only supports up to \d+.*Upgrade @berthos\/manifest-schema/s,
   );
 });
 

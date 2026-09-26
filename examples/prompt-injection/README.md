@@ -4,7 +4,7 @@ The demo that assumes the model already lost. There is no jailbreak to attempt
 here — [`index.mjs`](./index.mjs) hard-codes a compromised `LLMProvider` that
 reads a poisoned document and does exactly what the hidden instruction says:
 write a cron backdoor to `/etc`. The agent loop is the real one from
-`@berth/agents`; the app is the real `apps/filesystem`, scoped to
+`@berthos/agents`; the app is the real `apps/filesystem`, scoped to
 `filesystem:write:/workspace` and nothing else.
 
 ```

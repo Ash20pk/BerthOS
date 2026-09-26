@@ -47,4 +47,4 @@ Call `apps/filesystem`'s `write_file` or `apps/notes`' `add_note`/`complete_note
 pnpm exec berth test
 ```
 
-`src/index.test.ts` drives the app against `@berth/sdk`'s local (in-process) context bus directly — the same fallback the real runtime uses when no daemon is reachable — publishing across all three known topics and asserting ordering and the 50-event cap.
+`src/index.test.ts` drives the app against `@berthos/sdk`'s local (in-process) context bus directly — the same fallback the real runtime uses when no daemon is reachable — publishing across all three known topics and asserting ordering and the 50-event cap.

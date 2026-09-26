@@ -1,3 +1,15 @@
+import { applyDockerContext } from "./docker-host.js";
+
+// Before anything here constructs a Docker client: follow the selected
+// Docker context the way the `docker` CLI does. See docker-host.ts.
+applyDockerContext();
+
+export {
+  resolveDockerHost,
+  applyDockerContext,
+  describeDockerHost,
+  type DockerHostResolution,
+} from "./docker-host.js";
 export { buildImage, type BuildImageOptions, type BuildTarget } from "./image.js";
 export {
   startContainer,
@@ -18,6 +30,7 @@ export {
   runDoctor,
   probeKernel,
   findProbeImage,
+  PROBE_FALLBACK_IMAGE,
   type DoctorReport,
   type DoctorCheck,
   type CheckStatus,
@@ -28,6 +41,14 @@ export {
   unenforcedBanner,
   resetBannerState,
 } from "./doctor.js";
+export {
+  gatherBootEvidence,
+  demuxLogBuffer,
+  parseBootId,
+  parsePolicyLines,
+  parseRulesetReports,
+  type BootEvidence,
+} from "./attest.js";
 export { watchApp, type WatchHandle } from "./watch.js";
 export { invokeAppExport, rpcSocketPathFor, RPC_SOCKET_DIR, type RpcRequest, type RpcResponse } from "./relay.js";
 export { createStdioRpcClient, type StdioRpcClient } from "./stdio-rpc.js";

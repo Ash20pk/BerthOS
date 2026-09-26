@@ -37,7 +37,7 @@ import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { loadManifest } from "@berth/manifest-schema";
+import { loadManifest } from "@berthos/manifest-schema";
 import { buildImage, startContainer, stopContainer, invokeAppExport } from "../dist/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -641,7 +641,7 @@ async function main() {
     // And the authorized direction: app C is identical to app A except that its
     // berth.yml declares app:invoke:boundary-app-b. Without this half, the
     // denial above would be satisfied just as well by a boundary nothing can
-    // cross — including @berth/agents' agent-as-tool path, which is the reason
+    // cross — including @berthos/agents' agent-as-tool path, which is the reason
     // an opt-in exists at all.
     console.log("\n--- App C, which DECLARED app:invoke:boundary-app-b, on its own peer socket ---");
     const grantedSocket = await invokeAppExport(boundaryRunning.container, "boundary-app-c", {
@@ -952,7 +952,7 @@ async function createRpcClient(container) {
   const stream = await container.attach({ stream: true, stdin: true, stdout: true, stderr: true, hijack: true });
   // Terminates the attach options object docker-modem sends as this POST's
   // body straight into the container's stdin, so it can't concatenate onto the
-  // first real request — see @berth/docker-orchestrator's stdio-rpc.ts for the
+  // first real request — see @berthos/docker-orchestrator's stdio-rpc.ts for the
   // full explanation.
   stream.write("\n");
   const stdout = new PassThrough();

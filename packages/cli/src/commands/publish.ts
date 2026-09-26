@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { createGzip } from "node:zlib";
 import { pipeline } from "node:stream/promises";
 import { pack } from "tar-fs";
-import { applyClientTls, warnIfCredentialOverPlaintext } from "@berth/tls";
+import { applyClientTls, warnIfCredentialOverPlaintext } from "@berthos/tls";
 import { loadManifestOrExit } from "../util/manifest.js";
 import { buildProductionImage, productionImageTag } from "../util/build.js";
 

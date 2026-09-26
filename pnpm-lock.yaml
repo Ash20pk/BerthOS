@@ -9,6 +9,9 @@ overrides:
   sharp: link:packages/sdk/vendor/sharp-stub
   protobufjs: ^8.7.1
   uuid: ^11.1.1
+  fast-uri@>=3.0.0 <3.1.6: ^3.1.6
+  fast-uri@>=4.0.0 <4.1.3: ^4.1.3
+  js-yaml@>=4.0.0 <4.3.2: ^4.3.2
 
 importers:
 
@@ -26,7 +29,7 @@ importers:
 
   apps/activity-feed:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
       zod:
@@ -42,7 +45,7 @@ importers:
 
   apps/browser-native:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
       playwright-core:
@@ -61,7 +64,7 @@ importers:
 
   apps/code-editor:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
       zod:
@@ -77,7 +80,7 @@ importers:
 
   apps/code-interpreter:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
       zod:
@@ -93,7 +96,7 @@ importers:
 
   apps/filesystem:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
       zod:
@@ -109,7 +112,7 @@ importers:
 
   apps/github-assistant:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
       undici:
@@ -128,7 +131,7 @@ importers:
 
   apps/notes:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
       zod:
@@ -144,7 +147,7 @@ importers:
 
   apps/terminal:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
       zod:
@@ -158,60 +161,123 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
+  bench:
+    dependencies:
+      '@berthos/docker-orchestrator':
+        specifier: workspace:*
+        version: link:../packages/docker-orchestrator
+      '@berthos/manifest-schema':
+        specifier: workspace:*
+        version: link:../packages/manifest-schema
+      dockerode:
+        specifier: ^4.0.9
+        version: 4.0.12
+
+  bench/fixtures/bench-probe-a:
+    dependencies:
+      '@berthos/sdk':
+        specifier: workspace:*
+        version: link:../../../packages/sdk
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+
+  bench/fixtures/bench-probe-b:
+    dependencies:
+      '@berthos/sdk':
+        specifier: workspace:*
+        version: link:../../../packages/sdk
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+
+  breakout:
+    dependencies:
+      '@berthos/audit':
+        specifier: workspace:*
+        version: link:../packages/audit
+      '@berthos/docker-orchestrator':
+        specifier: workspace:*
+        version: link:../packages/docker-orchestrator
+      '@berthos/manifest-schema':
+        specifier: workspace:*
+        version: link:../packages/manifest-schema
+      dockerode:
+        specifier: ^4.0.9
+        version: 4.0.12
+
+  breakout/apps/breakout-target:
+    dependencies:
+      '@berthos/sdk':
+        specifier: workspace:*
+        version: link:../../../packages/sdk
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+
+  breakout/apps/flag-keeper:
+    dependencies:
+      '@berthos/sdk':
+        specifier: workspace:*
+        version: link:../../../packages/sdk
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+
   examples/agents/agent-server:
     dependencies:
-      '@berth/agents':
+      '@berthos/agents':
         specifier: workspace:*
-        version: link:../../../packages/agents
+        version: link:../../../experimental/agents
 
   examples/agents/simple-agent:
     dependencies:
-      '@berth/agents':
+      '@berthos/agents':
         specifier: workspace:*
-        version: link:../../../packages/agents
+        version: link:../../../experimental/agents
 
   examples/agents/with-vercel-ai-sdk:
     dependencies:
       '@ai-sdk/openai':
         specifier: ^4.0.0
         version: 4.0.42(zod@4.4.3)
-      '@berth/agents':
+      '@berthos/agents':
         specifier: workspace:*
-        version: link:../../../packages/agents
+        version: link:../../../experimental/agents
       ai:
         specifier: ^7.0.66
         version: 7.0.66(zod@4.4.3)
 
   examples/audit-trail:
     dependencies:
-      '@berth/audit':
+      '@berthos/audit':
         specifier: workspace:*
         version: link:../../packages/audit
 
   examples/kernel-says-no:
     dependencies:
-      '@berth/agents':
+      '@berthos/agents':
         specifier: workspace:*
-        version: link:../../packages/agents
+        version: link:../../experimental/agents
 
   examples/no-egress:
     dependencies:
-      '@berth/agents':
+      '@berthos/agents':
         specifier: workspace:*
-        version: link:../../packages/agents
+        version: link:../../experimental/agents
 
   examples/prompt-injection:
     dependencies:
-      '@berth/agents':
+      '@berthos/agents':
         specifier: workspace:*
-        version: link:../../packages/agents
-      '@berth/audit':
+        version: link:../../experimental/agents
+      '@berthos/audit':
         specifier: workspace:*
         version: link:../../packages/audit
 
   examples/resident-apps/generic-connector:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../../packages/sdk
     devDependencies:
@@ -224,7 +290,7 @@ importers:
 
   examples/resident-apps/hello-world:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../../packages/sdk
       zod:
@@ -240,7 +306,7 @@ importers:
 
   examples/resident-apps/http-fetch:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../../packages/sdk
       zod:
@@ -254,11 +320,11 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
-  packages/adapters/adapter-core:
+  experimental/adapters/adapter-core:
     dependencies:
-      '@berth/manifest-schema':
+      '@berthos/manifest-schema':
         specifier: workspace:*
-        version: link:../../manifest-schema
+        version: link:../../../packages/manifest-schema
     devDependencies:
       '@types/node':
         specifier: ^26.2.0
@@ -267,14 +333,14 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
-  packages/adapters/adapter-daytona:
+  experimental/adapters/adapter-daytona:
     dependencies:
-      '@berth/adapter-core':
+      '@berthos/adapter-core':
         specifier: workspace:*
         version: link:../adapter-core
-      '@berth/manifest-schema':
+      '@berthos/manifest-schema':
         specifier: workspace:*
-        version: link:../../manifest-schema
+        version: link:../../../packages/manifest-schema
       '@daytonaio/sdk':
         specifier: ^0.202.0
         version: 0.202.0
@@ -286,14 +352,14 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
-  packages/adapters/adapter-e2b:
+  experimental/adapters/adapter-e2b:
     dependencies:
-      '@berth/adapter-core':
+      '@berthos/adapter-core':
         specifier: workspace:*
         version: link:../adapter-core
-      '@berth/manifest-schema':
+      '@berthos/manifest-schema':
         specifier: workspace:*
-        version: link:../../manifest-schema
+        version: link:../../../packages/manifest-schema
       e2b:
         specifier: ^1.0.0
         version: 1.13.2
@@ -305,21 +371,21 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
-  packages/adapters/adapter-k8s:
+  experimental/adapters/adapter-k8s:
     dependencies:
-      '@berth/adapter-core':
+      '@berthos/adapter-core':
         specifier: workspace:*
         version: link:../adapter-core
-      '@berth/manifest-schema':
+      '@berthos/manifest-schema':
         specifier: workspace:*
-        version: link:../../manifest-schema
+        version: link:../../../packages/manifest-schema
       '@kubernetes/client-node':
         specifier: ^1.0.0
         version: 1.4.0
     devDependencies:
-      '@berth/docker-orchestrator':
+      '@berthos/docker-orchestrator':
         specifier: workspace:*
-        version: link:../../docker-orchestrator
+        version: link:../../../packages/docker-orchestrator
       '@types/node':
         specifier: ^26.2.0
         version: 26.2.0
@@ -330,7 +396,7 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
-  packages/agents:
+  experimental/agents:
     dependencies:
       '@a2a-js/sdk':
         specifier: ^1.0.1
@@ -338,24 +404,24 @@ importers:
       '@anthropic-ai/sdk':
         specifier: ^0.117.1
         version: 0.117.1(zod@4.4.3)
-      '@berth/adapter-core':
+      '@berthos/adapter-core':
         specifier: workspace:*
         version: link:../adapters/adapter-core
-      '@berth/audit':
+      '@berthos/audit':
         specifier: workspace:*
-        version: link:../audit
-      '@berth/docker-orchestrator':
+        version: link:../../packages/audit
+      '@berthos/docker-orchestrator':
         specifier: workspace:*
-        version: link:../docker-orchestrator
-      '@berth/grants-server':
+        version: link:../../packages/docker-orchestrator
+      '@berthos/grants-server':
         specifier: workspace:*
         version: link:../grants-server
-      '@berth/manifest-schema':
+      '@berthos/manifest-schema':
         specifier: workspace:*
-        version: link:../manifest-schema
-      '@berth/sdk':
+        version: link:../../packages/manifest-schema
+      '@berthos/sdk':
         specifier: workspace:*
-        version: link:../sdk
+        version: link:../../packages/sdk
       '@google/genai':
         specifier: ^2.17.1
         version: 2.17.1(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(zod@4.4.3))
@@ -400,11 +466,11 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
-  packages/agents/test/fixtures/crash-on-boot:
+  experimental/agents/test/fixtures/crash-on-boot:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
-        version: link:../../../../sdk
+        version: link:../../../../../packages/sdk
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -416,15 +482,122 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
-  packages/agents/test/fixtures/governance-gate-tester:
+  experimental/agents/test/fixtures/governance-gate-tester:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
-        version: link:../../../../sdk
+        version: link:../../../../../packages/sdk
       zod:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
+      '@types/node':
+        specifier: ^26.2.0
+        version: 26.2.0
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
+  experimental/agents/test/fixtures/governance-peer-caller:
+    dependencies:
+      '@berthos/sdk':
+        specifier: workspace:*
+        version: link:../../../../../packages/sdk
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@types/node':
+        specifier: ^26.2.0
+        version: 26.2.0
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
+  experimental/grants-server:
+    dependencies:
+      '@berthos/audit':
+        specifier: workspace:*
+        version: link:../../packages/audit
+      '@berthos/tls':
+        specifier: workspace:*
+        version: link:../../packages/tls
+      fastify:
+        specifier: ^5.12.0
+        version: 5.12.0
+    devDependencies:
+      '@types/node':
+        specifier: ^26.2.0
+        version: 26.2.0
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+      undici:
+        specifier: ^8.10.0
+        version: 8.10.0
+
+  experimental/mesh-coordinator:
+    dependencies:
+      '@berthos/tls':
+        specifier: workspace:*
+        version: link:../../packages/tls
+      fastify:
+        specifier: ^5.12.0
+        version: 5.12.0
+    devDependencies:
+      '@types/node':
+        specifier: ^26.2.0
+        version: 26.2.0
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
+  experimental/registry-server:
+    dependencies:
+      '@berthos/manifest-schema':
+        specifier: workspace:*
+        version: link:../../packages/manifest-schema
+      '@berthos/tls':
+        specifier: workspace:*
+        version: link:../../packages/tls
+      '@fastify/multipart':
+        specifier: ^10.1.1
+        version: 10.1.1
+      fastify:
+        specifier: ^5.12.0
+        version: 5.12.0
+      yaml:
+        specifier: ^2.7.0
+        version: 2.9.0
+    devDependencies:
+      '@types/node':
+        specifier: ^26.2.0
+        version: 26.2.0
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
+  experimental/seam-claude-agent-sdk:
+    dependencies:
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@anthropic-ai/claude-agent-sdk':
+        specifier: ^0.3.0
+        version: 0.3.241(@anthropic-ai/sdk@0.117.1(zod@4.4.3))(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(zod@4.4.3))(zod@4.4.3)
+      '@types/node':
+        specifier: ^26.2.0
+        version: 26.2.0
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
+  experimental/seam-openai-agents:
+    devDependencies:
+      '@openai/agents':
+        specifier: ^0.17.0
+        version: 0.17.0(@aws-sdk/credential-provider-node@3.972.78)(@smithy/signature-v4@5.6.12)(ws@8.21.3)(zod@4.4.3)
       '@types/node':
         specifier: ^26.2.0
         version: 26.2.0
@@ -443,34 +616,19 @@ importers:
 
   packages/cli:
     dependencies:
-      '@berth/adapter-core':
-        specifier: workspace:*
-        version: link:../adapters/adapter-core
-      '@berth/adapter-daytona':
-        specifier: workspace:*
-        version: link:../adapters/adapter-daytona
-      '@berth/adapter-e2b':
-        specifier: workspace:*
-        version: link:../adapters/adapter-e2b
-      '@berth/adapter-k8s':
-        specifier: workspace:*
-        version: link:../adapters/adapter-k8s
-      '@berth/agents':
-        specifier: workspace:*
-        version: link:../agents
-      '@berth/audit':
+      '@berthos/audit':
         specifier: workspace:*
         version: link:../audit
-      '@berth/docker-orchestrator':
+      '@berthos/docker-orchestrator':
         specifier: workspace:*
         version: link:../docker-orchestrator
-      '@berth/manifest-schema':
+      '@berthos/manifest-schema':
         specifier: workspace:*
         version: link:../manifest-schema
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../sdk
-      '@berth/tls':
+      '@berthos/tls':
         specifier: workspace:*
         version: link:../tls
       '@inquirer/prompts':
@@ -498,9 +656,24 @@ importers:
         specifier: ^3.24.1
         version: 3.25.2(zod@4.4.3)
     devDependencies:
-      '@berth/registry-server':
+      '@berthos/adapter-core':
         specifier: workspace:*
-        version: link:../registry-server
+        version: link:../../experimental/adapters/adapter-core
+      '@berthos/adapter-daytona':
+        specifier: workspace:*
+        version: link:../../experimental/adapters/adapter-daytona
+      '@berthos/adapter-e2b':
+        specifier: workspace:*
+        version: link:../../experimental/adapters/adapter-e2b
+      '@berthos/adapter-k8s':
+        specifier: workspace:*
+        version: link:../../experimental/adapters/adapter-k8s
+      '@berthos/agents':
+        specifier: workspace:*
+        version: link:../../experimental/agents
+      '@berthos/registry-server':
+        specifier: workspace:*
+        version: link:../../experimental/registry-server
       '@types/dockerode':
         specifier: ^4.0.1
         version: 4.0.1
@@ -519,7 +692,10 @@ importers:
 
   packages/docker-orchestrator:
     dependencies:
-      '@berth/manifest-schema':
+      '@berthos/audit':
+        specifier: workspace:*
+        version: link:../audit
+      '@berthos/manifest-schema':
         specifier: workspace:*
         version: link:../manifest-schema
       chokidar:
@@ -550,7 +726,7 @@ importers:
 
   packages/docker-orchestrator/test/fixtures/boundary-app-a:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../../../sdk
       zod:
@@ -566,7 +742,7 @@ importers:
 
   packages/docker-orchestrator/test/fixtures/boundary-app-b:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../../../sdk
       zod:
@@ -582,7 +758,7 @@ importers:
 
   packages/docker-orchestrator/test/fixtures/boundary-app-c:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../../../sdk
       zod:
@@ -598,7 +774,7 @@ importers:
 
   packages/docker-orchestrator/test/fixtures/mesh-echo-browser:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../../../sdk
       zod:
@@ -614,7 +790,7 @@ importers:
 
   packages/docker-orchestrator/test/fixtures/mesh-echo-intruder:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../../../sdk
       zod:
@@ -630,7 +806,7 @@ importers:
 
   packages/docker-orchestrator/test/fixtures/mesh-echo-planner:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../../../sdk
       zod:
@@ -646,7 +822,7 @@ importers:
 
   packages/docker-orchestrator/test/fixtures/on-install-probe:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../../../sdk
       zod:
@@ -659,28 +835,6 @@ importers:
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
-
-  packages/grants-server:
-    dependencies:
-      '@berth/audit':
-        specifier: workspace:*
-        version: link:../audit
-      '@berth/tls':
-        specifier: workspace:*
-        version: link:../tls
-      fastify:
-        specifier: ^5.12.0
-        version: 5.12.0
-    devDependencies:
-      '@types/node':
-        specifier: ^26.2.0
-        version: 26.2.0
-      typescript:
-        specifier: ^7.0.2
-        version: 7.0.2
-      undici:
-        specifier: ^8.10.0
-        version: 8.10.0
 
   packages/manifest-schema:
     dependencies:
@@ -698,50 +852,9 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
-  packages/mesh-coordinator:
-    dependencies:
-      '@berth/tls':
-        specifier: workspace:*
-        version: link:../tls
-      fastify:
-        specifier: ^5.12.0
-        version: 5.12.0
-    devDependencies:
-      '@types/node':
-        specifier: ^26.2.0
-        version: 26.2.0
-      typescript:
-        specifier: ^7.0.2
-        version: 7.0.2
-
-  packages/registry-server:
-    dependencies:
-      '@berth/manifest-schema':
-        specifier: workspace:*
-        version: link:../manifest-schema
-      '@berth/tls':
-        specifier: workspace:*
-        version: link:../tls
-      '@fastify/multipart':
-        specifier: ^10.1.1
-        version: 10.1.1
-      fastify:
-        specifier: ^5.12.0
-        version: 5.12.0
-      yaml:
-        specifier: ^2.7.0
-        version: 2.9.0
-    devDependencies:
-      '@types/node':
-        specifier: ^26.2.0
-        version: 26.2.0
-      typescript:
-        specifier: ^7.0.2
-        version: 7.0.2
-
   packages/sdk:
     dependencies:
-      '@berth/manifest-schema':
+      '@berthos/manifest-schema':
         specifier: workspace:*
         version: link:../manifest-schema
       '@xenova/transformers':
@@ -757,7 +870,7 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
-      '@berth/tls':
+      '@berthos/tls':
         specifier: workspace:*
         version: link:../tls
       '@types/node':
@@ -782,6 +895,27 @@ importers:
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
+
+  redteam:
+    dependencies:
+      '@berthos/breakout-box':
+        specifier: workspace:*
+        version: link:../breakout
+      '@berthos/docker-orchestrator':
+        specifier: workspace:*
+        version: link:../packages/docker-orchestrator
+
+  spec/attestation-record:
+    dependencies:
+      '@berthos/audit':
+        specifier: workspace:*
+        version: link:../../packages/audit
+
+  spec/capability-manifest:
+    dependencies:
+      '@berthos/manifest-schema':
+        specifier: workspace:*
+        version: link:../../packages/manifest-schema
 
 packages:
 
@@ -822,6 +956,54 @@ packages:
     resolution: {integrity: sha512-6or44XprPzKbr8zkmzosowSE0pxkvJcoojBL+mCZvPUt3kvXp3XSNqeVun9golb1acEfSo6yaEBRT18h2VU+1Q==}
     engines: {node: '>=22'}
 
+  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.241':
+    resolution: {integrity: sha512-v26ta54lKFMFEZzbOE+6p3YhKERWnDiEA6OmkSAg+3fAQHOa1+aLTKw222cfgzxgiVixwFtHMk8c63zsDd8aXQ==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.241':
+    resolution: {integrity: sha512-5jweT0vft1ZCaGSoxZHF9vJlHbx8Yxx4+x5aHAIXTd4lx7ZbT4o5buEF8kpmTeHUB+Fw9jtFIm4QDsRiBXgf+Q==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.241':
+    resolution: {integrity: sha512-GslvPvSzehfCZyzOaJAt4lgodznm5zpl/LMXN8ygD12z5qnpM+I9/eFnmAaISJ0L8/vyohtlAP1jjaeR2jz1AQ==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.241':
+    resolution: {integrity: sha512-SxszQGffXiLzMEnAv+pJXEmQbA8haijKyRjjH/jOt1CLeMIfpjKcO9WQDv8dEA8nREWS3zJ103zjgecAF7oOQQ==}
+    cpu: [arm64]
+    os: [linux]
+
+  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.241':
+    resolution: {integrity: sha512-kZigJ5Ug2I2G/n7Cunmwy4TGr0lOGnWrz6TkzyWiDcUmJOodoTH6GZECNarWAtETfN03AAeLfrpiz8z3hOEDqA==}
+    cpu: [x64]
+    os: [linux]
+
+  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.241':
+    resolution: {integrity: sha512-gJRa922Qcm7loumHcXMDFEFg//tz1aOi7Nx0sQa9I9lC1JSN8yL6i7/idzOU5Hp193tEDFOgqIMFL/yRiXg+rw==}
+    cpu: [x64]
+    os: [linux]
+
+  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.241':
+    resolution: {integrity: sha512-/3yA9jQuCvHDVlILzhtslH6kFYOvydXyMZiKwnzqM8ZfvFTNO41w8TpiFpBLseyM+4A4E8QMeTKu3L01Xyb5IQ==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.241':
+    resolution: {integrity: sha512-cHYdAgORl9kynujMeYXyV1uj/hbmsBjRw9dRVkIW4/4sF7S6L4u/qDSzn1/wiNP7g2yWSJ4KbsvHDH2WWDnCBQ==}
+    cpu: [x64]
+    os: [win32]
+
+  '@anthropic-ai/claude-agent-sdk@0.3.241':
+    resolution: {integrity: sha512-pIHdCSTywFe30H0oWDCKZzC4ipBLtF5YMDRKjf6PHyARg57O4l/72v3b6QKnnefwtKKMe6uWJ1Y9lUJg/sKWyA==}
+    engines: {node: '>=18.0.0'}
+    peerDependencies:
+      '@anthropic-ai/sdk': '>=0.93.0'
+      '@modelcontextprotocol/sdk': ^1.29.0
+      zod: ^4.0.0
+
   '@anthropic-ai/sdk@0.117.1':
     resolution: {integrity: sha512-Yn2QlXfyCiKJ5YGCOOay7ZE78ISvII2XY621WMCiflmG8IYgwx59IBwPExxki3Xk9jKUtnD/Sj6UvplWr0rZxg==}
     hasBin: true
@@ -831,10 +1013,6 @@ packages:
       zod:
         optional: true
 
-  '@aws-sdk/checksums@3.1000.24':
-    resolution: {integrity: sha512-7TWLjypP8kk3savsDBRuhZJx7mBuFFA2136BQhwwLllsAnO4Tmq/p+SXZaNxbuulkzUFz3BZzj0bb4YzexZcNQ==}
-    engines: {node: '>=20.0.0'}
-
   '@aws-sdk/checksums@3.1000.26':
     resolution: {integrity: sha512-CGznePoL+1oWCSzqmkvlYMpWQEZohPR3LntjKXXfVH+oh6Kd8d+yHLkjpiAGwPIHAxFe4OAq3aKfRnv/wqWIyA==}
     engines: {node: '>=20.0.0'}
@@ -843,67 +1021,32 @@ packages:
     resolution: {integrity: sha512-K1Gf/bPmagYoEjWwKvPcoK/jhd3v2i+xNISOiMTw7j2ogQ0ITHokOTWMhH2DvHyg9NQdXVtPOu2rRrbzgZDKfw==}
     engines: {node: '>=20.0.0'}
 
-  '@aws-sdk/client-s3@3.1100.0':
-    resolution: {integrity: sha512-5IvIlW6kWOC9EPq2RM7VQUgfDF2QFHHFgQJ2DichmrYBDg5yiAmqMkDiHqUSkFYosVexXaXD/lV4yYxTyA27zw==}
-    engines: {node: '>=20.0.0'}
-
   '@aws-sdk/client-s3@3.1106.0':
     resolution: {integrity: sha512-hUTlnyRRGlVdfvJLL3hCEnMm7CmunSzc/lxFVRX8g1fjJTMUVbyQCfhfMhp7dZ7JBftLU6OYresu3Hje4nvkJw==}
     engines: {node: '>=20.0.0'}
 
-  '@aws-sdk/core@3.977.4':
-    resolution: {integrity: sha512-CEkcQlMOQJCvul60U7wdAOACjtdgFWDsfJI+6wUOGdhGNV2lGbuJpi/R50QLpFG3Tp+sQxa/RmzC3X7KHbhuTA==}
-    engines: {node: '>=20.0.0'}
-    deprecated: |-
-      Deprecated due to Document number parsing bug in JSON, see
-        https://github.com/aws/aws-sdk-js-v3/issues/8246. Newer version available.
-
   '@aws-sdk/core@3.977.6':
     resolution: {integrity: sha512-QiaJV4/zDrB4ZY2mfeSXSzSTc36W16sZXcGz+SPFk0CJ26gziO0cS+4LjJUMAbdeeBOvS0k0Aq1cZpfGdUXxSw==}
-    engines: {node: '>=20.0.0'}
-
-  '@aws-sdk/credential-provider-env@3.972.65':
-    resolution: {integrity: sha512-lJT2aRw9wCV8jPHyFJjdZLD4HTydL6/22AnCSOB8e/LqOc55nEJGLHkJQeSxhn8QiqyjFwPKQFtMw0ovjRUY/g==}
     engines: {node: '>=20.0.0'}
 
   '@aws-sdk/credential-provider-env@3.972.67':
     resolution: {integrity: sha512-rcIpk5kxUqDaaNa6Xk23pQ6ViY7jlqzmfFWCahQcBT97ddXaXYYwzCen9Tz1Jvo6aJft6wDl5bN44/Jw5B4oLA==}
     engines: {node: '>=20.0.0'}
 
-  '@aws-sdk/credential-provider-http@3.972.67':
-    resolution: {integrity: sha512-N7fw/15hSwI/CPxe5ohOyb7O4ge9f5me1gVIn8OIkBRB0squ8OJqQyDyH/HoL+Sb1W5xdC88jVC+bHkw73iu+Q==}
-    engines: {node: '>=20.0.0'}
-
   '@aws-sdk/credential-provider-http@3.972.69':
     resolution: {integrity: sha512-nggwJtZ4eeNsUw5IeWBMXsi1ryct5idi0K+/SCRF3kybLubOMaNTb3XCihXpWMiVpyzyPeIrl0zTkzhBH9porA==}
-    engines: {node: '>=20.0.0'}
-
-  '@aws-sdk/credential-provider-ini@3.973.10':
-    resolution: {integrity: sha512-Zh9XRaPnDN9buO7GfWBubS22R6Nq5D6hbyYEMN05LiOnXugm/8WDjUx6y756bSPbdn3aJB2qG4zFW3bN82QhoQ==}
     engines: {node: '>=20.0.0'}
 
   '@aws-sdk/credential-provider-ini@3.973.12':
     resolution: {integrity: sha512-pNEf/OeyN5X3VmLKlgSO6TqaWmW10CvI3TfwL1XhsuhYjSLT2VDaxFnCPHnOeQXSaFisMX4jNhpETriqN8DOmg==}
     engines: {node: '>=20.0.0'}
 
-  '@aws-sdk/credential-provider-login@3.972.72':
-    resolution: {integrity: sha512-zZapIKwaHp7TdTf9hbH1I3CVUdEupmt7FXO/BoTQGC+4h6NkXKWpqF2p5WyfpjurDLHCpSyh+BzMlAg8arqWLA==}
-    engines: {node: '>=20.0.0'}
-
   '@aws-sdk/credential-provider-login@3.972.74':
     resolution: {integrity: sha512-0AQfDcf99TNmqVKv0owHrw/TQs6i4ZE5t9qmz6NvO53bE/sA/tpXhXL9AAcEP1qHc6Zzjd1UMb69+/9zdhvY3g==}
     engines: {node: '>=20.0.0'}
 
-  '@aws-sdk/credential-provider-node@3.972.76':
-    resolution: {integrity: sha512-1yzLmRiYSgGC25v7ZZEwJn/auhHHTIHgFOmzL2f36hf1+7jSLcX+1QrAz4760WEzPiiQl8xmlpFhHfl2OoyVzA==}
-    engines: {node: '>=20.0.0'}
-
   '@aws-sdk/credential-provider-node@3.972.78':
     resolution: {integrity: sha512-OgPAnfvbGAMWac6yvxJ1ihslrvDpPVwR68D2csospdNCCyPvHk9JLzYKwz48SNiS1T2znDwHauywRKRFfpyYng==}
-    engines: {node: '>=20.0.0'}
-
-  '@aws-sdk/credential-provider-process@3.972.65':
-    resolution: {integrity: sha512-e5DbbNteOSalN58U83G6kFa4ECLEuGbGqNBHIXE7zYXA/m4GHblIGjFbSH7wYv6gBV8iNSDcRZBKfQZF5vF9nw==}
     engines: {node: '>=20.0.0'}
 
   '@aws-sdk/credential-provider-process@3.972.67':
@@ -912,14 +1055,6 @@ packages:
 
   '@aws-sdk/credential-provider-sso@3.973.11':
     resolution: {integrity: sha512-gAQBkBZxUB84d71+pPcI9L+jh2ujhuAVxc/4FgGiWFDjkPBlMKxzd5XDtkSXTFX8Ro7ansnT88+XadasxMeCRw==}
-    engines: {node: '>=20.0.0'}
-
-  '@aws-sdk/credential-provider-sso@3.973.9':
-    resolution: {integrity: sha512-0V0u4t+KBku9fbh5CPCaC5hUWwSzDafp8nCuDy817zWbp2gz80jO44rMQkiwnZ+k54B+tjAtzRy00DJRGTKGBg==}
-    engines: {node: '>=20.0.0'}
-
-  '@aws-sdk/credential-provider-web-identity@3.972.71':
-    resolution: {integrity: sha512-e4dwiRltGAaQ+2yxw57Hj0l/BF3BHiG14+QpYE7bGYBlpAq/fkIri2BDhjWon8c0mhhtd2txQBAkQb9BcTStFg==}
     engines: {node: '>=20.0.0'}
 
   '@aws-sdk/credential-provider-web-identity@3.972.73':
@@ -932,16 +1067,8 @@ packages:
     peerDependencies:
       '@aws-sdk/client-s3': ^3.1100.0
 
-  '@aws-sdk/middleware-sdk-s3@3.972.70':
-    resolution: {integrity: sha512-APdP0iODt39AkjCjzTFIoFrxDH/Cz3CpWRDKLcsJg7eOnfE1htkxL9BhDoe/xL7cXdoMwh2HBYv3DiT1uf64NQ==}
-    engines: {node: '>=20.0.0'}
-
   '@aws-sdk/middleware-sdk-s3@3.972.72':
     resolution: {integrity: sha512-lSAoVPvQxX1d8TOM6waKDBQrvvZcm4w6pCldFAsRUffEaXq6lYY0pPyew3KlLu6Xqb74DXI42hGvSsbGBLljlw==}
-    engines: {node: '>=20.0.0'}
-
-  '@aws-sdk/nested-clients@3.997.39':
-    resolution: {integrity: sha512-wU5NPnj62Sb7A8xn/Zb+xThe05P3otNtDl37iOIi5DDMeCesNeCckaG+eXWGUs12Z9R34I8CD05TaTe6SIa61g==}
     engines: {node: '>=20.0.0'}
 
   '@aws-sdk/nested-clients@3.997.41':
@@ -950,10 +1077,6 @@ packages:
 
   '@aws-sdk/signature-v4-multi-region@3.996.43':
     resolution: {integrity: sha512-lKekx8bLBXSv4O+cslk9Zfnw2XKSkWBs3uWL5QGhH2ZAQfNS7FE0vcSSN2vD/AhxX54ZTywWxR4STThoeOXlBA==}
-    engines: {node: '>=20.0.0'}
-
-  '@aws-sdk/token-providers@3.1100.0':
-    resolution: {integrity: sha512-THf3MkgY3fNJZ3zdgSenLqR7gSE68KccCj1RCKretlG73Ppszvues02VpCUO9NlB/tZDC483FvGCld+AiPCkvg==}
     engines: {node: '>=20.0.0'}
 
   '@aws-sdk/token-providers@3.1103.0':
@@ -1546,6 +1669,14 @@ packages:
     resolution: {integrity: sha512-ppi2UaCYKqM4LEY8NWQ/JZ0Of0MAngHRvclceVeEQklcD/M6QKanlHPWblDnLO2m4vz7987b1Z4r33Ps6lf/ig==}
     engines: {node: '>=20'}
 
+  '@modelcontextprotocol/client@2.0.0':
+    resolution: {integrity: sha512-8f1OghQ2rjzIOfqgUCP+8GiUWqRs89njoWLNqAe8kWmDePv3s1fZXseej+QXemssEuuOvLLmLO/kqM3IQHtISw==}
+    engines: {node: '>=20'}
+
+  '@modelcontextprotocol/core@2.0.0':
+    resolution: {integrity: sha512-pJCEwGG7Lfr/+PQp9ZTwKXNeO5wzbfKL7H3MYpCorM4oFBoQrdjnBgEoqG+RjhsvS1FKrDbKux+M1HhlnGWqcA==}
+    engines: {node: '>=20'}
+
   '@modelcontextprotocol/sdk@1.30.0':
     resolution: {integrity: sha512-xKd8OIzlqNzcqcNumGAa6g+PW2kjD5vrpcKOnfldAUPP3j7lnqMPwlTXQm8gF+UwH72z0lqaRbjr9hqGz0eITA==}
     engines: {node: '>=18'}
@@ -1583,6 +1714,29 @@ packages:
   '@oclif/plugin-warn-if-update-available@3.1.72':
     resolution: {integrity: sha512-9bQH2Fxx6pYD9vtt7oMLicp1SIZWru11p6hWe4QVc/hpoWSFurRoclgqG8erxRYwqsTCsMiCPApRJ7FsXYUsEA==}
     engines: {node: '>=18.0.0'}
+
+  '@openai/agents-core@0.17.0':
+    resolution: {integrity: sha512-lyoF860313ypeKSPRsdmyNK1ypF8/ocShN2EwCcKUpF4VvRWa5AUVKL6VXO/keQMwNPZw5SACAf1siU9uMvUNg==}
+    peerDependencies:
+      zod: ^4.0.0
+    peerDependenciesMeta:
+      zod:
+        optional: true
+
+  '@openai/agents-openai@0.17.0':
+    resolution: {integrity: sha512-pMqXK7YtNI3U9KLAZIt+WzB9AReOWt/kiY8nhc9eXWcIZIpkmrzFd6dQgBpGLKWPfvEfgRCDeIVfHpWoXr7hEg==}
+    peerDependencies:
+      zod: ^4.0.0
+
+  '@openai/agents-realtime@0.17.0':
+    resolution: {integrity: sha512-spHgDIaWQIOJjwowjBTo0X9Jn3+CGX9fWgsyRUilsQ8SsnNrAre2km6sr8HwFnRiyQC0XpmTccieyfuXmzMfXg==}
+    peerDependencies:
+      zod: ^4.0.0
+
+  '@openai/agents@0.17.0':
+    resolution: {integrity: sha512-yzJ3tfHLO/6um9wsZ5IzEAQDaY7VcDBMxOPq7IgBaJkEPHrGX0vIXWGL0aqyreikHW4OpVmWwCaBBIOxxILXlA==}
+    peerDependencies:
+      zod: ^4.0.0
 
   '@opentelemetry/api-logs@0.220.0':
     resolution: {integrity: sha512-CmVa4ImJ+ynfrPMNaAXHET6Bhb44SwzmfyVJFq9ni2jgXJR/l7C6gfVFddNmHP+ZOkP9cf4f9DBe68qVLTHc9w==}
@@ -1921,6 +2075,9 @@ packages:
 
   '@types/wrap-ansi@3.0.0':
     resolution: {integrity: sha512-ltIpx+kM7g/MLRZfkbL7EsCEjfzCcScLpkg37eXEtx5kmrAKBkTJwd1GIAjDSL8wTpM6Hzn5YO4pSb91BEwu1g==}
+
+  '@types/ws@8.18.1':
+    resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
 
   '@typescript/typescript-aix-ppc64@7.0.2':
     resolution: {integrity: sha512-MTKKkWB7p/0E9xi1d1tHtZ5PiLkGEMIq88pK2CubZjOsLtYTLqhgIgi6zepFa+9GHZ6h05NMCkQxGKiPXMxXtQ==}
@@ -2379,6 +2536,10 @@ packages:
     resolution: {integrity: sha512-XJgGhoR/CLpqshm4d3L7rzH6t8NgDFUIIpztYlLHIApeJjMZKYJMz2zxPsYxnejq5h3ELYSw/RBsi3t5h7gNTA==}
     engines: {node: '>= 8.0'}
 
+  dockerode@4.0.12:
+    resolution: {integrity: sha512-/bCZd6KlGcjZO8Buqmi/vXuqEGVEZ0PNjx/biBNqJD3MhK9DmdiAuKxqfNhflgDESDIiBz3qF+0e55+CpnrUcw==}
+    engines: {node: '>= 8.0'}
+
   dockerode@5.0.1:
     resolution: {integrity: sha512-avsq/xk4YPIrn0CgleX5bjT9Y8IT1p9PxrNQ++RBQ2WEyFfHCTDsT9kmyxz+H/axnjAwg8wJWEIuPGOUuNupiA==}
     engines: {node: '>= 14.17'}
@@ -2543,11 +2704,11 @@ packages:
   fast-string-width@3.0.2:
     resolution: {integrity: sha512-gX8LrtNEI5hq8DVUfRQMbr5lpaS4nMIWV+7XEbXk2b8kiQIizgnlr12B4dA3ZEx3308ze0O4Q1R+cHts8kyUJg==}
 
-  fast-uri@3.1.5:
-    resolution: {integrity: sha512-gHwA1O9LDIcKunMKhObS/HimwtehO1nPUECKAu5TpKgaO19fcWEl4bliWe1jWxVFvIXztJjjQ4L8XQ1EU9f7Jw==}
+  fast-uri@3.1.8:
+    resolution: {integrity: sha512-GZMtZUTNRpOVIECoXwLNZS5xUGE+mVNbTB8h/7Rwh2TFWcBQiPzTgyZi05BF9UMZKkLJv8XBRJTlU7zg8+ZfMg==}
 
-  fast-uri@4.1.2:
-    resolution: {integrity: sha512-TyGmBcbDTZXcb2cj5MV89DrF42DKvb3y5DDUNh95iO+IMeAzMkVSxK1PZRrRIpc9yg8U2GhGdbofNa0LS/a4Bw==}
+  fast-uri@4.2.1:
+    resolution: {integrity: sha512-TmHQgewjHtMq1E5QKA0tOE0yeYGQs25KZC/ziJpubRtWI15W92e6vPFydWOeZBVROSHBYw/QhD9d5OefdD6LDg==}
 
   fast-wrap-ansi@0.2.2:
     resolution: {integrity: sha512-7F2Fl+TjRSenLqlU3UjSH0iyqopqoZIu7eZVpEirP2g1GtWa2G/ecEmBdgz31+Mxr+ELclgg6sokpSFIQiZ02Q==}
@@ -2855,8 +3016,8 @@ packages:
   js-tiktoken@1.0.21:
     resolution: {integrity: sha512-biOj/6M5qdgx5TKjDnFT1ymSpM5tbd3ylwDtrQvFQSu0Z7bBYko2dF+W/aUkXUPuk6IVpRxk/3Q2sHOzGlS36g==}
 
-  js-yaml@4.3.1:
-    resolution: {integrity: sha512-CY6crGq313MX8GkwvB7tzgp99vjQxY1++5y10/BKN/GUfHqWaOGQMNZkBvqSzsZKWk/ijwHlWzzkLulsGHhjWQ==}
+  js-yaml@4.3.2:
+    resolution: {integrity: sha512-SFNOvSJ+Dgf/9An904Yx+CgSlIPCkIpao4qo51lpee25TIRejdH3rhR4EZMGoNx3/TP3O+wzWuiTFl4sqbltzA==}
     hasBin: true
 
   jsep@1.4.0:
@@ -3657,18 +3818,6 @@ packages:
   wrappy@1.0.2:
     resolution: {integrity: sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==}
 
-  ws@8.21.1:
-    resolution: {integrity: sha512-+0NTnW77fFN/DjQi6k/Sq/Yvk4Sgajw7urW8V+asjXnRgDs9gyGkdb7EzgfhA4goXsRIZKE28fzIXBHEzhuiWw==}
-    engines: {node: '>=10.0.0'}
-    peerDependencies:
-      bufferutil: ^4.0.1
-      utf-8-validate: '>=5.0.2'
-    peerDependenciesMeta:
-      bufferutil:
-        optional: true
-      utf-8-validate:
-        optional: true
-
   ws@8.21.3:
     resolution: {integrity: sha512-201TZ/kPWxoPr/OKWjquZR1SWKXcvxdH+e1xrx89b3YbmzLMFCLfnaG1HFIgWzJOEWZ7MvpK++odZufgYR50Rw==}
     engines: {node: '>=10.0.0'}
@@ -3759,20 +3908,51 @@ snapshots:
     dependencies:
       json-schema: 0.4.0
 
+  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.241':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.241':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.241':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.241':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.241':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.241':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.241':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.241':
+    optional: true
+
+  '@anthropic-ai/claude-agent-sdk@0.3.241(@anthropic-ai/sdk@0.117.1(zod@4.4.3))(@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(zod@4.4.3))(zod@4.4.3)':
+    dependencies:
+      '@anthropic-ai/sdk': 0.117.1(zod@4.4.3)
+      '@modelcontextprotocol/sdk': 1.30.0(@cfworker/json-schema@4.1.1)(zod@4.4.3)
+      zod: 4.4.3
+    optionalDependencies:
+      '@anthropic-ai/claude-agent-sdk-darwin-arm64': 0.3.241
+      '@anthropic-ai/claude-agent-sdk-darwin-x64': 0.3.241
+      '@anthropic-ai/claude-agent-sdk-linux-arm64': 0.3.241
+      '@anthropic-ai/claude-agent-sdk-linux-arm64-musl': 0.3.241
+      '@anthropic-ai/claude-agent-sdk-linux-x64': 0.3.241
+      '@anthropic-ai/claude-agent-sdk-linux-x64-musl': 0.3.241
+      '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.3.241
+      '@anthropic-ai/claude-agent-sdk-win32-x64': 0.3.241
+
   '@anthropic-ai/sdk@0.117.1(zod@4.4.3)':
     dependencies:
       json-schema-to-ts: 3.1.1
       standardwebhooks: 1.0.0
     optionalDependencies:
       zod: 4.4.3
-
-  '@aws-sdk/checksums@3.1000.24':
-    dependencies:
-      '@aws-sdk/core': 3.977.4
-      '@aws-sdk/types': 3.974.2
-      '@smithy/core': 3.31.1
-      '@smithy/types': 4.16.1
-      tslib: 2.8.1
 
   '@aws-sdk/checksums@3.1000.26':
     dependencies:
@@ -3786,20 +3966,6 @@ snapshots:
     dependencies:
       '@aws-sdk/core': 3.977.6
       '@aws-sdk/credential-provider-node': 3.972.78
-      '@aws-sdk/types': 3.974.2
-      '@smithy/core': 3.31.1
-      '@smithy/fetch-http-handler': 5.6.13
-      '@smithy/node-http-handler': 4.9.13
-      '@smithy/types': 4.16.1
-      tslib: 2.8.1
-
-  '@aws-sdk/client-s3@3.1100.0':
-    dependencies:
-      '@aws-sdk/checksums': 3.1000.24
-      '@aws-sdk/core': 3.977.4
-      '@aws-sdk/credential-provider-node': 3.972.76
-      '@aws-sdk/middleware-sdk-s3': 3.972.70
-      '@aws-sdk/signature-v4-multi-region': 3.996.43
       '@aws-sdk/types': 3.974.2
       '@smithy/core': 3.31.1
       '@smithy/fetch-http-handler': 5.6.13
@@ -3821,17 +3987,6 @@ snapshots:
       '@smithy/types': 4.16.1
       tslib: 2.8.1
 
-  '@aws-sdk/core@3.977.4':
-    dependencies:
-      '@aws-sdk/types': 3.974.2
-      '@aws-sdk/xml-builder': 3.972.37
-      '@aws/lambda-invoke-store': 0.3.0
-      '@smithy/core': 3.31.1
-      '@smithy/signature-v4': 5.6.12
-      '@smithy/types': 4.16.1
-      bowser: 2.14.1
-      tslib: 2.8.1
-
   '@aws-sdk/core@3.977.6':
     dependencies:
       '@aws-sdk/types': 3.974.2
@@ -3843,29 +3998,11 @@ snapshots:
       bowser: 2.14.1
       tslib: 2.8.1
 
-  '@aws-sdk/credential-provider-env@3.972.65':
-    dependencies:
-      '@aws-sdk/core': 3.977.6
-      '@aws-sdk/types': 3.974.2
-      '@smithy/core': 3.31.1
-      '@smithy/types': 4.16.1
-      tslib: 2.8.1
-
   '@aws-sdk/credential-provider-env@3.972.67':
     dependencies:
       '@aws-sdk/core': 3.977.6
       '@aws-sdk/types': 3.974.2
       '@smithy/core': 3.31.1
-      '@smithy/types': 4.16.1
-      tslib: 2.8.1
-
-  '@aws-sdk/credential-provider-http@3.972.67':
-    dependencies:
-      '@aws-sdk/core': 3.977.6
-      '@aws-sdk/types': 3.974.2
-      '@smithy/core': 3.31.1
-      '@smithy/fetch-http-handler': 5.6.13
-      '@smithy/node-http-handler': 4.9.13
       '@smithy/types': 4.16.1
       tslib: 2.8.1
 
@@ -3876,22 +4013,6 @@ snapshots:
       '@smithy/core': 3.31.1
       '@smithy/fetch-http-handler': 5.6.13
       '@smithy/node-http-handler': 4.9.13
-      '@smithy/types': 4.16.1
-      tslib: 2.8.1
-
-  '@aws-sdk/credential-provider-ini@3.973.10':
-    dependencies:
-      '@aws-sdk/core': 3.977.6
-      '@aws-sdk/credential-provider-env': 3.972.65
-      '@aws-sdk/credential-provider-http': 3.972.67
-      '@aws-sdk/credential-provider-login': 3.972.72
-      '@aws-sdk/credential-provider-process': 3.972.65
-      '@aws-sdk/credential-provider-sso': 3.973.9
-      '@aws-sdk/credential-provider-web-identity': 3.972.71
-      '@aws-sdk/nested-clients': 3.997.39
-      '@aws-sdk/types': 3.974.2
-      '@smithy/core': 3.31.1
-      '@smithy/credential-provider-imds': 4.4.16
       '@smithy/types': 4.16.1
       tslib: 2.8.1
 
@@ -3911,35 +4032,12 @@ snapshots:
       '@smithy/types': 4.16.1
       tslib: 2.8.1
 
-  '@aws-sdk/credential-provider-login@3.972.72':
-    dependencies:
-      '@aws-sdk/core': 3.977.6
-      '@aws-sdk/nested-clients': 3.997.39
-      '@aws-sdk/types': 3.974.2
-      '@smithy/core': 3.31.1
-      '@smithy/types': 4.16.1
-      tslib: 2.8.1
-
   '@aws-sdk/credential-provider-login@3.972.74':
     dependencies:
       '@aws-sdk/core': 3.977.6
       '@aws-sdk/nested-clients': 3.997.41
       '@aws-sdk/types': 3.974.2
       '@smithy/core': 3.31.1
-      '@smithy/types': 4.16.1
-      tslib: 2.8.1
-
-  '@aws-sdk/credential-provider-node@3.972.76':
-    dependencies:
-      '@aws-sdk/credential-provider-env': 3.972.65
-      '@aws-sdk/credential-provider-http': 3.972.67
-      '@aws-sdk/credential-provider-ini': 3.973.10
-      '@aws-sdk/credential-provider-process': 3.972.65
-      '@aws-sdk/credential-provider-sso': 3.973.9
-      '@aws-sdk/credential-provider-web-identity': 3.972.71
-      '@aws-sdk/types': 3.974.2
-      '@smithy/core': 3.31.1
-      '@smithy/credential-provider-imds': 4.4.16
       '@smithy/types': 4.16.1
       tslib: 2.8.1
 
@@ -3954,14 +4052,6 @@ snapshots:
       '@aws-sdk/types': 3.974.2
       '@smithy/core': 3.31.1
       '@smithy/credential-provider-imds': 4.4.16
-      '@smithy/types': 4.16.1
-      tslib: 2.8.1
-
-  '@aws-sdk/credential-provider-process@3.972.65':
-    dependencies:
-      '@aws-sdk/core': 3.977.6
-      '@aws-sdk/types': 3.974.2
-      '@smithy/core': 3.31.1
       '@smithy/types': 4.16.1
       tslib: 2.8.1
 
@@ -3983,25 +4073,6 @@ snapshots:
       '@smithy/types': 4.16.1
       tslib: 2.8.1
 
-  '@aws-sdk/credential-provider-sso@3.973.9':
-    dependencies:
-      '@aws-sdk/core': 3.977.6
-      '@aws-sdk/nested-clients': 3.997.39
-      '@aws-sdk/token-providers': 3.1100.0
-      '@aws-sdk/types': 3.974.2
-      '@smithy/core': 3.31.1
-      '@smithy/types': 4.16.1
-      tslib: 2.8.1
-
-  '@aws-sdk/credential-provider-web-identity@3.972.71':
-    dependencies:
-      '@aws-sdk/core': 3.977.6
-      '@aws-sdk/nested-clients': 3.997.39
-      '@aws-sdk/types': 3.974.2
-      '@smithy/core': 3.31.1
-      '@smithy/types': 4.16.1
-      tslib: 2.8.1
-
   '@aws-sdk/credential-provider-web-identity@3.972.73':
     dependencies:
       '@aws-sdk/core': 3.977.6
@@ -4011,23 +4082,14 @@ snapshots:
       '@smithy/types': 4.16.1
       tslib: 2.8.1
 
-  '@aws-sdk/lib-storage@3.1100.0(@aws-sdk/client-s3@3.1100.0)':
+  '@aws-sdk/lib-storage@3.1100.0(@aws-sdk/client-s3@3.1106.0)':
     dependencies:
-      '@aws-sdk/client-s3': 3.1100.0
+      '@aws-sdk/client-s3': 3.1106.0
       '@smithy/core': 3.31.1
       '@smithy/types': 4.16.1
       buffer: 5.6.0
       events: 3.3.0
       stream-browserify: 3.0.0
-      tslib: 2.8.1
-
-  '@aws-sdk/middleware-sdk-s3@3.972.70':
-    dependencies:
-      '@aws-sdk/core': 3.977.4
-      '@aws-sdk/signature-v4-multi-region': 3.996.43
-      '@aws-sdk/types': 3.974.2
-      '@smithy/core': 3.31.1
-      '@smithy/types': 4.16.1
       tslib: 2.8.1
 
   '@aws-sdk/middleware-sdk-s3@3.972.72':
@@ -4036,17 +4098,6 @@ snapshots:
       '@aws-sdk/signature-v4-multi-region': 3.996.43
       '@aws-sdk/types': 3.974.2
       '@smithy/core': 3.31.1
-      '@smithy/types': 4.16.1
-      tslib: 2.8.1
-
-  '@aws-sdk/nested-clients@3.997.39':
-    dependencies:
-      '@aws-sdk/core': 3.977.6
-      '@aws-sdk/signature-v4-multi-region': 3.996.43
-      '@aws-sdk/types': 3.974.2
-      '@smithy/core': 3.31.1
-      '@smithy/fetch-http-handler': 5.6.13
-      '@smithy/node-http-handler': 4.9.13
       '@smithy/types': 4.16.1
       tslib: 2.8.1
 
@@ -4065,15 +4116,6 @@ snapshots:
     dependencies:
       '@aws-sdk/types': 3.974.2
       '@smithy/signature-v4': 5.6.12
-      '@smithy/types': 4.16.1
-      tslib: 2.8.1
-
-  '@aws-sdk/token-providers@3.1100.0':
-    dependencies:
-      '@aws-sdk/core': 3.977.6
-      '@aws-sdk/nested-clients': 3.997.39
-      '@aws-sdk/types': 3.974.2
-      '@smithy/core': 3.31.1
       '@smithy/types': 4.16.1
       tslib: 2.8.1
 
@@ -4138,8 +4180,8 @@ snapshots:
 
   '@daytonaio/sdk@0.202.0':
     dependencies:
-      '@aws-sdk/client-s3': 3.1100.0
-      '@aws-sdk/lib-storage': 3.1100.0(@aws-sdk/client-s3@3.1100.0)
+      '@aws-sdk/client-s3': 3.1106.0
+      '@aws-sdk/lib-storage': 3.1100.0(@aws-sdk/client-s3@3.1106.0)
       '@daytona/analytics-api-client': 0.202.0
       '@daytona/api-client': 0.202.0
       '@daytona/toolbox-api-client': 0.202.0
@@ -4158,13 +4200,13 @@ snapshots:
       expand-tilde: 2.0.2
       fast-glob: 3.3.3
       form-data: 4.0.6
-      isomorphic-ws: 5.0.0(ws@8.21.1)
+      isomorphic-ws: 5.0.0(ws@8.21.3)
       pathe: 2.0.3
       shell-quote: 1.10.0
       socket.io-client: 4.8.3
       tar: 7.5.22
       tslib: 2.8.1
-      ws: 8.21.1
+      ws: 8.21.3
     transitivePeerDependencies:
       - bufferutil
       - debug
@@ -4253,7 +4295,7 @@ snapshots:
     dependencies:
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
-      fast-uri: 4.1.2
+      fast-uri: 4.2.1
 
   '@fastify/busboy@3.2.1': {}
 
@@ -4631,8 +4673,8 @@ snapshots:
       '@types/stream-buffers': 3.0.8
       form-data: 4.0.6
       hpagent: 1.2.0
-      isomorphic-ws: 5.0.0(ws@8.21.1)
-      js-yaml: 4.3.1
+      isomorphic-ws: 5.0.0(ws@8.21.3)
+      js-yaml: 4.3.2
       jsonpath-plus: 10.4.0
       node-fetch: 2.7.0
       openid-client: 6.8.4
@@ -4640,7 +4682,7 @@ snapshots:
       socks-proxy-agent: 8.0.5
       stream-buffers: 3.0.3
       tar-fs: 3.1.3
-      ws: 8.21.1
+      ws: 8.21.3
     transitivePeerDependencies:
       - bare-abort-controller
       - bare-buffer
@@ -4665,6 +4707,22 @@ snapshots:
       - '@opentelemetry/sdk-trace-base'
       - openai
       - ws
+
+  '@modelcontextprotocol/client@2.0.0':
+    dependencies:
+      '@modelcontextprotocol/core': 2.0.0
+      cross-spawn: 7.0.6
+      eventsource: 3.0.7
+      eventsource-parser: 3.1.1
+      jose: 6.2.6
+      pkce-challenge: 5.0.1
+      zod: 4.4.3
+    optional: true
+
+  '@modelcontextprotocol/core@2.0.0':
+    dependencies:
+      zod: 4.4.3
+    optional: true
 
   '@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(zod@4.4.3)':
     dependencies:
@@ -4746,6 +4804,66 @@ snapshots:
       registry-auth-token: 5.1.1
     transitivePeerDependencies:
       - supports-color
+
+  '@openai/agents-core@0.17.0(@aws-sdk/credential-provider-node@3.972.78)(@smithy/signature-v4@5.6.12)(ws@8.21.3)(zod@4.4.3)':
+    dependencies:
+      '@standard-schema/spec': 1.1.0
+      debug: 4.4.3(supports-color@8.1.1)
+      openai: 7.4.0(@aws-sdk/credential-provider-node@3.972.78)(@smithy/signature-v4@5.6.12)(ws@8.21.3)(zod@4.4.3)
+    optionalDependencies:
+      '@modelcontextprotocol/client': 2.0.0
+      zod: 4.4.3
+    transitivePeerDependencies:
+      - '@aws-sdk/credential-provider-node'
+      - '@smithy/hash-node'
+      - '@smithy/signature-v4'
+      - supports-color
+      - ws
+
+  '@openai/agents-openai@0.17.0(@aws-sdk/credential-provider-node@3.972.78)(@smithy/signature-v4@5.6.12)(ws@8.21.3)(zod@4.4.3)':
+    dependencies:
+      '@openai/agents-core': 0.17.0(@aws-sdk/credential-provider-node@3.972.78)(@smithy/signature-v4@5.6.12)(ws@8.21.3)(zod@4.4.3)
+      debug: 4.4.3(supports-color@8.1.1)
+      openai: 7.4.0(@aws-sdk/credential-provider-node@3.972.78)(@smithy/signature-v4@5.6.12)(ws@8.21.3)(zod@4.4.3)
+      zod: 4.4.3
+    transitivePeerDependencies:
+      - '@aws-sdk/credential-provider-node'
+      - '@smithy/hash-node'
+      - '@smithy/signature-v4'
+      - supports-color
+      - ws
+
+  '@openai/agents-realtime@0.17.0(@aws-sdk/credential-provider-node@3.972.78)(@smithy/signature-v4@5.6.12)(zod@4.4.3)':
+    dependencies:
+      '@openai/agents-core': 0.17.0(@aws-sdk/credential-provider-node@3.972.78)(@smithy/signature-v4@5.6.12)(ws@8.21.3)(zod@4.4.3)
+      '@types/ws': 8.18.1
+      debug: 4.4.3(supports-color@8.1.1)
+      ws: 8.21.3
+      zod: 4.4.3
+    transitivePeerDependencies:
+      - '@aws-sdk/credential-provider-node'
+      - '@smithy/hash-node'
+      - '@smithy/signature-v4'
+      - bufferutil
+      - supports-color
+      - utf-8-validate
+
+  '@openai/agents@0.17.0(@aws-sdk/credential-provider-node@3.972.78)(@smithy/signature-v4@5.6.12)(ws@8.21.3)(zod@4.4.3)':
+    dependencies:
+      '@openai/agents-core': 0.17.0(@aws-sdk/credential-provider-node@3.972.78)(@smithy/signature-v4@5.6.12)(ws@8.21.3)(zod@4.4.3)
+      '@openai/agents-openai': 0.17.0(@aws-sdk/credential-provider-node@3.972.78)(@smithy/signature-v4@5.6.12)(ws@8.21.3)(zod@4.4.3)
+      '@openai/agents-realtime': 0.17.0(@aws-sdk/credential-provider-node@3.972.78)(@smithy/signature-v4@5.6.12)(zod@4.4.3)
+      debug: 4.4.3(supports-color@8.1.1)
+      openai: 7.4.0(@aws-sdk/credential-provider-node@3.972.78)(@smithy/signature-v4@5.6.12)(ws@8.21.3)(zod@4.4.3)
+      zod: 4.4.3
+    transitivePeerDependencies:
+      - '@aws-sdk/credential-provider-node'
+      - '@smithy/hash-node'
+      - '@smithy/signature-v4'
+      - bufferutil
+      - supports-color
+      - utf-8-validate
+      - ws
 
   '@opentelemetry/api-logs@0.220.0':
     dependencies:
@@ -5162,6 +5280,10 @@ snapshots:
 
   '@types/wrap-ansi@3.0.0': {}
 
+  '@types/ws@8.18.1':
+    dependencies:
+      '@types/node': 26.2.0
+
   '@typescript/typescript-aix-ppc64@7.0.2':
     optional: true
 
@@ -5263,7 +5385,7 @@ snapshots:
   ajv@8.20.0:
     dependencies:
       fast-deep-equal: 3.1.3
-      fast-uri: 3.1.5
+      fast-uri: 3.1.8
       json-schema-traverse: 1.0.0
       require-from-string: 2.0.2
 
@@ -5563,6 +5685,18 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  dockerode@4.0.12:
+    dependencies:
+      '@balena/dockerignore': 1.0.2
+      '@grpc/grpc-js': 1.14.4
+      '@grpc/proto-loader': 0.7.15
+      docker-modem: 5.0.7
+      protobufjs: 8.7.2
+      tar-fs: 2.1.5
+      uuid: 11.1.1
+    transitivePeerDependencies:
+      - supports-color
+
   dockerode@5.0.1:
     dependencies:
       '@balena/dockerignore': 1.0.2
@@ -5772,7 +5906,7 @@ snapshots:
       '@fastify/merge-json-schemas': 0.2.1
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
-      fast-uri: 4.1.2
+      fast-uri: 4.2.1
       json-schema-ref-resolver: 3.0.0
       rfdc: 1.4.1
 
@@ -5792,9 +5926,9 @@ snapshots:
     dependencies:
       fast-string-truncated-width: 3.0.3
 
-  fast-uri@3.1.5: {}
+  fast-uri@3.1.8: {}
 
-  fast-uri@4.1.2: {}
+  fast-uri@4.2.1: {}
 
   fast-wrap-ansi@0.2.2:
     dependencies:
@@ -6102,9 +6236,9 @@ snapshots:
 
   isexe@2.0.0: {}
 
-  isomorphic-ws@5.0.0(ws@8.21.1):
+  isomorphic-ws@5.0.0(ws@8.21.3):
     dependencies:
-      ws: 8.21.1
+      ws: 8.21.3
 
   jake@10.9.4:
     dependencies:
@@ -6118,7 +6252,7 @@ snapshots:
     dependencies:
       base64-js: 1.5.1
 
-  js-yaml@4.3.1:
+  js-yaml@4.3.2:
     dependencies:
       argparse: 2.0.1
 
@@ -6949,8 +7083,6 @@ snapshots:
       strip-ansi: 6.0.1
 
   wrappy@1.0.2: {}
-
-  ws@8.21.1: {}
 
   ws@8.21.3: {}
 

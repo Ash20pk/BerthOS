@@ -1,0 +1,17 @@
+{
+  "name": "@berthos/breakout-box",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The public break-out box: a standing Berth sandbox holding flags no capability grants",
+  "type": "module",
+  "scripts": {
+    "verify": "node test/breakout-milestone.mjs",
+    "serve": "node server.mjs"
+  },
+  "dependencies": {
+    "@berthos/audit": "workspace:*",
+    "@berthos/docker-orchestrator": "workspace:*",
+    "@berthos/manifest-schema": "workspace:*",
+    "dockerode": "^4.0.9"
+  }
+}

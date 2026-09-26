@@ -1,5 +1,5 @@
 import { Args, Command, Flags } from "@oclif/core";
-import { applyClientTls } from "@berth/tls";
+import { applyClientTls } from "@berthos/tls";
 import { input, select } from "@inquirer/prompts";
 import { cp, readFile, writeFile, readdir, stat, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -12,7 +12,7 @@ import { createGunzip } from "node:zlib";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
-import { loadManifest } from "@berth/manifest-schema";
+import { loadManifest } from "@berthos/manifest-schema";
 
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -105,7 +105,7 @@ export default class Init extends Command {
 }
 
 /**
- * Vendors @berth/sdk's self-contained external bundle (built by
+ * Vendors @berthos/sdk's self-contained external bundle (built by
  * packages/sdk/scripts/build-external.mjs) into the scaffolded project and
  * points its package.json at the vendored copy via a `file:` dependency,
  * replacing whatever was there ("^0.1.0" in local templates, "workspace:*"
@@ -114,12 +114,12 @@ export default class Init extends Command {
  * workspace, which is exactly the case this exists to cover.
  */
 async function vendorSdk(targetDir: string): Promise<void> {
-  const sdkEntryPath = fileURLToPath(import.meta.resolve("@berth/sdk"));
+  const sdkEntryPath = fileURLToPath(import.meta.resolve("@berthos/sdk"));
   const sdkPkgRoot = dirname(dirname(sdkEntryPath)); // dist/index.js -> dist -> package root
   const tarballPath = join(sdkPkgRoot, "dist-external", "berth-sdk.tgz");
   if (!existsSync(tarballPath)) {
     throw new Error(
-      `@berth/sdk's external bundle not found at ${tarballPath} — run \`pnpm --filter @berth/sdk build\` first; skipping SDK vendoring`,
+      `@berthos/sdk's external bundle not found at ${tarballPath} — run \`pnpm --filter @berthos/sdk build\` first; skipping SDK vendoring`,
     );
   }
 
@@ -129,13 +129,13 @@ async function vendorSdk(targetDir: string): Promise<void> {
 
   const pkgJsonPath = join(targetDir, "package.json");
   const pkgJson = JSON.parse(await readFile(pkgJsonPath, "utf-8")) as { dependencies?: Record<string, string> };
-  if (pkgJson.dependencies?.["@berth/sdk"]) {
-    pkgJson.dependencies["@berth/sdk"] = "file:./vendor/berth-sdk.tgz";
+  if (pkgJson.dependencies?.["@berthos/sdk"]) {
+    pkgJson.dependencies["@berthos/sdk"] = "file:./vendor/berth-sdk.tgz";
     await writeFile(pkgJsonPath, JSON.stringify(pkgJson, null, 2) + "\n");
   }
 
   // pnpm (10.21+) refuses to run a fresh dependency's install script until
-  // it's explicitly approved, and protobufjs (an @berth/sdk dependency, via
+  // it's explicitly approved, and protobufjs (an @berthos/sdk dependency, via
   // its context-bus client) has a benign one (scripts/postinstall — just an
   // optional-dep advisory). Outside this monorepo there's no prior approval
   // on record, so a first-time `pnpm install` would otherwise hard-fail —

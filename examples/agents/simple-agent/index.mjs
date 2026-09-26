@@ -9,15 +9,15 @@
 // paying this boot cost on every run via `berth os up` + `connect`.
 //
 // Unlike packages/agents/examples/*.mjs (which import "../dist/index.js",
-// a relative path into @berth/agents' own build output, since those scripts
-// live inside that package), this example imports "@berth/agents" by name.
+// a relative path into @berthos/agents' own build output, since those scripts
+// live inside that package), this example imports "@berthos/agents" by name.
 // package.json declares it as a real ("workspace:*") dependency, resolved
 // through node_modules the same way any external consumer of Berth would
 // get it. Requires ANTHROPIC_API_KEY or OPENAI_API_KEY, and skips (doesn't
 // fail) if neither is set.
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { runAgent } from "@berth/agents";
+import { runAgent } from "@berthos/agents";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");
@@ -33,7 +33,7 @@ async function main() {
   const result = await runAgent({
     apps: FILESYSTEM_APP_DIR,
     systemPrompt: "You are a helpful assistant with access to a real sandboxed filesystem.",
-    task: "Write a file called hello.txt containing the text 'hi from @berth/agents', then read it back to me.",
+    task: "Write a file called hello.txt containing the text 'hi from @berthos/agents', then read it back to me.",
   });
 
   console.log("\nagent said:", result.text);

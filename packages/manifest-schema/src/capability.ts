@@ -44,8 +44,8 @@ export function parseCapability(capability: string): ParsedCapability {
  * there, and companions live under `/workspace/<rel>`; see
  * packages/cli/src/util/workspace.ts).
  *
- * Kept here in @berth/manifest-schema rather than in the compiler so the
- * manifest schema, @berth/sdk's generate-capability-policy.ts, and anything
+ * Kept here in @berthos/manifest-schema rather than in the compiler so the
+ * manifest schema, @berthos/sdk's generate-capability-policy.ts, and anything
  * else that inspects capabilities all reject the same set — agent-init
  * re-checks its write paths independently in Rust, deliberately duplicating
  * this list, because it is the process actually doing the mkdir as root.

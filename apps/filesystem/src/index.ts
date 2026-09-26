@@ -1,4 +1,4 @@
-import { defineApp, type ContextBusClient, type SemanticFsClient } from "@berth/sdk";
+import { defineApp, type ContextBusClient, type SemanticFsClient } from "@berthos/sdk";
 import { z } from "zod";
 import { mkdir, readFile, writeFile, readdir, truncate } from "node:fs/promises";
 import { createConnection } from "node:net";
@@ -111,7 +111,7 @@ export default defineApp((app) => {
   // Diagnostic export used by capability-enforcement.mjs's network
   // deny-by-default check: this app declares no network:connect capability,
   // so under deny-by-default it should never be able to reach out. Always
-  // registered (not conditional) — @berth/sdk's runtime.js enforces an exact
+  // registered (not conditional) — @berthos/sdk's runtime.js enforces an exact
   // bijection between berth.yml's exports and the code's registered ones at
   // every boot, not just during `berth test`, so a conditionally-registered
   // export would break normal boot whenever its condition was true.

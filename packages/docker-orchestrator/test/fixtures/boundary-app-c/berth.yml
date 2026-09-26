@@ -7,7 +7,7 @@ capabilities:
   # per-app, and what the cross-app read assertion in
   # capability-enforcement.mjs Test 9 turns on.
   - filesystem:read:/workspace/.berth/dev-workspace/boundary-app-c
-  # The code this app boots from. `node_modules/@berth/sdk` is a pnpm
+  # The code this app boots from. `node_modules/@berthos/sdk` is a pnpm
   # symlink to /workspace/packages/sdk, and Landlock resolves symlinks to
   # the real inode — so without these the app cannot read its own entry
   # point and dies at startup with EACCES on

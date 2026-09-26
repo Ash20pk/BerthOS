@@ -1,6 +1,6 @@
 # `simple-agent` example
 
-The agent-side counterpart to [`../../resident-apps/hello-world`](../../resident-apps/hello-world), a resident app example. This one boots a `Computer` from a resident app and drives it with an `Agent`, using `@berth/agents` as an ordinary installed dependency. Check `package.json`'s `"@berth/agents": "workspace:*"` and `index.mjs`'s `import ... from "@berth/agents"`. That's the same shape an external project would use once `@berth/agents` is published. Nothing here reaches into this monorepo's source or build output by relative path.
+The agent-side counterpart to [`../../resident-apps/hello-world`](../../resident-apps/hello-world), a resident app example. This one boots a `Computer` from a resident app and drives it with an `Agent`, using `@berthos/agents` as an ordinary installed dependency. Check `package.json`'s `"@berthos/agents": "workspace:*"` and `index.mjs`'s `import ... from "@berthos/agents"`. That's the same shape an external project would use once `@berthos/agents` is published. Nothing here reaches into this monorepo's source or build output by relative path.
 
 Two scripts, two levels of the API:
 
@@ -11,7 +11,7 @@ Two scripts, two levels of the API:
 
 ```bash
 pnpm install
-pnpm build          # from the repo root, builds @berth/agents and its deps
+pnpm build          # from the repo root, builds @berthos/agents and its deps
 ```
 
 A local Docker daemon needs to be running (this example boots a real container, not a mock), and either `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` needs to be set. The script prints `SKIP` and exits cleanly if neither is, rather than failing.
@@ -44,4 +44,4 @@ See [`docs/berth-os-reference.md`](../../../docs/berth-os-reference.md).
 
 ## Multi-agent composition
 
-For `Crew.withManager()`/`Crew.networked()`, see [`packages/agents/examples`](../../../packages/agents/examples) and [`docs/agents-reference.md`](../../../docs/agents-reference.md).
+For `Crew.withManager()`/`Crew.networked()`, see [`experimental/agents/examples`](../../../experimental/agents/examples) and [`docs/agents-reference.md`](../../../docs/agents-reference.md).

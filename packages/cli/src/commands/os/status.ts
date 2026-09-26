@@ -1,6 +1,6 @@
 import { Args, Command } from "@oclif/core";
 import Docker from "dockerode";
-import { readOsState, listOsNames } from "@berth/docker-orchestrator";
+import { readOsState, listOsNames } from "@berthos/docker-orchestrator";
 import { isContainerRunning } from "../../util/os-docker.js";
 
 export default class OsStatus extends Command {

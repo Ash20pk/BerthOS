@@ -14,7 +14,7 @@ write /etc/berth-should-not-exist.txt -> EACCES: permission denied, open '/etc/b
 PASS — the capability line in berth.yml is the boundary, and the kernel is the one holding it.
 ```
 
-Nothing in `index.mjs`, in `@berth/agents`, or in `apps/filesystem`'s own code
+Nothing in `index.mjs`, in `@berthos/agents`, or in `apps/filesystem`'s own code
 inspects that second path. `apps/filesystem/berth.yml`'s capability list is
 compiled into a [Landlock](https://docs.kernel.org/userspace-api/landlock.html)
 ruleset that `agent-init` applies before the app's first line runs, so the write
@@ -24,7 +24,7 @@ gets the same answer as this script does.
 ## Run it
 
 ```bash
-pnpm install && pnpm build      # from the repo root, once — @berth/* is not on npm yet
+pnpm install && pnpm build      # from the repo root, once — @berthos/* is not on npm yet
 cd examples/kernel-says-no
 pnpm start                      # docker build chatter goes to stderr; add 2>/dev/null for just the demo
 ```

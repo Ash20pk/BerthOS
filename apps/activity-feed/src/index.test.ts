@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createLocalContextBus } from "@berth/sdk";
+import { createLocalContextBus } from "@berthos/sdk";
 import app from "./index.js";
 
 // `app` is a module-level singleton (defineApp() runs once at import, same

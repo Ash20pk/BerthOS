@@ -10,10 +10,11 @@ import {
   createMemoryAuditSink,
   readAuditFile,
   verifyAuditChain,
+  verifyAuditSegments,
 } from "./sink.js";
 import { operatorActor } from "./index.js";
 import { REDACTED } from "./redact.js";
-import type { AuditEvent } from "./types.js";
+import type { AuditEvent, AuditRecord } from "./types.js";
 
 function tmp(): string {
   return join(mkdtempSync(join(tmpdir(), "berth-audit-")), "audit.jsonl");
@@ -232,4 +233,74 @@ test("combineAuditSinks fans out and survives one sink failing", async () => {
   }
   assert.equal(good.records.length, 1);
   assert.ok(errors.some((e) => e.includes("an audit sink failed")));
+});
+
+
+/**
+ * Rotation past the retention window. `verifyAuditSegments` exists because
+ * seeding the walk with CHAIN_GENESIS reports BROKEN at record 0 of the
+ * oldest *surviving* segment once retention has pruned the genesis segment —
+ * i.e. on every healthy long-lived install.
+ */
+async function chainOf(n: number): Promise<AuditRecord[]> {
+  const path = tmp();
+  const sink = createFileAuditSink({ path });
+  for (let i = 0; i < n; i++) await sink.record(denial({ target: `app.export${i}` }));
+  return readAuditFile(path);
+}
+
+test("verifies a whole chain that begins at genesis", async () => {
+  const records = await chainOf(6);
+  const result = verifyAuditSegments([{ segment: "audit.jsonl", records }]);
+  assert.equal(result.valid, true);
+  assert.equal(result.truncatedStart, false);
+  assert.equal(result.totalRecords, 6);
+  assert.equal(result.head, records[5]!.hash);
+});
+
+test("verifies across a rotation boundary", async () => {
+  const all = await chainOf(6);
+  const result = verifyAuditSegments([
+    { segment: "audit.jsonl.1", records: all.slice(0, 3) },
+    { segment: "audit.jsonl", records: all.slice(3) },
+  ]);
+  assert.equal(result.valid, true);
+  assert.equal(result.truncatedStart, false);
+  assert.equal(result.head, all[5]!.hash);
+});
+
+test("accepts a start whose predecessor was pruned, and says so", async () => {
+  const all = await chainOf(6);
+  const result = verifyAuditSegments([{ segment: "audit.jsonl", records: all.slice(3) }]);
+  assert.equal(result.valid, true);
+  assert.equal(result.truncatedStart, true);
+  assert.equal(result.startedFrom, all[2]!.hash);
+  assert.equal(result.totalRecords, 3);
+  assert.equal(result.head, all[5]!.hash);
+});
+
+test("still detects an edited record when the start was pruned", async () => {
+  const all = await chainOf(6);
+  const tail = all.slice(3);
+  tail[1]!.decision = "allowed";
+  const result = verifyAuditSegments([{ segment: "audit.jsonl", records: tail }]);
+  assert.equal(result.valid, false);
+  assert.equal(result.failure?.brokenAt, 1);
+  assert.match(result.failure!.reason, /do not match its hash/);
+});
+
+test("still detects a deleted record when the start was pruned", async () => {
+  const all = await chainOf(6);
+  const result = verifyAuditSegments([{ segment: "audit.jsonl", records: [all[3]!, all[5]!] }]);
+  assert.equal(result.valid, false);
+  assert.equal(result.failure?.brokenAt, 1);
+  assert.match(result.failure!.reason, /does not match the previous record's hash/);
+});
+
+test("treats no records at all as an intact empty chain", () => {
+  const result = verifyAuditSegments([{ segment: "audit.jsonl", records: [] }]);
+  assert.equal(result.valid, true);
+  assert.equal(result.truncatedStart, false);
+  assert.equal(result.totalRecords, 0);
+  assert.equal(result.head, CHAIN_GENESIS);
 });

@@ -53,7 +53,7 @@ building ([Berth](https://github.com/Ash20pk/BerthOS)):
 |---|---|
 | The policy document | [`berth.yml`](https://github.com/Ash20pk/BerthOS/blob/main/docs/manifest-reference.md) — `filesystem:write:/workspace`, `network:connect:api.github.com:443`, `app:invoke:<sibling>` |
 | The enforcement point | [`agent-init`](https://github.com/Ash20pk/BerthOS/tree/main/packages/agent-init): Landlock + seccomp + capability drop, applied in the kernel before the agent's code runs; egress and GitHub API brokers for what the kernel can't express |
-| CloudTrail | [`@berth/audit`](https://github.com/Ash20pk/BerthOS/blob/main/docs/audit-reference.md) — hash-chained records with a *verified* actor, not a self-reported one |
+| CloudTrail | [`@berthos/audit`](https://github.com/Ash20pk/BerthOS/blob/main/docs/audit-reference.md) — hash-chained records with a *verified* actor, not a self-reported one |
 | *(no AWS equivalent yet)* | **Attestation** — per-run proof the policy was actually enforced on the host that ran it. In progress; not shipped, and we won't claim it until the verifier exists. |
 
 The word "kernel" in the middle row is the part that makes it a layer rather
@@ -71,11 +71,13 @@ IAM earned its trust by being *checkable* — and by being honest about scope.
 So, in the same spirit, what this layer does **not** yet give you (all
 tracked publicly in the repo's
 [threat model](https://github.com/Ash20pk/BerthOS/blob/main/docs/threat-model.md)
-and [remediation log](https://github.com/Ash20pk/BerthOS/blob/main/docs/internal/REMEDIATION.md)):
+and remediation log):
 
-- It is strong against a prompt-injected agent; it is not yet a boundary
-  against an attacker who already has arbitrary code execution inside the
-  container and targets the pre-enforcement daemons.
+- It is strong against a prompt-injected agent — and, since the daemons were
+  confined and `CAP_SYS_ADMIN` left the sandbox (BUILD_PLAN M1.1–M1.2), against
+  an attacker with arbitrary code execution inside the container too. One named
+  exception: the mesh daemon keeps root and `CAP_NET_ADMIN` for its WireGuard
+  interface, behind a control socket that still trusts self-declared identity.
 - Enforcement is a property of the *host kernel*. `berth doctor` exists
   because Docker Desktop on a Mac cannot enforce Landlock, and a tool that
   reported green there would be worse than no tool.

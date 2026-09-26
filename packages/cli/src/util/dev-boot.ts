@@ -1,6 +1,6 @@
 import Docker from "dockerode";
-import { startContainer, type RunningContainer } from "@berth/docker-orchestrator";
-import type { BerthManifest } from "@berth/manifest-schema";
+import { startContainer, type RunningContainer } from "@berthos/docker-orchestrator";
+import type { BerthManifest } from "@berthos/manifest-schema";
 import { buildDevImage, devImageTag } from "./build.js";
 import { resolveDevBindMount, devStatePath } from "./workspace.js";
 import type { AppSpec } from "./multi-app.js";

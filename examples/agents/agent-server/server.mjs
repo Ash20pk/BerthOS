@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Exposes an Agent over HTTP via @berth/agents' serveAgent() — the
+// Exposes an Agent over HTTP via @berthos/agents' serveAgent() — the
 // framework primitive this example's own server.mjs used to hand-roll
 // (GET /health, POST /task) before serveAgent()/createAgentRequestHandler()
 // existed (see gaps.md gap #22). serveAgent() also adds POST /chat, a
@@ -14,7 +14,7 @@
 //
 // Requires ANTHROPIC_API_KEY or OPENAI_API_KEY (createAgent() auto-detects
 // whichever is set), and skips (doesn't fail) if neither is present.
-import { createAgent, serveAgent } from "@berth/agents";
+import { createAgent, serveAgent } from "@berthos/agents";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 

@@ -1,0 +1,94 @@
+{
+  "name": "@berthos/agents",
+  "version": "0.1.0",
+  "description": "computer -> agent -> tool: boots a Berth computer loaded with resident apps, generates a tool list from their exports, and wires any LLM provider into single- or multi-agent crews",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.test.*",
+    "!dist/**/mock-server.*"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Ash20pk/BerthOS.git",
+    "directory": "experimental/agents"
+  },
+  "homepage": "https://github.com/Ash20pk/BerthOS#readme",
+  "bugs": {
+    "url": "https://github.com/Ash20pk/BerthOS/issues"
+  },
+  "author": "Berth Contributors",
+  "keywords": [
+    "ai-agents",
+    "agent-framework",
+    "llm",
+    "mcp",
+    "opentelemetry",
+    "sandbox",
+    "multi-agent",
+    "vercel-ai-sdk",
+    "langchain",
+    "langgraph"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "test": "node --test dist/*.test.js dist/*/*.test.js",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "prepublishOnly": "pnpm run build"
+  },
+  "dependencies": {
+    "@a2a-js/sdk": "^1.0.1",
+    "@anthropic-ai/sdk": "^0.117.1",
+    "@berthos/adapter-core": "workspace:*",
+    "@berthos/audit": "workspace:*",
+    "@berthos/docker-orchestrator": "workspace:*",
+    "@berthos/grants-server": "workspace:*",
+    "@berthos/manifest-schema": "workspace:*",
+    "@berthos/sdk": "workspace:*",
+    "@google/genai": "^2.17.1",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@opentelemetry/api": "^1.9.1",
+    "dockerode": "^5.0.1",
+    "openai": "^7.4.0",
+    "yaml": "^2.7.0",
+    "zod": "^4.4.3",
+    "zod-to-json-schema": "^3.24.1"
+  },
+  "devDependencies": {
+    "@langchain/core": "^1.2.8",
+    "@opentelemetry/sdk-trace-base": "^2.10.0",
+    "@types/dockerode": "^4.0.1",
+    "@types/node": "^26.2.0",
+    "ai": "^7.0.66",
+    "typescript": "^7.0.2"
+  },
+  "peerDependencies": {
+    "ai": ">=5",
+    "@langchain/core": ">=0.3"
+  },
+  "peerDependenciesMeta": {
+    "ai": {
+      "optional": true
+    },
+    "@langchain/core": {
+      "optional": true
+    }
+  }
+}

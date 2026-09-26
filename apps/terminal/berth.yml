@@ -5,11 +5,11 @@ description: "An interactive shared terminal: the agent drives a real shell via 
 capabilities:
   # Write-restricted to /workspace, same default as apps/filesystem — but no
   # filesystem:read:<path> is declared, so read access stays today's fully
-  # open default (see @berth/sdk's generate-capability-policy.ts) rather than
+  # open default (see @berthos/sdk's generate-capability-policy.ts) rather than
   # narrowing to just /workspace: a general-purpose shell that can't `cat`
   # outside one directory isn't very useful as a terminal.
   - filesystem:write:/workspace
-  # Two jobs. It's the signal @berth/docker-orchestrator's container.ts uses
+  # Two jobs. It's the signal @berthos/docker-orchestrator's container.ts uses
   # to map the ttyd port and start it — and, since REMEDIATION.md 1.15, it's
   # also what grants Landlock write access to /dev/pts and /dev/ptmx. Without
   # that grant tmux cannot allocate a pty at all on a kernel that enforces

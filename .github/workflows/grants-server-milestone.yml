@@ -2,7 +2,7 @@ name: Grants Server Milestone (Phase 3)
 
 # Real, running verification of the human-approval workflow — see
 # packages/docker-orchestrator/test/grants-server-milestone.mjs. Proves a
-# capability approved through a real running @berth/grants-server after the
+# capability approved through a real running @berthos/grants-server after the
 # fact lands in the effective capability policy at the app's next boot.
 on:
   push:

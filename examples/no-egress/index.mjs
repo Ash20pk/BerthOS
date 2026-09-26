@@ -20,7 +20,7 @@
  */
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { Computer } from "@berth/agents";
+import { Computer } from "@berthos/agents";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const CODE_INTERPRETER_DIR = join(REPO_ROOT, "apps", "code-interpreter");

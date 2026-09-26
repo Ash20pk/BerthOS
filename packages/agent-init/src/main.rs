@@ -2,7 +2,7 @@
 //
 // Sits between entrypoint.sh and the resident app's actual command (the SDK
 // runtime, check-exports.js, npm test, ...). Reads the capability policy
-// generated from berth.yml (see @berth/sdk's generate-capability-policy.ts),
+// generated from berth.yml (see @berthos/sdk's generate-capability-policy.ts),
 // applies a Landlock ruleset restricting write-ish filesystem access to only
 // the declared paths, then exec()s into the original command. Landlock
 // restrictions are inherited across execve() and can never be lifted, so
@@ -17,7 +17,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use caps::{CapSet, Capability};
 use landlock::{
-    AccessFs, AccessNet, Access, BitFlags, NetPort, PathBeneath, PathFd, Ruleset, RulesetAttr,
+    AccessFs, AccessNet, BitFlags, NetPort, PathBeneath, PathFd, Ruleset, RulesetAttr,
     RulesetCreatedAttr, RulesetStatus, ABI,
 };
 use serde::Deserialize;
@@ -39,10 +39,11 @@ struct CapabilityPolicy {
     read_paths: Vec<String>,
     #[serde(rename = "networkPorts", default)]
     network_ports: Vec<u16>,
-    // Deny-by-default: network access is restricted to `network_ports` unless
-    // this is set, which is the explicit, audited escape hatch for an app
-    // that declared `network:connect:*` (e.g. browser-native, which needs to
-    // reach arbitrary hosts). See generate-capability-policy.ts.
+    // Deny-by-default: outbound access is restricted to `network_ports`
+    // unless this is set, which is the explicit, audited escape hatch for an
+    // app that declared `network:connect:*`. It opts out of *outbound port
+    // scoping only* — bind(2) stays deny-by-default and per-port regardless
+    // (see apply_policy()). See generate-capability-policy.ts.
     #[serde(rename = "networkUnrestricted", default)]
     network_unrestricted: bool,
     // Declared network:peer:<name> globs (see docs/mesh-reference.md). Not
@@ -52,14 +53,16 @@ struct CapabilityPolicy {
     // exists purely so it's captured in the audit line below.
     #[serde(rename = "meshPeers", default)]
     mesh_peers: Vec<String>,
-    // Ports this app is allowed to bind()/listen() on — e.g. @berth/sdk's
+    // Ports this app is allowed to bind()/listen() on — e.g. @berthos/sdk's
     // HTTP RPC bridge (see docs/agents-reference.md's "Reaching a Computer
-    // from outside Node/Docker" section). Separate from network_ports:
-    // AccessNet::from_all handles (denies-by-default) BindTcp too the
-    // moment network access is restricted at all, not just ConnectTcp, and
-    // no capability namespace/action declares "this app needs to listen" —
-    // it's an orchestration-level fact (see generate-capability-policy.ts's
-    // computeBindPorts()), not something berth.yml's author writes.
+    // from outside Node/Docker" section). Separate from network_ports because
+    // Landlock separates AccessNet::BindTcp from ConnectTcp: listening is a
+    // different privilege from dialling out, and this process handles BindTcp
+    // unconditionally so bind is deny-by-default for every app.
+    //
+    // Two sources, unioned by generate-capability-policy.ts: `network:bind:<port>`
+    // declared in a berth.yml, and the orchestration-level ports no manifest
+    // author knows about (the HTTP RPC bridge's, ttyd's) from computeBindPorts().
     #[serde(rename = "bindPorts", default)]
     bind_ports: Vec<u16>,
 }
@@ -558,7 +561,7 @@ fn access_rights_for(path: &str) -> BitFlags<AccessFs> {
 }
 
 /// Path prefixes a declared write path may live under. A deliberate duplicate
-/// of ALLOWED_FILESYSTEM_SCOPE_PREFIXES in @berth/manifest-schema's
+/// of ALLOWED_FILESYSTEM_SCOPE_PREFIXES in @berthos/manifest-schema's
 /// capability.ts — that's the layer that rejects a bad `berth.yml` with a
 /// line-numbered error, but *this* process is the one that runs
 /// create_dir_all() as uid 0 with CAP_SYS_ADMIN, so it re-checks rather than
@@ -574,7 +577,7 @@ fn access_rights_for(path: &str) -> BitFlags<AccessFs> {
 const ALLOWED_WRITE_PATH_PREFIXES: [&str; 4] = ["/workspace", "/context", "/tmp", "/app"];
 
 /// Device paths the *compiler* injects — never something a `berth.yml` can
-/// declare, which is why `@berth/manifest-schema`'s copy of the prefix list
+/// declare, which is why `@berthos/manifest-schema`'s copy of the prefix list
 /// above deliberately does not grow to match. `/dev/null` goes to every app;
 /// `/dev/pts` and `/dev/ptmx` only to one declaring `terminal:*` (see
 /// generate-capability-policy.ts, which also records why `/dev/tty` is not
@@ -684,14 +687,24 @@ fn apply_policy(policy_path: &str) -> Result<(CapabilityPolicy, RulesetStatus), 
     let net_access = AccessNet::ConnectTcp;
 
     let restrict_reads = !policy.read_paths.is_empty();
-    let restrict_network = !policy.network_unrestricted;
+    // Connect and bind are handled independently. `network:connect:*`
+    // (network_unrestricted) opts out of *outbound port scoping* — it must not
+    // also hand back the ability to listen on any port, which is what
+    // handling neither right used to do: an app declaring a *connect*
+    // capability silently gained unrestricted bind(2) on all 65535 ports,
+    // and K22 ("the TCP cross-container listener cannot bind on an enforcing
+    // kernel") did not hold for it. Landlock has no "all ports" rule, so
+    // unrestricted connect is still expressed by not handling ConnectTcp;
+    // BindTcp is handled always, and granted only per declared bind port.
+    let restrict_connect = !policy.network_unrestricted;
 
     let mut builder = Ruleset::default().handle_access(write_access)?;
     if restrict_reads {
         builder = builder.handle_access(read_access)?;
     }
-    if restrict_network {
-        builder = builder.handle_access(AccessNet::from_all(ABI::V4))?;
+    builder = builder.handle_access(AccessNet::BindTcp)?;
+    if restrict_connect {
+        builder = builder.handle_access(AccessNet::ConnectTcp)?;
     }
     let mut ruleset = builder.create()?;
 
@@ -789,22 +802,23 @@ fn apply_policy(policy_path: &str) -> Result<(CapabilityPolicy, RulesetStatus), 
         }
     }
 
-    if restrict_network {
+    if restrict_connect {
         for &port in &policy.network_ports {
             ruleset = ruleset.add_rule(NetPort::new(port, net_access))?;
         }
-        // Bind grants are independent of network_ports' ConnectTcp ones —
-        // an app that needs to listen on a port (e.g. the HTTP RPC bridge)
-        // doesn't necessarily need to *dial out* on it too. Without this,
-        // AccessNet::from_all above denies bind() by default the same as
-        // connect(), and every listen() call in the process fails with
-        // EPERM the moment Landlock is actually enforced (silently a no-op
-        // wherever it isn't, e.g. Docker Desktop's linuxkit VM kernel —
-        // which is exactly why this was missed until CI's real kernel
-        // caught it).
-        for &port in &policy.bind_ports {
-            ruleset = ruleset.add_rule(NetPort::new(port, AccessNet::BindTcp))?;
-        }
+    }
+    // Unconditional, unlike the ConnectTcp rules above: BindTcp is always
+    // handled, so bind(2) is deny-by-default for every app regardless of
+    // whether it opted out of outbound port scoping. Bind grants are also
+    // independent of network_ports' ConnectTcp ones — an app that needs to
+    // listen on a port (e.g. the HTTP RPC bridge, ttyd) doesn't necessarily
+    // need to *dial out* on it too. Without a grant here, every listen() call
+    // in the process fails with EPERM the moment Landlock actually enforces
+    // (silently a no-op wherever it doesn't, e.g. Docker Desktop's linuxkit
+    // VM kernel — which is exactly why this was missed until CI's real kernel
+    // caught it).
+    for &port in &policy.bind_ports {
+        ruleset = ruleset.add_rule(NetPort::new(port, AccessNet::BindTcp))?;
     }
 
     let status = ruleset.restrict_self()?;

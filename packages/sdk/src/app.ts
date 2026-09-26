@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { BerthManifest } from "@berth/manifest-schema";
+import type { BerthManifest } from "@berthos/manifest-schema";
 import type { ContextBusClient } from "./context-bus/client.js";
 import type { SemanticFsClient } from "./semantic-fs/client.js";
 

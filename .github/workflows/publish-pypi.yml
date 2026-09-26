@@ -1,4 +1,4 @@
-name: Publish berth-agents to PyPI
+name: Publish berthos-agents to PyPI
 
 # Manual-only, dry-run by default: this workflow is never triggered by a
 # push or tag, only a human clicking "Run workflow" in the Actions tab and
@@ -6,7 +6,7 @@ name: Publish berth-agents to PyPI
 #
 # One-time setup this workflow depends on but can't do itself: PyPI trusted
 # publishing (https://docs.pypi.org/trusted-publishers/) needs a "pending
-# publisher" registered on PyPI for project "berth-agents" pointing at this
+# publisher" registered on PyPI for project "berthos-agents" pointing at this
 # repo (Ash20pk/BerthOS), workflow file (publish-pypi.yml), and environment
 # ("pypi") *before* the first real run — PyPI supports registering one for a
 # project that doesn't exist yet. No API token/secret to manage this way.
@@ -27,7 +27,7 @@ jobs:
       id-token: write # required by pypa/gh-action-pypi-publish's OIDC trusted-publishing flow
     defaults:
       run:
-        working-directory: packages/agents-python
+        working-directory: experimental/agents-python
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -49,4 +49,4 @@ jobs:
         if: ${{ !inputs.dry_run }}
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
-          packages-dir: packages/agents-python/dist
+          packages-dir: experimental/agents-python/dist

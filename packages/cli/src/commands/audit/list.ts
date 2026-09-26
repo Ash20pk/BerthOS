@@ -1,6 +1,6 @@
 import { Command, Flags } from "@oclif/core";
 import { homedir } from "node:os";
-import { defaultAuditPath, readAuditFile, type AuditRecord } from "@berth/audit";
+import { defaultAuditPath, readAuditFile, type AuditRecord } from "@berthos/audit";
 
 export default class AuditList extends Command {
   static override description =

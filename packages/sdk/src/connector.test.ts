@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { defineConnectorApp, type ConnectorConfig } from "./connector.js";
 import type { ContextBusClient } from "./context-bus/client.js";
-import type { BerthManifest } from "@berth/manifest-schema";
+import type { BerthManifest } from "@berthos/manifest-schema";
 
 function fakeManifest(name: string): BerthManifest {
   return { name } as unknown as BerthManifest;

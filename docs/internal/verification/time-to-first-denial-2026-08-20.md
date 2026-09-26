@@ -21,6 +21,6 @@ Honest caveats, per BUILD_PLAN rule 5:
 - Berth images were in the daemon's cache; a first `berth dev`/example run
   builds them. The 2 m 14 s is dominated by the example's container boot,
   not by image builds.
-- The npm-published flow (`npm i -g @berth/cli`) is not yet measurable —
+- The npm-published flow (`npm i -g @berthos/cli`) is not yet measurable —
   packages are unpublished (M0.2 human gate). Re-measure on a clean machine
   after publish and update this file.

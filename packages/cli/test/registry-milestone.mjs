@@ -4,13 +4,13 @@
 // stated Phase 5 verification approach), plus the "open SDK for external
 // developers" half of Phase 5's scope.
 //
-// Boots a real @berth/registry-server (real SQLite index, real blob storage
+// Boots a real @berthos/registry-server (real SQLite index, real blob storage
 // on disk), then drives the ACTUAL `berth` CLI as a user would, playing both
 // ends of the ecosystem:
 //   1. `berth init` a throwaway app from the local hello-world template into
 //      a fresh OS temp dir outside this repo — this IS what a genuine
 //      third-party developer has: a self-contained scaffold with its own
-//      vendored @berth/sdk, no monorepo-relative config (unlike, say,
+//      vendored @berthos/sdk, no monorepo-relative config (unlike, say,
 //      examples/resident-apps/hello-world, whose tsconfig.json extends
 //      "../../../tsconfig.base.json" — real, but coupled to this repo,
 //      which isn't the case being tested here).
@@ -19,10 +19,10 @@
 //   3. Confirms the registry actually indexed and can serve it back.
 //   4. `berth init --registry=<url> --template=<published-name>` into a
 //      SECOND fresh temp dir, simulating a different developer installing
-//      it — confirms package.json's "@berth/sdk" was rewritten to the
+//      it — confirms package.json's "@berthos/sdk" was rewritten to the
 //      vendored tarball (not left as whatever the publisher had), runs a
 //      real `pnpm install` + `pnpm build`, then boots the scaffolded app's
-//      vendored @berth/sdk runtime and calls its "ping" export over the real
+//      vendored @berthos/sdk runtime and calls its "ping" export over the real
 //      stdio RPC protocol.
 //
 // Requires Docker Desktop running (step 2's production image build) and all
@@ -34,7 +34,7 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createRegistryServer } from "@berth/registry-server";
+import { createRegistryServer } from "@berthos/registry-server";
 
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -87,14 +87,14 @@ async function main() {
 
     const pkgJson = JSON.parse(await readFile(join(targetDir, "package.json"), "utf-8"));
     assert(
-      pkgJson.dependencies["@berth/sdk"] === "file:./vendor/berth-sdk.tgz",
-      `expected the second developer's own vendorSdk() pass to (re-)point @berth/sdk at their own vendored tarball, got "${pkgJson.dependencies["@berth/sdk"]}"`,
+      pkgJson.dependencies["@berthos/sdk"] === "file:./vendor/berth-sdk.tgz",
+      `expected the second developer's own vendorSdk() pass to (re-)point @berthos/sdk at their own vendored tarball, got "${pkgJson.dependencies["@berthos/sdk"]}"`,
     );
 
     console.log("\n--- Building the scaffolded app outside the workspace ---");
     await execFileAsync("pnpm", ["build"], { cwd: targetDir });
 
-    console.log("\n--- Booting the scaffolded app via its vendored @berth/sdk runtime ---");
+    console.log("\n--- Booting the scaffolded app via its vendored @berthos/sdk runtime ---");
     const pingResult = await bootAndPing(targetDir);
     assert.deepEqualJson(pingResult, { id: "1", result: { message: "pong" } });
 
@@ -114,7 +114,7 @@ async function runCli(args, cwd) {
 
 function bootAndPing(appDir) {
   return new Promise((resolve, reject) => {
-    const child = spawn("node", [join(appDir, "node_modules", "@berth", "sdk", "runtime.js")], { cwd: appDir });
+    const child = spawn("node", [join(appDir, "node_modules", "@berthos", "sdk", "runtime.js")], { cwd: appDir });
     let stdout = "";
     const timer = setTimeout(() => {
       child.kill();

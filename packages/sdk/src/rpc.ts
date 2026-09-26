@@ -32,10 +32,10 @@ export type RpcResponse = { id: string; result: unknown } | { id: string; error:
  * startPeerSocketServers() for why the caller's identity comes from which
  * socket it reached rather than from anything it says.
  *
- * `networkPort` (or the `BERTH_NETWORK_PORT` env var) binds that same framing
- * on a TCP listener instead of a Unix socket, reachable from *other*
- * containers on a shared Docker network (see @berth/agents's
- * Crew.networked()) rather than only from the host.
+ * `networkPort` (or the `BERTH_NETWORK_PORT_<APP>` / `BERTH_NETWORK_PORT` env
+ * vars) binds that same framing on a TCP listener instead of a Unix socket,
+ * reachable from *other* containers on a shared Docker network rather than
+ * only from the host. Nothing in the product sets it — see envNetworkPort().
  */
 export function startRpcServer(app: BerthApp, options?: { socketPath?: string; networkPort?: number }): void {
   const rl = readline.createInterface({ input: process.stdin, terminal: false });
@@ -58,7 +58,29 @@ export function startRpcServer(app: BerthApp, options?: { socketPath?: string; n
   }
 }
 
-function envNetworkPort(): number | undefined {
+/**
+ * The TCP listener is opt-in and, today, opted into by hand: nothing in
+ * @berthos/agents or the orchestrator sets either of these variables —
+ * `Crew.networked()` reaches a remote peer over the authenticated HTTP RPC
+ * bridge (`startHttpRpcServer`) instead. So this is a door an app author
+ * opens deliberately, which is exactly why the governance gate has to sit on
+ * it: an ungated door nobody opens is still an ungated door.
+ *
+ * `BERTH_NETWORK_PORT_<APP>` is read first, because the plain container-wide
+ * form cannot work in a multi-app container — every app would try to bind the
+ * same port and all but one would fail. The app-scoped name is upper-cased
+ * with `-` mapped to `_`, matching `berth.yml`'s lower-kebab app names
+ * (`code-interpreter` → `BERTH_NETWORK_PORT_CODE_INTERPRETER`).
+ *
+ * Exported for rpc.test.ts — the resolution order is the whole behaviour, and
+ * a multi-app collision is not something a unit test can otherwise observe.
+ */
+export function envNetworkPort(): number | undefined {
+  const appName = process.env.BERTH_APP_NAME;
+  if (appName) {
+    const scoped = process.env[`BERTH_NETWORK_PORT_${appName.toUpperCase().replace(/-/g, "_")}`];
+    if (scoped) return Number(scoped);
+  }
   const raw = process.env.BERTH_NETWORK_PORT;
   return raw ? Number(raw) : undefined;
 }
@@ -170,10 +192,18 @@ function startPeerSocketServers(app: BerthApp, socketPath: string): void {
 
 function startTcpServer(app: BerthApp, port: number): void {
   // "tcp" rather than "host": this listener is reachable from *other
-  // containers* on a shared Docker network (Crew.networked), which is a
-  // materially different caller from the root-only relay socket, and a
-  // governor should be able to tell them apart.
+  // containers* on a shared Docker network, which is a materially different
+  // caller from the root-only relay socket, and a governor should be able to
+  // tell them apart.
   const server = net.createServer(connectionHandler(app, undefined, "tcp"));
+  // Without this, a bind failure is an unhandled 'error' event on the server,
+  // which takes the whole app process down — and the most likely bind failure
+  // is the plain container-wide BERTH_NETWORK_PORT in a multi-app container,
+  // where the second app to start hits EADDRINUSE. Losing the TCP listener
+  // should cost the listener, not the app.
+  server.on("error", (err) => {
+    console.error(`[berth:runtime] WARNING: could not listen on 0.0.0.0:${port} (${err}) — this app is not reachable over TCP`);
+  });
   server.listen(port, "0.0.0.0", () => {
     console.error(`[berth:runtime] RPC server also listening on 0.0.0.0:${port}`);
   });

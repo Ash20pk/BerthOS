@@ -24,6 +24,7 @@ So every kernel-level check runs **inside a container**, against the daemon's ke
 | Docker daemon reachable | `docker` | `ping()` plus version, kernel and arch. Gating: every kernel fact below comes from a container. |
 | Landlock enforcement | `landlock` | The verdict-deciding check. See below. |
 | Docker's default seccomp profile | `seccomp` | Read from the daemon. A `warn` here is not fatal — `agent-init` installs its own two filters regardless — but Docker's defence-in-depth is absent. |
+| Container runtime for sandboxes | `runtime` | Which runtime a sandbox would boot with (`BERTH_RUNTIME` / `--runtime`, else the daemon default), and whether the daemon actually has it. Informational when nothing was requested — with a pointer when `runsc` is registered. A requested runtime the daemon lacks is a `fail` (every boot would die at `createContainer`), and the kernel probe is then skipped rather than run under a different runtime and passed off as the answer. When a runtime *is* requested, the Landlock probe runs under it — under gVisor the kernel being probed is the sentry, not the host's Linux, and the two answers differ (see [kernel-enforcement.md § Optional hardened runtime](./kernel-enforcement.md#optional-hardened-runtime-gvisor--berth_runtime)). |
 | `/dev/fuse` available | `fuse` | Probed with the same `Devices` and `CapAdd` a real boot uses, because `/dev/fuse` is never present in a default container. Semantic FS mounts `/context` over FUSE. |
 
 ### The Landlock check is behavioural, and that's the point
@@ -48,8 +49,9 @@ Homebrew if missing, starts the VM with the flags
 --mount-type virtiofs --mount "$HOME:w"`), and then **re-runs the same checks
 against the Colima socket** — success is only ever claimed from that second,
 observed run. It exits non-zero if the re-check still can't observe
-enforcement, and finishes by printing the `DOCKER_HOST` export line a child
-process cannot apply to your shell. On Linux it refuses with an explanation:
+enforcement, and finishes by printing how to keep Berth on Colima: `docker
+context use colima` once (Berth follows the current Docker context), or the
+`DOCKER_HOST` export per shell. On Linux it refuses with an explanation:
 enforcement there is a property of the running kernel's LSM stack, not
 something a VM swap fixes.
 
@@ -66,7 +68,7 @@ Schema version `1`. Additive changes (new checks, new optional fields) keep `sch
   "reasons": ["the Landlock syscalls are not available in this kernel (Function not implemented)"],
   "checks": [
     {
-      "id": "landlock",                   // "docker" | "landlock" | "seccomp" | "fuse" — stable
+      "id": "landlock",                   // "docker" | "landlock" | "seccomp" | "fuse" | "runtime" — stable; readers must tolerate new ids
       "title": "Landlock enforcement in the container kernel",
       "status": "fail",                   // "ok" | "warn" | "fail" | "unknown"
       "detail": "…what was observed…",
@@ -88,7 +90,7 @@ Three contract details worth relying on:
 
 - **`unknown` never means "probably fine".** A check that didn't run has not passed. `--no-probe`, an unreachable daemon, and a probe that failed to start all report `unknown`.
 - **`enforcementActive: false` is not by itself a finding.** Pair it with `enforcementDetermined`: `false`/`true` means enforcement is off; `false`/`false` means the check failed and nothing was established. The `verdict` string says `NOT ACTIVE` vs `UNKNOWN` for the same reason.
-- **A `warn` never decides the verdict.** Only the `landlock` check does. `seccomp` and `fuse` warnings describe real losses (Docker's default profile, Semantic FS) that are not the capability boundary.
+- **A `warn` never decides the verdict.** Only the `landlock` check does. `seccomp` and `fuse` warnings describe real losses (Docker's default profile, Semantic FS) that are not the capability boundary. A `runtime` **fail** reaches the verdict indirectly and honestly: the probe can't start under a runtime the daemon doesn't have, so `landlock` reports `unknown` and the verdict is `UNKNOWN`, with the runtime failure in `reasons`.
 
 ## The probe image
 

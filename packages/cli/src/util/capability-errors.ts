@@ -1,4 +1,4 @@
-import { ALLOWED_FILESYSTEM_SCOPE_PREFIXES, matchesCapability, type BerthManifest } from "@berth/manifest-schema";
+import { ALLOWED_FILESYSTEM_SCOPE_PREFIXES, matchesCapability, type BerthManifest } from "@berthos/manifest-schema";
 import * as path from "node:path";
 
 /**

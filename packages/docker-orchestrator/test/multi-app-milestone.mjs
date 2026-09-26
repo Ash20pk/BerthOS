@@ -12,7 +12,7 @@ import Docker from "dockerode";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { loadManifest } from "@berth/manifest-schema";
+import { loadManifest } from "@berthos/manifest-schema";
 import { buildImage, startContainer, stopContainer, invokeAppExport } from "../dist/index.js";
 import { resolveDevBindMount } from "../../cli/dist/util/workspace.js";
 
@@ -81,11 +81,16 @@ async function main() {
     await waitFor(() => /"filesystem" ready/.test(containerLog.text()), 20000, "filesystem runtime ready");
     await waitFor(() => /"code-editor" ready/.test(containerLog.text()), 20000, "code-editor runtime ready");
 
-    const statusLines = [...containerLog.text().matchAll(/\[agent-init\] landlock restrict_self\(\).*$/gm)].map((m) => m[0]);
-    console.log("agent-init status lines:", statusLines);
+    // Match the app-NAMED "restricted \"<app>\"" lines, not the nameless
+    // "restrict_self() status" line: since BUILD_PLAN M1.2, context-bus-daemon
+    // also runs under agent-init and emits its own restrict_self() line, so a
+    // bare count of those would be 3 (two apps + the daemon). The named lines
+    // are unambiguous — one per app — which is the property this asserts.
+    const statusLines = [...containerLog.text().matchAll(/\[agent-init\] restricted "(filesystem|code-editor)".*$/gm)].map((m) => m[0]);
+    console.log("agent-init per-app restricted lines:", statusLines);
     assert(
       statusLines.length === 2,
-      `expected 2 separate agent-init restrict_self() status lines (one per app), got ${statusLines.length}: ${JSON.stringify(statusLines)}`,
+      `expected 2 separate agent-init per-app restricted lines (one per app), got ${statusLines.length}: ${JSON.stringify(statusLines)}`,
     );
 
     // No app in multi-app mode reads the container's raw stdin (see

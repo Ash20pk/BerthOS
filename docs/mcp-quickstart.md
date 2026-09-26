@@ -9,7 +9,7 @@ For the mechanics of the bridge (how manifest exports become MCP tools, what's d
 ## Prerequisites
 
 - Node.js 22+, Docker running locally, `corepack enable`.
-- A checkout, built once — `@berth/*` isn't on npm yet:
+- A checkout, built once — `@berthos/*` isn't on npm yet:
 
 ```bash
 git clone https://github.com/Ash20pk/BerthOS && cd BerthOS
@@ -35,7 +35,7 @@ Absolute paths matter: the client spawns this command with its own working direc
 
 Then ask Claude Code to write a file with the `write_file` tool, and to write one to `/etc`. The first succeeds inside the sandbox; the second comes back as the denial below.
 
-**On a Colima host** (the [macOS setup where enforcement is real](./mac-enforcement.md)), add `DOCKER_HOST` to the server's environment as well — Berth reaches Docker through dockerode, which reads `DOCKER_HOST` and ignores Docker CLI contexts, so without it the bridge talks to Docker Desktop while your terminal talks to Colima:
+**On a Colima host** (the [macOS setup where enforcement is real](./mac-enforcement.md)), the bridge follows your current Docker context (`docker context use colima`), just as your terminal does. To pin it regardless of which context is selected when the client starts the server, add `DOCKER_HOST` to the server's environment:
 
 ```bash
 claude mcp add berth-filesystem \

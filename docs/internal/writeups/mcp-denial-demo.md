@@ -55,7 +55,7 @@ Closing caption:
 
 > `denied-by: the kernel` is printed only when the container's own init
 > reported an enforced ruleset. On a host that can't enforce, the same
-> denial says so — honestly. `npm i -g @berth/cli && berth doctor` tells you
+> denial says so — honestly. `npm i -g @berthos/cli && berth doctor` tells you
 > which one you have.
 
 ## Recording notes
@@ -84,6 +84,6 @@ Closing caption:
       doctor output to the PR that publishes the demo).
 - [ ] The denial text in the post is pasted from the recording, not from
       this draft.
-- [ ] If the published-package flow (`npm i -g @berth/cli`) isn't live yet,
+- [ ] If the published-package flow (`npm i -g @berthos/cli`) isn't live yet,
       the caption must say "from source" — no install command we haven't
       shipped.

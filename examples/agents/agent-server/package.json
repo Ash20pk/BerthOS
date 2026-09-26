@@ -7,6 +7,6 @@
     "start": "node server.mjs"
   },
   "dependencies": {
-    "@berth/agents": "workspace:*"
+    "@berthos/agents": "workspace:*"
   }
 }

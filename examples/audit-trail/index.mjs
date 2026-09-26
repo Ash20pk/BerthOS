@@ -31,7 +31,7 @@ import {
   operatorActor,
   agentActor,
   appActor,
-} from "@berth/audit";
+} from "@berthos/audit";
 
 const auditPath = join(mkdtempSync(join(tmpdir(), "berth-audit-")), "audit.jsonl");
 const sink = createFileAuditSink({ path: auditPath });

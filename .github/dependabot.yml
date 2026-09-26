@@ -2,7 +2,7 @@ version: 2
 updates:
   # The pnpm workspace root — Dependabot's npm ecosystem understands
   # pnpm-lock.yaml natively and walks every workspace member's package.json
-  # (packages/*, packages/adapters/*, apps/*, examples/*/*, the test fixture
+  # (packages/*, experimental/adapters/*, apps/*, examples/*/*, the test fixture
   # workspaces in pnpm-workspace.yaml) from this one entry; it does not need
   # a separate entry per workspace member.
   - package-ecosystem: npm

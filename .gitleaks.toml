@@ -1,0 +1,18 @@
+# gitleaks' default rules, plus one allowlist entry.
+#
+# The containment benchmark generates a throwaway canary on every run
+# (bench/run.mjs: `bench-canary-${randomBytes(12).toString("hex")}`) and
+# hands it to each harness as BENCH_WORKLOAD_SECRET. The plain-Docker
+# column's recorded evidence shows that canary in `docker inspect`, which is
+# the finding ("Secret visible in runtime metadata"), so bench/results/
+# carries it on purpose. It is not a credential and grants nothing.
+#
+# Allowlisted by the canary's exact shape, not by path: a real key committed
+# to bench/results/ is still caught.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "containment benchmark canary (bench/run.mjs), not a credential"
+regexTarget = "match"
+regexes = ['''BENCH_WORKLOAD_SECRET=bench-canary-[0-9a-f]{24}\b''']

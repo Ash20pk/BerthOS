@@ -16,7 +16,7 @@ import {
   type RunningSidecar,
 } from "./semantic-fs-sidecar.js";
 import { randomBytes } from "node:crypto";
-import type { BerthManifest } from "@berth/manifest-schema";
+import type { BerthManifest } from "@berthos/manifest-schema";
 
 /**
  * CDP (9222) is deliberately absent. Chromium binds its debugging port to
@@ -30,7 +30,7 @@ import type { BerthManifest } from "@berth/manifest-schema";
  */
 const BROWSER_PORTS = { vnc: "5900", novnc: "6080" } as const;
 const TERMINAL_PORT = "7681";
-/** Container-internal port for @berth/sdk's HTTP RPC bridge — see StartContainerOptions.httpRpc. Same numeric default DEFAULT_FLEET_RPC_PORT (@berth/agents' network.ts) uses for a remote fleet deploy's bridge, for consistency, though the two are independent (this is a container-internal Docker port; that's a value baked into a remote instance's env). */
+/** Container-internal port for @berthos/sdk's HTTP RPC bridge — see StartContainerOptions.httpRpc. Same numeric default DEFAULT_FLEET_RPC_PORT (@berthos/agents' network.ts) uses for a remote fleet deploy's bridge, for consistency, though the two are independent (this is a container-internal Docker port; that's a value baked into a remote instance's env). */
 const HTTP_RPC_CONTAINER_PORT = "7300";
 
 export function declaresBrowserCapability(manifest: BerthManifest): boolean {
@@ -92,7 +92,7 @@ export interface StartContainerOptions {
    * just `{ hostPath: appDir, containerPath: "/app" }`. For an app that's a
    * pnpm workspace member, it must be the whole workspace root (not just the
    * app's own directory) — pnpm's `node_modules` uses relative symlinks
-   * (e.g. `@berth/sdk -> ../../../../packages/sdk`) that point outside the
+   * (e.g. `@berthos/sdk -> ../../../../packages/sdk`) that point outside the
    * app's own directory tree, and those symlinks dangle unless the sibling
    * package directories are present at the same relative path inside the
    * container. Omit for test/prod, where a real (non-symlinked) image was
@@ -145,14 +145,14 @@ export interface StartContainerOptions {
    * it doesn't already exist), rather than the default bridge. Containers on
    * a user-defined network resolve each other by container `name` via
    * Docker's embedded DNS — this is what lets one Berth computer reach
-   * another by name for agent-to-agent networking (see @berth/agents's
+   * another by name for agent-to-agent networking (see @berthos/agents's
    * Crew.networked()). The default bridge network provides no such DNS.
    */
   network?: string;
   /** berth-mesh-coordinator URL for network:peer:* apps — passed through as BERTH_MESH_COORDINATOR_URL. Omitted, mesh-daemon falls back to its own default (see docs/mesh-reference.md). */
   meshCoordinatorUrl?: string;
   /**
-   * Starts @berth/sdk's HTTP RPC bridge (`startHttpRpcServer`, gated by
+   * Starts @berthos/sdk's HTTP RPC bridge (`startHttpRpcServer`, gated by
    * BERTH_HTTP_RPC_PORT/TOKEN/APP env vars already read by runtime.ts's
    * main()) inside the container, and maps its port to the host — the same
    * bridge fleet-computer.ts's HttpBridgeComputer uses for a remote deploy,
@@ -178,6 +178,30 @@ export interface StartContainerOptions {
    * silently widen the binding back to Docker's default.
    */
   publishHost?: string;
+  /**
+   * Container runtime for the sandbox — Docker's `HostConfig.Runtime`, e.g.
+   * `runsc` for gVisor (BUILD_PLAN M1.4). Defaults to the daemon's default
+   * runtime, or to `BERTH_RUNTIME` when that's set (empty means unset, same
+   * rule as `BERTH_PUBLISH_HOST`). This is defense-in-depth for the one tier
+   * the threat model otherwise answers with "Docker is trusted" — a
+   * container-escape 0-day — and is NOT a substitute for the in-container
+   * enforcement (M1.1/M1.2): gVisor's sentry is a different kernel, so what
+   * Landlock/seccomp enforce there is *its* implementation of them, which the
+   * boot-time enforcement probe measures per runtime rather than assuming.
+   * The semantic-fs sidecar deliberately does not get this runtime: it must
+   * perform a FUSE mount that propagates through the host's mount table
+   * (rshared), which a gVisor-sandboxed mount namespace cannot do.
+   */
+  runtime?: string;
+  /**
+   * Extra HostConfig.SecurityOpt entries, appended verbatim after the ones
+   * this module computes. The one in-repo consumer is
+   * attestation-milestone.mjs's control boot, which pins a seccomp profile
+   * that ENOSYSes the landlock syscalls so an enforcing host can produce a
+   * genuinely NOT_ENFORCED boot — but the shape is general operator config
+   * (a custom seccomp/AppArmor profile), same trust tier as BERTH_RUNTIME.
+   */
+  extraSecurityOpt?: string[];
   /**
    * Where the per-container secrets file is written on the host — defaults to
    * ~/.berth/run/<container name>/secrets.env. Overridable so tests don't
@@ -225,14 +249,23 @@ function resolvePublishHost(explicit: string | undefined): string {
   return value;
 }
 
+/** Same empty-means-unset rule as resolvePublishHost, so a stray `BERTH_RUNTIME=` in a .env can't select a runtime named "". */
+function resolveRuntime(explicit: string | undefined): string | undefined {
+  const value = explicit ?? process.env.BERTH_RUNTIME;
+  return value === undefined || value === "" ? undefined : value;
+}
+
 export async function startContainer(options: StartContainerOptions): Promise<RunningContainer> {
   const docker = options.docker ?? new Docker();
+  const runtime = resolveRuntime(options.runtime);
 
   // Before anything else, because a banner printed after a screenful of app
-  // logs is a banner nobody reads. Cached per kernel, so this costs one probe
-  // container on the first boot after a kernel change and nothing after that.
-  // Best-effort by construction: it never throws and never blocks a boot.
-  await warnIfEnforcementInactive(docker, options.image);
+  // logs is a banner nobody reads. Cached per kernel (and per runtime — under
+  // gVisor the kernel being probed is the sentry, not the host's), so this
+  // costs one probe container on the first boot after a kernel change and
+  // nothing after that. Best-effort by construction: it never throws and
+  // never blocks a boot.
+  await warnIfEnforcementInactive(docker, options.image, runtime);
   const wantsBrowserPorts =
     options.apps && options.apps.length > 0
       ? options.apps.some((a) => needsBrowserPorts(a.manifest))
@@ -281,7 +314,7 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
   // caller that deliberately passes exactly one app here, specifically to
   // get entrypoint.sh's multi-app branch (and thus a per-app RPC socket a
   // separate host process can reconnect to via invokeAppExport) even for a
-  // lone app — see @berth/agents' Computer.connect().
+  // lone app — see @berthos/agents' Computer.connect().
   const env = { ...options.env };
   if (options.apps && options.apps.length > 0) {
     env.BERTH_APPS = JSON.stringify(options.apps.map((a) => ({ name: a.name, workingDir: a.workingDir })));
@@ -329,17 +362,42 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
   // (BUILD_PLAN M1.1, docs/internal/design/sys-admin-drop.md), so the
   // sandbox itself gets no SYS_ADMIN, no /dev/fuse, and no AppArmor
   // exception — `mount(2)` inside it fails EPERM for every process, root
-  // daemons included. If the sidecar's mount cannot propagate on this host
-  // (or BERTH_DISABLE_FS_SIDECAR=1 forces it), fall back to the pre-M1.1
-  // in-sandbox mount — with the capability, and with a loud warning, so
-  // `docker inspect` always tells the truth about which posture this
-  // container has. /dev/net/tun + NET_ADMIN are added only when an app
+  // daemons included. If the sidecar's mount cannot propagate on this host,
+  // the boot goes on without /context rather than quietly taking the pre-M1.1
+  // in-sandbox mount; BERTH_DISABLE_FS_SIDECAR=1 asks for that posture
+  // explicitly, with the
+  // capability and a loud warning, so `docker inspect` always tells the
+  // truth about which posture this container has. /dev/net/tun + NET_ADMIN are added only when an app
   // actually declares network:peer:* (see docs/mesh-reference.md).
   const devices: { PathOnHost: string; PathInContainer: string; CgroupPermissions: string }[] = [];
   const capAdd: string[] = [];
   const securityOpt: string[] = [];
   let sidecar: RunningSidecar | undefined;
-  if (process.env.BERTH_DISABLE_FS_SIDECAR !== "1") {
+  // Three postures, not two. BERTH_DISABLE_FS_SIDECAR=1 does NOT mean "no
+  // semantic FS" — it means "mount it inside the sandbox instead", which puts
+  // CAP_SYS_ADMIN back on this container. There was no way to say "this boot
+  // does not need /context at all", so every boot paid for a second container
+  // and a transient SYS_ADMIN window even when nothing would ever read
+  // /context. BERTH_NO_SEMANTIC_FS=1 is that third option: no sidecar, no
+  // in-sandbox mount, no /dev/fuse, no SYS_ADMIN anywhere, and no boot wait
+  // for a socket nothing will use.
+  //
+  // Opt-in, and it stays opt-in: an app that does reach /context (or an agent
+  // using checkpointing, sessions, or trace, which are Semantic-FS-backed)
+  // gets @berthos/sdk's loud "semantic-fs daemon not reachable" error rather
+  // than silently wrong results — see runtime.ts's createUnavailableSemanticFs.
+  // Defaulting this on would mean deciding for the caller which of those they
+  // use, and the failure is remote from the cause, so the caller declares it.
+  let semanticFsDisabled = process.env.BERTH_NO_SEMANTIC_FS === "1";
+  if (semanticFsDisabled) {
+    // The entrypoint needs to know too, or it starts the in-container daemon
+    // and then polls /proc/mounts for 5s waiting on a mount nobody will make.
+    env.BERTH_NO_SEMANTIC_FS = "1";
+    console.warn(
+      "[berth] semantic FS is off (BERTH_NO_SEMANTIC_FS=1): no /context mount, no sidecar, and no CAP_SYS_ADMIN anywhere in this boot. Anything that reads /context — including agent checkpointing, sessions, and trace — will fail loudly.",
+    );
+  }
+  if (!semanticFsDisabled && process.env.BERTH_DISABLE_FS_SIDECAR !== "1") {
     // `berth snapshot restore` pre-populates the daemon's backing paths via
     // extraBinds targeting /var/berth/* — the daemon lives in the sidecar
     // now, so those binds are re-aimed at its export dir. The sandbox keeps
@@ -369,14 +427,37 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
         appUidMap,
       });
     } catch (err) {
+      // Degrade to less, never to more. This used to fall through to the
+      // in-sandbox mount, so a host problem the caller never saw handed
+      // CAP_SYS_ADMIN to the app container — the one capability the
+      // sandbox's no-mount(2) claim rests on. It is always the case on
+      // Docker Desktop for Mac, whose file sharing isn't a shared mount.
+      // Now the boot takes the BERTH_NO_SEMANTIC_FS=1 posture instead: no
+      // /context, no capability, and @berthos/sdk's /context calls throw
+      // (createUnavailableSemanticFs) rather than return empty results.
+      semanticFsDisabled = true;
+      env.BERTH_NO_SEMANTIC_FS = "1";
       console.warn(
-        `[berth] WARNING: semantic-fs sidecar failed — falling back to the in-sandbox FUSE mount, which puts CAP_SYS_ADMIN back on this container (pre-M1.1 posture). ${(err as Error).message}`,
+        `[berth] WARNING: semantic-fs sidecar failed, so this boot has no /context (and no CAP_SYS_ADMIN): ` +
+          `/context reads, writes and queries will throw. ${(err as Error).message}\n` +
+          `  To mount /context inside the sandbox instead, accepting CAP_SYS_ADMIN on it: BERTH_DISABLE_FS_SIDECAR=1\n` +
+          `  To silence this on a host that never needs /context: BERTH_NO_SEMANTIC_FS=1`,
       );
     }
   }
   if (sidecar) {
     binds.push(...sidecar.sandboxBinds);
+  } else if (semanticFsDisabled) {
+    // Nothing to add: the whole point of this posture is that no mount is
+    // attempted, so neither the device nor the capability is needed. Falling
+    // through to the branch below would hand SYS_ADMIN to a boot that
+    // explicitly said it does not want a FUSE mount at all.
   } else {
+    // Only reachable by asking: BERTH_DISABLE_FS_SIDECAR=1. A failed sidecar
+    // no longer lands here (it turns semantic FS off above).
+    console.warn(
+      "[berth] WARNING: BERTH_DISABLE_FS_SIDECAR=1 — mounting /context inside the sandbox, which puts CAP_SYS_ADMIN, /dev/fuse and apparmor:unconfined on this container (pre-M1.1 posture).",
+    );
     devices.push({ PathOnHost: "/dev/fuse", PathInContainer: "/dev/fuse", CgroupPermissions: "rwm" });
     capAdd.push("SYS_ADMIN");
     // The default docker-default AppArmor profile denies the FUSE mount(2)
@@ -384,6 +465,7 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
     // — only needed on the legacy path, where the mount happens in here.
     securityOpt.push("apparmor:unconfined");
   }
+  if (options.extraSecurityOpt) securityOpt.push(...options.extraSecurityOpt);
   if (needsMesh) {
     devices.push({ PathOnHost: "/dev/net/tun", PathInContainer: "/dev/net/tun", CgroupPermissions: "rwm" });
     capAdd.push("NET_ADMIN");
@@ -400,7 +482,7 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
   // The 5.5 split. Everything a name marks as a credential — the RPC bearer
   // token and the terminal/VNC passwords generated above, plus whatever the
   // caller passed (a provider API key reaching a networked agent's own
-  // container is the motivating case; see @berth/agents' bootNetworkedAgent)
+  // container is the motivating case; see @berthos/agents' bootNetworkedAgent)
   // — leaves `Env` entirely and travels through a 0600 host file mounted
   // read-only at CONTAINER_SECRETS_PATH, which entrypoint.sh sources before
   // any daemon or app starts. Same process environment for the app either
@@ -410,7 +492,13 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
   //
   // No secrets, no mount: a container whose environment holds nothing
   // sensitive is byte-for-byte what it was before this existed.
-  const { plain, secret } = partitionSecretEnv(env);
+  // Declared names first: a name any app lists under `secrets:` is a secret
+  // regardless of what it is called, so the split below cannot miss one whose
+  // name does not look like a credential (see partitionSecretEnv).
+  const appDeclarations = (options.apps ?? [{ name: options.manifest.name, manifest: options.manifest }]).map(
+    (a) => ({ name: a.name, secrets: a.manifest.secrets ?? [] }),
+  );
+  const { plain, secret } = partitionSecretEnv(env, appDeclarations.flatMap((d) => d.secrets));
 
   // The M1.3 split on top of the 5.5 one: a secret name declared by any
   // app's `secrets:` list leaves the shared file and travels in that app's
@@ -418,9 +506,6 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
   // app's uid and sourced only in that app's subshell. Manifests with no
   // `secrets:` partition everything into `shared`, so a container that
   // declares nothing is byte-for-byte what it was before this existed.
-  const appDeclarations = (options.apps ?? [{ name: options.manifest.name, manifest: options.manifest }]).map(
-    (a) => ({ name: a.name, secrets: a.manifest.secrets ?? [] }),
-  );
   const { shared, perApp, missing } = partitionSecretsPerApp(secret, appDeclarations);
   for (const { app, name } of missing) {
     // Names only, never values — and loudly, because the app declared it
@@ -476,6 +561,10 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
       ...(resources.memoryMb !== undefined ? { Memory: resources.memoryMb * 1024 * 1024 } : {}),
       ...(deviceRequests ? { DeviceRequests: deviceRequests } : {}),
       ...(securityOpt.length > 0 ? { SecurityOpt: securityOpt } : {}),
+      // The hardened-runtime opt-in (BUILD_PLAN M1.4). Only the sandbox gets
+      // it — the sidecar's FUSE mount needs real host mount propagation, so
+      // startSemanticFsSidecar stays on the daemon's default runtime.
+      ...(runtime ? { Runtime: runtime } : {}),
     },
     ...(options.network
       ? { NetworkingConfig: { EndpointsConfig: { [options.network]: {} } } }
@@ -639,21 +728,18 @@ export async function stopContainer(
   container: Docker.Container,
   options: { secretsRunDir?: string; docker?: Docker } = {},
 ): Promise<void> {
-  // Before stopping, because inspect() is the only way back to the container
-  // *name* the secrets file was written under, and a removed container can no
-  // longer be inspected. Best-effort throughout: the file is 0600 in a 0700
-  // directory and is overwritten by the next boot of the same name, so
-  // failing to unlink it must not turn a successful teardown into an error.
-  await removeSecretsForContainer(container, options.secretsRunDir);
-  // The semantic-fs sidecar lives and dies with its sandbox. Best-effort and
-  // before the stop, for the same inspect()-needs-a-live-container reason.
+  // inspect() is the only way back to the container's *name*, which both the
+  // secrets directory and the sidecar are keyed by, and a removed container
+  // can no longer be inspected — so read it once, first.
+  let name: string | undefined;
   try {
-    const info = await container.inspect();
-    const name = info.Name?.replace(/^\//, "");
-    if (name) await stopSemanticFsSidecar(name, options.docker ?? new Docker());
+    // Docker reports names with a leading slash ("/berth-dev-app").
+    name = (await container.inspect()).Name?.replace(/^\//, "");
   } catch {
-    // No sidecar (legacy boot), or the container is already gone.
+    // Already gone, or the daemon went away.
   }
+  // The semantic-fs sidecar lives and dies with its sandbox. Best-effort.
+  if (name) await stopSemanticFsSidecar(name, options.docker ?? new Docker()).catch(() => {});
   try {
     await container.stop();
   } catch (err) {
@@ -663,32 +749,28 @@ export async function stopContainer(
     }
   }
   await container.remove({ force: true });
-}
-
-/**
- * Deliberately not called from `restartContainer()`: a restart re-runs
- * entrypoint.sh, which sources the secrets file again, so removing it there
- * would leave the app's second life without the credentials its first one
- * had.
- */
-async function removeSecretsForContainer(container: Docker.Container, secretsRunDir?: string): Promise<void> {
-  try {
-    const info = await container.inspect();
-    // Docker reports names with a leading slash ("/berth-dev-app").
-    const name = info.Name?.replace(/^\//, "");
-    if (name) await removeContainerSecretsDir(name, secretsRunDir);
-  } catch {
-    // Already gone, or the daemon went away — nothing to clean up that the
-    // next boot of this name won't overwrite anyway.
-  }
+  // Last, not first. The sidecar's host directory (<runDir>/<name>/fs) sits
+  // inside this one, and its FUSE mount propagates back to the host (rshared),
+  // so removing the directory while the sidecar ran failed on the live mount —
+  // silently, since this is best-effort — and left the credentials file
+  // behind on every Linux host. Colima's file sharing doesn't carry the mount
+  // to the macOS side, which is why it only showed in CI. Best-effort still:
+  // the file is 0600 in a 0700 directory and the next boot of this name
+  // overwrites it, so failing to unlink must not fail a successful teardown.
+  if (name) await removeContainerSecretsDir(name, options.secretsRunDir);
 }
 
 /**
  * Phase 1's hot-reload mechanism restarts the whole container rather than
  * exec-ing a fresh process inside a live one. On_install hooks are skipped on
- * restart via the marker file (see @berth/sdk's run-lifecycle.ts), so this stays fast —
+ * restart via the marker file (see @berthos/sdk's run-lifecycle.ts), so this stays fast —
  * a finer-grained "restart just the app process" is a later optimization,
  * not required for the Phase 1 workflow to feel responsive.
+ *
+ * Deliberately leaves the secrets directory alone, unlike stopContainer(): a
+ * restart re-runs entrypoint.sh, which sources the secrets file again, so
+ * removing it here would leave the app's second life without the credentials
+ * its first one had.
  */
 export async function restartContainer(container: Docker.Container): Promise<void> {
   await container.restart();

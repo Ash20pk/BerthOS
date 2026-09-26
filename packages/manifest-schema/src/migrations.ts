@@ -58,8 +58,8 @@ export function migrateToCurrent(raw: RawManifest, declaredVersion: number): Raw
     if (!migration) {
       throw new Error(
         `no migration registered from schema_version ${v} to ${v + 1} — this berth.yml declares schema_version: ${declaredVersion}, ` +
-          `but this installed @berth/manifest-schema (current version ${CURRENT_SCHEMA_VERSION}) doesn't know how to bring it forward. ` +
-          `Upgrade @berth/manifest-schema, or migrate this berth.yml to schema_version: ${CURRENT_SCHEMA_VERSION} by hand.`,
+          `but this installed @berthos/manifest-schema (current version ${CURRENT_SCHEMA_VERSION}) doesn't know how to bring it forward. ` +
+          `Upgrade @berthos/manifest-schema, or migrate this berth.yml to schema_version: ${CURRENT_SCHEMA_VERSION} by hand.`,
       );
     }
     migrated = migration(migrated);

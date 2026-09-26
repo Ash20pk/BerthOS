@@ -1,17 +1,17 @@
-# Berth
+# BerthOS
 
 **IAM for agents: declare what your agent may touch, and the kernel enforces it.**
 
 The cloud solved this for humans and services decades ago — declared policy, enforced by the platform rather than the application, with an audit trail compliance can run on. Agents have none of that: frameworks trust the model, sandboxes are permission-blind *inside* the box, guardrails filter words rather than actions. Berth is the missing layer — the **agent trust layer**.
 
-Your agent gets a persistent, sandboxed computer — a **Berth OS** — where what it's allowed to touch is a line in a manifest compiled into a [Landlock](https://docs.kernel.org/userspace-api/landlock.html) policy, applied before the app's own code runs. `filesystem:write:/workspace` means a write anywhere else dies on `EACCES` in the kernel, not in a `try/catch` and not in a system prompt the model can be talked out of. Every action lands in a hash-chained, actor-attributed [audit trail](./docs/audit-reference.md). (The third IAM leg — per-run *proof* that the policy was enforced — is in open development, and we won't claim it before it ships.)
+Your agent gets a persistent, sandboxed computer — a **Berth OS** — where what it's allowed to touch is a line in a manifest compiled into a [Landlock](https://docs.kernel.org/userspace-api/landlock.html) policy, applied before the app's own code runs. `filesystem:write:/workspace` means a write anywhere else dies on `EACCES` in the kernel, not in a `try/catch` and not in a system prompt the model can be talked out of. Every action lands in a hash-chained, actor-attributed [audit trail](./docs/audit-reference.md). And the third IAM leg — per-run *proof* — exists as a first cut: [`berth attest <runId>`](./docs/attestation-reference.md) emits a record binding the run's audit-chain slice to the enforcement status *as measured* for its boot, with a verdict derived from the embedded measurements — so on a host where nothing enforces, it says `NOT_ENFORCED` to your face. A standalone script verifies it with no Berth install. Tamper-evident, not tamper-proof — [the record says so itself](./docs/attestation-reference.md#what-this-does-not-prove).
 
 > Agents are not functions. They are workers. Workers need desks — and permissions.
 
 ## Run it
 
 ```bash
-npm install -g @berth/cli
+npm install -g @berthos/cli
 berth doctor --fix      # macOS: provisions a Colima host whose kernel actually enforces
 berth init my-app && cd my-app && berth dev
 ```
@@ -53,7 +53,7 @@ write /etc/berth-should-not-exist.txt -> EACCES: permission denied, open '/etc/b
 PASS — the capability line in berth.yml is the boundary, and the kernel is the one holding it.
 ```
 
-Nothing in that script, in `@berth/agents`, or in the app's own code inspects the second path. The manifest's capability list was compiled into a Landlock ruleset and applied by `agent-init` before the app's first line ran, so the write dies in `open(2)`. An agent that gets prompt-injected into trying it gets the same answer.
+Nothing in that script, in `@berthos/agents`, or in the app's own code inspects the second path. The manifest's capability list was compiled into a Landlock ruleset and applied by `agent-init` before the app's first line ran, so the write dies in `open(2)`. An agent that gets prompt-injected into trying it gets the same answer.
 
 **The honest part:** that denial needs a host kernel that provides Landlock. Docker Desktop for Mac does not, and the example says so and exits non-zero rather than printing a denial it can't attribute to the kernel. On macOS, [docs/mac-enforcement.md](./docs/mac-enforcement.md) is a four-flag Colima recipe (no kernel build) where it's real — verified on Apple silicon, Landlock ABI 4. Run [`berth doctor`](./docs/doctor-reference.md) to see which host you're on. What is and isn't enforced, per capability and per tier: [docs/kernel-enforcement.md](./docs/kernel-enforcement.md).
 
@@ -77,7 +77,7 @@ denied-by: the kernel — a Landlock ruleset compiled from "filesystem"'s berth.
 fix: none available — a berth.yml filesystem scope may only name /workspace, /context, /tmp, /app
 ```
 
-Denials name the manifest line that would allow them (or say honestly that none would), and `denied-by:` says `the kernel` only where the kernel really did it. Run `--warm` once first, then read [docs/mcp-quickstart.md](./docs/mcp-quickstart.md) — setup for Claude Desktop/Cursor, scoping with `--only`, and the `DOCKER_HOST` gotcha on Colima.
+Denials name the manifest line that would allow them (or say honestly that none would), and `denied-by:` says `the kernel` only where the kernel really did it. Run `--warm` once first, then read [docs/mcp-quickstart.md](./docs/mcp-quickstart.md) — setup for Claude Desktop/Cursor, scoping with `--only`, and pointing it at Colima.
 
 ## Keep the agent framework you already have
 
@@ -92,7 +92,7 @@ Berth's differentiator is what its tools are *made of*, so adopting a whole fram
 
 [`examples/agents/with-vercel-ai-sdk`](./examples/agents/with-vercel-ai-sdk) is the demo above with a real model in the loop and no Berth `Agent` anywhere in the file. Details, and why both adapters are optional peer dependencies: [docs/why-berth.md](./docs/why-berth.md#use-it-from-your-existing-framework).
 
-Or use the framework in the box: `@berth/agents` is a full one — providers, agents, multi-agent crews, `runAgent()` for the simple case. It's the reference consumer of everything above, and it's optional. See [docs/berth-agents-guide.md](./docs/berth-agents-guide.md).
+Or use the framework in the box: `@berthos/agents` is a full one — providers, agents, multi-agent crews, `runAgent()` for the simple case. It's the reference consumer of everything above, and it's optional. See [docs/berth-agents-guide.md](./docs/berth-agents-guide.md).
 
 ## Where everything went
 
@@ -104,18 +104,18 @@ This README used to be 500 lines. It's a hub now; nothing was deleted, including
 | [Quickstart](./docs/quickstart.md) | Prerequisites, install and build, running an agent, running a resident app, the CLI reference, repository layout |
 | [Enforcement](./docs/kernel-enforcement.md) | Kernel enforcement by platform, every capability and what enforces it, the kernel/broker/recorded tiers, **what isn't enforced yet** |
 | [Threat model](./docs/threat-model.md) | Adversaries, trust boundaries, what holds each one, what's permanently out of scope |
-| [Why Berth](./docs/why-berth.md) | The problem, the use cases, what `@berth/agents` gives you, using Berth from your existing framework |
+| [Why Berth](./docs/why-berth.md) | The problem, the use cases, what `@berthos/agents` gives you, using Berth from your existing framework |
 | [Resident apps](./docs/resident-apps.md) | Building one: `berth.yml`, `defineApp()`, the gotchas, the context bus, the semantic filesystem |
-| [`@berth/agents` guide](./docs/berth-agents-guide.md) | `Computer`/`createAgent`/`runAgent`, what a Berth OS is, multi-agent crews, the governance gate |
+| [`@berthos/agents` guide](./docs/berth-agents-guide.md) | `Computer`/`createAgent`/`runAgent`, what a Berth OS is, multi-agent crews, the governance gate |
 | [Getting started](./docs/getting-started.md) | The longer, resident-app-focused walkthrough |
 | [`berth doctor`](./docs/doctor-reference.md) · [Mac enforcement](./docs/mac-enforcement.md) | Whether your host enforces anything, and how to get a Mac that does |
 
-Reference docs for individual subsystems live in [docs/](./docs): [manifest](./docs/manifest-reference.md), [SDK](./docs/sdk-reference.md) ([Python](./docs/sdk-python-reference.md)), [agents](./docs/agents-reference.md) ([Python](./docs/agents-python-reference.md)), [Berth OS](./docs/berth-os.md) ([commands](./docs/berth-os-reference.md)), [semantic FS](./docs/semantic-fs-reference.md), [context bus](./docs/context-bus-reference.md), [egress broker](./docs/egress-broker-reference.md), [GitHub API scoping](./docs/github-api-scoping-reference.md), [TLS](./docs/tls-reference.md), [secrets](./docs/secrets-reference.md), [capability tokens and grants](./docs/capability-tokens-reference.md), [governance](./docs/governance-reference.md), [audit trail](./docs/audit-reference.md), [multi-app](./docs/multi-app-reference.md), [mesh](./docs/mesh-reference.md), [MCP bridge](./docs/mcp-bridge-reference.md), [app registry](./docs/app-registry-reference.md), [snapshots](./docs/computer-snapshots-reference.md), [K8s adapter](./docs/k8s-adapter-reference.md). Status of what's real: [ROADMAP.md](./ROADMAP.md).
+Reference docs for individual subsystems live in [docs/](./docs): [manifest](./docs/manifest-reference.md), [SDK](./docs/sdk-reference.md) ([Python](./docs/sdk-python-reference.md)), [agents](./docs/agents-reference.md) ([Python](./docs/agents-python-reference.md)), [Berth OS](./docs/berth-os.md) ([commands](./docs/berth-os-reference.md)), [semantic FS](./docs/semantic-fs-reference.md), [context bus](./docs/context-bus-reference.md), [egress broker](./docs/egress-broker-reference.md), [GitHub API scoping](./docs/github-api-scoping-reference.md), [TLS](./docs/tls-reference.md), [secrets](./docs/secrets-reference.md), [capability tokens and grants](./docs/capability-tokens-reference.md), [governance](./docs/governance-reference.md), [audit trail](./docs/audit-reference.md), [attestation](./docs/attestation-reference.md), [containment benchmark](./bench/README.md), [break-out box](./breakout/README.md), [multi-app](./docs/multi-app-reference.md), [mesh](./docs/mesh-reference.md), [MCP bridge](./docs/mcp-bridge-reference.md), [app registry](./docs/app-registry-reference.md), [snapshots](./docs/computer-snapshots-reference.md), [K8s adapter](./docs/k8s-adapter-reference.md). Status of what's real: [ROADMAP.md](./ROADMAP.md). Every enforcement claim, tagged by tier with its proving test or `UNPROVEN`: [claims inventory](./docs/internal/claims.md). The manifest grammar as a standalone, independently versioned spec anyone can implement — with a conformance suite and a mandatory enforcement-tier declaration: [spec/capability-manifest](./spec/capability-manifest). The attestation record's format, its canonical digest, the rule that a verdict must be derived from the measurements rather than asserted, and the verifier algorithm — same treatment, separately versioned: [spec/attestation-record](./spec/attestation-record).
 
 ## Two things to know before you build on it
 
-- **`@berth/*` isn't on npm yet.** You build it from source — that's what `pnpm build` above is for. The publish pipeline is real and dry-run-verified; see [Releasing](./docs/quickstart.md#releasing).
-- **Kernel-enforced filesystem and network scoping is real and testable today; cross-app and in-container privilege isolation is in progress.** Berth is a strong boundary around what an agent's *code* can touch, and not yet one you should trust against a determined attacker who already has code execution inside the container. The open items, with evidence: [what isn't enforced yet](./docs/kernel-enforcement.md#what-isnt-enforced-yet) and [docs/threat-model.md](./docs/threat-model.md).
+- **`@berthos/*` isn't on npm yet.** You build it from source — that's what `pnpm build` above is for. The publish pipeline is real and dry-run-verified; see [Releasing](./docs/quickstart.md#releasing). Not to be confused with the unrelated `@berth/*` packages on npm: they belong to a different project, and nothing here is published under that scope.
+- **Kernel-enforced filesystem and network scoping is real and testable today, and so is in-container privilege isolation.** Berth is a strong boundary around what an agent's *code* can touch — including code a determined attacker runs inside the container, who gets one app's uid, one Landlock domain, and no `CAP_SYS_ADMIN` anywhere in the sandbox. The residuals that bound that claim (the mesh daemon's retained root + `CAP_NET_ADMIN` is the largest — and it starts only for a container that declares `network:peer:`, so it is absent unless you ask for the mesh), with evidence: [what isn't enforced yet](./docs/kernel-enforcement.md#what-isnt-enforced-yet) and [docs/threat-model.md](./docs/threat-model.md).
 
 ## Something not working?
 

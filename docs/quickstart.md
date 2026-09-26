@@ -27,7 +27,7 @@ pnpm install
 pnpm build
 ```
 
-`pnpm build` compiles every package in dependency order through Turborepo: `@berth/manifest-schema` first, then `@berth/sdk`, `@berth/docker-orchestrator`, `@berth/agents` and the deploy adapters, and finally `@berth/cli`.
+`pnpm build` compiles every package in dependency order through Turborepo: `@berthos/manifest-schema` first, then `@berthos/sdk`, `@berthos/docker-orchestrator`, `@berthos/agents` and the deploy adapters, and finally `@berthos/cli`.
 
 ## See enforcement, with no API key
 
@@ -113,7 +113,7 @@ berth deploy --fleet=e2b          # or --fleet=daytona, --fleet=k8s, or an alias
 
 ## Releasing
 
-`@berth/*` is not published to npm yet, but the pipeline is real and dry-run-verified: `pnpm publish:npm:dry-run` (root `package.json`) builds every workspace package and packs each non-private one (everything under `packages/`, skipping `apps/`/`examples/`/test fixtures, which are all `"private": true`) exactly as `npm publish` would, without uploading. `.github/workflows/publish-npm.yml` and `.github/workflows/publish-pypi.yml` run that same pipeline (plus the `berth-agents` PyPI package's own build) from CI — both `workflow_dispatch`-only, dry-run by default, and only publish for real when a human explicitly flips `dry_run` to `false` on a manual run.
+`@berthos/*` is not published to npm yet, but the pipeline is real and dry-run-verified: `pnpm publish:npm:dry-run` (root `package.json`) builds every workspace package and packs each non-private one (everything under `packages/`, skipping `apps/`/`examples/`/test fixtures, which are all `"private": true`) exactly as `npm publish` would, without uploading. `.github/workflows/publish-npm.yml` and `.github/workflows/publish-pypi.yml` run that same pipeline (plus the `berth-agents` PyPI package's own build) from CI — both `workflow_dispatch`-only, dry-run by default, and only publish for real when a human explicitly flips `dry_run` to `false` on a manual run.
 
 ## CLI reference
 
@@ -123,7 +123,7 @@ berth deploy --fleet=e2b          # or --fleet=daytona, --fleet=k8s, or an alias
 | `berth init <name>` | Scaffold a new resident app from a template |
 | `berth dev` | Build a dev image, run it, hot-reload on source changes |
 | `berth test` | Build the production image, validate exports against `berth.yml`, invoke each with a schema-valid stub, run your own `npm test` |
-| `berth eval <file> [--history]` | Run a `@berth/agents` eval suite against a real Agent/Crew and check assertions about *behavior* — distinct from `berth test`'s manifest/export shape check; `--history` lists a suite's prior recorded runs |
+| `berth eval <file> [--history]` | Run a `@berthos/agents` eval suite against a real Agent/Crew and check assertions about *behavior* — distinct from `berth test`'s manifest/export shape check; `--history` lists a suite's prior recorded runs |
 | `berth agent run <file.yml> <task>` | Run a task against an Agent declared in a YAML config file — no code needed for the common case |
 | `berth crew run <file.yml> <task>` | Run a task against a `sequential`/`parallel`/`withManager` Crew declared in a YAML config file |
 | `berth deploy --fleet=<e2b\|daytona\|k8s> [--region=<value>]` | Deploy to a remote sandbox provider — `--region` meaning differs per adapter (Daytona snapshot region, k8s node selector, no-op on E2B) |
@@ -139,6 +139,19 @@ berth deploy --fleet=e2b          # or --fleet=daytona, --fleet=k8s, or an alias
 | `berth os up\|down\|status` | Boot a long-lived Berth OS once, then reconnect to it instantly instead of rebuilding on every dev iteration |
 
 Run `berth <command> --help` to see the flags. A few of these deserve their own doc: [MCP bridge](./mcp-bridge-reference.md), [app registry](./app-registry-reference.md), [computer snapshots](./computer-snapshots-reference.md), [capability tokens and grants](./capability-tokens-reference.md), [K8s adapter](./k8s-adapter-reference.md), [what is a Berth OS](./berth-os.md), and [the `berth os` command reference for cold start](./berth-os-reference.md).
+
+`berth eval`, `berth agent run` and `berth crew run` are the only commands that need
+the agent framework, and `@berthos/cli` does not depend on it. Installing the CLI
+gets you the sandbox and its evidence — `dev`, `mcp`, `doctor`, `attest`, `os`,
+`snapshot` — not an LLM framework and its provider tree. `@berthos/agents` is an
+optional peer dependency:
+
+```bash
+npm install @berthos/agents     # only for eval / agent run / crew run
+```
+
+Run one of those three without it and the CLI says exactly that, with the
+install line — not a module-resolution trace.
 
 ## Repository layout
 
@@ -156,7 +169,7 @@ packages/
   mesh-daemon/         Rust daemon that reconciles a sandbox's WireGuard config against mesh-coordinator's state
   adapters/            deploy adapters for E2B, Daytona, and Kubernetes
   cli/                 the `berth` CLI: init, dev, test, publish, deploy, os
-  sdk-python/          Python resident app SDK, wire-protocol compatible with @berth/sdk
+  sdk-python/          Python resident app SDK, wire-protocol compatible with @berthos/sdk
   agents/              computer, then agent, then tool: boots a Berth OS from resident apps, drives it with any LLM provider, composes multi-agent Crews
   agents-python/       Python Agent/Crew core (checkpointing, streaming, structured-output repair, all Crew shapes but networked) plus Computer.connect() over berth os up --http-rpc for a real sandbox's tools — no Computer.boot() yet
 apps/
@@ -172,5 +185,5 @@ apps/
 examples/
   kernel-says-no/      the hero demo: one resident app, two writes, one EACCES from the kernel — no LLM, no API key
   resident-apps/       resident app examples you run with `berth dev` (hello-world/ is the minimal, zero-capability one; http-fetch/ shows network:host:* + configureEgressProxy() on a plain, non-browser app)
-  agents/              agent examples that depend on @berth/agents as a real (workspace:*) package dependency (simple-agent/ is computer, agent, tool; agent-server/ serves the agent over HTTP instead of driving something itself)
+  agents/              agent examples that depend on @berthos/agents as a real (workspace:*) package dependency (simple-agent/ is computer, agent, tool; agent-server/ serves the agent over HTTP instead of driving something itself)
 ```

@@ -1,6 +1,6 @@
 import { Command, Args, Flags } from "@oclif/core";
 import Docker from "dockerode";
-import { streamLogs } from "@berth/docker-orchestrator";
+import { streamLogs } from "@berthos/docker-orchestrator";
 import { resolveFleet } from "../util/fleet.js";
 import { resolveInstanceId } from "../util/resolve-instance.js";
 

@@ -4,13 +4,13 @@ The Context Bus is Phase 2's first real agent runtime primitive: shared semantic
 
 ## Architecture
 
-One `context-bus-daemon` process (Rust, `packages/context-bus-daemon`) runs per agent sandbox (per container), started by `entrypoint.sh` before any resident app's runtime. Every resident app process in that sandbox connects to the same Unix socket (`$BERTH_CONTEXT_BUS_SOCKET`, default `/tmp/berth-context-bus.sock`) and exchanges length-prefixed protobuf `Envelope` frames — the schema lives at `packages/context-bus-daemon/proto/context_bus.proto` (canonical) with identical copies shipped in `@berth/sdk` (for the TypeScript client) and `packages/sdk-python` (for the Python client) to load at runtime.
+One `context-bus-daemon` process (Rust, `packages/context-bus-daemon`) runs per agent sandbox (per container), started by `entrypoint.sh` before any resident app's runtime. Every resident app process in that sandbox connects to the same Unix socket (`$BERTH_CONTEXT_BUS_SOCKET`, default `/tmp/berth-context-bus.sock`) and exchanges length-prefixed protobuf `Envelope` frames — the schema lives at `packages/context-bus-daemon/proto/context_bus.proto` (canonical) with identical copies shipped in `@berthos/sdk` (for the TypeScript client) and `packages/sdk-python` (for the Python client) to load at runtime.
 
 ```
 resident app A ──┐                      ┌── resident app B
   (filesystem)    │                      │    (code-editor)
                   ▼                      ▼
-         @berth/sdk ContextBusClient (unix-socket.ts)
+         @berthos/sdk ContextBusClient (unix-socket.ts)
                   │                      │
                   └────► context-bus-daemon ◄────┘
                        (one per sandbox, Unix socket)
@@ -44,11 +44,11 @@ app.export({ name: "write_file", /* ... */, handler: async (input) => {
 app.onAgentReady(async (ctx) => { contextBus = ctx.contextBus; });
 ```
 
-`@berth/sdk`'s `runtime.ts` tries the real Unix-socket client first and falls back to the Phase 1 local no-op if the daemon isn't reachable (e.g. running a bare `node dist/index.js` outside a sandbox, or in a unit test) — so app code is never forced to depend on a daemon being present.
+`@berthos/sdk`'s `runtime.ts` tries the real Unix-socket client first and falls back to the Phase 1 local no-op if the daemon isn't reachable (e.g. running a bare `node dist/index.js` outside a sandbox, or in a unit test) — so app code is never forced to depend on a daemon being present.
 
 ## Publishing from outside the sandbox
 
-`ctx.contextBus` is only ever handed to code running *inside* the sandbox — a host process (`@berth/agents`'s `Agent`, which runs outside it) has no direct socket to reach the daemon at all. `apps/filesystem` closes that gap with one export, `publish_context_event({topic, payload})`, a thin pass-through to the same `contextBus` reference it already captures for `fs.file_created`:
+`ctx.contextBus` is only ever handed to code running *inside* the sandbox — a host process (`@berthos/agents`'s `Agent`, which runs outside it) has no direct socket to reach the daemon at all. `apps/filesystem` closes that gap with one export, `publish_context_event({topic, payload})`, a thin pass-through to the same `contextBus` reference it already captures for `fs.file_created`:
 
 ```ts
 let contextBus: ContextBusClient | undefined;
@@ -60,7 +60,7 @@ app.export({
 app.onAgentReady(async (ctx) => { contextBus = ctx.contextBus; });
 ```
 
-`packages/agents/src/tracing.ts`'s `createContextBusStepTracer()` calls this the same way any other host-to-sandbox call happens — as a tool invocation, resolved off `Computer.tools` by export name — to publish `agent.step` events for live tailing. See [`docs/agents-reference.md`](./agents-reference.md#tracing-a-run-agentstep-events-not-a-langsmith-style-tracer).
+`experimental/agents/src/tracing.ts`'s `createContextBusStepTracer()` calls this the same way any other host-to-sandbox call happens — as a tool invocation, resolved off `Computer.tools` by export name — to publish `agent.step` events for live tailing. See [`docs/agents-reference.md`](./agents-reference.md#tracing-a-run-agentstep-events-not-a-langsmith-style-tracer).
 
 ## Verifying it
 

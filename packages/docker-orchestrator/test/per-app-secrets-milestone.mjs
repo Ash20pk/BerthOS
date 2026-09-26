@@ -27,7 +27,7 @@ import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { loadManifest } from "@berth/manifest-schema";
+import { loadManifest } from "@berthos/manifest-schema";
 import Docker from "dockerode";
 import { buildImage, startContainer, stopContainer } from "../dist/index.js";
 
@@ -103,7 +103,7 @@ async function bootTwoApps(docker, { declare, env, runDir }) {
   const manifestB = await loadManifest(join(APP_B_DIR, "berth.yml"));
   // The declaration under test, added here rather than in the fixture's
   // berth.yml so capability-enforcement.mjs's boots stay byte-identical.
-  // The schema path is unit-tested in @berth/manifest-schema.
+  // The schema path is unit-tested in @berthos/manifest-schema.
   const declaredA = declare ? { ...manifestA, secrets: ["BOUNDARY_A_API_TOKEN"] } : manifestA;
 
   return startContainer({

@@ -1,8 +1,8 @@
 name: Agents Milestone
 
-# Real, running verification that @berth/agents's Computer boots a
+# Real, running verification that @berthos/agents's Computer boots a
 # live sandbox and produces a callable tool list from resident-app exports —
-# see packages/agents/test/computer-boot-milestone.mjs,
+# see experimental/agents/test/computer-boot-milestone.mjs,
 # computer-multi-app-milestone.mjs, computer-http-rpc-milestone.mjs,
 # governance-gate-milestone.mjs, mcp-client-milestone.mjs,
 # code-interpreter-milestone.mjs, and declarative-config-milestone.mjs. The
@@ -34,29 +34,29 @@ jobs:
       - run: pnpm build
 
       - name: Run computer-boot-milestone.mjs
-        working-directory: packages/agents
+        working-directory: experimental/agents
         run: node test/computer-boot-milestone.mjs
 
       - name: Run computer-multi-app-milestone.mjs
-        working-directory: packages/agents
+        working-directory: experimental/agents
         run: node test/computer-multi-app-milestone.mjs
 
       - name: Run computer-http-rpc-milestone.mjs
-        working-directory: packages/agents
+        working-directory: experimental/agents
         run: node test/computer-http-rpc-milestone.mjs
 
       - name: Run governance-gate-milestone.mjs
-        working-directory: packages/agents
+        working-directory: experimental/agents
         run: node test/governance-gate-milestone.mjs
 
       - name: Run mcp-client-milestone.mjs
-        working-directory: packages/agents
+        working-directory: experimental/agents
         run: node test/mcp-client-milestone.mjs
 
       - name: Run code-interpreter-milestone.mjs
-        working-directory: packages/agents
+        working-directory: experimental/agents
         run: node test/code-interpreter-milestone.mjs
 
       - name: Run declarative-config-milestone.mjs
-        working-directory: packages/agents
+        working-directory: experimental/agents
         run: node test/declarative-config-milestone.mjs

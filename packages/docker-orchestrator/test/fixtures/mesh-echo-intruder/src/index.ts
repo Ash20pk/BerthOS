@@ -4,7 +4,7 @@
 // introduction wires it into a peer's wg0. Identical across
 // mesh-echo-planner/-browser/-intruder; only each one's berth.yml differs
 // (see docs/mesh-reference.md).
-import { defineApp } from "@berth/sdk";
+import { defineApp } from "@berthos/sdk";
 import { z } from "zod";
 import http from "node:http";
 import { execSync } from "node:child_process";

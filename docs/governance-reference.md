@@ -4,22 +4,26 @@ Lets a resident app put itself in front of every other app's tool calls in a Com
 
 Berth does record the verdicts, though. Pass an `AuditSink` and every allow, deny, and could-not-reach-the-governor is written to a hash-chained trail with an actor on it — see the [audit trail reference](./audit-reference.md). That is a record of what the gate *decided*, which is a different thing from the richer, policy-aware trail a governance app may want to keep for itself.
 
-## Why this lives in `@berth/agents`, not the kernel
+## Why this lives in `@berthos/agents`, not the kernel
 
 The instinct is "gate this at the kernel." Landlock (Berth's real kernel enforcement mechanism) applies a static ruleset once at container boot — it has no per-syscall callback to consult an external verdict-provider, which is the same reason per-syscall audit logging is permanently out of scope (see [capability tokens reference](./capability-tokens-reference.md)). There's no real hook at that layer to build this on.
 
-The layer that actually sees every action an agent takes, regardless of which app owns it, is `Computer` (`packages/agents/src/computer.ts`): the one place that turns every loaded app's exports into `Tool`s that the `Agent`'s tool-use loop calls through (see [agents reference](./agents-reference.md)). Gating there is the closest honest equivalent to "every app the agent uses goes through governance," and it stays pure TypeScript — no kernel, Rust, or Docker changes.
+The layer that actually sees every action an agent takes, regardless of which app owns it, is `Computer` (`experimental/agents/src/computer.ts`): the one place that turns every loaded app's exports into `Tool`s that the `Agent`'s tool-use loop calls through (see [agents reference](./agents-reference.md)). Gating there is the closest honest equivalent to "every app the agent uses goes through governance," and it stays pure TypeScript — no kernel, Rust, or Docker changes.
 
 **Scope boundary, and where it moved.** Gating at `Computer` covers an LLM-driven agent's tool use. It never covered the other ways into the same container — `berth rpc`, `berth mcp`, the HTTP RPC bridge, the cross-container TCP listener, or a sibling app's direct socket call — because none of them touch a `Computer`. An app denied a tool call could make the identical call over its peer socket and be obeyed.
 
-As of REMEDIATION.md 1.13's second half there is a **second gate, in `@berth/sdk`**, at the one point all of those converge: `invokeExport()`. Neither gate replaces the other, and the split follows what each layer can see:
+As of REMEDIATION.md 1.13's second half there is a **second gate, in `@berthos/sdk`**, at the one point all of those converge: `invokeExport()`. Neither gate replaces the other, and the split follows what each layer can see:
 
 | Gate | Lives in | Sees |
 |---|---|---|
-| Computer dispatch | `@berth/agents` | Agent tool calls, `computer.call`, the retriever, MCP tools, agent-as-tool delegation |
-| RPC dispatch | `@berth/sdk` | Every transport into a resident app: the relay (`berth rpc`, `berth mcp`), the HTTP bridge, the TCP listener, a sibling's peer socket |
+| Computer dispatch | `@berthos/agents` | Agent tool calls, `computer.call`, the retriever, MCP tools, agent-as-tool delegation |
+| RPC dispatch | `@berthos/sdk` | Every transport into a resident app: the relay (`berth rpc`, `berth mcp`), the HTTP bridge, the TCP listener, a sibling's peer socket |
 
-Still not gated: anything at the kernel/Landlock level (no per-syscall hook exists — see above), and root on the host, who can `docker exec` into the container regardless. For the relay specifically the gate is policy and audit rather than a boundary, since the operator reaching it is already root; for the peer socket, the TCP listener and the HTTP bridge it is a real boundary, because those callers are not.
+Still not gated: anything at the kernel/Landlock level (no per-syscall hook exists — see above), and root on the host, who can `docker exec` into the container regardless. For the relay specifically the gate is policy and audit rather than a boundary, since the operator reaching it is already root; for the peer socket and the HTTP bridge it is a real boundary, because those callers are not.
+
+**Every one of those transports now has a milestone row behind it**, not just the two that started with one: `experimental/agents/test/governance-gate-milestone.mjs` sends the same governor-refused `write_file` over the relay, the HTTP bridge and a sibling's peer socket, each with an allowed-export control, and then checks that none of the refused writes reached disk. Evidence and the negative controls: [governance-transports-2026-08-29.md](./internal/verification/governance-transports-2026-08-29.md).
+
+**The TCP listener is a special case, and the honest answer is better than "gated".** On a kernel that enforces, it cannot bind: Landlock denies `BindTcp` for any app with network scoping active, and the only two ports exempted are the HTTP RPC bridge's and ttyd's. `listen(2)` returns `EACCES` and there is no transport to gate. Nothing in Berth opens it either — `Crew.networked()` uses the HTTP bridge — so it is a door an app author opens by hand with `BERTH_NETWORK_PORT_<APP>`, on a host where the kernel will let them. If that ever changes, the gate does cover it: granting the bind in a negative control shows the same denial arriving over TCP.
 
 **What is gated, as of REMEDIATION.md 1.13.** The gate used to be applied by mapping over one `Tool[]`, so it covered exactly the tools in that array at that moment — anything assembled afterwards escaped it. It now sits on the Computer's *dispatch*, plus an explicit wrapper for the two paths that never touch that dispatch:
 
@@ -48,7 +52,7 @@ exports:
     output: { allowed: boolean, reason: string }
 ```
 
-`@berth/manifest-schema` hard-fails manifest loading if `governs: true` is set without an `evaluate_action` export declared — the same severity as the existing exports-must-match-code check.
+`@berthos/manifest-schema` hard-fails manifest loading if `governs: true` is set without an `evaluate_action` export declared — the same severity as the existing exports-must-match-code check.
 
 At most one app per Computer may declare `governs: true`. `Computer.boot()`/`Computer.connect()` throws a clear error at boot if more than one is loaded.
 

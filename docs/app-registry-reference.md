@@ -1,10 +1,12 @@
 # App Registry Reference (Phase 5)
 
-Phase 5 opens the framework to external developers: a place to publish resident apps, discover what others have published, and scaffold a new project from a published one — plus making `@berth/sdk` itself something a genuinely external project can depend on. This phase's registry/marketplace and SDK-openness goals are in scope here; usage-based billing and a hosted, multi-tenant service are not — those remain longer-term goals, not a Phase 5 build item (see [Scope](#scope) below).
+> **Frozen subsystem.** This lives in [`experimental/`](../experimental/README.md) and is not part of the core artifact (a `berth.yml` compiled into a kernel-enforced policy, plus the evidence for it). It still builds, still runs its tests, and nothing was deleted — it simply is not what `npm install @berthos/cli` gives you. See [`experimental/README.md`](../experimental/README.md) for why.
+
+Phase 5 opens the framework to external developers: a place to publish resident apps, discover what others have published, and scaffold a new project from a published one — plus making `@berthos/sdk` itself something a genuinely external project can depend on. This phase's registry/marketplace and SDK-openness goals are in scope here; usage-based billing and a hosted, multi-tenant service are not — those remain longer-term goals, not a Phase 5 build item (see [Scope](#scope) below).
 
 ## Architecture
 
-`@berth/registry-server` (`packages/registry-server`) is a small Fastify HTTP API backed by `node:sqlite` (Node's built-in SQLite — same "real database, no ORM" instinct as Phase 4's sidecar index, minus an extra dependency) for metadata and a plain directory tree for blob storage.
+`@berthos/registry-server` (`experimental/registry-server`) is a small Fastify HTTP API backed by `node:sqlite` (Node's built-in SQLite — same "real database, no ORM" instinct as Phase 4's sidecar index, minus an extra dependency) for metadata and a plain directory tree for blob storage.
 
 ```
 berth publish --registry=<url> ──► POST /apps (multipart: manifest + bundle.tar.gz)
@@ -29,10 +31,10 @@ berth init --registry=<url> --template=<name> ──► GET /apps/:name/latest
                                                         ▼
                                           extract into the new project,
                                           rewrite berth.yml's name,
-                                          vendor @berth/sdk (see below)
+                                          vendor @berthos/sdk (see below)
 ```
 
-Run the server standalone with `pnpm --filter @berth/registry-server exec node dist/server.js` (env: `BERTH_REGISTRY_PORT`, `BERTH_REGISTRY_HOST`, `BERTH_REGISTRY_DATA_DIR`), or embed it via `createRegistryServer({ dataDir })` (returns a Fastify instance — call `.listen()` yourself; this is what the milestone test below does in-process on an ephemeral port).
+Run the server standalone with `pnpm --filter @berthos/registry-server exec node dist/server.js` (env: `BERTH_REGISTRY_PORT`, `BERTH_REGISTRY_HOST`, `BERTH_REGISTRY_DATA_DIR`), or embed it via `createRegistryServer({ dataDir })` (returns a Fastify instance — call `.listen()` yourself; this is what the milestone test below does in-process on an ephemeral port).
 
 ## Endpoints
 
@@ -54,13 +56,13 @@ Unchanged from Phase 1 up through building the production Docker image and writi
 
 Resolves `<name>`'s latest version, downloads and extracts the bundle as the new project, then rewrites the extracted `berth.yml`'s `name:` field to whatever the new project was named (a downloaded bundle is a real published app with its own name baked in, not a `{{name}}`-templated scaffold like the local `hello-world`/`browser-native` templates).
 
-## Making `@berth/sdk` installable outside this monorepo
+## Making `@berthos/sdk` installable outside this monorepo
 
-This is the other half of Phase 5's "open SDK for external developers" — and the part that surfaced the most real bugs, because it's the first time anything in this repo tried to run `@berth/sdk` **outside** the pnpm workspace that has always resolved it via symlinks.
+This is the other half of Phase 5's "open SDK for external developers" — and the part that surfaced the most real bugs, because it's the first time anything in this repo tried to run `@berthos/sdk` **outside** the pnpm workspace that has always resolved it via symlinks.
 
-`packages/sdk/scripts/build-external.mjs` (run as part of `pnpm --filter @berth/sdk build`) produces `packages/sdk/dist-external/berth-sdk.tgz`: an esbuild bundle of `index.ts`/`runtime.ts` with `@berth/manifest-schema` (the one workspace-internal dependency) inlined, `zod`/`protobufjs`/`yaml` (real npm packages) kept as declared `dependencies`, and hand-mirrored `.d.ts` declarations (including a copy of `@berth/manifest-schema`'s types, since `BerthManifest` leaks into `AppContext`'s public shape) so a consuming app's own `tsc` still type-checks — packaged with `npm pack` so it's a standard, installable tarball, not a hand-rolled archive.
+`packages/sdk/scripts/build-external.mjs` (run as part of `pnpm --filter @berthos/sdk build`) produces `packages/sdk/dist-external/berth-sdk.tgz`: an esbuild bundle of `index.ts`/`runtime.ts` with `@berthos/manifest-schema` (the one workspace-internal dependency) inlined, `zod`/`protobufjs`/`yaml` (real npm packages) kept as declared `dependencies`, and hand-mirrored `.d.ts` declarations (including a copy of `@berthos/manifest-schema`'s types, since `BerthManifest` leaks into `AppContext`'s public shape) so a consuming app's own `tsc` still type-checks — packaged with `npm pack` so it's a standard, installable tarball, not a hand-rolled archive.
 
-`berth init`'s `vendorSdk()` (`packages/cli/src/commands/init.ts`) copies that tarball into the new project as `vendor/berth-sdk.tgz` and rewrites `package.json`'s `"@berth/sdk"` entry to `"file:./vendor/berth-sdk.tgz"` — replacing whatever was there (`"^0.1.0"` in the local templates, `"workspace:*"` in a real first-party app pulled from the registry; **neither resolves** once the project is copied anywhere outside this repo's pnpm workspace). It also pre-approves protobufjs's `postinstall` script via a generated `pnpm-workspace.yaml` (`allowBuilds: { protobufjs: true }`) — pnpm 10+ refuses to run any dependency's install script without explicit approval, and outside this monorepo there's no prior approval on record, so a first `pnpm install` would otherwise hard-fail on a script that's just a benign optional-dependency advisory.
+`berth init`'s `vendorSdk()` (`packages/cli/src/commands/init.ts`) copies that tarball into the new project as `vendor/berth-sdk.tgz` and rewrites `package.json`'s `"@berthos/sdk"` entry to `"file:./vendor/berth-sdk.tgz"` — replacing whatever was there (`"^0.1.0"` in the local templates, `"workspace:*"` in a real first-party app pulled from the registry; **neither resolves** once the project is copied anywhere outside this repo's pnpm workspace). It also pre-approves protobufjs's `postinstall` script via a generated `pnpm-workspace.yaml` (`allowBuilds: { protobufjs: true }`) — pnpm 10+ refuses to run any dependency's install script without explicit approval, and outside this monorepo there's no prior approval on record, so a first `pnpm install` would otherwise hard-fail on a script that's just a benign optional-dependency advisory.
 
 This makes the vendoring step, not tarball construction, the part worth trusting: `vendor/berth-sdk.tgz` travels with the scaffolded project, so `pnpm install && pnpm build` succeeds with zero access to this monorepo — verified for real below, not assumed.
 
@@ -72,12 +74,12 @@ This makes the vendoring step, not tarball construction, the part worth trusting
 
 ## Verification status
 
-**Fully verified**, via `packages/cli/test/registry-milestone.mjs` (real Fastify server, real SQLite, real filesystem blob storage — no mocks): it scaffolds a throwaway app from the local `hello-world` template, publishes it (a real Docker image build, same as any other `berth publish`) to a live registry instance, confirms the registry indexed and can list/search/serve it back, has a *second* `berth init` install it from the registry into a separate OS temp directory outside this repo's pnpm workspace, confirms `@berth/sdk` was correctly re-vendored there, runs a real `pnpm install` + `pnpm build`, and boots the scaffolded app's own vendored `@berth/sdk` runtime — asserting a real `ping` RPC round-trip over stdio.
+**Fully verified**, via `packages/cli/test/registry-milestone.mjs` (real Fastify server, real SQLite, real filesystem blob storage — no mocks): it scaffolds a throwaway app from the local `hello-world` template, publishes it (a real Docker image build, same as any other `berth publish`) to a live registry instance, confirms the registry indexed and can list/search/serve it back, has a *second* `berth init` install it from the registry into a separate OS temp directory outside this repo's pnpm workspace, confirms `@berthos/sdk` was correctly re-vendored there, runs a real `pnpm install` + `pnpm build`, and boots the scaffolded app's own vendored `@berthos/sdk` runtime — asserting a real `ping` RPC round-trip over stdio.
 
 ## Running it yourself
 
 ```bash
-pnpm build   # needed once so @berth/sdk's dist-external/ bundle exists
+pnpm build   # needed once so @berthos/sdk's dist-external/ bundle exists
 node packages/cli/test/registry-milestone.mjs
 ```
 

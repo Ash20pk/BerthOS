@@ -1,6 +1,6 @@
 # Audit trail reference
 
-`@berth/audit` is the record of what happened on a Berth installation and who did it: governance verdicts, capability-grant decisions, failed authentication attempts, and — optionally — every step an agent took.
+`@berthos/audit` is the record of what happened on a Berth installation and who did it: governance verdicts, capability-grant decisions, failed authentication attempts, and — optionally — every step an agent took.
 
 It exists because none of that was written down. `REMEDIATION.md` 5.1: governance denials threw silently, no server logged a request, `AgentStepEvent` recorded tool names and no actor, and `decided_by` on a grant was free text from the request body. A gate that blocks a hundred calls used to leave exactly the same trace as a gate nobody ever consulted.
 
@@ -35,8 +35,8 @@ An agent step that threw is recorded as `allowed` with a `reason`, not as `denie
 ## Turning it on
 
 ```ts
-import { createFileAuditSink, defaultAuditPath } from "@berth/audit";
-import { createAgent } from "@berth/agents";
+import { createFileAuditSink, defaultAuditPath } from "@berthos/audit";
+import { createAgent } from "@berthos/agents";
 import { homedir } from "node:os";
 
 const audit = createFileAuditSink({ path: defaultAuditPath(homedir()) });
@@ -79,11 +79,26 @@ Each record's `hash` covers `prevHash` plus its own canonical JSON, so a record 
 
 **This is tamper-evident, not tamper-proof.** Anyone who can write the file can recompute every hash from the line they edited onwards and produce a chain that verifies cleanly. Getting past that needs the hashes somewhere the editor cannot reach — an append-only store, a remote sink, periodic external anchoring — none of which is built. `berth audit verify` says so in its own output rather than implying a guarantee it does not have.
 
+`berth attest <runId>` (BUILD_PLAN M2.1) builds on this chain: it binds a run's slice of it, plus the chain head and the boot's measured enforcement status, into one self-hashed record a stranger can check without Berth installed — same trust model, stated inside the record. See [attestation-reference.md](./attestation-reference.md).
+
 ## Operational notes
 
 - **Writes are synchronous.** A record buffered when the process dies is a record that does not exist, and these are the events a crash would otherwise erase. Volume is low: a line per governance verdict and grant decision, not per HTTP request.
 - **A failing sink never fails the audited action.** It reports on stderr and drops the record. Both the sink and every call site catch — a monitoring backend having a bad day must not become a failed tool call.
 - **Rotation** defaults to 16MB and 5 files. There is no retention policy beyond that; pruning older segments is left to whatever already manages the host.
+- **Once rotation has pruned the genesis segment, the chain no longer starts at genesis.** The
+  oldest segment still on disk begins with a record naming a predecessor that has been
+  deleted. `berth audit verify` and `berth attest` start the walk from that named
+  predecessor and **report that they did so** — verification of every record still held is
+  unaffected, but the boundary itself is not checkable. That is stated in the output rather
+  than passed over silently, because retention pruning and someone deleting the early
+  segments to hide something are indistinguishable from the files alone.
+
+  Until 2026-08-29 both commands seeded the walk with the genesis hash instead, so on any
+  install that had rotated past its retention window `audit verify` reported `BROKEN` at
+  record 0 and `attest` refused to emit at all — a routine rotation was indistinguishable
+  from tampering, in the direction that cries wolf. Fixed by `verifyAuditSegments()` in
+  `@berthos/audit`, which both commands now share.
 - **`agent-init`'s boot events** are separate — they go to container stderr, not to this sink, since they run inside the sandbox before any of this exists. They are parseable JSON with a `"source":"agent-init"` field (the old `[agent-init] ` prefix made them unparseable, also 5.1).
 
 ## What is still open

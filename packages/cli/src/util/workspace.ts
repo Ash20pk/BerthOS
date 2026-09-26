@@ -5,7 +5,7 @@ import { dirname, join, relative } from "node:path";
  * Walks up from `startDir` looking for pnpm-workspace.yaml. If the app being
  * developed is a workspace member, `berth dev` must bind-mount the whole
  * workspace root (not just the app's own directory) — pnpm's node_modules
- * uses relative symlinks (e.g. `@berth/sdk -> ../../../../packages/sdk`)
+ * uses relative symlinks (e.g. `@berthos/sdk -> ../../../../packages/sdk`)
  * that point outside the app's directory tree, and those symlinks dangle
  * unless sibling package directories are present at the same relative path
  * inside the container.

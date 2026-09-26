@@ -33,7 +33,7 @@
 import Docker from "dockerode";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { loadManifest } from "@berth/manifest-schema";
+import { loadManifest } from "@berthos/manifest-schema";
 import { buildImage, startContainer, stopContainer, restartContainer, createStdioRpcClient } from "../dist/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));

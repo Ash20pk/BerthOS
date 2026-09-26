@@ -1,6 +1,6 @@
 import { Command, Args, Flags } from "@oclif/core";
 import Docker from "dockerode";
-import { invokeAppExport } from "@berth/docker-orchestrator";
+import { invokeAppExport } from "@berthos/docker-orchestrator";
 
 export default class Rpc extends Command {
   static override description =

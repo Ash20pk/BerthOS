@@ -20,7 +20,7 @@ pnpm install
 pnpm build
 ```
 
-`pnpm build` compiles every package in dependency order through Turborepo: `@berth/manifest-schema` first, then `@berth/sdk`, `@berth/docker-orchestrator`, `@berth/agents` and the deploy adapters, and finally `@berth/cli`.
+`pnpm build` compiles every package in dependency order through Turborepo: `@berthos/manifest-schema` first, then `@berthos/sdk`, `@berthos/docker-orchestrator`, `@berthos/agents` and the deploy adapters, and finally `@berthos/cli`.
 
 ## 2. Run the hello-world example
 
@@ -105,9 +105,9 @@ Beyond the `hello-world` → `notes` → `browser-native` ladder above:
 - [`apps/activity-feed`](../apps/activity-feed): a zero-capability resident app that fans context-bus events **in** from other apps rather than reacting to just one. It subscribes to `fs.file_created` (`apps/filesystem`) and `notes.added`/`notes.completed` (`apps/notes`), and exposes `get_recent_activity`, the last 50 events, most-recent first. Run it alongside `filesystem`/`notes` to see several containers composed purely over the context bus, with no direct RPC between them.
 - [`apps/terminal`](../apps/terminal): a shared, interactive shell. The agent drives a real shell through `run_command`/`read_screen`/`send_keys` (backed by `tmux`), and a human can watch, and type into, that exact same session live over the web (`ttyd`), the terminal equivalent of watching `apps/browser-native`'s Chromium over noVNC. Because both are spawned as children of this app's own already-Landlocked process, the shell inherits whatever filesystem and network capabilities `terminal` declares, the same way Chromium inherits `browser-native`'s.
 
-## 8. Build agents on top with `@berth/agents`
+## 8. Build agents on top with `@berthos/agents`
 
-Everything above is about authoring and running one resident app. To wire an LLM agent up to one or more resident apps' exports as tools, whether that's a single agent, a manager/worker crew, or independent agents networked across containers, start with [`examples/agents/simple-agent`](../examples/agents/simple-agent). It depends on `@berth/agents` as an ordinary `workspace:*` package dependency, the shape an external project's `package.json` would actually use. Then see [`packages/agents/examples/`](../packages/agents/examples/README.md) and [agents-reference.md](./agents-reference.md) for multi-agent composition.
+Everything above is about authoring and running one resident app. To wire an LLM agent up to one or more resident apps' exports as tools, whether that's a single agent, a manager/worker crew, or independent agents networked across containers, start with [`examples/agents/simple-agent`](../examples/agents/simple-agent). It depends on `@berthos/agents` as an ordinary `workspace:*` package dependency, the shape an external project's `package.json` would actually use. Then see [`experimental/agents/examples/`](../experimental/agents/examples/README.md) and [agents-reference.md](./agents-reference.md) for multi-agent composition.
 
 ## Something not working?
 

@@ -178,11 +178,11 @@ provision_app_identity() {
 # both the authorization and the identity, because which socket a connection
 # arrived on is a fact the kernel established at connect(2) and the caller
 # cannot influence. That is Step 4's SO_PEERCRED property, obtained the only
-# way available to a Node server — see @berth/sdk's rpc.ts.
+# way available to a Node server — see @berthos/sdk's rpc.ts.
 #
 # This is the authorized half of REMEDIATION.md 1.4. The unauthorized half —
 # any app reaching any other app's socket because they all sat in a 1777
-# directory — is what Step 3 closes; but @berth/agents' generated agent app
+# directory — is what Step 3 closes; but @berthos/agents' generated agent app
 # genuinely calls its sibling apps' exports (network.ts's callSibling, the
 # agent-as-tool path), so closing it without an opt-in would delete a shipped
 # feature rather than secure it. Declaring the capability is now what buys it,
@@ -237,7 +237,7 @@ grant_invoke_access() {
 # owned by the governor and group-owned by the caller means the caller is the
 # only unprivileged uid that can traverse in, so the governor learns which app
 # is asking from the kernel rather than from the request body.
-# What @berth/sdk's gate reads, per app. Unset (rather than empty) when no
+# What @berthos/sdk's gate reads, per app. Unset (rather than empty) when no
 # governor is loaded, which is the common case and the one where the gate
 # costs nothing: with no BERTH_GOVERNANCE_APP the SDK skips the check
 # entirely. The governor's own exports are exempted here *and* in the SDK —
@@ -405,6 +405,111 @@ secure_capability_policy() {
   chmod 0640 "$policy_path" 2>/dev/null || true
 }
 
+# --- Daemon confinement (BUILD_PLAN M1.2; threat model B4). ---
+#
+# The pre-agent-init daemons used to run as root with no Landlock domain —
+# the exact posture B4 names. context-bus-daemon now gets the same treatment
+# an app gets: its own uid (9001, below the apps' 10000+index range and never
+# colliding with it), and a Landlock ruleset + seccomp filters + capability
+# drop applied by the very same agent-init binary, reading a policy this
+# script writes rather than one compiled from a berth.yml. What the policy
+# grants is exactly what the daemon does: create and serve one Unix socket.
+# No outbound TCP (networkUnrestricted false, zero ports), no UDP (the
+# no-network seccomp filter), no namespace creation, no write outside the
+# socket's directory.
+#
+# semantic-fs-daemon and mesh-daemon are NOT started this way, for reasons
+# each states at its own start site: semantic-fs needs mount(2), which a
+# Landlock domain refuses outright (it narrows itself post-mount, in-process
+# — see main.go); mesh needs CAP_NET_ADMIN netlink access for wg0's whole
+# lifetime (it applies its own Landlock ruleset in-process — see its main.rs).
+#
+# BERTH_DISABLE_DAEMON_CONFINEMENT=1 restores the pre-M1.2 posture for all
+# three — the milestone test's negative control, and a loud escape hatch if
+# confinement breaks something in the field. All three log which mode they
+# are in either way.
+BERTH_DAEMON_BUS_UID=9001
+
+# Same shape as provision_app_identity above, minus the app-specific parts
+# (no tty group, no RPC/peers directories, no .berth chown — a daemon has
+# none of those). Membership in the shared `berth` group is what lets the
+# daemon chgrp its own socket to BERTH_SHARED_GID after binding it: chown(2)
+# to a group the caller belongs to is permitted without CAP_CHOWN.
+provision_daemon_identity() {
+  local user="$1"
+  local id="$2"
+  if id "$user" >/dev/null 2>&1; then
+    return 0
+  fi
+  if ! addgroup -g "$id" "$user" 2>/dev/null; then
+    echo "[berth:entrypoint] WARNING: could not create group ${user} (gid ${id}) — this daemon will keep running as root" >&2
+    return 1
+  fi
+  if ! adduser -S -D -H -u "$id" -G "$user" -s /sbin/nologin "$user" 2>/dev/null; then
+    echo "[berth:entrypoint] WARNING: could not create user ${user} (uid ${id}) — this daemon will keep running as root" >&2
+    return 1
+  fi
+  addgroup "$user" berth 2>/dev/null || true
+  return 0
+}
+
+# Starts context-bus-daemon, confined. Shared by the single- and multi-app
+# paths below, which used to duplicate the bare `context-bus-daemon &` line.
+# The policy is written by this script, as root, to a file the daemon itself
+# can never rewrite (0600 root-owned; agent-init reads it before dropping),
+# and its write grant is the socket's own directory — nothing else.
+start_context_bus_daemon() {
+  # Before the daemon starts and before it stops being root: a stale socket
+  # file from a previous boot is root-owned, and /tmp's sticky bit would
+  # stop uid 9001 from unlinking it (the daemon's own remove_file would
+  # silently fail and the bind would then refuse).
+  rm -f "$BERTH_CONTEXT_BUS_SOCKET" 2>/dev/null || true
+
+  if [ "${BERTH_DISABLE_DAEMON_CONFINEMENT:-0}" = "1" ]; then
+    echo "[berth:entrypoint] WARNING: BERTH_DISABLE_DAEMON_CONFINEMENT=1 — context-bus-daemon runs as root with no Landlock domain (pre-M1.2 posture)" >&2
+    /usr/local/bin/context-bus-daemon &
+    return 0
+  fi
+
+  install -d -m 0755 -o 0 -g 0 /run/berth
+
+  local policy="/run/berth/daemon-policy.context-bus.json"
+  local socket_dir
+  socket_dir="$(dirname "$BERTH_CONTEXT_BUS_SOCKET")"
+  # agent-init re-validates every write path against its own allowlist
+  # (/tmp, /workspace, /context, /app, /run/berth/<appName>), so a socket
+  # relocated somewhere exotic degrades to a skipped grant and a loud bind
+  # failure, never to a wider one.
+  cat >"$policy" <<EOF
+{
+  "appName": "context-bus-daemon",
+  "declaredCapabilities": ["daemon:context-bus"],
+  "writePaths": ["${socket_dir}"],
+  "readPaths": [],
+  "networkPorts": [],
+  "networkUnrestricted": false,
+  "bindPorts": []
+}
+EOF
+  chmod 0600 "$policy" 2>/dev/null || true
+
+  local user="berth-context-bus"
+  if provision_daemon_identity "$user" "$BERTH_DAEMON_BUS_UID"; then
+    echo "[berth:entrypoint] context-bus-daemon confined: uid ${BERTH_DAEMON_BUS_UID}, Landlock write scope ${socket_dir} (BUILD_PLAN M1.2)" >&2
+    env BERTH_CAPABILITY_POLICY="$policy" \
+        BERTH_APP_UID="$BERTH_DAEMON_BUS_UID" \
+        BERTH_APP_GID="$BERTH_DAEMON_BUS_UID" \
+        BERTH_APP_SUPPLEMENTARY_GIDS="$(id -G "$user" 2>/dev/null | tr ' ' ',')" \
+        /usr/local/bin/agent-init /usr/local/bin/context-bus-daemon &
+  else
+    # Identity provisioning failed (warned above) — the Landlock ruleset,
+    # capability drop, and seccomp filters still apply; only the uid drop is
+    # lost, which is strictly better than the bare fallback.
+    env BERTH_CAPABILITY_POLICY="$policy" \
+        /usr/local/bin/agent-init /usr/local/bin/context-bus-daemon &
+  fi
+}
+
 if [ -z "${BERTH_APPS:-}" ]; then
   # --- Single-app mode. ---
   # BERTH_APPS is only ever set by container.ts when more than one app
@@ -420,7 +525,7 @@ if [ -z "${BERTH_APPS:-}" ]; then
   # when unset) — a Python resident app sets BERTH_APP_RUNTIME=python.
   # PYTHONPATH points straight at the bind-mounted packages/sdk-python
   # source, the same role a pre-existing node_modules symlink plays for a
-  # TS app's @berth/sdk — no pip install needed for dev mode.
+  # TS app's @berthos/sdk — no pip install needed for dev mode.
   if [ "${BERTH_APP_RUNTIME:-node}" = "python" ]; then
     export PYTHONPATH="/workspace/packages/sdk-python${PYTHONPATH:+:$PYTHONPATH}"
   fi
@@ -440,7 +545,7 @@ if [ -z "${BERTH_APPS:-}" ]; then
   if [ "${BERTH_APP_RUNTIME:-node}" = "python" ]; then
     LIFECYCLE_FLAGS="$(python3 -m berth_sdk.run_lifecycle | tail -n1)"
   else
-    LIFECYCLE_FLAGS="$(node "$PWD/node_modules/@berth/sdk/dist/run-lifecycle.js" | tail -n1)"
+    LIFECYCLE_FLAGS="$(node "$PWD/node_modules/@berthos/sdk/dist/run-lifecycle.js" | tail -n1)"
   fi
   NEEDS_BROWSER="${LIFECYCLE_FLAGS%,*}"
   NEEDS_EGRESS_BROKER="${LIFECYCLE_FLAGS#*,}"
@@ -450,7 +555,7 @@ if [ -z "${BERTH_APPS:-}" ]; then
   fi
 
   echo "[berth:entrypoint] starting context-bus daemon on ${BERTH_CONTEXT_BUS_SOCKET}" >&2
-  /usr/local/bin/context-bus-daemon &
+  start_context_bus_daemon
 
   # Wait briefly for the daemon's socket to appear before handing off, so the
   # SDK runtime's first connection attempt doesn't race the bind() call.
@@ -465,37 +570,44 @@ if [ -z "${BERTH_APPS:-}" ]; then
   # Resident apps that want to write through /context still need their own
   # filesystem:write:/context capability declared in berth.yml; only the
   # control socket (register/tag/query) is unconditionally reachable.
-  if [ "${BERTH_SEMANTIC_FS_EXTERNAL:-0}" = "1" ]; then
-    # BUILD_PLAN M1.1: the FUSE mount is performed by the semantic-fs sidecar
-    # container and arrives here as a bind — this container holds no
-    # CAP_SYS_ADMIN and could not mount anything if it tried. The wait below
-    # is against the *propagated* mount becoming visible.
-    echo "[berth:entrypoint] /context is served by the semantic-fs sidecar (no CAP_SYS_ADMIN in this container)" >&2
+  if [ "${BERTH_NO_SEMANTIC_FS:-0}" = "1" ]; then
+    # No /context in this boot at all — no daemon, no sidecar mount to wait
+    # for, and no 5s poll for something that will never appear. The SDK's
+    # runtime reports the socket as unreachable, loudly, if anything asks.
+    echo "[berth:entrypoint] semantic FS is off (BERTH_NO_SEMANTIC_FS=1): no /context mount, and nothing waiting on one" >&2
   else
-    echo "[berth:entrypoint] starting semantic-fs daemon at ${BERTH_CONTEXT_MOUNT} (backed by ${BERTH_CONTEXT_DATA})" >&2
-    /usr/local/bin/semantic-fs-daemon &
+    if [ "${BERTH_SEMANTIC_FS_EXTERNAL:-0}" = "1" ]; then
+      # BUILD_PLAN M1.1: the FUSE mount is performed by the semantic-fs sidecar
+      # container and arrives here as a bind — this container holds no
+      # CAP_SYS_ADMIN and could not mount anything if it tried. The wait below
+      # is against the *propagated* mount becoming visible.
+      echo "[berth:entrypoint] /context is served by the semantic-fs sidecar (no CAP_SYS_ADMIN in this container)" >&2
+    else
+      echo "[berth:entrypoint] starting semantic-fs daemon at ${BERTH_CONTEXT_MOUNT} (backed by ${BERTH_CONTEXT_DATA})" >&2
+      /usr/local/bin/semantic-fs-daemon &
+    fi
+
+    # Wait for the FUSE mount to actually appear in the mount table, not just for
+    # the process to start — fuse.Mount() hands off to fusermount3 and the mount
+    # only becomes visible once that completes. (Sidecar mode: the propagated
+    # mount shows up here with the same fuse fstype.)
+    for _ in $(seq 1 50); do
+      grep -q " ${BERTH_CONTEXT_MOUNT} fuse" /proc/mounts && break
+      sleep 0.1
+    done
+    grep -q " ${BERTH_CONTEXT_MOUNT} fuse" /proc/mounts \
+      || echo "[berth:entrypoint] WARNING: ${BERTH_CONTEXT_MOUNT} never appeared as a FUSE mount — semantic-fs-daemon likely died on mount(2) (check AppArmor); the SDK will silently fall back to a local stub that always returns empty query results" >&2
   fi
 
-  # Wait for the FUSE mount to actually appear in the mount table, not just for
-  # the process to start — fuse.Mount() hands off to fusermount3 and the mount
-  # only becomes visible once that completes. (Sidecar mode: the propagated
-  # mount shows up here with the same fuse fstype.)
-  for _ in $(seq 1 50); do
-    grep -q " ${BERTH_CONTEXT_MOUNT} fuse" /proc/mounts && break
-    sleep 0.1
-  done
-  grep -q " ${BERTH_CONTEXT_MOUNT} fuse" /proc/mounts \
-    || echo "[berth:entrypoint] WARNING: ${BERTH_CONTEXT_MOUNT} never appeared as a FUSE mount — semantic-fs-daemon likely died on mount(2) (check AppArmor); the SDK will silently fall back to a local stub that always returns empty query results" >&2
-
   # Translates berth.yml's capabilities into the JSON policy agent-init reads
-  # (see @berth/sdk's generate-capability-policy.ts for why this lives in
+  # (see @berthos/sdk's generate-capability-policy.ts for why this lives in
   # Node/TypeScript rather than being parsed from YAML in Rust) — mirrored
   # exactly in Python for BERTH_APP_RUNTIME=python (same policy JSON shape;
   # agent-init doesn't care which one wrote it).
   if [ "${BERTH_APP_RUNTIME:-node}" = "python" ]; then
     python3 -m berth_sdk.generate_capability_policy
   else
-    node "$PWD/node_modules/@berth/sdk/dist/generate-capability-policy.js"
+    node "$PWD/node_modules/@berthos/sdk/dist/generate-capability-policy.js"
   fi
 
   # The app's name comes from the policy that was just generated rather than
@@ -522,7 +634,7 @@ if [ -z "${BERTH_APPS:-}" ]; then
     echo "[berth:entrypoint] browser:navigate:*/network:host:* capability declared — starting egress broker on 127.0.0.1:${EGRESS_BROKER_PORT}" >&2
     BERTH_CAPABILITY_POLICY="${BERTH_CAPABILITY_POLICY:-$PWD/.berth/capability-policy.json}" node /usr/local/bin/berth-egress-broker.js &
     # The standardized way any resident app's own code (not just Chromium's
-    # --proxy-server flag) discovers the broker — @berth/sdk's
+    # --proxy-server flag) discovers the broker — @berthos/sdk's
     # configureEgressProxy() reads exactly this. Same name whether this app
     # got here via browser:navigate:* or network:host:*.
     export BERTH_EGRESS_PROXY_URL="http://127.0.0.1:${EGRESS_BROKER_PORT}"
@@ -578,7 +690,7 @@ if [ -z "${BERTH_APPS:-}" ]; then
       || echo "[berth:entrypoint] WARNING: mesh-daemon's control socket never appeared — continuing without mesh" >&2
   fi
 
-  # No BERTH_TOKEN_SECRET any more. It backed @berth/sdk's HMAC-signed
+  # No BERTH_TOKEN_SECRET any more. It backed @berthos/sdk's HMAC-signed
   # capability tokens, which REMEDIATION.md 1.10 removed: nothing ever
   # verified one, and exporting the signing key into the environment of the
   # very process the tokens were meant to constrain is what made them
@@ -628,10 +740,10 @@ EGRESS_APP_DIR=""
 # assertAtMostOneMeshApp guarantees at most one hit here.
 NEEDS_MESH=0
 MESH_APP_DIR=""
-# The app declaring `governs: true`, if any. @berth/manifest-schema allows at
+# The app declaring `governs: true`, if any. @berthos/manifest-schema allows at
 # most one per Computer and already refuses such a manifest unless it exports
 # evaluate_action, so this loop only has to find the name — REMEDIATION.md
-# 1.13. What it enables is the gate at @berth/sdk's own RPC dispatch, which is
+# 1.13. What it enables is the gate at @berthos/sdk's own RPC dispatch, which is
 # the only place `berth rpc`, the HTTP bridge, the TCP listener and a
 # sibling's direct socket call can all be seen from.
 GOVERNANCE_APP=""
@@ -662,7 +774,7 @@ fi
 # default known upfront — only the broker process's actual startup happens
 # later, once EGRESS_APP_DIR's capability policy exists) so every app in this
 # container, whichever one declared the capability, inherits the same
-# standardized variable @berth/sdk's configureEgressProxy() reads.
+# standardized variable @berthos/sdk's configureEgressProxy() reads.
 if [ "$NEEDS_EGRESS_BROKER" = "1" ]; then
   export BERTH_EGRESS_PROXY_URL="http://127.0.0.1:${BERTH_EGRESS_BROKER_PORT:-8090}"
 fi
@@ -675,26 +787,31 @@ fi
 install -d -m 0755 -o 0 -g 0 /run/berth
 
 echo "[berth:entrypoint] starting context-bus daemon on ${BERTH_CONTEXT_BUS_SOCKET}" >&2
-/usr/local/bin/context-bus-daemon &
+start_context_bus_daemon
 for _ in $(seq 1 50); do
   [ -S "$BERTH_CONTEXT_BUS_SOCKET" ] && break
   sleep 0.1
 done
 
-if [ "${BERTH_SEMANTIC_FS_EXTERNAL:-0}" = "1" ]; then
-  # BUILD_PLAN M1.1 — same as the single-app path above: the mount comes from
-  # the sidecar; this container has no capability to make one.
-  echo "[berth:entrypoint] /context is served by the semantic-fs sidecar (no CAP_SYS_ADMIN in this container)" >&2
+if [ "${BERTH_NO_SEMANTIC_FS:-0}" = "1" ]; then
+  # See the single-app path above.
+  echo "[berth:entrypoint] semantic FS is off (BERTH_NO_SEMANTIC_FS=1): no /context mount, and nothing waiting on one" >&2
 else
-  echo "[berth:entrypoint] starting semantic-fs daemon at ${BERTH_CONTEXT_MOUNT} (backed by ${BERTH_CONTEXT_DATA})" >&2
-  /usr/local/bin/semantic-fs-daemon &
+  if [ "${BERTH_SEMANTIC_FS_EXTERNAL:-0}" = "1" ]; then
+    # BUILD_PLAN M1.1 — same as the single-app path above: the mount comes from
+    # the sidecar; this container has no capability to make one.
+    echo "[berth:entrypoint] /context is served by the semantic-fs sidecar (no CAP_SYS_ADMIN in this container)" >&2
+  else
+    echo "[berth:entrypoint] starting semantic-fs daemon at ${BERTH_CONTEXT_MOUNT} (backed by ${BERTH_CONTEXT_DATA})" >&2
+    /usr/local/bin/semantic-fs-daemon &
+  fi
+  for _ in $(seq 1 50); do
+    grep -q " ${BERTH_CONTEXT_MOUNT} fuse" /proc/mounts && break
+    sleep 0.1
+  done
+  grep -q " ${BERTH_CONTEXT_MOUNT} fuse" /proc/mounts \
+    || echo "[berth:entrypoint] WARNING: ${BERTH_CONTEXT_MOUNT} never appeared as a FUSE mount — semantic-fs-daemon likely died on mount(2) (check AppArmor); the SDK will silently fall back to a local stub that always returns empty query results" >&2
 fi
-for _ in $(seq 1 50); do
-  grep -q " ${BERTH_CONTEXT_MOUNT} fuse" /proc/mounts && break
-  sleep 0.1
-done
-grep -q " ${BERTH_CONTEXT_MOUNT} fuse" /proc/mounts \
-  || echo "[berth:entrypoint] WARNING: ${BERTH_CONTEXT_MOUNT} never appeared as a FUSE mount — semantic-fs-daemon likely died on mount(2) (check AppArmor); the SDK will silently fall back to a local stub that always returns empty query results" >&2
 
 # Runs one app's lifecycle (on_install + capability policy) then hands off to
 # agent-init, given its name/dir as $1/$2 and its command as the rest of the
@@ -713,7 +830,7 @@ run_app() {
   # only by declaring app:invoke:<name>, which puts it in this app's group;
   # the host relay reaches it as root (docker exec), which is unchanged.
   export BERTH_RPC_SOCKET="/run/berth/${app_name}/rpc.sock"
-  # Who this app is, in its own environment — @berth/sdk's governance gate
+  # Who this app is, in its own environment — @berthos/sdk's governance gate
   # announces actions under this name, and it is set by the orchestrator
   # rather than read from the manifest so it cannot disagree with the identity
   # the peers/ directories were built around (REMEDIATION.md 1.13).
@@ -725,7 +842,7 @@ run_app() {
   # browser/egress flags (the grep loop above decides those for the whole
   # container), so once on_install moved to build time — REMEDIATION.md 1.5 —
   # the only thing this invocation still did was cost a Node startup per app.
-  node "node_modules/@berth/sdk/dist/generate-capability-policy.js"
+  node "node_modules/@berthos/sdk/dist/generate-capability-policy.js"
   secure_capability_policy "$BERTH_CAPABILITY_POLICY"
 
   exec /usr/local/bin/agent-init "$@"
@@ -776,7 +893,7 @@ precreate_declared_paths() {
     ( cd "$dir" \
         && BERTH_MANIFEST_PATH="$dir/berth.yml" \
            BERTH_CAPABILITY_POLICY="$dir/.berth/capability-policy.json" \
-           node "node_modules/@berth/sdk/dist/generate-capability-policy.js" >/dev/null ) \
+           node "node_modules/@berthos/sdk/dist/generate-capability-policy.js" >/dev/null ) \
       || { echo "[berth:entrypoint] WARNING: could not pre-compile ${name}'s capability policy — its declared paths may not exist when a sibling binds a read grant on them" >&2; continue; }
 
     node -e '
@@ -864,7 +981,7 @@ while IFS=$'\t' read -r APP_NAME APP_DIR; do
   # second app was added). `</dev/null` for every app sidesteps that
   # fragility entirely rather than depending on exactly how fds survive
   # this script's fork/exec chain.
-  run_app "$APP_NAME" "$APP_DIR" node "node_modules/@berth/sdk/dist/runtime.js" </dev/null &
+  run_app "$APP_NAME" "$APP_DIR" node "node_modules/@berthos/sdk/dist/runtime.js" </dev/null &
   PID=$!
 
   if [ "$INDEX" -eq 0 ]; then

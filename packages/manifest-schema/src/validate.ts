@@ -71,7 +71,7 @@ function resolveSchemaVersion(raw: Record<string, unknown>, sourcePath?: string)
   if (declared > CURRENT_SCHEMA_VERSION) {
     throw new Error(
       `invalid berth.yml${sourcePath ? ` (${sourcePath})` : ""}: declares schema_version: ${declared}, but this installed ` +
-        `@berth/manifest-schema only supports up to ${CURRENT_SCHEMA_VERSION}. Upgrade @berth/manifest-schema to load this file.`,
+        `@berthos/manifest-schema only supports up to ${CURRENT_SCHEMA_VERSION}. Upgrade @berthos/manifest-schema to load this file.`,
     );
   }
   if (declared === CURRENT_SCHEMA_VERSION) return raw;

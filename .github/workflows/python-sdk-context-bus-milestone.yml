@@ -1,6 +1,6 @@
 name: Python SDK Context Bus Milestone
 
-# Real, running verification of @berth/sdk-python's context-bus client
+# Real, running verification of @berthos/sdk-python's context-bus client
 # (compiled-protobuf framing) interoperating with a real TypeScript
 # subscriber through the actual Rust daemon — see
 # packages/docker-orchestrator/test/python-sdk-context-bus-milestone.mjs.

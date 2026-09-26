@@ -1,5 +1,5 @@
 {
-  "name": "@berth/cli",
+  "name": "@berthos/cli",
   "version": "0.1.0",
   "description": "The berth CLI — init, dev, test, publish, deploy",
   "type": "module",
@@ -56,16 +56,11 @@
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
-    "@berth/audit": "workspace:*",
-    "@berth/tls": "workspace:*",
-    "@berth/adapter-core": "workspace:*",
-    "@berth/adapter-daytona": "workspace:*",
-    "@berth/adapter-e2b": "workspace:*",
-    "@berth/adapter-k8s": "workspace:*",
-    "@berth/agents": "workspace:*",
-    "@berth/docker-orchestrator": "workspace:*",
-    "@berth/manifest-schema": "workspace:*",
-    "@berth/sdk": "workspace:*",
+    "@berthos/audit": "workspace:*",
+    "@berthos/docker-orchestrator": "workspace:*",
+    "@berthos/manifest-schema": "workspace:*",
+    "@berthos/sdk": "workspace:*",
+    "@berthos/tls": "workspace:*",
     "@inquirer/prompts": "^8.5.2",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@oclif/core": "^4.13.5",
@@ -76,11 +71,36 @@
     "zod-to-json-schema": "^3.24.1"
   },
   "devDependencies": {
-    "@berth/registry-server": "workspace:*",
+    "@berthos/adapter-core": "workspace:*",
+    "@berthos/adapter-daytona": "workspace:*",
+    "@berthos/adapter-e2b": "workspace:*",
+    "@berthos/adapter-k8s": "workspace:*",
+    "@berthos/agents": "workspace:*",
+    "@berthos/registry-server": "workspace:*",
     "@types/dockerode": "^4.0.1",
     "@types/node": "^26.2.0",
     "@types/tar-fs": "^2.0.4",
     "oclif": "^4.23.30",
     "typescript": "^7.0.2"
+  },
+  "peerDependencies": {
+    "@berthos/adapter-daytona": "workspace:^",
+    "@berthos/adapter-e2b": "workspace:^",
+    "@berthos/adapter-k8s": "workspace:^",
+    "@berthos/agents": "workspace:^"
+  },
+  "peerDependenciesMeta": {
+    "@berthos/adapter-daytona": {
+      "optional": true
+    },
+    "@berthos/adapter-e2b": {
+      "optional": true
+    },
+    "@berthos/adapter-k8s": {
+      "optional": true
+    },
+    "@berthos/agents": {
+      "optional": true
+    }
   }
 }

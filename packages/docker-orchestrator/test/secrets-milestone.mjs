@@ -12,7 +12,7 @@
 //      neither value present under any other name;
 //   2. the host secrets file is 0600 inside a 0700 directory;
 //   3. the HTTP RPC bridge accepts the bearer token — which it can only do if
-//      entrypoint.sh sourced the file and @berth/sdk's server read it — and
+//      entrypoint.sh sourced the file and @berthos/sdk's server read it — and
 //      still refuses a wrong one;
 //   4. a real `berth snapshot create` of this container writes an env.json
 //      with no credential values in it, at 0600, naming what it withheld;
@@ -29,7 +29,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { mkdtemp } from "node:fs/promises";
-import { loadManifest } from "@berth/manifest-schema";
+import { loadManifest } from "@berthos/manifest-schema";
 import Docker from "dockerode";
 import { buildImage, startContainer, stopContainer, createSnapshot, containerSecretsDir, CONTAINER_SECRETS_PATH } from "../dist/index.js";
 
