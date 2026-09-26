@@ -95,22 +95,36 @@ async function startWithFakeDocker(options: {
   secretsRunDir: string;
   runtime?: string;
   extraSecurityOpt?: string[];
+  /** Use the /context posture the process env already selects, even none. */
+  postureFromEnv?: boolean;
 }): Promise<Docker.ContainerCreateOptions> {
   // The enforcement banner runs a real probe container against the real
   // daemon, which has nothing to do with what's under test here.
   process.env.BERTH_NO_ENFORCEMENT_BANNER = "1";
+  // The fake daemon can't run a sidecar, and a failed sidecar now turns
+  // /context off. Tests that don't pick a /context posture get the in-sandbox
+  // one by asking for it — the same HostConfig they saw before that change.
+  const choosePosture =
+    !options.postureFromEnv &&
+    process.env.BERTH_NO_SEMANTIC_FS === undefined &&
+    process.env.BERTH_DISABLE_FS_SIDECAR === undefined;
+  if (choosePosture) process.env.BERTH_DISABLE_FS_SIDECAR = "1";
   const captured: { create?: Docker.ContainerCreateOptions } = {};
-  await startContainer({
-    image: "berth/test:dev",
-    name: options.name,
-    manifest: manifest(["filesystem:write:/workspace"]),
-    env: options.env,
-    httpRpc: options.httpRpc,
-    secretsRunDir: options.secretsRunDir,
-    runtime: options.runtime,
-    extraSecurityOpt: options.extraSecurityOpt,
-    docker: fakeDocker(captured),
-  });
+  try {
+    await startContainer({
+      image: "berth/test:dev",
+      name: options.name,
+      manifest: manifest(["filesystem:write:/workspace"]),
+      env: options.env,
+      httpRpc: options.httpRpc,
+      secretsRunDir: options.secretsRunDir,
+      runtime: options.runtime,
+      extraSecurityOpt: options.extraSecurityOpt,
+      docker: fakeDocker(captured),
+    });
+  } finally {
+    if (choosePosture) delete process.env.BERTH_DISABLE_FS_SIDECAR;
+  }
   assert.ok(captured.create, "startContainer never called createContainer");
   return captured.create;
 }
@@ -221,9 +235,10 @@ test("startContainer appends extraSecurityOpt to HostConfig.SecurityOpt", async 
  * ask for neither.
  *
  * These run without a reachable sidecar (the fake daemon can't propagate a
- * FUSE mount), so the default and DISABLE_FS_SIDECAR cases both land in the
- * in-sandbox fallback — which is exactly the branch that must NOT be reached
- * when semantic FS is off.
+ * FUSE mount), which is the failure the default posture must degrade to
+ * "off" rather than paper over with the in-sandbox mount. Only DISABLE_FS_SIDECAR reaches
+ * that mount, and it is exactly the branch that must NOT be reached when
+ * semantic FS is off.
  */
 async function hostConfigWithEnv(name: string, env: Record<string, string | undefined>) {
   const runDir = await mkdtemp(join(tmpdir(), "berth-container-semfs-"));
@@ -234,7 +249,7 @@ async function hostConfigWithEnv(name: string, env: Record<string, string | unde
     else process.env[k] = v;
   }
   try {
-    return await startWithFakeDocker({ name, secretsRunDir: runDir });
+    return await startWithFakeDocker({ name, secretsRunDir: runDir, postureFromEnv: true });
   } finally {
     for (const [k, v] of Object.entries(prev)) {
       if (v === undefined) delete process.env[k];
@@ -279,4 +294,27 @@ test("without BERTH_NO_SEMANTIC_FS, the in-sandbox fallback still takes SYS_ADMI
     "this is the pre-M1.1 posture and must stay reachable — sys-admin-drop-milestone.mjs uses it as its negative control",
   );
   assert.ok(!(created.Env ?? []).includes("BERTH_NO_SEMANTIC_FS=1"));
+});
+
+test("a failed sidecar boots without /context instead of handing SYS_ADMIN to the sandbox", async () => {
+  const created = await hostConfigWithEnv("berth-test-semfs-degrade", {
+    BERTH_NO_SEMANTIC_FS: undefined,
+    BERTH_DISABLE_FS_SIDECAR: undefined,
+  });
+  assert.ok(
+    !(created.HostConfig?.CapAdd ?? []).includes("SYS_ADMIN"),
+    `a sidecar failure the caller never asked about must not raise privilege, got: ${JSON.stringify(created.HostConfig?.CapAdd)}`,
+  );
+  assert.ok(
+    !(created.HostConfig?.Devices ?? []).some((d: { PathOnHost: string }) => d.PathOnHost === "/dev/fuse"),
+    "no in-sandbox mount is attempted, so /dev/fuse must not be handed in",
+  );
+  assert.ok(
+    !(created.HostConfig?.SecurityOpt ?? []).some((o: string) => o.includes("apparmor:unconfined")),
+    "the AppArmor exception belongs to the in-sandbox mount only",
+  );
+  assert.ok(
+    (created.Env ?? []).includes("BERTH_NO_SEMANTIC_FS=1"),
+    `the entrypoint must be told /context is off, or it waits on a mount nobody makes, got: ${JSON.stringify(created.Env)}`,
+  );
 });
