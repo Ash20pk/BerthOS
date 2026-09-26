@@ -41,11 +41,14 @@ test("a Berth tool drives a real AI SDK generateText loop end to end", async () 
   const berthTool = fakeBerthTool();
   let step = 0;
 
+  // finishReason is the LanguageModelV3 object ({ unified, raw }), not the
+  // V2 string. ai 7.0.66 accepted a bare string; 7.0.112 reads .unified, so a
+  // string ended the loop after the first step with the tool never run.
   const model = new MockLanguageModelV3({
     doGenerate: async () =>
       step++ === 0
         ? {
-            finishReason: "tool-calls",
+            finishReason: { unified: "tool-calls", raw: "tool_calls" },
             usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
             content: [
               {
@@ -58,7 +61,7 @@ test("a Berth tool drives a real AI SDK generateText loop end to end", async () 
             warnings: [],
           }
         : {
-            finishReason: "stop",
+            finishReason: { unified: "stop", raw: "stop" },
             usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
             content: [{ type: "text", text: "the file says hello" }],
             warnings: [],
