@@ -1,5 +1,5 @@
 {
-  "name": "@berth/spec-attestation-record",
+  "name": "@berthos/spec-attestation-record",
   "version": "1.0.0",
   "private": true,
   "description": "The Attestation Record Specification and its conformance suite (versioned independently of Berth's packages — this version is the SPEC's, see VERSION)",
@@ -10,6 +10,6 @@
     "selftest": "node conformance/selftest.mjs"
   },
   "dependencies": {
-    "@berth/audit": "workspace:*"
+    "@berthos/audit": "workspace:*"
   }
 }

@@ -1,5 +1,5 @@
 import { join, relative } from "node:path";
-import { loadManifest, ManifestValidationError, type BerthManifest } from "@berth/manifest-schema";
+import { loadManifest, ManifestValidationError, type BerthManifest } from "@berthos/manifest-schema";
 import { findWorkspaceRoot } from "./workspace.js";
 
 export interface AppSpec {

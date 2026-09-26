@@ -14,7 +14,7 @@ $ node spec/capability-manifest/conformance/run.mjs \
     --adapter "node spec/capability-manifest/conformance/adapters/berth.mjs"
 
 Capability Manifest conformance 1.0.0
-implementation: @berth/manifest-schema (Berth reference implementation)
+implementation: @berthos/manifest-schema (Berth reference implementation)
                 (targets spec 1.0.0, manifest schema_version 1)
 allowlist: /workspace /context /tmp /app
 87 of 87 cases selected

@@ -1,7 +1,7 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import { join } from "node:path";
-import type { AuditSink } from "@berth/audit";
-import type { ServerTlsOptions } from "@berth/tls";
+import type { AuditSink } from "@berthos/audit";
+import type { ServerTlsOptions } from "@berthos/tls";
 import { GrantsDb } from "./db.js";
 import { registerGrantsRoutes } from "./routes.js";
 import { loadOperatorRegistry, singleTokenRegistry, type OperatorRegistry } from "./operators.js";
@@ -33,7 +33,7 @@ export interface CreateGrantsServerOptions {
   operatorToken?: string;
   /**
    * Serve HTTPS instead of plain HTTP. Built by `resolveServerTls()` from
-   * cert/key paths — see @berth/tls and docs/tls-reference.md. Undefined
+   * cert/key paths — see @berthos/tls and docs/tls-reference.md. Undefined
    * means plain HTTP, which is the default and what every existing
    * deployment keeps getting (REMEDIATION.md 5.3).
    */

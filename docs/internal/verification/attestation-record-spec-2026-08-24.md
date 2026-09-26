@@ -50,7 +50,7 @@ canonicalization reason, and a canonicalization bug shows up only in the
 
 M2.1 shipped the verifier twice on purpose — `scripts/verify-attestation.mjs`
 (nothing but `node:crypto`, the one a stranger runs) and `verifyAttestation` in
-`@berth/audit` (the one `berth attest` checks its own output with). Two
+`@berthos/audit` (the one `berth attest` checks its own output with). Two
 implementations of the same algorithm drift; both stay internally consistent
 while diverging from each other, and nothing notices.
 

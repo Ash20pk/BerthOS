@@ -20,7 +20,7 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createFileAuditSink, readAuditFile, verifyAuditChain } from "@berth/audit";
+import { createFileAuditSink, readAuditFile, verifyAuditChain } from "@berthos/audit";
 import { bootBox, mintFlags, detectCapture } from "./box.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));

@@ -9,7 +9,7 @@ import { findExportTool } from "./checkpoint.js";
  * chat UI's turns, say), the seam OpenAI SDK Sessions, ADK's
  * SessionService/MemoryService, and CrewAI's short-term memory all cover.
  * "It's in Semantic FS" was an architecture claim before this, not an API
- * @berth/agents exposed — Session is that API. Deliberately narrow, the
+ * @berthos/agents exposed — Session is that API. Deliberately narrow, the
  * same "save/load, nothing fancier" posture CheckpointStore has: no
  * summarization, no entity/long-term memory, no automatic trimming — see
  * docs/agents-reference.md for what a caller still owns.

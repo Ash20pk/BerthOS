@@ -1,7 +1,7 @@
 /**
  * Berth tools, usable from the agent frameworks people already run.
  *
- * The premise of this module is that `@berth/agents` should not be the price
+ * The premise of this module is that `@berthos/agents` should not be the price
  * of admission for the thing Berth is actually differentiated on. A team on
  * the Vercel AI SDK, on LangGraph, or on the Claude Agent SDK has a working
  * loop already, and no appetite for swapping it. What they don't have is a
@@ -148,8 +148,8 @@ async function importOptional<T>(specifier: string, usedFor: string): Promise<T>
     return (await import(specifier)) as T;
   } catch (err) {
     throw new Error(
-      `${usedFor} needs the "${specifier}" package, which @berth/agents deliberately does not depend on — ` +
-        `install it alongside @berth/agents to use this adapter. (${err instanceof Error ? err.message : String(err)})`,
+      `${usedFor} needs the "${specifier}" package, which @berthos/agents deliberately does not depend on — ` +
+        `install it alongside @berthos/agents to use this adapter. (${err instanceof Error ? err.message : String(err)})`,
     );
   }
 }

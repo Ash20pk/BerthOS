@@ -37,8 +37,8 @@ import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { PassThrough } from "node:stream";
-import { loadManifest } from "@berth/manifest-schema";
-import { createFileAuditSink, readAuditFile, verifyAuditChain, attestationDigest } from "@berth/audit";
+import { loadManifest } from "@berthos/manifest-schema";
+import { createFileAuditSink, readAuditFile, verifyAuditChain, attestationDigest } from "@berthos/audit";
 import Docker from "dockerode";
 import { buildImage, startContainer, stopContainer, probeKernel } from "../dist/index.js";
 

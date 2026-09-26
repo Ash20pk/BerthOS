@@ -1,7 +1,7 @@
 """Thin adapter over the `anthropic` package's Messages API tool-use loop.
 One built-in LLMProvider implementation, proving the interface isn't secretly
 hardcoded to one vendor — Agent/Crew never reference this module. Mirrors
-@berth/agents' providers/anthropic.ts, including chat_stream()/usage."""
+@berthos/agents' providers/anthropic.ts, including chat_stream()/usage."""
 
 from __future__ import annotations
 

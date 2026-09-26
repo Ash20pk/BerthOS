@@ -20,7 +20,7 @@
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { loadManifest } from "@berth/manifest-schema";
+import { loadManifest } from "@berthos/manifest-schema";
 import Docker from "dockerode";
 import { buildImage, startContainer, stopContainer, sidecarName } from "../dist/index.js";
 

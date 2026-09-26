@@ -1,6 +1,6 @@
 """Multi-agent composition — wiring over Agent, not a new execution
 primitive: Agent's tool-use loop is identical whether its tools are hand-
-built or other agents. Mirrors @berth/agents' crew.ts: `sequential`,
+built or other agents. Mirrors @berthos/agents' crew.ts: `sequential`,
 `with_manager`, `parallel`, `loop_until`, `route`, and `pipeline` are all
 ported; `networked` isn't, since it needs independent agent-computers
 (bootNetworkedAgent()) — a Computer/Docker concept this package doesn't

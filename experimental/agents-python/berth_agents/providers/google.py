@@ -1,7 +1,7 @@
 """Thin adapter over `google-genai`'s `generate_content`/`generate_content_stream`
 — the third built-in LLMProvider, and the first non-Anthropic-shaped,
 non-OpenAI-shaped one: Gemini's Content/Part/FunctionCall/FunctionResponse
-types are genuinely different from either. Mirrors @berth/agents'
+types are genuinely different from either. Mirrors @berthos/agents'
 providers/google.ts field-for-field (snake_case instead of camelCase)."""
 
 from __future__ import annotations

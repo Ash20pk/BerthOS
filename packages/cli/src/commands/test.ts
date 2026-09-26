@@ -4,7 +4,7 @@ import { PassThrough } from "node:stream";
 import { loadManifestOrExit } from "../util/manifest.js";
 import { buildProductionImage, productionImageTag } from "../util/build.js";
 import { resolveApps, assertAtMostOneBrowserApp, type AppSpec } from "../util/multi-app.js";
-import { startContainer, stopContainer } from "@berth/docker-orchestrator";
+import { startContainer, stopContainer } from "@berthos/docker-orchestrator";
 
 interface ExportCheckResult {
   ok: boolean;
@@ -43,7 +43,7 @@ export default class Test extends Command {
       docker,
       image,
       apps,
-      ["node", "node_modules/@berth/sdk/dist/check-exports.js"],
+      ["node", "node_modules/@berthos/sdk/dist/check-exports.js"],
       grantsServerEnv,
     );
     const appTestCheck = await this.maybeRunAppTests(docker, image, appDir, apps, grantsServerEnv);

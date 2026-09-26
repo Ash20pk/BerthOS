@@ -139,7 +139,7 @@ emitter, and the spec says so where an implementer will read it.
 
 ## Pre-publish checklist
 
-- [ ] `pnpm --filter @berth/spec-attestation-record selftest` green on the
+- [ ] `pnpm --filter @berthos/spec-attestation-record selftest` green on the
       publishing machine; paste the real numbers, don't reuse the ones above.
 - [ ] §4's bug is described as *found and fixed*, with the fixing commit
       reachable — the story is worthless if a reader can't see the diff.

@@ -1,6 +1,6 @@
 name: hello-world-py
 version: 0.1.0
-description: "Minimal Python resident app — proves @berth/sdk-python's wire-protocol compatibility with the TypeScript runtime"
+description: "Minimal Python resident app — proves @berthos/sdk-python's wire-protocol compatibility with the TypeScript runtime"
 
 capabilities: []
 

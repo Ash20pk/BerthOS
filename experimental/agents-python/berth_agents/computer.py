@@ -21,7 +21,7 @@ import yaml
 DEFAULT_OS_DIR = Path.home() / ".berth" / "os"
 
 # berth.yml's IOSpec is a flat map of field name -> one of these primitive
-# type names (see @berth/manifest-schema's JsonPrimitiveType) — the same
+# type names (see @berthos/manifest-schema's JsonPrimitiveType) — the same
 # 5-case table experimental/agents/src/tools.ts's zodFor()/inputSchemaFor()
 # mechanically walks to reach JSON Schema, just without zod as an
 # intermediate step, since the source data here is already plain YAML.
@@ -109,7 +109,7 @@ class Computer:
         --http-rpc`), loads the designated bridge app's `berth.yml` directly
         off disk (the state file only ever records `{name, appDir}` pairs,
         not manifest data — same thing TypeScript's own Computer.connect()
-        does, it just re-reads through @berth/manifest-schema instead of
+        does, it just re-reads through @berthos/manifest-schema instead of
         plain YAML), and returns a ComputerHandle exposing that one app's
         exports as Tools reachable over HTTP.
         """

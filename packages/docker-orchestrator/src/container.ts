@@ -16,7 +16,7 @@ import {
   type RunningSidecar,
 } from "./semantic-fs-sidecar.js";
 import { randomBytes } from "node:crypto";
-import type { BerthManifest } from "@berth/manifest-schema";
+import type { BerthManifest } from "@berthos/manifest-schema";
 
 /**
  * CDP (9222) is deliberately absent. Chromium binds its debugging port to
@@ -30,7 +30,7 @@ import type { BerthManifest } from "@berth/manifest-schema";
  */
 const BROWSER_PORTS = { vnc: "5900", novnc: "6080" } as const;
 const TERMINAL_PORT = "7681";
-/** Container-internal port for @berth/sdk's HTTP RPC bridge — see StartContainerOptions.httpRpc. Same numeric default DEFAULT_FLEET_RPC_PORT (@berth/agents' network.ts) uses for a remote fleet deploy's bridge, for consistency, though the two are independent (this is a container-internal Docker port; that's a value baked into a remote instance's env). */
+/** Container-internal port for @berthos/sdk's HTTP RPC bridge — see StartContainerOptions.httpRpc. Same numeric default DEFAULT_FLEET_RPC_PORT (@berthos/agents' network.ts) uses for a remote fleet deploy's bridge, for consistency, though the two are independent (this is a container-internal Docker port; that's a value baked into a remote instance's env). */
 const HTTP_RPC_CONTAINER_PORT = "7300";
 
 export function declaresBrowserCapability(manifest: BerthManifest): boolean {
@@ -92,7 +92,7 @@ export interface StartContainerOptions {
    * just `{ hostPath: appDir, containerPath: "/app" }`. For an app that's a
    * pnpm workspace member, it must be the whole workspace root (not just the
    * app's own directory) — pnpm's `node_modules` uses relative symlinks
-   * (e.g. `@berth/sdk -> ../../../../packages/sdk`) that point outside the
+   * (e.g. `@berthos/sdk -> ../../../../packages/sdk`) that point outside the
    * app's own directory tree, and those symlinks dangle unless the sibling
    * package directories are present at the same relative path inside the
    * container. Omit for test/prod, where a real (non-symlinked) image was
@@ -145,14 +145,14 @@ export interface StartContainerOptions {
    * it doesn't already exist), rather than the default bridge. Containers on
    * a user-defined network resolve each other by container `name` via
    * Docker's embedded DNS — this is what lets one Berth computer reach
-   * another by name for agent-to-agent networking (see @berth/agents's
+   * another by name for agent-to-agent networking (see @berthos/agents's
    * Crew.networked()). The default bridge network provides no such DNS.
    */
   network?: string;
   /** berth-mesh-coordinator URL for network:peer:* apps — passed through as BERTH_MESH_COORDINATOR_URL. Omitted, mesh-daemon falls back to its own default (see docs/mesh-reference.md). */
   meshCoordinatorUrl?: string;
   /**
-   * Starts @berth/sdk's HTTP RPC bridge (`startHttpRpcServer`, gated by
+   * Starts @berthos/sdk's HTTP RPC bridge (`startHttpRpcServer`, gated by
    * BERTH_HTTP_RPC_PORT/TOKEN/APP env vars already read by runtime.ts's
    * main()) inside the container, and maps its port to the host — the same
    * bridge fleet-computer.ts's HttpBridgeComputer uses for a remote deploy,
@@ -314,7 +314,7 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
   // caller that deliberately passes exactly one app here, specifically to
   // get entrypoint.sh's multi-app branch (and thus a per-app RPC socket a
   // separate host process can reconnect to via invokeAppExport) even for a
-  // lone app — see @berth/agents' Computer.connect().
+  // lone app — see @berthos/agents' Computer.connect().
   const env = { ...options.env };
   if (options.apps && options.apps.length > 0) {
     env.BERTH_APPS = JSON.stringify(options.apps.map((a) => ({ name: a.name, workingDir: a.workingDir })));
@@ -383,7 +383,7 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
   //
   // Opt-in, and it stays opt-in: an app that does reach /context (or an agent
   // using checkpointing, sessions, or trace, which are Semantic-FS-backed)
-  // gets @berth/sdk's loud "semantic-fs daemon not reachable" error rather
+  // gets @berthos/sdk's loud "semantic-fs daemon not reachable" error rather
   // than silently wrong results — see runtime.ts's createUnavailableSemanticFs.
   // Defaulting this on would mean deciding for the caller which of those they
   // use, and the failure is remote from the cause, so the caller declares it.
@@ -463,7 +463,7 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
   // The 5.5 split. Everything a name marks as a credential — the RPC bearer
   // token and the terminal/VNC passwords generated above, plus whatever the
   // caller passed (a provider API key reaching a networked agent's own
-  // container is the motivating case; see @berth/agents' bootNetworkedAgent)
+  // container is the motivating case; see @berthos/agents' bootNetworkedAgent)
   // — leaves `Env` entirely and travels through a 0600 host file mounted
   // read-only at CONTAINER_SECRETS_PATH, which entrypoint.sh sources before
   // any daemon or app starts. Same process environment for the app either
@@ -756,7 +756,7 @@ async function removeSecretsForContainer(container: Docker.Container, secretsRun
 /**
  * Phase 1's hot-reload mechanism restarts the whole container rather than
  * exec-ing a fresh process inside a live one. On_install hooks are skipped on
- * restart via the marker file (see @berth/sdk's run-lifecycle.ts), so this stays fast —
+ * restart via the marker file (see @berthos/sdk's run-lifecycle.ts), so this stays fast —
  * a finer-grained "restart just the app process" is a later optimization,
  * not required for the Phase 1 workflow to feel responsive.
  */

@@ -6,7 +6,7 @@
 //   --impl standalone  scripts/verify-attestation.mjs — no dependency beyond
 //                      node:crypto, which is the one a stranger runs
 //   --impl library     verifyAttestation / deriveEnforcementStatus /
-//                      attestationDigest from @berth/audit, which is the one
+//                      attestationDigest from @berthos/audit, which is the one
 //                      `berth attest` runs against its own output
 //
 // Running the same corpus through both is how the two are kept from drifting
@@ -18,7 +18,7 @@
 // something — re-checking a field, normalizing a record — the suite stops
 // testing Berth and starts testing the adapter.
 //
-// Run from the repo root (after `pnpm --filter @berth/audit build` for the
+// Run from the repo root (after `pnpm --filter @berthos/audit build` for the
 // library variant):
 //   node spec/attestation-record/conformance/run.mjs \
 //     --adapter "node spec/attestation-record/conformance/adapters/berth.mjs --impl standalone"
@@ -47,9 +47,9 @@ if (which === "standalone") {
     digest: (record) => mod.digestOf(record),
   };
 } else {
-  const mod = await import("@berth/audit");
+  const mod = await import("@berthos/audit");
   impl = {
-    name: "@berth/audit verifyAttestation (library)",
+    name: "@berthos/audit verifyAttestation (library)",
     verify: (record) => mod.verifyAttestation(record).problems,
     derive: (reports, probe) => mod.deriveEnforcementStatus(reports, probe).status,
     digest: (record) => mod.attestationDigest(record),

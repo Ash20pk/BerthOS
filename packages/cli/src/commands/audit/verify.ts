@@ -1,7 +1,7 @@
 import { Command, Flags } from "@oclif/core";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { defaultAuditPath, readAuditFile, verifyAuditSegments } from "@berth/audit";
+import { defaultAuditPath, readAuditFile, verifyAuditSegments } from "@berthos/audit";
 
 /**
  * Rotated segments oldest-first, so the chain can be walked in the order it

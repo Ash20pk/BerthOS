@@ -1,6 +1,6 @@
 import { Args, Command } from "@oclif/core";
 import Docker from "dockerode";
-import { readOsState, removeOsState, stopContainer } from "@berth/docker-orchestrator";
+import { readOsState, removeOsState, stopContainer } from "@berthos/docker-orchestrator";
 
 export default class OsDown extends Command {
   static override description = "Tear down a Berth OS instance started with `berth os up`";

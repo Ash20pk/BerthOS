@@ -1,5 +1,5 @@
 {
-  "name": "@berth/seam-claude-agent-sdk",
+  "name": "@berthos/seam-claude-agent-sdk",
   "version": "0.1.0",
   "description": "Berth as the Claude Agent SDK's sandbox backend — the harness's Bash/Read/Write/Edit run inside a kernel-enforced manifest",
   "type": "module",

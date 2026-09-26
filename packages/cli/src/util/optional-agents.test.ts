@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { loadAgents, resetAgentsCache, isModuleNotFound, describeMissingFramework } from "./optional-agents.js";
 
 /**
- * The point of the seam is that `@berth/cli` does not depend on
- * `@berth/agents` at runtime. In this workspace it IS installed (a
+ * The point of the seam is that `@berthos/cli` does not depend on
+ * `@berthos/agents` at runtime. In this workspace it IS installed (a
  * devDependency, for typechecking the three commands that use it), so the
  * happy path is testable directly and the missing-package path is tested by
  * driving the same error handling the loader has.
@@ -28,7 +28,7 @@ test("loadAgents caches, so three lazy call sites in one command load once", asy
 });
 
 /**
- * The failure that matters: a published `@berth/cli` without the optional peer
+ * The failure that matters: a published `@berthos/cli` without the optional peer
  * installed must say what to install, not emit a module-resolution trace.
  * These call the loader's own exported classification and message, not a copy
  * of them, so drift between the two cannot pass.
@@ -50,7 +50,7 @@ test("a real failure inside the framework is not classified as missing", () => {
 test("the missing-framework message names the command, the install, and why", () => {
   const msg = describeMissingFramework("agent run");
   assert.match(msg, /berth agent run/, "someone sees this after typing a command — it should name that command");
-  assert.match(msg, /npm install @berth\/agents/, "the fix must be copy-pasteable");
+  assert.match(msg, /npm install @berthos\/agents/, "the fix must be copy-pasteable");
   assert.match(msg, /does not depend on it/, "it should explain why it is not already there, or it reads as a packaging bug");
   assert.ok(!/ERR_MODULE_NOT_FOUND/.test(msg), "the errno is noise to someone who just needs to install a package");
 });

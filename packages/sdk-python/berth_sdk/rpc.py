@@ -1,4 +1,4 @@
-"""The identical line-delimited JSON RPC protocol from @berth/sdk's rpc.ts —
+"""The identical line-delimited JSON RPC protocol from @berthos/sdk's rpc.ts —
 {id, export, input} in, {id, result} or {id, error} out — over stdio and,
 optionally, a Unix socket. No length-prefix, no protobuf: this is the
 simplest of the two wire protocols this SDK reuses (see context_bus.py for

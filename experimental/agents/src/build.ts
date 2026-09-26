@@ -1,8 +1,8 @@
-import { buildImage } from "@berth/docker-orchestrator";
+import { buildImage } from "@berthos/docker-orchestrator";
 import type { ComputerAppSpec } from "./resolve-apps.js";
 
 /**
- * One buildImage() call, primary + companions — mirrors @berth/cli's
+ * One buildImage() call, primary + companions — mirrors @berthos/cli's
  * buildProductionImage() exactly, minus its pnpm-workspace requirement (this
  * is a library used by a long-running agent process, and production image
  * staging already works for arbitrary standalone directories).

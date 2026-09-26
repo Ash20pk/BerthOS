@@ -1,5 +1,5 @@
 {
-  "name": "@berth/breakout-box",
+  "name": "@berthos/breakout-box",
   "version": "0.1.0",
   "private": true,
   "description": "The public break-out box: a standing Berth sandbox holding flags no capability grants",
@@ -9,9 +9,9 @@
     "serve": "node server.mjs"
   },
   "dependencies": {
-    "@berth/audit": "workspace:*",
-    "@berth/docker-orchestrator": "workspace:*",
-    "@berth/manifest-schema": "workspace:*",
+    "@berthos/audit": "workspace:*",
+    "@berthos/docker-orchestrator": "workspace:*",
+    "@berthos/manifest-schema": "workspace:*",
     "dockerode": "^4.0.9"
   }
 }

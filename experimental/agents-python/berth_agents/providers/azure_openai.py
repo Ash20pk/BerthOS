@@ -4,7 +4,7 @@ Bearer`, routes by a deployment name in the URL path rather than `model` in
 the request body, and requires an `api-version` query param on every
 request. `openai`'s own `AsyncAzureOpenAI` client already handles all three;
 this just reuses the same chat()/chat_stream() implementation every
-OpenAI-shaped provider shares. Mirrors @berth/agents' providers/azure-openai.ts."""
+OpenAI-shaped provider shares. Mirrors @berthos/agents' providers/azure-openai.ts."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Mirrors @berth/agents' providers/fallback.ts: wraps an ordered list of
+"""Mirrors @berthos/agents' providers/fallback.ts: wraps an ordered list of
 LLMProviders into one primary/secondary/... model chain."""
 
 from __future__ import annotations

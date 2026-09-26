@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Conformance adapter for the reference implementation, @berth/manifest-schema.
+// Conformance adapter for the reference implementation, @berthos/manifest-schema.
 //
 // It is a thin translation layer and nothing else: every decision below is
 // delegated to the shipped package (validateManifest, matchesCapability,
@@ -7,7 +7,7 @@
 // starts *deciding* something — re-checking a path, normalizing a scope — the
 // suite stops testing Berth and starts testing the adapter.
 //
-// Run from the repo root after `pnpm --filter @berth/manifest-schema build`:
+// Run from the repo root after `pnpm --filter @berthos/manifest-schema build`:
 //   node spec/capability-manifest/conformance/run.mjs \
 //     --adapter "node spec/capability-manifest/conformance/adapters/berth.mjs"
 
@@ -18,7 +18,7 @@ import {
   ManifestValidationError,
   ALLOWED_FILESYSTEM_SCOPE_PREFIXES,
   CURRENT_SCHEMA_VERSION,
-} from "@berth/manifest-schema";
+} from "@berthos/manifest-schema";
 
 /**
  * Berth's tier table (SPEC 5.1-5.2), as measured by this repo's milestone
@@ -58,7 +58,7 @@ const TIERS = [
 ];
 
 const DESCRIBE = {
-  implementation: "@berth/manifest-schema (Berth reference implementation)",
+  implementation: "@berthos/manifest-schema (Berth reference implementation)",
   specVersion: "1.0.0",
   filesystemAllowlist: ALLOWED_FILESYSTEM_SCOPE_PREFIXES,
   schemaVersion: CURRENT_SCHEMA_VERSION,

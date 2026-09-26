@@ -1,6 +1,6 @@
 import { Command, Flags } from "@oclif/core";
 import Docker from "dockerode";
-import { createSnapshot } from "@berth/docker-orchestrator";
+import { createSnapshot } from "@berthos/docker-orchestrator";
 import { loadManifestOrExit } from "../../util/manifest.js";
 import { resolveFleet } from "../../util/fleet.js";
 import { resolveInstanceId } from "../../util/resolve-instance.js";

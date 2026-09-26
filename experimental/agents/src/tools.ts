@@ -1,11 +1,11 @@
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import type { ExportSpecType, JsonPrimitiveTypeName } from "@berth/manifest-schema";
+import type { ExportSpecType, JsonPrimitiveTypeName } from "@berthos/manifest-schema";
 import type { ComputerAppSpec } from "./resolve-apps.js";
 import type { Tool } from "./types.js";
 
 /**
- * Same primitive-type switch as @berth/cli's mcp-tools.ts zodFor() — berth.yml's
+ * Same primitive-type switch as @berthos/cli's mcp-tools.ts zodFor() — berth.yml's
  * IOSpec is intentionally flat (no nesting), so this is strictly a
  * schema-shape mapping, not a re-derivation of whatever richer Zod schema the
  * app author wrote in app.export({input: ...}) (that never crosses the RPC

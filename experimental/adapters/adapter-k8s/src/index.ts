@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { withTimeout, DEPLOY_CREATE_TIMEOUT_MS, DEPLOY_READ_TIMEOUT_MS } from "@berth/adapter-core";
-import type { DeployAdapter, DeployHandle, DeployStatus, DeployTarget } from "@berth/adapter-core";
-import type { BerthManifest } from "@berth/manifest-schema";
+import { withTimeout, DEPLOY_CREATE_TIMEOUT_MS, DEPLOY_READ_TIMEOUT_MS } from "@berthos/adapter-core";
+import type { DeployAdapter, DeployHandle, DeployStatus, DeployTarget } from "@berthos/adapter-core";
+import type { BerthManifest } from "@berthos/manifest-schema";
 
 /**
  * `@kubernetes/client-node` is an optional peer dependency, mirroring
@@ -13,7 +13,7 @@ async function loadK8s(): Promise<any> {
     return await import("@kubernetes/client-node");
   } catch {
     throw new Error(
-      '@berth/adapter-k8s requires the "@kubernetes/client-node" package. Install it with `pnpm add @kubernetes/client-node` to deploy to Kubernetes.',
+      '@berthos/adapter-k8s requires the "@kubernetes/client-node" package. Install it with `pnpm add @kubernetes/client-node` to deploy to Kubernetes.',
     );
   }
 }

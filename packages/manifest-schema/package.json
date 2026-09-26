@@ -1,5 +1,5 @@
 {
-  "name": "@berth/manifest-schema",
+  "name": "@berthos/manifest-schema",
   "version": "0.1.0",
   "description": "Schema, validation, and capability-string parsing for berth.yml",
   "type": "module",

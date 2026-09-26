@@ -1,4 +1,4 @@
-"""Mirrors @berth/sdk's run-lifecycle.ts: reports whether a browser:*
+"""Mirrors @berthos/sdk's run-lifecycle.ts: reports whether a browser:*
 capability is declared, and separately whether a browser:navigate:*/
 network:host:* capability is declared (entrypoint.sh's own trigger for
 starting the egress broker), via the last stdout line ("1,1" / "0,1" / etc.)

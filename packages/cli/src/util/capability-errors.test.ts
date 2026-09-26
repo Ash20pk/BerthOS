@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import type { BerthManifest } from "@berth/manifest-schema";
+import type { BerthManifest } from "@berthos/manifest-schema";
 import { explainAppError, enforcementFromContainerLogs } from "./capability-errors.js";
 
 const manifest = {

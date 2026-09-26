@@ -93,7 +93,7 @@ export const BerthManifestSchema = z
     /**
      * Declares this app as its Computer's governance authority: every other
      * app's tool calls get routed through this app's `evaluate_action` export
-     * first (enforced by @berth/agents' Computer, not the kernel — see
+     * first (enforced by @berthos/agents' Computer, not the kernel — see
      * docs/governance-reference.md). Default false. At most one app per
      * Computer may set this to true.
      */
@@ -131,7 +131,7 @@ export const BerthManifestSchema = z
     });
 
     // on_install entries become lines in a generated shell script that runs
-    // as a Docker build layer (see @berth/docker-orchestrator's
+    // as a Docker build layer (see @berthos/docker-orchestrator's
     // stageOnInstallScript()). The script file is what keeps this from being
     // a Dockerfile-injection surface, so these checks are about a command
     // being a *command* rather than about escaping: an empty or

@@ -20,7 +20,7 @@ capabilities:
 
 Write is restricted to `/workspace` (same default as `apps/filesystem`), but no `filesystem:read:<path>` is declared, so reads stay at today's fully open default — a general-purpose terminal that could only `cat` inside one directory wouldn't be very useful. See [docs/capability-tokens-reference.md](../../docs/capability-tokens-reference.md).
 
-`terminal:attach:*` isn't kernel-enforced on its own (same as `browser:*`/`github:*`) — it's the signal `@berth/docker-orchestrator`'s `container.ts` uses to map the ttyd port and `berth dev` uses to print its URL. No `network:connect:*` is declared, so the shell this spawns has **zero outbound network access** under deny-by-default — `curl`, `git clone`, `apt`-equivalents, etc. will fail unless a future version scopes in a specific port. This is a real, worth-knowing limitation, not a bug.
+`terminal:attach:*` isn't kernel-enforced on its own (same as `browser:*`/`github:*`) — it's the signal `@berthos/docker-orchestrator`'s `container.ts` uses to map the ttyd port and `berth dev` uses to print its URL. No `network:connect:*` is declared, so the shell this spawns has **zero outbound network access** under deny-by-default — `curl`, `git clone`, `apt`-equivalents, etc. will fail unless a future version scopes in a specific port. This is a real, worth-knowing limitation, not a bug.
 
 ## How it works
 

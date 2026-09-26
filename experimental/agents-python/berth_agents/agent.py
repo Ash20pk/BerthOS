@@ -1,6 +1,6 @@
 """The provider-agnostic tool-use loop: identical regardless of which
 LLMProvider or which Tool implementations are plugged in. Mirrors the core
-loop in @berth/agents' agent.ts, including its checkpointing, token-level
+loop in @berthos/agents' agent.ts, including its checkpointing, token-level
 streaming, structured-output repair loop, and per-turn/per-tool-call
 tracing. Retrieval/human-approval and Computer/Docker boot glue
 (createAgent/runAgent) still aren't ported — see docs/agents-python-reference.md."""

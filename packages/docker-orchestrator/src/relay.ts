@@ -32,7 +32,7 @@ export type RpcResponse = { id: string; result?: unknown; error?: string };
  * an arbitrary interior process — so this spawns a tiny relay process
  * inside the container via `docker exec` (see docker/rpc-relay.js) that
  * pipes its own stdio to the target app's Unix socket, and speaks the exact
- * same line-delimited JSON framing `@berth/sdk`'s rpc.ts already uses over
+ * same line-delimited JSON framing `@berthos/sdk`'s rpc.ts already uses over
  * stdio. Only the transport is new; the wire format doesn't change.
  */
 export async function invokeAppExport(

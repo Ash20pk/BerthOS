@@ -5,7 +5,7 @@ anything itself. It emits real spans through opentelemetry-api's global
 tracer, so whatever OTel SDK + exporter you configure (Langfuse, Phoenix,
 Honeycomb, Datadog, a plain OTel Collector, ...) receives them.
 opentelemetry-api alone has no exporter and does nothing without a real SDK
-registered — wiring one up is on the caller. Mirrors @berth/agents'
+registered — wiring one up is on the caller. Mirrors @berthos/agents'
 otel-tracer.ts field-for-field."""
 
 from __future__ import annotations

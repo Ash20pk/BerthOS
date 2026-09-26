@@ -9,8 +9,8 @@ import {
   verifyAttestation,
   verifyAuditSegments,
   type AuditRecord,
-} from "@berth/audit";
-import { gatherBootEvidence, listOsNames, readOsState } from "@berth/docker-orchestrator";
+} from "@berthos/audit";
+import { gatherBootEvidence, listOsNames, readOsState } from "@berthos/docker-orchestrator";
 
 /** Rotated segments oldest-first — same walk as `berth audit verify`. */
 function segmentsFor(path: string, maxFiles = 50): string[] {

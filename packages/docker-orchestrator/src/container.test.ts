@@ -4,7 +4,7 @@ import { mkdtemp, stat, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type Docker from "dockerode";
-import { BerthManifestSchema } from "@berth/manifest-schema";
+import { BerthManifestSchema } from "@berthos/manifest-schema";
 import {
   declaresBrowserCapability,
   declaresTerminalCapability,

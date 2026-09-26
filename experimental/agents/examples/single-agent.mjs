@@ -27,7 +27,7 @@ async function main() {
 
   try {
     console.log("Running: write hello.txt, then read it back...");
-    const result = await agent.run("Write a file called hello.txt containing the text 'hi from @berth/agents', then read it back to me.");
+    const result = await agent.run("Write a file called hello.txt containing the text 'hi from @berthos/agents', then read it back to me.");
 
     console.log("\nagent said:", result.text);
     console.log(

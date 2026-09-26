@@ -1,4 +1,4 @@
-"""Mirrors @berth/sdk's runtime.ts boot sequence: load manifest -> import the
+"""Mirrors @berthos/sdk's runtime.ts boot sequence: load manifest -> import the
 app module -> assert exports match manifest -> run hooks -> serve RPC. The
 orchestration itself is idiomatic Python (importlib, not a port of Node's
 dynamic import()) — only the wire protocols (manifest shape, RPC framing)
@@ -21,7 +21,7 @@ from .rpc import serve_stdio_forever, start_rpc_server
 
 def _create_context_bus():
     """Real context-bus daemon if reachable (entrypoint.sh starts it before
-    this runtime — same file/env contract @berth/sdk's runtime.ts uses);
+    this runtime — same file/env contract @berthos/sdk's runtime.ts uses);
     falls back to a local no-op otherwise, so an app never hard-fails just
     because it's running outside a sandbox with the daemon (e.g. a bare
     `python3 -m berth_sdk.runtime` during a quick script)."""

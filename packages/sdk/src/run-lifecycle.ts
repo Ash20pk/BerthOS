@@ -8,11 +8,11 @@
 // from "needs a display": network:host:* apps need the broker but never
 // Xvfb, and this is what makes the broker a capability any resident app can
 // opt into, not something wired specifically for browser-native's Chromium
-// launch flag. Lives inside @berth/sdk (not a loose script copied from
-// docker-orchestrator) specifically so it can import @berth/manifest-schema
+// launch flag. Lives inside @berthos/sdk (not a loose script copied from
+// docker-orchestrator) specifically so it can import @berthos/manifest-schema
 // through normal package resolution — pnpm's per-package node_modules only
-// resolves declared dependencies, and @berth/sdk already declares
-// @berth/manifest-schema as one.
+// resolves declared dependencies, and @berthos/sdk already declares
+// @berthos/manifest-schema as one.
 //
 // It used to have a third job: executing the manifest's on_install commands
 // (once, tracked by a marker file). That ran as uid 0 with CAP_SYS_ADMIN and
@@ -21,7 +21,7 @@
 // this one. Any berth.yml was therefore arbitrary root code execution inside
 // the sandbox meant to constrain it (REMEDIATION.md 1.5). on_install now runs
 // as a Docker build layer instead, for both the dev and production targets —
-// see @berth/docker-orchestrator's stageOnInstallScript() and
+// see @berthos/docker-orchestrator's stageOnInstallScript() and
 // docker/run-on-install.sh. Nothing executes it at container boot any more,
 // which is also why the install-marker file is gone: there is no longer a
 // boot-time action to run at most once.
@@ -31,7 +31,7 @@
 // inside the app's own already-Landlocked process, under its declared
 // capabilities.
 import { join } from "node:path";
-import { loadManifest } from "@berth/manifest-schema";
+import { loadManifest } from "@berthos/manifest-schema";
 
 // Relative to process.cwd() (the container's WorkingDir), not a hardcoded
 // /app — the app's working directory varies depending on whether it's a

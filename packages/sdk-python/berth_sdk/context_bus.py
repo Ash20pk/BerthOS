@@ -1,4 +1,4 @@
-"""Real context-bus client — talks to the same Rust daemon @berth/sdk's
+"""Real context-bus client — talks to the same Rust daemon @berthos/sdk's
 unix-socket.ts does, over the same wire contract: a Unix socket carrying
 length-prefixed (4-byte big-endian length + protobuf bytes) Envelope frames,
 per proto/context_bus.proto. Unlike rpc.py's protocol (plain newline-JSON,
@@ -24,7 +24,7 @@ CONNECT_RETRY_INTERVAL_S = 0.1
 
 
 class ContextBusClient:
-    """Same interface shape as @berth/sdk's ContextBusClient
+    """Same interface shape as @berthos/sdk's ContextBusClient
     (register/publish/subscribe) — resident app code doesn't change based on
     which implementation runtime.py wires in, matching the TS SDK's own
     local-vs-real symmetry."""

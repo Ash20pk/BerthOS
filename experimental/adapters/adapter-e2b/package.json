@@ -1,5 +1,5 @@
 {
-  "name": "@berth/adapter-e2b",
+  "name": "@berthos/adapter-e2b",
   "version": "0.1.0",
   "description": "DeployAdapter implementation targeting E2B sandboxes",
   "type": "module",
@@ -46,8 +46,8 @@
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
-    "@berth/adapter-core": "workspace:*",
-    "@berth/manifest-schema": "workspace:*"
+    "@berthos/adapter-core": "workspace:*",
+    "@berthos/manifest-schema": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^7.0.2",

@@ -19,7 +19,7 @@
 // Runs from a fixed /usr/local/bin location, outside any app's own
 // node_modules resolution — same reason rpc-relay.js has zero external
 // dependencies, so the capability-string parsing below duplicates (not
-// imports) @berth/manifest-schema's parseCapability/matchesCapability.
+// imports) @berthos/manifest-schema's parseCapability/matchesCapability.
 const http = require("node:http");
 const net = require("node:net");
 const fs = require("node:fs");
@@ -32,7 +32,7 @@ const POLICY_PATH = process.env.BERTH_CAPABILITY_POLICY || `${process.cwd()}/.be
 // (e.g. a residential/rotating proxy provider) instead of connecting to the
 // target directly — lets any app using this broker (browser-native via
 // Chromium's launch flag, or a plain fetch()-based app via
-// configureEgressProxy(), see @berth/sdk) present a real residential IP to
+// configureEgressProxy(), see @berthos/sdk) present a real residential IP to
 // sites that block/challenge datacenter ranges, without weakening
 // browser:navigate:<pattern>/network:host:<pattern> enforcement: the
 // host-allow check above still runs first, so a denied host never reaches

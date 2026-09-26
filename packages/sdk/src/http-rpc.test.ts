@@ -7,7 +7,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Agent, fetch as undiciFetch } from "undici";
-import { generateSelfSignedCerts } from "@berth/tls";
+import { generateSelfSignedCerts } from "@berthos/tls";
 
 function testApp() {
   return defineApp((a) => {

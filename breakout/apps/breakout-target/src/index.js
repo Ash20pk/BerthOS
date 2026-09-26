@@ -11,7 +11,7 @@
 // Landlock domain and seccomp filter, so spawning would be honest too — but
 // in-process removes any doubt that the attacker's code is running exactly
 // where the app's own code runs, with exactly the app's own privileges.
-import { defineApp } from "@berth/sdk";
+import { defineApp } from "@berthos/sdk";
 import { z } from "zod";
 
 const ATTEMPT_TIMEOUT_MS = Number(process.env.BREAKOUT_ATTEMPT_TIMEOUT_MS ?? 10000);

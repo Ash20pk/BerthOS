@@ -2,7 +2,7 @@
  * Phase 4's semantic filesystem client — the counterpart to
  * ContextBusClient (../context-bus/client.ts) for Berth's other userspace
  * primitive. Resident apps write ordinary files under BERTH_CONTEXT_MOUNT
- * (default /context, see @berth/docker-orchestrator's entrypoint.sh, which
+ * (default /context, see @berthos/docker-orchestrator's entrypoint.sh, which
  * mounts the semantic-fs-daemon's FUSE filesystem there before this runtime
  * boots) and use this client to register their identity (so writes are
  * attributed via created_by), attach task/related_apps metadata, and search

@@ -1,8 +1,8 @@
 # Kubernetes Adapter Reference
 
-> **Frozen subsystem.** This lives in [`experimental/`](../experimental/README.md) and is not part of the core artifact (a `berth.yml` compiled into a kernel-enforced policy, plus the evidence for it). It still builds, still runs its tests, and nothing was deleted — it simply is not what `npm install @berth/cli` gives you. See [`experimental/README.md`](../experimental/README.md) for why.
+> **Frozen subsystem.** This lives in [`experimental/`](../experimental/README.md) and is not part of the core artifact (a `berth.yml` compiled into a kernel-enforced policy, plus the evidence for it). It still builds, still runs its tests, and nothing was deleted — it simply is not what `npm install @berthos/cli` gives you. See [`experimental/README.md`](../experimental/README.md) for why.
 
-`@berth/adapter-k8s` implements the same `DeployAdapter` interface as `adapter-e2b`/`adapter-daytona` (`experimental/adapters/adapter-core/src/index.ts`), targeting a Kubernetes cluster instead of a managed sandbox provider. Select it via `--fleet=k8s`, or a `~/.berthrc` alias with `"adapter": "k8s"`.
+`@berthos/adapter-k8s` implements the same `DeployAdapter` interface as `adapter-e2b`/`adapter-daytona` (`experimental/adapters/adapter-core/src/index.ts`), targeting a Kubernetes cluster instead of a managed sandbox provider. Select it via `--fleet=k8s`, or a `~/.berthrc` alias with `"adapter": "k8s"`.
 
 ## Why K8s wasn't built alongside E2B/Daytona
 

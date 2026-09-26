@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type Docker from "dockerode";
-import type { DeployAdapter } from "@berth/adapter-core";
+import type { DeployAdapter } from "@berthos/adapter-core";
 import { inputSchemaFor } from "./tools.js";
 import { resolveComputerApps, type ComputerAppSpec } from "./resolve-apps.js";
 import { Computer, type ComputerHandle } from "./computer.js";
@@ -82,7 +82,7 @@ function renderManifestYaml(name: string, siblingApps: ComputerAppSpec[]): strin
 
   return `name: ${name}
 version: 0.1.0
-description: "Synthesized by @berth/agents — runs an in-container agent loop reachable as a Crew.networked() peer"
+description: "Synthesized by @berthos/agents — runs an in-container agent loop reachable as a Crew.networked() peer"
 
 capabilities:
   # v1 simplification: unrestricted egress rather than a scoped broker — the
@@ -111,7 +111,7 @@ function renderPackageJson(name: string): string {
         type: "module",
         main: "dist/index.js",
         dependencies: {
-          "@berth/sdk": "file:./vendor/berth-sdk.tgz",
+          "@berthos/sdk": "file:./vendor/berth-sdk.tgz",
           zod: "^3.24.1",
         },
       },
@@ -123,15 +123,15 @@ function renderPackageJson(name: string): string {
 
 /**
  * Same vendoring mechanism `berth init` already uses (packages/cli/src/commands/init.ts's
- * vendorSdk()) to make @berth/sdk resolvable outside the pnpm workspace — this
+ * vendorSdk()) to make @berthos/sdk resolvable outside the pnpm workspace — this
  * generated app lives in a temp directory, not a workspace member.
  */
 async function vendorSdk(appDir: string): Promise<void> {
-  const sdkEntryPath = fileURLToPath(import.meta.resolve("@berth/sdk"));
+  const sdkEntryPath = fileURLToPath(import.meta.resolve("@berthos/sdk"));
   const sdkPkgRoot = dirname(dirname(sdkEntryPath)); // dist/index.js -> dist -> package root
   const tarballPath = join(sdkPkgRoot, "dist-external", "berth-sdk.tgz");
   if (!existsSync(tarballPath)) {
-    throw new Error(`@berth/sdk's external bundle not found at ${tarballPath} — run \`pnpm --filter @berth/sdk build\` first`);
+    throw new Error(`@berthos/sdk's external bundle not found at ${tarballPath} — run \`pnpm --filter @berthos/sdk build\` first`);
   }
   const vendorDir = join(appDir, "vendor");
   await mkdir(vendorDir, { recursive: true });
@@ -141,7 +141,7 @@ async function vendorSdk(appDir: string): Promise<void> {
 /**
  * The generated app's runtime: a self-contained agent loop using only Node
  * built-ins (node:net for sibling RPC sockets, fetch() for the LLM API) —
- * deliberately not importing @berth/agents itself, which would drag
+ * deliberately not importing @berthos/agents itself, which would drag
  * @anthropic-ai/sdk/openai (and their own vendoring) into the sandbox. Kept
  * as one provider-native loop per LLM (Anthropic content-blocks vs OpenAI
  * role/tool_calls) rather than a third unified format, since this is
@@ -152,7 +152,7 @@ function renderAgentServerSource(options: GenerateAgentServerAppOptions): string
   const llm = { provider: options.llm.provider, model: options.llm.model ?? null, apiKeyEnvVar: options.llm.apiKeyEnvVar };
   const systemPrompt = options.systemPrompt ?? null;
 
-  return `import { defineApp } from "@berth/sdk";
+  return `import { defineApp } from "@berthos/sdk";
 import { z } from "zod";
 import * as net from "node:net";
 
@@ -167,7 +167,7 @@ function callSibling(appName, exportName, input) {
     // Not <appName>/rpc.sock, which is 0600 and reachable only by that app and
     // root: an authorized caller gets its own socket, in a directory only it
     // can traverse, so the server knows which sibling called it without having
-    // to trust anything on the wire. See REMEDIATION.md 1.4 and @berth/sdk's
+    // to trust anything on the wire. See REMEDIATION.md 1.4 and @berthos/sdk's
     // startPeerSocketServers(). SELF is this generated app's own name, which
     // is also what its berth.yml declares app:invoke: from.
     const socket = net.createConnection(\`/run/berth/\${appName}/peers/\${SELF}/rpc.sock\`);

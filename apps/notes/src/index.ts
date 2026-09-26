@@ -1,4 +1,4 @@
-import { defineApp, type ContextBusClient } from "@berth/sdk";
+import { defineApp, type ContextBusClient } from "@berthos/sdk";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";

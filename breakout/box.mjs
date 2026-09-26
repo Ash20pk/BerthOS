@@ -26,8 +26,8 @@ import Docker from "dockerode";
 import { randomBytes } from "node:crypto";
 import { mkdir, writeFile, chmod, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { loadManifest } from "@berth/manifest-schema";
-import { buildImage, startContainer, stopContainer, invokeAppExport, gatherBootEvidence } from "@berth/docker-orchestrator";
+import { loadManifest } from "@berthos/manifest-schema";
+import { buildImage, startContainer, stopContainer, invokeAppExport, gatherBootEvidence } from "@berthos/docker-orchestrator";
 
 export const TARGET_APP = "breakout-target";
 export const KEEPER_APP = "flag-keeper";

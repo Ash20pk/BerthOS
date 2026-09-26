@@ -1,11 +1,11 @@
-# @berth/mesh-coordinator
+# @berthos/mesh-coordinator
 
 Coordination service for Berth's WireGuard mesh: allocates stable mesh IPs, exchanges public keys, and mutually-matches peers before introducing them (see docs/mesh-reference.md).
 
 Part of [Berth](https://github.com/Ash20pk/BerthOS) — IAM for agents — declared capabilities, kernel-enforced, audit-trailed. The `berth.yml` capability line is the boundary; Landlock + seccomp hold it.
 
 ```sh
-npm install @berth/mesh-coordinator
+npm install @berthos/mesh-coordinator
 ```
 
 ## Documentation

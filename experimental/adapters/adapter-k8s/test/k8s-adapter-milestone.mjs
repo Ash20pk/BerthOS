@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Real, running verification of @berth/adapter-k8s against a live (if
+// Real, running verification of @berthos/adapter-k8s against a live (if
 // throwaway) Kubernetes cluster — provisioned via `kind` (Kubernetes-in-
 // Docker), which needs no cloud account, unlike adapter-e2b (zero tests,
 // real or mocked) and adapter-daytona (mocked-only) — both need paid live
@@ -13,8 +13,8 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import Docker from "dockerode";
-import { loadManifest } from "@berth/manifest-schema";
-import { buildImage } from "@berth/docker-orchestrator";
+import { loadManifest } from "@berthos/manifest-schema";
+import { buildImage } from "@berthos/docker-orchestrator";
 import { createK8sAdapter } from "../dist/index.js";
 
 const execFileAsync = promisify(execFile);
@@ -128,7 +128,7 @@ async function main() {
     console.log("PASS — teardown() removed the Pod for real.");
 
     console.log(
-      "\nALL PASS — @berth/adapter-k8s's full DeployAdapter lifecycle (upload/start/status/list/streamLogs/previewUrl/teardown) " +
+      "\nALL PASS — @berthos/adapter-k8s's full DeployAdapter lifecycle (upload/start/status/list/streamLogs/previewUrl/teardown) " +
         "works against a real, live Kubernetes API, not a mock.",
     );
   } finally {

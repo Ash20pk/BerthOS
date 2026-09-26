@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { Command, Flags } from "@oclif/core";
 import Docker from "dockerode";
-import { runDoctor, type CheckStatus, type DoctorReport } from "@berth/docker-orchestrator";
+import { runDoctor, type CheckStatus, type DoctorReport } from "@berthos/docker-orchestrator";
 import { planMacEnforcementFix, type MacFixFacts } from "../util/doctor-fix.js";
 
 const GLYPH: Record<CheckStatus, string> = { ok: "✔", warn: "!", fail: "✘", unknown: "?" };

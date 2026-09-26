@@ -2,7 +2,7 @@
 import * as path from "node:path";
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { loadManifest } from "@berth/manifest-schema";
+import { loadManifest } from "@berthos/manifest-schema";
 import type { BerthApp, AppContext } from "./app.js";
 import type { ContextBusClient } from "./context-bus/client.js";
 import { createLocalContextBus } from "./context-bus/local.js";
@@ -22,7 +22,7 @@ const SEMANTIC_FS_SOCKET = process.env.BERTH_SEMANTIC_FS_SOCKET ?? "/tmp/berth-s
 
 /**
  * Phase 2's real context bus if the daemon is reachable (see
- * @berth/docker-orchestrator's entrypoint.sh, which starts it before this
+ * @berthos/docker-orchestrator's entrypoint.sh, which starts it before this
  * runtime); falls back to Phase 1's local no-op otherwise, so an app never
  * hard-fails just because it's running outside a sandbox with the daemon
  * (e.g. a bare `node dist/index.js` during a unit test).
@@ -98,7 +98,7 @@ async function main(): Promise<void> {
   startRpcServer(app, { socketPath: process.env.BERTH_RPC_SOCKET });
 
   // Only set for an instance deployed to a remote fleet (E2B/Daytona/K8s) via
-  // @berth/agents's bootNetworkedAgent({fleet}) — never by berth dev/os up.
+  // @berthos/agents's bootNetworkedAgent({fleet}) — never by berth dev/os up.
   // BERTH_HTTP_RPC_PORT/TOKEN are container-wide env (see container.ts's
   // env: Object.entries(...) — every app in a multi-app instance gets the
   // same ones), but only ONE app (the synthesized agent-server, in

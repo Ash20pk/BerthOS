@@ -1,7 +1,7 @@
 import { Command, Args, Flags } from "@oclif/core";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import type { EvalRunnable, EvalCase, EvalSuiteResult, ComputerHandle } from "@berth/agents";
+import type { EvalRunnable, EvalCase, EvalSuiteResult, ComputerHandle } from "@berthos/agents";
 import { loadAgents } from "../util/optional-agents.js";
 
 /**

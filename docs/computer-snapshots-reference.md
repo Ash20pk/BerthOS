@@ -6,7 +6,7 @@ See [What is a Berth OS?](./berth-os.md) and [Resident apps](./resident-apps.md)
 
 ## How it works
 
-- **`berth snapshot create`** (`packages/cli/src/commands/snapshot/create.ts`): finds the running dev container (`berth-dev-<appName>` by default), then calls `@berth/docker-orchestrator`'s `createSnapshot()`:
+- **`berth snapshot create`** (`packages/cli/src/commands/snapshot/create.ts`): finds the running dev container (`berth-dev-<appName>` by default), then calls `@berthos/docker-orchestrator`'s `createSnapshot()`:
   - `container.commit()` — a **real Docker image commit**, capturing the container's actual filesystem and installed packages as a new image layer, not a re-run of `on_install`.
   - `container.getArchive({path: BERTH_CONTEXT_DATA})` — a **real tar archive** of semantic-fs's backing directory (the files it tracks), saved alongside the image.
   - `container.getArchive({path: BERTH_CONTEXT_INDEX_DB})` — a **second, separate real tar archive** of semantic-fs's SQLite metadata index. `BERTH_CONTEXT_INDEX_DB` is a sibling path to `BERTH_CONTEXT_DATA`, not nested inside it, so it can't ride along with the context-data archive and needs its own capture/restore step.

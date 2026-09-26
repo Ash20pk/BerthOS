@@ -1,7 +1,7 @@
 """The other half of `berth mcp` (which makes a Berth resident app's exports
 available to any MCP client — Claude Desktop, Claude Code, ...): this lets a
 Python `Agent` be the *client*, consuming any external MCP server's tools as
-ordinary Tools. Mirrors @berth/agents' mcp-client.ts field-for-field —
+ordinary Tools. Mirrors @berthos/agents' mcp-client.ts field-for-field —
 snake_case instead of camelCase, `contextlib.AsyncExitStack` standing in for
 TypeScript's plain `client.close()` since Python's `ClientSession`/transport
 pair are async context managers that must stay entered for the connection's

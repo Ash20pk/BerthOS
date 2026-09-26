@@ -1,5 +1,5 @@
 {
-  "name": "@berth/adapter-k8s",
+  "name": "@berthos/adapter-k8s",
   "version": "0.1.0",
   "description": "DeployAdapter implementation targeting a Kubernetes cluster",
   "type": "module",
@@ -46,13 +46,13 @@
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
-    "@berth/adapter-core": "workspace:*",
-    "@berth/manifest-schema": "workspace:*"
+    "@berthos/adapter-core": "workspace:*",
+    "@berthos/manifest-schema": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^7.0.2",
     "@types/node": "^26.2.0",
-    "@berth/docker-orchestrator": "workspace:*",
+    "@berthos/docker-orchestrator": "workspace:*",
     "dockerode": "^5.0.1"
   },
   "peerDependencies": {

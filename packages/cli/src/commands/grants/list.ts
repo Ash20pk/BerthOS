@@ -1,5 +1,5 @@
 import { Command, Flags } from "@oclif/core";
-import { applyClientTls, warnIfCredentialOverPlaintext } from "@berth/tls";
+import { applyClientTls, warnIfCredentialOverPlaintext } from "@berthos/tls";
 
 const DEFAULT_SERVER = "http://127.0.0.1:4874";
 

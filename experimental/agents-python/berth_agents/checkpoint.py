@@ -1,5 +1,5 @@
 """The persistence seam Agent.run()/resume() write through — mirrors
-@berth/agents' checkpoint.ts's CheckpointStore interface (save/load by id),
+@berthos/agents' checkpoint.ts's CheckpointStore interface (save/load by id),
 deliberately narrow enough that a backend other than Semantic FS can
 implement it. There's no Python-reachable Computer/Semantic FS yet (see
 docs/agents-python-reference.md — driving a Berth sandbox from Python needs

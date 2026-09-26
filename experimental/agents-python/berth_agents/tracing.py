@@ -1,4 +1,4 @@
-"""Mirrors @berth/agents' tracing.ts's core AgentStepEvent/StepTracer seam —
+"""Mirrors @berthos/agents' tracing.ts's core AgentStepEvent/StepTracer seam —
 only the OTel backend (otel_tracer.py) is ported so far. The Context
 Bus/Semantic FS backends (create_context_bus_step_tracer()/
 create_semantic_fs_step_tracer()/create_agent_tracer()/read_agent_trace()/

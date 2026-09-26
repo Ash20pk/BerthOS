@@ -1,7 +1,7 @@
 """Thin adapter over the `openai` package's Chat Completions tool-calling
 loop. The second of two built-in LLMProvider implementations — proves the
 Tool/LLMProvider seam is real (Agent/Crew never reference this module or
-Anthropic's), not secretly single-vendor. Mirrors @berth/agents'
+Anthropic's), not secretly single-vendor. Mirrors @berthos/agents'
 providers/openai.ts."""
 
 from __future__ import annotations

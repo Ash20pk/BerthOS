@@ -29,7 +29,7 @@ import { dirname, join } from "node:path";
 import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { loadManifest } from "@berth/manifest-schema";
+import { loadManifest } from "@berthos/manifest-schema";
 import { buildImage, startContainer, stopContainer } from "../dist/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -563,7 +563,7 @@ async function createRpcClient(container) {
   const stream = await container.attach({ stream: true, stdin: true, stdout: true, stderr: true, hijack: true });
   // Terminates the attach options object docker-modem sends as this POST's
   // body straight into the container's stdin, so it can't concatenate onto the
-  // first real request — see @berth/docker-orchestrator's stdio-rpc.ts for the
+  // first real request — see @berthos/docker-orchestrator's stdio-rpc.ts for the
   // full explanation.
   stream.write("\n");
   const stdout = new PassThrough();

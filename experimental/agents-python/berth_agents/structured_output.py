@@ -1,4 +1,4 @@
-"""Mirrors @berth/agents' structured-output.ts: parse a model's final answer
+"""Mirrors @berthos/agents' structured-output.ts: parse a model's final answer
 as JSON against a schema, and feed a corrective prompt back on failure.
 Zod's schema/validation role is played by pydantic here — the closest
 Python equivalent already used elsewhere in this repo (berth_sdk's own

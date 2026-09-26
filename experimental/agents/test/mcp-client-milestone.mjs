@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Real, running verification that @berth/agents' own createMcpClientTools()
+// Real, running verification that @berthos/agents' own createMcpClientTools()
 // (not just the underlying SDK, already proven by
 // packages/docker-orchestrator/test/mcp-milestone.mjs) turns a real running
 // MCP server's tools into real Tools an Agent can call — boots a real
@@ -12,8 +12,8 @@ import Docker from "dockerode";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { loadManifest } from "@berth/manifest-schema";
-import { buildImage, startContainer, stopContainer } from "@berth/docker-orchestrator";
+import { loadManifest } from "@berthos/manifest-schema";
+import { buildImage, startContainer, stopContainer } from "@berthos/docker-orchestrator";
 import { Agent, createMcpClientTools } from "../dist/index.js";
 import { resolveDevBindMount } from "../../cli/dist/util/workspace.js";
 

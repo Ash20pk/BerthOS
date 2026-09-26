@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Real, running verification of the human-approval workflow described in
 // docs/capability-tokens-reference.md: a capability NOT declared in
-// berth.yml, approved via a real running @berth/grants-server + the
+// berth.yml, approved via a real running @berthos/grants-server + the
 // `berth grants approve` HTTP contract, actually lands in the effective
 // capability policy generate-capability-policy.ts writes at the app's next
 // boot. This is the "does approval actually gate anything" question,
@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { loadManifest } from "@berth/manifest-schema";
+import { loadManifest } from "@berthos/manifest-schema";
 import { buildImage, startContainer, stopContainer } from "../dist/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));

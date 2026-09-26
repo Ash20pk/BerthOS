@@ -1,4 +1,4 @@
-import { defineConnectorApp } from "@berth/sdk";
+import { defineConnectorApp } from "@berthos/sdk";
 
 // JSONPLACEHOLDER_BASE_URL lets index.test.ts point this at a real local
 // server instead of the live internet — same override pattern

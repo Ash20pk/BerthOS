@@ -1,7 +1,7 @@
 """Amazon Bedrock's newer OpenAI-compatible "Mantle" endpoint, via the
 `openai` package's own `AsyncBedrockOpenAI` client (`openai.lib.bedrock`,
 bearer-token auth, not full AWS SigV4) — real, current Bedrock support, not
-a workaround. Mirrors @berth/agents' providers/bedrock.ts."""
+a workaround. Mirrors @berthos/agents' providers/bedrock.ts."""
 
 from __future__ import annotations
 

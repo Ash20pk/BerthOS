@@ -1,4 +1,4 @@
-"""Mirrors @berth/sdk's context-bus/local.ts — an in-process no-op fallback
+"""Mirrors @berthos/sdk's context-bus/local.ts — an in-process no-op fallback
 used when the real Unix-socket daemon isn't reachable (e.g. running an app
 outside a sandbox during a quick script/test)."""
 

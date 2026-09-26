@@ -1,4 +1,4 @@
-import { defineApp } from "@berth/sdk";
+import { defineApp } from "@berthos/sdk";
 import { z } from "zod";
 import { getPage } from "./cdp-controller.js";
 

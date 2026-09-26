@@ -1,4 +1,4 @@
-"""Mirrors @berth/sdk's generate-capability-policy.ts exactly (same policy
+"""Mirrors @berthos/sdk's generate-capability-policy.ts exactly (same policy
 shape, same deny-by-default network/opt-in read-path rules, same
 per-app baseline write/read paths) — agent-init (Rust) reads whichever
 one ran, TypeScript or Python, without caring which wrote it. Invoked as

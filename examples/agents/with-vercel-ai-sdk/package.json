@@ -7,7 +7,7 @@
     "start": "node index.mjs"
   },
   "dependencies": {
-    "@berth/agents": "workspace:*",
+    "@berthos/agents": "workspace:*",
     "@ai-sdk/openai": "^4.0.0",
     "ai": "^7.0.66"
   }

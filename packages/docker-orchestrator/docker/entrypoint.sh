@@ -178,11 +178,11 @@ provision_app_identity() {
 # both the authorization and the identity, because which socket a connection
 # arrived on is a fact the kernel established at connect(2) and the caller
 # cannot influence. That is Step 4's SO_PEERCRED property, obtained the only
-# way available to a Node server — see @berth/sdk's rpc.ts.
+# way available to a Node server — see @berthos/sdk's rpc.ts.
 #
 # This is the authorized half of REMEDIATION.md 1.4. The unauthorized half —
 # any app reaching any other app's socket because they all sat in a 1777
-# directory — is what Step 3 closes; but @berth/agents' generated agent app
+# directory — is what Step 3 closes; but @berthos/agents' generated agent app
 # genuinely calls its sibling apps' exports (network.ts's callSibling, the
 # agent-as-tool path), so closing it without an opt-in would delete a shipped
 # feature rather than secure it. Declaring the capability is now what buys it,
@@ -237,7 +237,7 @@ grant_invoke_access() {
 # owned by the governor and group-owned by the caller means the caller is the
 # only unprivileged uid that can traverse in, so the governor learns which app
 # is asking from the kernel rather than from the request body.
-# What @berth/sdk's gate reads, per app. Unset (rather than empty) when no
+# What @berthos/sdk's gate reads, per app. Unset (rather than empty) when no
 # governor is loaded, which is the common case and the one where the gate
 # costs nothing: with no BERTH_GOVERNANCE_APP the SDK skips the check
 # entirely. The governor's own exports are exempted here *and* in the SDK —
@@ -525,7 +525,7 @@ if [ -z "${BERTH_APPS:-}" ]; then
   # when unset) — a Python resident app sets BERTH_APP_RUNTIME=python.
   # PYTHONPATH points straight at the bind-mounted packages/sdk-python
   # source, the same role a pre-existing node_modules symlink plays for a
-  # TS app's @berth/sdk — no pip install needed for dev mode.
+  # TS app's @berthos/sdk — no pip install needed for dev mode.
   if [ "${BERTH_APP_RUNTIME:-node}" = "python" ]; then
     export PYTHONPATH="/workspace/packages/sdk-python${PYTHONPATH:+:$PYTHONPATH}"
   fi
@@ -545,7 +545,7 @@ if [ -z "${BERTH_APPS:-}" ]; then
   if [ "${BERTH_APP_RUNTIME:-node}" = "python" ]; then
     LIFECYCLE_FLAGS="$(python3 -m berth_sdk.run_lifecycle | tail -n1)"
   else
-    LIFECYCLE_FLAGS="$(node "$PWD/node_modules/@berth/sdk/dist/run-lifecycle.js" | tail -n1)"
+    LIFECYCLE_FLAGS="$(node "$PWD/node_modules/@berthos/sdk/dist/run-lifecycle.js" | tail -n1)"
   fi
   NEEDS_BROWSER="${LIFECYCLE_FLAGS%,*}"
   NEEDS_EGRESS_BROKER="${LIFECYCLE_FLAGS#*,}"
@@ -600,14 +600,14 @@ if [ -z "${BERTH_APPS:-}" ]; then
   fi
 
   # Translates berth.yml's capabilities into the JSON policy agent-init reads
-  # (see @berth/sdk's generate-capability-policy.ts for why this lives in
+  # (see @berthos/sdk's generate-capability-policy.ts for why this lives in
   # Node/TypeScript rather than being parsed from YAML in Rust) — mirrored
   # exactly in Python for BERTH_APP_RUNTIME=python (same policy JSON shape;
   # agent-init doesn't care which one wrote it).
   if [ "${BERTH_APP_RUNTIME:-node}" = "python" ]; then
     python3 -m berth_sdk.generate_capability_policy
   else
-    node "$PWD/node_modules/@berth/sdk/dist/generate-capability-policy.js"
+    node "$PWD/node_modules/@berthos/sdk/dist/generate-capability-policy.js"
   fi
 
   # The app's name comes from the policy that was just generated rather than
@@ -634,7 +634,7 @@ if [ -z "${BERTH_APPS:-}" ]; then
     echo "[berth:entrypoint] browser:navigate:*/network:host:* capability declared — starting egress broker on 127.0.0.1:${EGRESS_BROKER_PORT}" >&2
     BERTH_CAPABILITY_POLICY="${BERTH_CAPABILITY_POLICY:-$PWD/.berth/capability-policy.json}" node /usr/local/bin/berth-egress-broker.js &
     # The standardized way any resident app's own code (not just Chromium's
-    # --proxy-server flag) discovers the broker — @berth/sdk's
+    # --proxy-server flag) discovers the broker — @berthos/sdk's
     # configureEgressProxy() reads exactly this. Same name whether this app
     # got here via browser:navigate:* or network:host:*.
     export BERTH_EGRESS_PROXY_URL="http://127.0.0.1:${EGRESS_BROKER_PORT}"
@@ -690,7 +690,7 @@ if [ -z "${BERTH_APPS:-}" ]; then
       || echo "[berth:entrypoint] WARNING: mesh-daemon's control socket never appeared — continuing without mesh" >&2
   fi
 
-  # No BERTH_TOKEN_SECRET any more. It backed @berth/sdk's HMAC-signed
+  # No BERTH_TOKEN_SECRET any more. It backed @berthos/sdk's HMAC-signed
   # capability tokens, which REMEDIATION.md 1.10 removed: nothing ever
   # verified one, and exporting the signing key into the environment of the
   # very process the tokens were meant to constrain is what made them
@@ -740,10 +740,10 @@ EGRESS_APP_DIR=""
 # assertAtMostOneMeshApp guarantees at most one hit here.
 NEEDS_MESH=0
 MESH_APP_DIR=""
-# The app declaring `governs: true`, if any. @berth/manifest-schema allows at
+# The app declaring `governs: true`, if any. @berthos/manifest-schema allows at
 # most one per Computer and already refuses such a manifest unless it exports
 # evaluate_action, so this loop only has to find the name — REMEDIATION.md
-# 1.13. What it enables is the gate at @berth/sdk's own RPC dispatch, which is
+# 1.13. What it enables is the gate at @berthos/sdk's own RPC dispatch, which is
 # the only place `berth rpc`, the HTTP bridge, the TCP listener and a
 # sibling's direct socket call can all be seen from.
 GOVERNANCE_APP=""
@@ -774,7 +774,7 @@ fi
 # default known upfront — only the broker process's actual startup happens
 # later, once EGRESS_APP_DIR's capability policy exists) so every app in this
 # container, whichever one declared the capability, inherits the same
-# standardized variable @berth/sdk's configureEgressProxy() reads.
+# standardized variable @berthos/sdk's configureEgressProxy() reads.
 if [ "$NEEDS_EGRESS_BROKER" = "1" ]; then
   export BERTH_EGRESS_PROXY_URL="http://127.0.0.1:${BERTH_EGRESS_BROKER_PORT:-8090}"
 fi
@@ -830,7 +830,7 @@ run_app() {
   # only by declaring app:invoke:<name>, which puts it in this app's group;
   # the host relay reaches it as root (docker exec), which is unchanged.
   export BERTH_RPC_SOCKET="/run/berth/${app_name}/rpc.sock"
-  # Who this app is, in its own environment — @berth/sdk's governance gate
+  # Who this app is, in its own environment — @berthos/sdk's governance gate
   # announces actions under this name, and it is set by the orchestrator
   # rather than read from the manifest so it cannot disagree with the identity
   # the peers/ directories were built around (REMEDIATION.md 1.13).
@@ -842,7 +842,7 @@ run_app() {
   # browser/egress flags (the grep loop above decides those for the whole
   # container), so once on_install moved to build time — REMEDIATION.md 1.5 —
   # the only thing this invocation still did was cost a Node startup per app.
-  node "node_modules/@berth/sdk/dist/generate-capability-policy.js"
+  node "node_modules/@berthos/sdk/dist/generate-capability-policy.js"
   secure_capability_policy "$BERTH_CAPABILITY_POLICY"
 
   exec /usr/local/bin/agent-init "$@"
@@ -893,7 +893,7 @@ precreate_declared_paths() {
     ( cd "$dir" \
         && BERTH_MANIFEST_PATH="$dir/berth.yml" \
            BERTH_CAPABILITY_POLICY="$dir/.berth/capability-policy.json" \
-           node "node_modules/@berth/sdk/dist/generate-capability-policy.js" >/dev/null ) \
+           node "node_modules/@berthos/sdk/dist/generate-capability-policy.js" >/dev/null ) \
       || { echo "[berth:entrypoint] WARNING: could not pre-compile ${name}'s capability policy — its declared paths may not exist when a sibling binds a read grant on them" >&2; continue; }
 
     node -e '
@@ -981,7 +981,7 @@ while IFS=$'\t' read -r APP_NAME APP_DIR; do
   # second app was added). `</dev/null` for every app sidesteps that
   # fragility entirely rather than depending on exactly how fds survive
   # this script's fork/exec chain.
-  run_app "$APP_NAME" "$APP_DIR" node "node_modules/@berth/sdk/dist/runtime.js" </dev/null &
+  run_app "$APP_NAME" "$APP_DIR" node "node_modules/@berthos/sdk/dist/runtime.js" </dev/null &
   PID=$!
 
   if [ "$INDEX" -eq 0 ]; then

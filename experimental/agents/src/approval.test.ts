@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createGrantsServer } from "@berth/grants-server";
+import { createGrantsServer } from "@berthos/grants-server";
 import { applyHumanApprovalGate, HumanApprovalDeniedError } from "./approval.js";
 import type { Tool } from "./types.js";
 

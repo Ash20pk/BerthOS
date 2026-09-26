@@ -813,7 +813,7 @@ There are two, deliberately:
 
 - `scripts/verify-attestation.mjs` — standalone, depending on nothing but
   `node:crypto`, so a stranger can check a record without installing anything.
-- `verifyAttestation` in `@berth/audit` — the same algorithm as a library,
+- `verifyAttestation` in `@berthos/audit` — the same algorithm as a library,
   used by the emitter to check its own output (§9.4).
 
 The conformance suite runs the same corpus through both

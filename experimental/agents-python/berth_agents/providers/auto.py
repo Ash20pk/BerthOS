@@ -1,4 +1,4 @@
-"""Mirrors @berth/agents' providers/auto.ts: env-key auto-detection and a
+"""Mirrors @berthos/agents' providers/auto.ts: env-key auto-detection and a
 plain-data provider config, so a caller doesn't have to know which
 create_x_provider() function to call."""
 

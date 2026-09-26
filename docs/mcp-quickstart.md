@@ -9,7 +9,7 @@ For the mechanics of the bridge (how manifest exports become MCP tools, what's d
 ## Prerequisites
 
 - Node.js 22+, Docker running locally, `corepack enable`.
-- A checkout, built once — `@berth/*` isn't on npm yet:
+- A checkout, built once — `@berthos/*` isn't on npm yet:
 
 ```bash
 git clone https://github.com/Ash20pk/BerthOS && cd BerthOS

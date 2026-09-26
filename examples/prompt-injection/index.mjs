@@ -9,7 +9,7 @@
  * hard-coded to obey the attacker — see `compromisedModel` below, a scripted
  * LLMProvider that reads a poisoned file and does exactly what the poison says.
  *
- * The agent loop is the real one from `@berth/agents`. The resident app is the
+ * The agent loop is the real one from `@berthos/agents`. The resident app is the
  * real `apps/filesystem`, which declares `filesystem:write:/workspace` and
  * nothing else. The flow:
  *
@@ -35,8 +35,8 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { createAgent } from "@berth/agents";
-import { createFileAuditSink, readAuditFile, verifyAuditChain } from "@berth/audit";
+import { createAgent } from "@berthos/agents";
+import { createFileAuditSink, readAuditFile, verifyAuditChain } from "@berthos/audit";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const FILESYSTEM_APP_DIR = join(REPO_ROOT, "apps", "filesystem");

@@ -1,5 +1,5 @@
 """The provider-agnostic shapes Agent/Crew are built from — mirrors
-@berth/agents' types.ts field-for-field (snake_case instead of camelCase),
+@berthos/agents' types.ts field-for-field (snake_case instead of camelCase),
 not a novel design."""
 
 from __future__ import annotations

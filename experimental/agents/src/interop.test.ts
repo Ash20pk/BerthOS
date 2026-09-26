@@ -35,7 +35,7 @@ function fakeBerthTool(overrides: Partial<Tool> = {}): Tool & { calls: { input: 
 
 test("a Berth tool drives a real AI SDK generateText loop end to end", async () => {
   // The assertion that matters for this module: a tool defined by a
-  // berth.yml, with no @berth/agents Agent anywhere, executed by someone
+  // berth.yml, with no @berthos/agents Agent anywhere, executed by someone
   // else's loop. Run against the real `ai` package rather than a stub of it,
   // because what's being checked is whether the SDK accepts the shape.
   const berthTool = fakeBerthTool();

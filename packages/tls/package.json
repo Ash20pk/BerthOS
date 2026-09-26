@@ -1,5 +1,5 @@
 {
-  "name": "@berth/tls",
+  "name": "@berthos/tls",
   "version": "0.1.0",
   "description": "Shared TLS for Berth servers and clients: cert loading, self-signed generation for dev, and client-side CA trust",
   "type": "module",

@@ -1,4 +1,4 @@
-import type { BerthManifest } from "@berth/manifest-schema";
+import type { BerthManifest } from "@berthos/manifest-schema";
 
 /**
  * Every deploy adapter's SDK calls are real network requests against a
@@ -114,8 +114,8 @@ export interface DeployAdapter {
    */
   previewUrl?(handle: DeployHandle, port: number): Promise<string | null>;
   /**
-   * A reachable URL for this instance's HTTP RPC bridge (see @berth/sdk's
-   * startHttpRpcServer / BERTH_HTTP_RPC_PORT), used by @berth/agents's
+   * A reachable URL for this instance's HTTP RPC bridge (see @berthos/sdk's
+   * startHttpRpcServer / BERTH_HTTP_RPC_PORT), used by @berthos/agents's
    * bootNetworkedAgent({fleet}) to dispatch tool calls to a peer deployed to
    * this provider instead of a local Docker container. Deliberately
    * separate from previewUrl(): that one is a human-facing, opt-in-via-

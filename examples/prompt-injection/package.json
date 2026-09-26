@@ -7,7 +7,7 @@
     "start": "node index.mjs"
   },
   "dependencies": {
-    "@berth/agents": "workspace:*",
-    "@berth/audit": "workspace:*"
+    "@berthos/agents": "workspace:*",
+    "@berthos/audit": "workspace:*"
   }
 }

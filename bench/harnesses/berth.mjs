@@ -14,8 +14,8 @@
 import Docker from "dockerode";
 import { mkdir, writeFile, chmod } from "node:fs/promises";
 import { join } from "node:path";
-import { loadManifest } from "@berth/manifest-schema";
-import { buildImage, startContainer, stopContainer, invokeAppExport, gatherBootEvidence } from "@berth/docker-orchestrator";
+import { loadManifest } from "@berthos/manifest-schema";
+import { buildImage, startContainer, stopContainer, invokeAppExport, gatherBootEvidence } from "@berthos/docker-orchestrator";
 import { describePorts, probeControlPlane } from "./docker.mjs";
 
 const IMAGE_TAG = "berth/bench-probe:dev";

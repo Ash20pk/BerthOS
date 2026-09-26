@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { parse as parseYaml } from "yaml";
-import { validateManifest, ManifestValidationError } from "@berth/manifest-schema";
+import { validateManifest, ManifestValidationError } from "@berthos/manifest-schema";
 import type { RegistryDb, AppRecord } from "./db.js";
 import type { BlobStore } from "./storage.js";
 

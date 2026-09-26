@@ -10,7 +10,7 @@
  *   1. inside /workspace  -> succeeds
  *   2. outside /workspace -> EACCES, from the kernel
  *
- * Nothing in this file, in @berth/agents, or in the app's own code checks the
+ * Nothing in this file, in @berthos/agents, or in the app's own code checks the
  * second path. `apps/filesystem/berth.yml`'s capability line was compiled into
  * a Landlock ruleset and applied by `agent-init` before the app's first line
  * ran, so the write dies in `open(2)`. A prompt-injected agent, a hallucinated
@@ -28,7 +28,7 @@
  */
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { Computer } from "@berth/agents";
+import { Computer } from "@berthos/agents";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const FILESYSTEM_APP_DIR = join(REPO_ROOT, "apps", "filesystem");

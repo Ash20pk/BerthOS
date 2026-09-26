@@ -1,17 +1,17 @@
-# @berth/sdk
+# @berthos/sdk
 
 Resident app SDK: defineApp(), lifecycle hooks, context bus client — runs inside the sandbox.
 
 Part of [Berth](https://github.com/Ash20pk/BerthOS) — IAM for agents — declared capabilities, kernel-enforced, audit-trailed. The `berth.yml` capability line is the boundary; Landlock + seccomp hold it.
 
 ```sh
-npm install @berth/sdk
+npm install @berthos/sdk
 ```
 
 ## Usage
 
 ```ts
-import { defineApp } from "@berth/sdk";
+import { defineApp } from "@berthos/sdk";
 
 export default defineApp((app) => {
   // runs inside the sandbox; capabilities come from berth.yml

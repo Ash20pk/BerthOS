@@ -1,5 +1,5 @@
 /**
- * Mirrors @berth/manifest-schema's capability.ts globToRegExp exactly (same
+ * Mirrors @berthos/manifest-schema's capability.ts globToRegExp exactly (same
  * `*` -> `.*` translation) — deliberately reimplemented rather than
  * depended-on: peer names aren't necessarily berth app names, and this
  * package shouldn't need to understand the full `namespace:action:scope`

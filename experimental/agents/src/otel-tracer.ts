@@ -26,7 +26,7 @@ export interface OtelStepTracerOptions {
  * stable across a semconv version, so this is the safer dependency to take.
  */
 export function createOtelStepTracer(options: OtelStepTracerOptions = {}): StepTracer {
-  const tracer = trace.getTracer(options.tracerName ?? "@berth/agents");
+  const tracer = trace.getTracer(options.tracerName ?? "@berthos/agents");
 
   return {
     async emit(event: AgentStepEvent): Promise<void> {

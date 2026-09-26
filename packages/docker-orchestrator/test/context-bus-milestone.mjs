@@ -7,7 +7,7 @@
 // This boots ONE sandbox (one container) for filesystem — since it's a
 // pnpm workspace member, `bindMount`ing the whole workspace root is what
 // makes code-editor's own dist/node_modules reachable at the same relative
-// path inside the container too (see @berth/cli's resolveDevBindMount). We
+// path inside the container too (see @berthos/cli's resolveDevBindMount). We
 // then start code-editor's runtime as a second process in that SAME
 // container via `docker exec`, sharing the one context-bus daemon socket
 // and /workspace filesystem — this is what "multiple resident apps on one
@@ -17,7 +17,7 @@ import Docker from "dockerode";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { loadManifest } from "@berth/manifest-schema";
+import { loadManifest } from "@berthos/manifest-schema";
 import { buildImage, startContainer, stopContainer } from "../dist/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -25,7 +25,7 @@ const REPO_ROOT = join(__dirname, "..", "..", "..");
 const FILESYSTEM_APP_DIR = join(REPO_ROOT, "apps", "filesystem");
 const CODE_EDITOR_ENTRY = "/workspace/apps/code-editor/dist/index.js";
 const CODE_EDITOR_MANIFEST = "/workspace/apps/code-editor/berth.yml";
-const CODE_EDITOR_RUNTIME = "/workspace/apps/code-editor/node_modules/@berth/sdk/dist/runtime.js";
+const CODE_EDITOR_RUNTIME = "/workspace/apps/code-editor/node_modules/@berthos/sdk/dist/runtime.js";
 
 const docker = new Docker();
 
@@ -133,7 +133,7 @@ async function invokeExportViaAttach(container, request) {
   const stream = await container.attach({ stream: true, stdin: true, stdout: true, stderr: true, hijack: true });
   // Terminates the attach options object docker-modem sends as this POST's
   // body straight into the container's stdin, so it can't concatenate onto the
-  // first real request — see @berth/docker-orchestrator's stdio-rpc.ts for the
+  // first real request — see @berthos/docker-orchestrator's stdio-rpc.ts for the
   // full explanation.
   stream.write("\n");
   const stdout = new PassThrough();

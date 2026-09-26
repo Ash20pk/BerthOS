@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Agent, fetch as undiciFetch } from "undici";
-import { generateSelfSignedCerts, resolveServerTls } from "@berth/tls";
+import { generateSelfSignedCerts, resolveServerTls } from "@berthos/tls";
 import { createGrantsServer } from "./index.js";
 
 const OPERATOR_TOKEN = "test-operator-token";

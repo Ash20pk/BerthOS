@@ -1,4 +1,4 @@
-"""Mirrors @berth/manifest-schema's schema.ts/capability.ts — the manifest
+"""Mirrors @berthos/manifest-schema's schema.ts/capability.ts — the manifest
 shape and capability-string grammar are plain data (YAML + a
 namespace:action:scope string), not TypeScript-specific, so a Python
 implementation validates the exact same shape rather than porting any code.

@@ -53,7 +53,7 @@ building ([Berth](https://github.com/Ash20pk/BerthOS)):
 |---|---|
 | The policy document | [`berth.yml`](https://github.com/Ash20pk/BerthOS/blob/main/docs/manifest-reference.md) — `filesystem:write:/workspace`, `network:connect:api.github.com:443`, `app:invoke:<sibling>` |
 | The enforcement point | [`agent-init`](https://github.com/Ash20pk/BerthOS/tree/main/packages/agent-init): Landlock + seccomp + capability drop, applied in the kernel before the agent's code runs; egress and GitHub API brokers for what the kernel can't express |
-| CloudTrail | [`@berth/audit`](https://github.com/Ash20pk/BerthOS/blob/main/docs/audit-reference.md) — hash-chained records with a *verified* actor, not a self-reported one |
+| CloudTrail | [`@berthos/audit`](https://github.com/Ash20pk/BerthOS/blob/main/docs/audit-reference.md) — hash-chained records with a *verified* actor, not a self-reported one |
 | *(no AWS equivalent yet)* | **Attestation** — per-run proof the policy was actually enforced on the host that ran it. In progress; not shipped, and we won't claim it until the verifier exists. |
 
 The word "kernel" in the middle row is the part that makes it a layer rather

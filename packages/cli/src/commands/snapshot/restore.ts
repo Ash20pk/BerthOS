@@ -1,6 +1,6 @@
 import { Command, Args, Flags } from "@oclif/core";
 import Docker from "dockerode";
-import { restoreSnapshot, startContainer, snapshotDirFor } from "@berth/docker-orchestrator";
+import { restoreSnapshot, startContainer, snapshotDirFor } from "@berthos/docker-orchestrator";
 import { loadManifestOrExit } from "../../util/manifest.js";
 import { resolveFleet } from "../../util/fleet.js";
 

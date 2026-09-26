@@ -1,10 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import type { BerthManifest } from "@berth/manifest-schema";
+import type { BerthManifest } from "@berthos/manifest-schema";
 import type { ComputerAppSpec } from "./resolve-apps.js";
 import type { Tool } from "./types.js";
 import { applyGovernanceGate, resolveGovernanceGate, GovernanceDeniedError, GovernanceUnavailableError } from "./governance.js";
-import { agentActor, createMemoryAuditSink } from "@berth/audit";
+import { agentActor, createMemoryAuditSink } from "@berthos/audit";
 
 function appSpec(name: string, opts: { governs?: boolean; exempt?: boolean; exports?: string[] } = {}): ComputerAppSpec {
   const exportNames = opts.exports ?? [`${name}_export`];

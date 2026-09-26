@@ -1,5 +1,5 @@
-import { withTimeout, DEPLOY_CREATE_TIMEOUT_MS, DEPLOY_READ_TIMEOUT_MS } from "@berth/adapter-core";
-import type { DeployAdapter, DeployHandle, DeployStatus, DeployTarget } from "@berth/adapter-core";
+import { withTimeout, DEPLOY_CREATE_TIMEOUT_MS, DEPLOY_READ_TIMEOUT_MS } from "@berthos/adapter-core";
+import type { DeployAdapter, DeployHandle, DeployStatus, DeployTarget } from "@berthos/adapter-core";
 
 /**
  * `e2b` is an optional peer dependency: `berth deploy --fleet=e2b` only needs
@@ -12,7 +12,7 @@ async function loadE2b(): Promise<any> {
     return await import("e2b");
   } catch {
     throw new Error(
-      '@berth/adapter-e2b requires the "e2b" package. Install it with `pnpm add e2b` to deploy to E2B.',
+      '@berthos/adapter-e2b requires the "e2b" package. Install it with `pnpm add e2b` to deploy to E2B.',
     );
   }
 }

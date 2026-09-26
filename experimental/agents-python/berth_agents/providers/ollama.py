@@ -1,7 +1,7 @@
 """`create_openai_provider(base_url="http://127.0.0.1:11434/v1")` already
 works — Ollama speaks the OpenAI Chat Completions API — so this is pure
 ergonomics: a real local-model default and a name that says what it is.
-Mirrors @berth/agents' providers/ollama.ts."""
+Mirrors @berthos/agents' providers/ollama.ts."""
 
 from __future__ import annotations
 

@@ -1,6 +1,6 @@
 # hello-world-py
 
-A minimal Python resident app. Its only job is to prove that [`@berth/sdk-python`](../../packages/sdk-python) is wire-protocol compatible with the TypeScript runtime — same manifest format, same RPC and context-bus semantics, different language.
+A minimal Python resident app. Its only job is to prove that [`@berthos/sdk-python`](../../packages/sdk-python) is wire-protocol compatible with the TypeScript runtime — same manifest format, same RPC and context-bus semantics, different language.
 
 ## Exports
 

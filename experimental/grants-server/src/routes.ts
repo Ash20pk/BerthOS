@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { anonymousActor, operatorActor, type AuditSink } from "@berth/audit";
+import { anonymousActor, operatorActor, type AuditSink } from "@berthos/audit";
 import type { GrantsDb, GrantStatus } from "./db.js";
 import type { OperatorRegistry } from "./operators.js";
 

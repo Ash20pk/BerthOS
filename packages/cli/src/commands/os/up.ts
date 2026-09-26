@@ -2,7 +2,7 @@ import { Args, Command, Flags } from "@oclif/core";
 import { resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 import Docker from "dockerode";
-import { startContainer, writeOsState, readOsState } from "@berth/docker-orchestrator";
+import { startContainer, writeOsState, readOsState } from "@berthos/docker-orchestrator";
 import { buildOsImage } from "../../util/build.js";
 import {
   loadOsConfigFile,
@@ -28,7 +28,7 @@ export default class OsUp extends Command {
     network: Flags.string({ description: "join a Docker network (see Crew.networked())" }),
     "http-rpc": Flags.boolean({
       description:
-        "expose @berth/sdk's HTTP RPC bridge on a host port, for a process with no Docker API access (e.g. a Python client via berth_agents.Computer.connect()) to call this OS's exports over plain HTTP+bearer-token instead of docker exec",
+        "expose @berthos/sdk's HTTP RPC bridge on a host port, for a process with no Docker API access (e.g. a Python client via berth_agents.Computer.connect()) to call this OS's exports over plain HTTP+bearer-token instead of docker exec",
     }),
     "http-rpc-app": Flags.string({
       description: "which loaded app should bind the HTTP RPC bridge, when more than one is loaded (defaults to the first)",
@@ -145,11 +145,11 @@ export default class OsUp extends Command {
 /**
  * A published Docker port can accept TCP connections before the resident
  * app inside has actually finished booting far enough to call
- * startHttpRpcServer() — same reasoning as @berth/agents' computer.ts's own
+ * startHttpRpcServer() — same reasoning as @berthos/agents' computer.ts's own
  * checkHttpRpcHealth()/withReadyRetry(), reimplemented here in the CLI
- * rather than importing it, since @berth/cli depending on @berth/agents just
+ * rather than importing it, since @berthos/cli depending on @berthos/agents just
  * for a 15-line retry loop isn't worth the coupling (unlike `berth eval`,
- * which genuinely needs @berth/agents' EvalRunnable machinery).
+ * which genuinely needs @berthos/agents' EvalRunnable machinery).
  */
 async function waitForHttpRpcHealthy(url: string, token: string, ceilingMs = 30_000): Promise<void> {
   const start = Date.now();

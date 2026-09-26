@@ -1,5 +1,5 @@
 {
-  "name": "@berth/bench",
+  "name": "@berthos/bench",
   "version": "0.1.0",
   "private": true,
   "description": "The containment benchmark: one probe, several sandboxes, a generated scorecard",
@@ -9,8 +9,8 @@
     "bench:local": "node run.mjs --harness docker,berth,berth-weakened"
   },
   "dependencies": {
-    "@berth/docker-orchestrator": "workspace:*",
-    "@berth/manifest-schema": "workspace:*",
+    "@berthos/docker-orchestrator": "workspace:*",
+    "@berthos/manifest-schema": "workspace:*",
     "dockerode": "^4.0.9"
   }
 }

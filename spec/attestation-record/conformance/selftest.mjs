@@ -2,7 +2,7 @@
 // The suite's own control (SPEC 8.5). Three runs, three required outcomes:
 //
 //   standalone verifier  MUST pass  — scripts/verify-attestation.mjs conforms
-//   library verifier     MUST pass  — @berth/audit conforms, and by running the
+//   library verifier     MUST pass  — @berthos/audit conforms, and by running the
 //                                     same corpus through both, the two
 //                                     reference implementations are shown not
 //                                     to have drifted apart

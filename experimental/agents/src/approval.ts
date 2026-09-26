@@ -1,4 +1,4 @@
-import type { GrantRecord } from "@berth/grants-server";
+import type { GrantRecord } from "@berthos/grants-server";
 import { abortableSleep } from "./cancellation.js";
 import { isAbortError } from "./errors.js";
 import type { Tool } from "./types.js";
@@ -27,7 +27,7 @@ export class HumanApprovalDeniedError extends Error {
 }
 
 export interface HumanApprovalGateOptions {
-  /** Base URL of a running grants-server instance (`berth-grants`, see @berth/grants-server), e.g. "http://127.0.0.1:4874". */
+  /** Base URL of a running grants-server instance (`berth-grants`, see @berthos/grants-server), e.g. "http://127.0.0.1:4874". */
   grantsServerUrl: string;
   /** Attributed as the grant's `appName` — typically the Agent's name, so `berth grants list` shows which agent is asking. */
   requesterName: string;

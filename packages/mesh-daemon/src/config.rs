@@ -2,7 +2,7 @@ use serde::Deserialize;
 use std::env;
 
 /// Only the one field mesh-daemon needs out of the same capability-policy.json
-/// agent-init reads (see @berth/sdk's generate-capability-policy.ts) — serde
+/// agent-init reads (see @berthos/sdk's generate-capability-policy.ts) — serde
 /// ignores every other field by default (no deny_unknown_fields), so this
 /// stays correct even as that file gains fields for other consumers.
 #[derive(Deserialize, Default)]

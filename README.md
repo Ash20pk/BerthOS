@@ -11,7 +11,7 @@ Your agent gets a persistent, sandboxed computer — a **Berth OS** — where wh
 ## Run it
 
 ```bash
-npm install -g @berth/cli
+npm install -g @berthos/cli
 berth doctor --fix      # macOS: provisions a Colima host whose kernel actually enforces
 berth init my-app && cd my-app && berth dev
 ```
@@ -53,7 +53,7 @@ write /etc/berth-should-not-exist.txt -> EACCES: permission denied, open '/etc/b
 PASS — the capability line in berth.yml is the boundary, and the kernel is the one holding it.
 ```
 
-Nothing in that script, in `@berth/agents`, or in the app's own code inspects the second path. The manifest's capability list was compiled into a Landlock ruleset and applied by `agent-init` before the app's first line ran, so the write dies in `open(2)`. An agent that gets prompt-injected into trying it gets the same answer.
+Nothing in that script, in `@berthos/agents`, or in the app's own code inspects the second path. The manifest's capability list was compiled into a Landlock ruleset and applied by `agent-init` before the app's first line ran, so the write dies in `open(2)`. An agent that gets prompt-injected into trying it gets the same answer.
 
 **The honest part:** that denial needs a host kernel that provides Landlock. Docker Desktop for Mac does not, and the example says so and exits non-zero rather than printing a denial it can't attribute to the kernel. On macOS, [docs/mac-enforcement.md](./docs/mac-enforcement.md) is a four-flag Colima recipe (no kernel build) where it's real — verified on Apple silicon, Landlock ABI 4. Run [`berth doctor`](./docs/doctor-reference.md) to see which host you're on. What is and isn't enforced, per capability and per tier: [docs/kernel-enforcement.md](./docs/kernel-enforcement.md).
 
@@ -92,7 +92,7 @@ Berth's differentiator is what its tools are *made of*, so adopting a whole fram
 
 [`examples/agents/with-vercel-ai-sdk`](./examples/agents/with-vercel-ai-sdk) is the demo above with a real model in the loop and no Berth `Agent` anywhere in the file. Details, and why both adapters are optional peer dependencies: [docs/why-berth.md](./docs/why-berth.md#use-it-from-your-existing-framework).
 
-Or use the framework in the box: `@berth/agents` is a full one — providers, agents, multi-agent crews, `runAgent()` for the simple case. It's the reference consumer of everything above, and it's optional. See [docs/berth-agents-guide.md](./docs/berth-agents-guide.md).
+Or use the framework in the box: `@berthos/agents` is a full one — providers, agents, multi-agent crews, `runAgent()` for the simple case. It's the reference consumer of everything above, and it's optional. See [docs/berth-agents-guide.md](./docs/berth-agents-guide.md).
 
 ## Where everything went
 
@@ -104,9 +104,9 @@ This README used to be 500 lines. It's a hub now; nothing was deleted, including
 | [Quickstart](./docs/quickstart.md) | Prerequisites, install and build, running an agent, running a resident app, the CLI reference, repository layout |
 | [Enforcement](./docs/kernel-enforcement.md) | Kernel enforcement by platform, every capability and what enforces it, the kernel/broker/recorded tiers, **what isn't enforced yet** |
 | [Threat model](./docs/threat-model.md) | Adversaries, trust boundaries, what holds each one, what's permanently out of scope |
-| [Why Berth](./docs/why-berth.md) | The problem, the use cases, what `@berth/agents` gives you, using Berth from your existing framework |
+| [Why Berth](./docs/why-berth.md) | The problem, the use cases, what `@berthos/agents` gives you, using Berth from your existing framework |
 | [Resident apps](./docs/resident-apps.md) | Building one: `berth.yml`, `defineApp()`, the gotchas, the context bus, the semantic filesystem |
-| [`@berth/agents` guide](./docs/berth-agents-guide.md) | `Computer`/`createAgent`/`runAgent`, what a Berth OS is, multi-agent crews, the governance gate |
+| [`@berthos/agents` guide](./docs/berth-agents-guide.md) | `Computer`/`createAgent`/`runAgent`, what a Berth OS is, multi-agent crews, the governance gate |
 | [Getting started](./docs/getting-started.md) | The longer, resident-app-focused walkthrough |
 | [`berth doctor`](./docs/doctor-reference.md) · [Mac enforcement](./docs/mac-enforcement.md) | Whether your host enforces anything, and how to get a Mac that does |
 
@@ -114,7 +114,7 @@ Reference docs for individual subsystems live in [docs/](./docs): [manifest](./d
 
 ## Two things to know before you build on it
 
-- **`@berth/*` isn't on npm yet.** You build it from source — that's what `pnpm build` above is for. The publish pipeline is real and dry-run-verified; see [Releasing](./docs/quickstart.md#releasing).
+- **`@berthos/*` isn't on npm yet.** You build it from source — that's what `pnpm build` above is for. The publish pipeline is real and dry-run-verified; see [Releasing](./docs/quickstart.md#releasing).
 - **Kernel-enforced filesystem and network scoping is real and testable today, and so is in-container privilege isolation.** Berth is a strong boundary around what an agent's *code* can touch — including code a determined attacker runs inside the container, who gets one app's uid, one Landlock domain, and no `CAP_SYS_ADMIN` anywhere in the sandbox. The residuals that bound that claim (the mesh daemon's retained root + `CAP_NET_ADMIN` is the largest — and it starts only for a container that declares `network:peer:`, so it is absent unless you ask for the mesh), with evidence: [what isn't enforced yet](./docs/kernel-enforcement.md#what-isnt-enforced-yet) and [docs/threat-model.md](./docs/threat-model.md).
 
 ## Something not working?

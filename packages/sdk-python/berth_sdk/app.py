@@ -1,4 +1,4 @@
-"""Mirrors @berth/sdk's app.ts (defineApp/BerthApp/ExportDefinition). Python
+"""Mirrors @berthos/sdk's app.ts (defineApp/BerthApp/ExportDefinition). Python
 has no default-export convention, so the equivalent authoring pattern is a
 module-level `app = define_app(...)` — runtime.py looks for that attribute
 name on the imported app module.

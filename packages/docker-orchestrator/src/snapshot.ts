@@ -6,7 +6,7 @@ import { pipeline } from "node:stream/promises";
 import { join, basename } from "node:path";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
-import type { BerthManifest } from "@berth/manifest-schema";
+import type { BerthManifest } from "@berthos/manifest-schema";
 import { stripSecretEnv } from "./secrets.js";
 
 const DEFAULT_SNAPSHOTS_DIR = join(homedir(), ".berth", "snapshots");

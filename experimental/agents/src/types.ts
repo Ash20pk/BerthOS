@@ -101,7 +101,7 @@ export interface LLMTurn {
 
 /**
  * The "bring your own LLM" seam. Any provider implementing this can drive an
- * Agent. @berth/agents ships six vendor providers — createAnthropicProvider,
+ * Agent. @berthos/agents ships six vendor providers — createAnthropicProvider,
  * createOpenAIProvider, createGoogleProvider, createAzureOpenAIProvider,
  * createBedrockProvider, createOllamaProvider — plus
  * createOpenAICompatibleProvider() for any OpenAI-shaped endpoint, and

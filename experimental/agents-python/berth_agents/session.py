@@ -3,7 +3,7 @@ task, picked back up after a crash. A Session is a different thing
 entirely: shared conversation history across *separate* run() calls (a chat
 UI's turns, say), the seam OpenAI SDK Sessions, ADK's
 SessionService/MemoryService, and CrewAI's short-term memory all cover. A
-direct port of @berth/agents' session.ts. Deliberately narrow, the same
+direct port of @berthos/agents' session.ts. Deliberately narrow, the same
 "save/load, nothing fancier" posture CheckpointStore has: no summarization,
 no entity/long-term memory, no automatic trimming."""
 

@@ -1,4 +1,4 @@
-import { anonymousActor, type Actor, type AuditSink } from "@berth/audit";
+import { anonymousActor, type Actor, type AuditSink } from "@berthos/audit";
 import type { ComputerAppSpec } from "./resolve-apps.js";
 import { toolNameFor } from "./tools.js";
 import type { Tool } from "./types.js";
@@ -132,7 +132,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
  * `call(governorName, "evaluate_action", ...)` can reach that resident app,
  * which is always true within one Computer/OS instance.
  *
- * This is @berth/agents' own choke point, not a kernel mechanism: it gates
+ * This is @berthos/agents' own choke point, not a kernel mechanism: it gates
  * what goes through Computer/Agent, not `berth rpc`, `berth mcp`, the HTTP
  * RPC bridge, or direct multi-app `invokeAppExport()` calls — separate
  * transports into the same container, with no governance app on their path

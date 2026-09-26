@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// Produces a self-contained, publishable @berth/sdk artifact for genuinely
+// Produces a self-contained, publishable @berthos/sdk artifact for genuinely
 // external consumers: everything workspace-internal (currently just
-// @berth/manifest-schema) is inlined by esbuild; only real npm packages
+// @berthos/manifest-schema) is inlined by esbuild; only real npm packages
 // (zod, protobufjs) stay as declared dependencies. `berth init` vendors the
 // resulting tarball into scaffolded projects as a `file:` dependency so
 // `pnpm install` works with zero access to this monorepo's pnpm workspace —
@@ -20,8 +20,8 @@ const OUT_DIR = join(PACKAGE_ROOT, "dist-external");
 
 const pkg = JSON.parse(await readFile(join(PACKAGE_ROOT, "package.json"), "utf-8"));
 const manifestPkg = JSON.parse(await readFile(join(MANIFEST_SCHEMA_ROOT, "package.json"), "utf-8"));
-// Real npm packages stay external — including "yaml", which @berth/sdk only
-// depends on transitively via the inlined @berth/manifest-schema, but which
+// Real npm packages stay external — including "yaml", which @berthos/sdk only
+// depends on transitively via the inlined @berthos/manifest-schema, but which
 // must still be resolvable at runtime (esbuild can't safely bundle its CJS
 // dynamic-require internals into an ESM output). "@xenova/transformers" is
 // the same story, more so — its backend-selection code branches on
@@ -54,9 +54,9 @@ await cp(join(PACKAGE_ROOT, "proto"), join(OUT_DIR, "proto"), { recursive: true 
 // fails soft to keyword-only ranking if this directory is absent.
 await cp(join(PACKAGE_ROOT, "models"), join(OUT_DIR, "models"), { recursive: true, force: true }).catch(() => {});
 
-// esbuild inlines @berth/manifest-schema's *code* into the JS bundle above,
+// esbuild inlines @berthos/manifest-schema's *code* into the JS bundle above,
 // but a consuming app's own `tsc` still needs its *types* (BerthManifest
-// leaks into AppContext's public shape) — @berth/manifest-schema isn't a
+// leaks into AppContext's public shape) — @berthos/manifest-schema isn't a
 // declared dependency of the external package, so mirror its .d.ts tree
 // alongside the SDK's own and rewrite the one bare-specifier import that
 // crosses that boundary (app.d.ts) to a relative path.
@@ -84,10 +84,10 @@ async function rewriteManifestSchemaImports(dir) {
     }
     if (!entry.name.endsWith(".d.ts")) continue;
     const contents = await readFile(entryPath, "utf-8");
-    if (!contents.includes("@berth/manifest-schema")) continue;
+    if (!contents.includes("@berthos/manifest-schema")) continue;
     const relPath = relative(dirname(entryPath), join(OUT_DIR, "manifest-schema", "index.js")).split(sep).join(posix.sep);
     const specifier = relPath.startsWith(".") ? relPath : `./${relPath}`;
-    await writeFile(entryPath, contents.replaceAll("@berth/manifest-schema", specifier));
+    await writeFile(entryPath, contents.replaceAll("@berthos/manifest-schema", specifier));
   }
 }
 await rewriteManifestSchemaImports(OUT_DIR);
@@ -114,7 +114,7 @@ await writeFile(join(OUT_DIR, "package.json"), JSON.stringify(externalPkg, null,
 // `npm pack` (not a hand-rolled tar) so the artifact is a real, standard,
 // installable package tarball — same format any `npm install <tgz>` expects.
 // Strips inherited npm_config_* env (dry_run in particular): this script
-// runs as @berth/sdk's own prepublishOnly during `pnpm -r publish`, and
+// runs as @berthos/sdk's own prepublishOnly during `pnpm -r publish`, and
 // without this, `npm pack` silently no-ops under an ambient
 // npm_config_dry_run=true from the outer publish, leaving OUT_DIR without a
 // tarball for the next step to find.
@@ -123,7 +123,7 @@ const packEnv = Object.fromEntries(
 );
 await execFileAsync("npm", ["pack", "--silent", "--pack-destination", OUT_DIR], { cwd: OUT_DIR, env: packEnv });
 
-// npm names the tarball from the scoped package name (@berth/sdk -> berth-sdk-<version>.tgz);
+// npm names the tarball from the scoped package name (@berthos/sdk -> berth-sdk-<version>.tgz);
 // give it a fixed name so consumers don't need to know the version to find it.
 const tgz = (await readdir(OUT_DIR)).find((f) => f.endsWith(".tgz"));
 await cp(join(OUT_DIR, tgz), join(OUT_DIR, "berth-sdk.tgz"));

@@ -8,7 +8,7 @@ name: Publish npm packages
 # gaps.md gap #18 and docs/agents-reference.md for why this exists.
 #
 # One-time setup this workflow depends on but can't do itself: an
-# npm-organization automation token with publish rights to the @berth scope,
+# npm-organization automation token with publish rights to the @berthos scope,
 # stored as the NPM_TOKEN repository secret.
 on:
   workflow_dispatch:
