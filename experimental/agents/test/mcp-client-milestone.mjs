@@ -15,7 +15,7 @@ import { dirname, join } from "node:path";
 import { loadManifest } from "@berthos/manifest-schema";
 import { buildImage, startContainer, stopContainer } from "@berthos/docker-orchestrator";
 import { Agent, createMcpClientTools } from "../dist/index.js";
-import { resolveDevBindMount } from "../../cli/dist/util/workspace.js";
+import { resolveDevBindMount } from "../../../packages/cli/dist/util/workspace.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");

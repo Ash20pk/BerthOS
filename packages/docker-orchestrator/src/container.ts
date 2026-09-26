@@ -728,21 +728,18 @@ export async function stopContainer(
   container: Docker.Container,
   options: { secretsRunDir?: string; docker?: Docker } = {},
 ): Promise<void> {
-  // Before stopping, because inspect() is the only way back to the container
-  // *name* the secrets file was written under, and a removed container can no
-  // longer be inspected. Best-effort throughout: the file is 0600 in a 0700
-  // directory and is overwritten by the next boot of the same name, so
-  // failing to unlink it must not turn a successful teardown into an error.
-  await removeSecretsForContainer(container, options.secretsRunDir);
-  // The semantic-fs sidecar lives and dies with its sandbox. Best-effort and
-  // before the stop, for the same inspect()-needs-a-live-container reason.
+  // inspect() is the only way back to the container's *name*, which both the
+  // secrets directory and the sidecar are keyed by, and a removed container
+  // can no longer be inspected — so read it once, first.
+  let name: string | undefined;
   try {
-    const info = await container.inspect();
-    const name = info.Name?.replace(/^\//, "");
-    if (name) await stopSemanticFsSidecar(name, options.docker ?? new Docker());
+    // Docker reports names with a leading slash ("/berth-dev-app").
+    name = (await container.inspect()).Name?.replace(/^\//, "");
   } catch {
-    // No sidecar (legacy boot), or the container is already gone.
+    // Already gone, or the daemon went away.
   }
+  // The semantic-fs sidecar lives and dies with its sandbox. Best-effort.
+  if (name) await stopSemanticFsSidecar(name, options.docker ?? new Docker()).catch(() => {});
   try {
     await container.stop();
   } catch (err) {
@@ -752,24 +749,15 @@ export async function stopContainer(
     }
   }
   await container.remove({ force: true });
-}
-
-/**
- * Deliberately not called from `restartContainer()`: a restart re-runs
- * entrypoint.sh, which sources the secrets file again, so removing it there
- * would leave the app's second life without the credentials its first one
- * had.
- */
-async function removeSecretsForContainer(container: Docker.Container, secretsRunDir?: string): Promise<void> {
-  try {
-    const info = await container.inspect();
-    // Docker reports names with a leading slash ("/berth-dev-app").
-    const name = info.Name?.replace(/^\//, "");
-    if (name) await removeContainerSecretsDir(name, secretsRunDir);
-  } catch {
-    // Already gone, or the daemon went away — nothing to clean up that the
-    // next boot of this name won't overwrite anyway.
-  }
+  // Last, not first. The sidecar's host directory (<runDir>/<name>/fs) sits
+  // inside this one, and its FUSE mount propagates back to the host (rshared),
+  // so removing the directory while the sidecar ran failed on the live mount —
+  // silently, since this is best-effort — and left the credentials file
+  // behind on every Linux host. Colima's file sharing doesn't carry the mount
+  // to the macOS side, which is why it only showed in CI. Best-effort still:
+  // the file is 0600 in a 0700 directory and the next boot of this name
+  // overwrites it, so failing to unlink must not fail a successful teardown.
+  if (name) await removeContainerSecretsDir(name, options.secretsRunDir);
 }
 
 /**
@@ -778,6 +766,11 @@ async function removeSecretsForContainer(container: Docker.Container, secretsRun
  * restart via the marker file (see @berthos/sdk's run-lifecycle.ts), so this stays fast —
  * a finer-grained "restart just the app process" is a later optimization,
  * not required for the Phase 1 workflow to feel responsive.
+ *
+ * Deliberately leaves the secrets directory alone, unlike stopContainer(): a
+ * restart re-runs entrypoint.sh, which sources the secrets file again, so
+ * removing it here would leave the app's second life without the credentials
+ * its first one had.
  */
 export async function restartContainer(container: Docker.Container): Promise<void> {
   await container.restart();

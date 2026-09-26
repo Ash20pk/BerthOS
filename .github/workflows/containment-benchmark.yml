@@ -42,11 +42,14 @@ jobs:
       - run: pnpm build
 
       - name: Run the containment benchmark
-        run: node bench/run.mjs --harness docker,berth,berth-weakened
+        # To a scratch path, not bench/results/: the committed scorecard also
+        # carries the E2B column this job can't run, and run.mjs refuses to
+        # overwrite a file with columns the run didn't produce.
+        run: node bench/run.mjs --harness docker,berth,berth-weakened --out "$RUNNER_TEMP/bench/results.json" --md "$RUNNER_TEMP/bench/table.md"
 
       - name: Publish the scorecard
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: containment-benchmark
-          path: bench/results/
+          path: ${{ runner.temp }}/bench/
