@@ -12,6 +12,7 @@ import { spawn } from "node:child_process";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { mkdir } from "node:fs/promises";
 import { loadManifest } from "@berthos/manifest-schema";
 import { buildImage, startContainer, stopContainer } from "../dist/index.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -256,6 +257,12 @@ async function verifyFixLine() {
   await stopContainer(docker.getContainer(containerName)).catch(() => {});
 
   console.log(`\n--- Test 5: a grantable denial names the exact berth.yml line (${containerName}) ---`);
+  // The sibling's data directory has to exist for this to be the denial under
+  // test: a write *into* another app's directory. On a fresh runner nothing
+  // has booted boundary-app-b, so the first refused call was mkdir(2) of the
+  // directory itself, and the (correct) fix for that is write on the parent.
+  // /workspace is the repo root here, so create it on the host side.
+  await mkdir(join(REPO_ROOT, ".berth", "dev-workspace", "boundary-app-b"), { recursive: true });
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [BERTH_BIN, "mcp", "--app=boundary-app-a", `--app-dir=${BOUNDARY_APP_DIR}`, `--container=${containerName}`],
