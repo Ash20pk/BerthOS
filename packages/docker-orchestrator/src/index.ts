@@ -30,6 +30,7 @@ export {
   runDoctor,
   probeKernel,
   findProbeImage,
+  PROBE_FALLBACK_IMAGE,
   type DoctorReport,
   type DoctorCheck,
   type CheckStatus,

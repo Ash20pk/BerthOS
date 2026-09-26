@@ -172,7 +172,34 @@ export async function findProbeImage(docker: Docker): Promise<string | undefined
   // A Berth app image is the safest bet: it is the thing that will actually be
   // booted, so probing it answers the question about the image in play, not
   // about some other image that happens to be lying around.
-  return tags.find((t) => t.startsWith("berth/")) ?? tags.find((t) => /^(python|.*\/python):/.test(t));
+  // Both prefixes Berth tags with: `berth/<app>:dev` from `berth dev`, and
+  // `berth-agent/<app>:<ts>` from a Computer/demo boot. Missing the second
+  // meant a user who had just run the hero demo still got UNKNOWN.
+  return (
+    tags.find((t) => t.startsWith("berth/") || t.startsWith("berth-agent/")) ??
+    tags.find((t) => /^(python|.*\/python):/.test(t))
+  );
+}
+
+/**
+ * Pulled only when no local image qualifies — which is every fresh install,
+ * since the README has people run `berth doctor` before they build anything.
+ * Landlock support is a property of the kernel, not the image, so any
+ * image with python3 answers the same question. Small, official, pinned by
+ * tag; `--image` or `--no-probe` avoid the pull entirely.
+ */
+export const PROBE_FALLBACK_IMAGE = "python:3.13-alpine";
+
+async function pullProbeImage(docker: Docker): Promise<string | undefined> {
+  try {
+    const stream = await docker.pull(PROBE_FALLBACK_IMAGE);
+    await new Promise<void>((resolve, reject) =>
+      docker.modem.followProgress(stream, (err: Error | null) => (err ? reject(err) : resolve())),
+    );
+    return PROBE_FALLBACK_IMAGE;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -262,6 +289,10 @@ export interface RunDoctorOptions {
    * Defaults to `BERTH_RUNTIME`, same resolution `startContainer()` uses.
    */
   runtime?: string;
+  /** Pull PROBE_FALLBACK_IMAGE when no local image qualifies. Default true. */
+  pullProbeImage?: boolean;
+  /** Test seam for that pull; resolves to the image pulled, or undefined. */
+  pull?: (docker: Docker) => Promise<string | undefined>;
 }
 
 /**
@@ -388,7 +419,12 @@ export async function runDoctor(options: RunDoctorOptions = {}): Promise<DoctorR
   }
 
   // --- the kernel probe --------------------------------------------------
-  const probeImage = options.image ?? (dockerReachable ? await findProbeImage(docker).catch(() => undefined) : undefined);
+  let probeImage = options.image ?? (dockerReachable ? await findProbeImage(docker).catch(() => undefined) : undefined);
+  let pulledProbeImage = false;
+  if (!probeImage && dockerReachable && !options.skipProbe && options.pullProbeImage !== false) {
+    probeImage = await (options.pull ?? pullProbeImage)(docker);
+    pulledProbeImage = probeImage !== undefined;
+  }
 
   const runtimeMissing = checks.find((c) => c.id === "runtime")?.status === "fail";
   if (options.skipProbe || !dockerReachable || !probeImage || runtimeMissing) {
@@ -398,16 +434,18 @@ export async function runDoctor(options: RunDoctorOptions = {}): Promise<DoctorR
         ? `not run — the requested runtime "${runtime}" is not registered with the daemon, so the probe container cannot start under it`
         : options.skipProbe
           ? "not run — probe skipped"
-          : "not run — no local image with python3 to probe in";
+          : `not run — no local image with python3 to probe in, and pulling ${PROBE_FALLBACK_IMAGE} failed (offline?)`;
     const remedy = !dockerReachable || options.skipProbe || runtimeMissing
       ? undefined
-      : "Build any Berth app (`berth dev <app>` builds one), or pass `--image <image>` to probe a specific one.";
+      : `Pull ${PROBE_FALLBACK_IMAGE}, build any Berth app (\`berth dev <app>\` builds one), or pass \`--image <image>\` to probe a specific one.`;
     checks.push({ id: "landlock", title: "Landlock enforcement in the container kernel", status: "unknown", detail, remedy });
     checks.push({ id: "fuse", title: "/dev/fuse available to a sandbox", status: "unknown", detail, remedy });
   } else {
     try {
       const probe = await (options.probe ?? probeKernel)(docker, probeImage, runtime);
-      checks.push(landlockCheck(probe, runtime));
+      const landlock = landlockCheck(probe, runtime);
+      if (pulledProbeImage) landlock.detail += ` (probed in ${probeImage}, pulled because no local Berth image was found)`;
+      checks.push(landlock);
       checks.push({
         id: "fuse",
         title: "/dev/fuse available to a sandbox",

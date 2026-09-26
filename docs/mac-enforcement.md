@@ -115,11 +115,11 @@ Probed in: python:3.12-slim
 enforcement: ACTIVE
 ```
 
-If the kernel line still says `linuxkit`, `DOCKER_HOST` is not set — go back to
-step 3. `berth doctor` needs one local image containing `python3` to probe in;
-any Berth app image qualifies, and before you have built one,
-`berth doctor --image python:3.12-slim` (after `docker pull python:3.12-slim`)
-works. See [doctor-reference.md](./doctor-reference.md) for the `--json`
+If the kernel line still says `linuxkit`, Berth is still pointed at Docker
+Desktop — the `via` on the daemon line says which setting chose it; go back to
+step 3. `berth doctor` probes inside a local image containing `python3` (any
+Berth app image qualifies); before you have built one, it pulls
+`python:3.13-alpine` for the probe, and `--image` picks your own instead. See [doctor-reference.md](./doctor-reference.md) for the `--json`
 contract and the full verdict table.
 
 ### 5. Going back to Docker Desktop
