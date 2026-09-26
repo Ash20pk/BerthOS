@@ -686,7 +686,7 @@ the defaults for anything else absent.
 
 ## Appendix B — reference implementation
 
-`@berth/manifest-schema` is the reference implementation of this document, and
+`@berthos/manifest-schema` is the reference implementation of this document, and
 its conformance adapter is
 [`conformance/adapters/berth.mjs`](./conformance/adapters/berth.mjs). Being the
 reference confers no authority: where the implementation and this document

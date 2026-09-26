@@ -1,10 +1,10 @@
 /**
- * Lazy access to `@berth/agents`, which `@berth/cli` deliberately does not
+ * Lazy access to `@berthos/agents`, which `@berthos/cli` deliberately does not
  * depend on at runtime.
  *
  * The core CLI — `berth mcp`, `berth doctor`, `berth attest`, `berth dev`, the
  * sandbox lifecycle — is the substrate: a manifest compiled into a kernel
- * policy, plus the evidence for it. `@berth/agents` is a full agent framework
+ * policy, plus the evidence for it. `@berthos/agents` is a full agent framework
  * layered on top, and three commands (`berth eval`, `berth agent run`,
  * `berth crew run`) are its CLI surface. A static import of it from any command
  * module makes the framework a hard dependency of the substrate, so installing
@@ -20,14 +20,14 @@
  * `resolveComputerApps()` and `commands/os/up.ts`'s duplicated
  * `startHttpRpcServer()`. This is that seam made explicit instead of duplicated.
  *
- * `@berth/agents` stays a devDependency: the types below are erased at runtime
+ * `@berthos/agents` stays a devDependency: the types below are erased at runtime
  * but are needed to typecheck these three commands. If it is absent at runtime,
  * the failure is one clear sentence naming the install, not a module-resolution
  * stack trace.
  */
 
 /** Everything the three framework-backed commands use. Keep this list minimal — it is the seam. */
-export type AgentsModule = typeof import("@berth/agents");
+export type AgentsModule = typeof import("@berthos/agents");
 
 /** True for the error node throws when the package simply is not installed. */
 export function isModuleNotFound(err: unknown): boolean {
@@ -37,14 +37,14 @@ export function isModuleNotFound(err: unknown): boolean {
 
 /**
  * The message someone sees when they run one of the three framework commands
- * on a `@berth/cli` that has no framework installed. Exported so it is tested
+ * on a `@berthos/cli` that has no framework installed. Exported so it is tested
  * directly rather than through a copy of itself.
  */
 export function describeMissingFramework(commandId: string): string {
   return (
     `\`berth ${commandId}\` needs the agent framework, which is not installed.\n\n` +
-    `  npm install @berth/agents\n\n` +
-    `@berth/cli does not depend on it: the CLI's own commands (dev, mcp, doctor, attest, os, snapshot) ` +
+    `  npm install @berthos/agents\n\n` +
+    `@berthos/cli does not depend on it: the CLI's own commands (dev, mcp, doctor, attest, os, snapshot) ` +
     `are the sandbox and its evidence, and none of them needs an LLM framework. Only \`eval\`, ` +
     `\`agent run\` and \`crew run\` do.`
   );
@@ -56,7 +56,7 @@ export async function loadAgents(commandId: string): Promise<AgentsModule> {
   if (cached) return cached;
   try {
     // Not a static import: see this module's header.
-    cached = (await import("@berth/agents")) as AgentsModule;
+    cached = (await import("@berthos/agents")) as AgentsModule;
     return cached;
   } catch (err) {
     if (isModuleNotFound(err)) throw new Error(describeMissingFramework(commandId));

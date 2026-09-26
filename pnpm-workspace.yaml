@@ -2,7 +2,7 @@ packages:
   - "packages/*"
   # Frozen subsystems: shipped, tested, and no longer part of the core
   # artifact (the manifest -> kernel-policy substrate and its evidence).
-  # Still built and still tested; simply not what `npm install @berth/cli`
+  # Still built and still tested; simply not what `npm install @berthos/cli`
   # is. See EXECUTION_PLAN.md.
   - "experimental/*"
   - "experimental/adapters/*"

@@ -1,4 +1,4 @@
-import { defineApp } from "@berth/sdk";
+import { defineApp } from "@berthos/sdk";
 import { z } from "zod";
 
 // computer-boot-failure-milestone.mjs's fixture: an app that dies during

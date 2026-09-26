@@ -2,9 +2,9 @@
 // Real, running verification that startContainer()'s `httpRpc` option
 // produces a live, host-reachable HTTP RPC bridge into a resident app's
 // exports — port mapping, the three BERTH_HTTP_RPC_* env vars, and
-// @berth/sdk's startHttpRpcServer's bearer-token auth, all exercised for
+// @berthos/sdk's startHttpRpcServer's bearer-token auth, all exercised for
 // real against a real container, not mocked. Uses target:"dev" deliberately
-// (not buildComputerImage()'s "production", which @berth/agents' own
+// (not buildComputerImage()'s "production", which @berthos/agents' own
 // Computer.boot({httpRpc}) milestone test — computer-http-rpc-milestone.mjs
 // — uses) so this test verifies the actual bridge mechanism independent of
 // the already-documented, unrelated Docker-Desktop-for-Mac Landlock
@@ -15,7 +15,7 @@ import { randomBytes } from "node:crypto";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { loadManifest } from "@berth/manifest-schema";
+import { loadManifest } from "@berthos/manifest-schema";
 import { buildImage, startContainer, stopContainer } from "../dist/index.js";
 import Docker from "dockerode";
 

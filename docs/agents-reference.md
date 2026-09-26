@@ -1,13 +1,13 @@
 # Agent runtime reference
 
-> **Frozen subsystem.** This lives in [`experimental/`](../experimental/README.md) and is not part of the core artifact (a `berth.yml` compiled into a kernel-enforced policy, plus the evidence for it). It still builds, still runs its tests, and nothing was deleted — it simply is not what `npm install @berth/cli` gives you. See [`experimental/README.md`](../experimental/README.md) for why.
+> **Frozen subsystem.** This lives in [`experimental/`](../experimental/README.md) and is not part of the core artifact (a `berth.yml` compiled into a kernel-enforced policy, plus the evidence for it). It still builds, still runs its tests, and nothing was deleted — it simply is not what `npm install @berthos/cli` gives you. See [`experimental/README.md`](../experimental/README.md) for why.
 
-Most agent frameworks wire `agent -> tool`: the agent process calls out to stateless functions. `@berth/agents` flips that around. A `Computer` (a real Docker sandbox, built from the same `berth.yml` and manifest infrastructure every other part of Berth already uses) comes first. Resident apps loaded into it become the tools, and an `Agent` gets attached on top. It's a framework in the spirit of LangChain or CrewAI: bring your own LLM provider, define agents, compose them into multi-agent crews. The difference is that every agent's tools come from real, sandboxed resident apps, not bare functions.
+Most agent frameworks wire `agent -> tool`: the agent process calls out to stateless functions. `@berthos/agents` flips that around. A `Computer` (a real Docker sandbox, built from the same `berth.yml` and manifest infrastructure every other part of Berth already uses) comes first. Resident apps loaded into it become the tools, and an `Agent` gets attached on top. It's a framework in the spirit of LangChain or CrewAI: bring your own LLM provider, define agents, compose them into multi-agent crews. The difference is that every agent's tools come from real, sandboxed resident apps, not bare functions.
 
 Build the computer, then attach the agent to it.
 
 ```ts
-import { Computer, createAgent, createAnthropicProvider } from "@berth/agents";
+import { Computer, createAgent, createAnthropicProvider } from "@berthos/agents";
 
 const computer = await Computer.boot({ apps: ["apps/filesystem", "./my-custom-app"] });
 
@@ -19,9 +19,9 @@ await computer.stop();
 
 ## `Computer`, the runtime primitive
 
-`Computer.boot({ apps: string[] })` resolves each directory's `berth.yml` through `resolveComputerApps()` (no pnpm-workspace requirement here, unlike `@berth/cli`'s `resolveApps`), builds one production image via `buildImage()` (primary plus companions, exactly `@berth/cli`'s `buildProductionImage` pattern), boots it with `startContainer()`, and turns every export across every loaded app into a `Tool`: `{name, description, inputSchema, invoke}`. Tool names get namespaced `<appName>__<exportName>` once more than one app is loaded, both to avoid collisions and because tool names need to satisfy `^[a-zA-Z0-9_-]+$`, which rules out a `.` separator.
+`Computer.boot({ apps: string[] })` resolves each directory's `berth.yml` through `resolveComputerApps()` (no pnpm-workspace requirement here, unlike `@berthos/cli`'s `resolveApps`), builds one production image via `buildImage()` (primary plus companions, exactly `@berthos/cli`'s `buildProductionImage` pattern), boots it with `startContainer()`, and turns every export across every loaded app into a `Tool`: `{name, description, inputSchema, invoke}`. Tool names get namespaced `<appName>__<exportName>` once more than one app is loaded, both to avoid collisions and because tool names need to satisfy `^[a-zA-Z0-9_-]+$`, which rules out a `.` separator.
 
-None of this is new infrastructure. Capability enforcement, the context bus, and semantic FS all work exactly the way they do everywhere else: `@berth/manifest-schema`'s `loadManifest()`, `@berth/docker-orchestrator`'s `buildImage()`, `startContainer()`, `createStdioRpcClient()` for a single app, and `invokeAppExport()` for multi-app.
+None of this is new infrastructure. Capability enforcement, the context bus, and semantic FS all work exactly the way they do everywhere else: `@berthos/manifest-schema`'s `loadManifest()`, `@berthos/docker-orchestrator`'s `buildImage()`, `startContainer()`, `createStdioRpcClient()` for a single app, and `invokeAppExport()` for multi-app.
 
 There's no fabricated health-check export to poll for readiness. Container boot (`on_install`, the context-bus and semantic-fs daemons, capability-policy generation, `agent-init`'s Landlock setup) takes a few seconds before an app's RPC server is even listening. `Computer.call()` retries a failed attempt with backoff (a short per-attempt timeout, about a 30 second ceiling) instead of requiring every loaded app to expose a synthetic ping export just so something can poll it.
 
@@ -72,7 +72,7 @@ berth os down my-agent                                   # tear it down when you
 Agent code then connects instead of booting.
 
 ```ts
-import { createAgent, createAnthropicProvider } from "@berth/agents";
+import { createAgent, createAnthropicProvider } from "@berthos/agents";
 
 const { agent, computer } = await createAgent({ connect: "my-agent", llm: createAnthropicProvider() });
 ```
@@ -87,11 +87,11 @@ const computer = await Computer.connect({ name: "my-agent" });
 
 **`computer.stop()` is a no-op for a connected Computer.** `Computer.boot()`'s `stop()` tears down the container and image it created. A connected Computer didn't create anything and doesn't own the container's lifecycle, so tearing it down from inside one agent run would kill it for every other run still using it. That means `runAgent({connect: "...", task: "..."})` is always safe to call over and over against the same `berth os up` instance. Its `finally { computer.stop() }` never actually stops anything when `connect` was used. Use `berth os down <name>` when you actually want to tear it down.
 
-**Scope:** local, `berth dev`-equivalent Docker only, same as the rest of `@berth/agents`. There's no `berth os` equivalent for E2B, Daytona, or K8s fleets today.
+**Scope:** local, `berth dev`-equivalent Docker only, same as the rest of `@berthos/agents`. There's no `berth os` equivalent for E2B, Daytona, or K8s fleets today.
 
 ### Reaching a Computer from outside Node/Docker: `--http-rpc`
 
-`Computer.connect()`'s docker-exec-plus-Unix-socket relay needs Docker API access — fine for another Node process on the same host, useless for a process that can't drive Docker at all (a Python script, a client on a different machine). `berth os up --http-rpc` starts the same HTTP RPC bridge `bootNetworkedAgent({fleet})` already uses for a remote deploy (`@berth/sdk`'s `startHttpRpcServer`, bearer-token-gated `POST /rpc` + `GET /healthz`), but for a local container: the port is published to the host, and the URL plus a freshly generated per-boot token are recorded in `~/.berth/os/<name>.json` alongside the rest of `berth os up`'s state.
+`Computer.connect()`'s docker-exec-plus-Unix-socket relay needs Docker API access — fine for another Node process on the same host, useless for a process that can't drive Docker at all (a Python script, a client on a different machine). `berth os up --http-rpc` starts the same HTTP RPC bridge `bootNetworkedAgent({fleet})` already uses for a remote deploy (`@berthos/sdk`'s `startHttpRpcServer`, bearer-token-gated `POST /rpc` + `GET /healthz`), but for a local container: the port is published to the host, and the URL plus a freshly generated per-boot token are recorded in `~/.berth/os/<name>.json` alongside the rest of `berth os up`'s state.
 
 ```bash
 berth os up my-agent --apps=apps/filesystem --http-rpc
@@ -105,12 +105,12 @@ berth os up my-agent --apps=apps/filesystem --http-rpc
 
 ## Shortcuts: `runAgent()` and `createAgent({ apps })`
 
-Building the `Computer` yourself pays off when you need to reuse it across agents, filter which apps an agent sees, or mix in a custom resident app. Most of the time you don't need any of that, so `@berth/agents` also gives you two shortcuts that build the Computer for you behind the scenes, from whatever you pass as `apps`.
+Building the `Computer` yourself pays off when you need to reuse it across agents, filter which apps an agent sees, or mix in a custom resident app. Most of the time you don't need any of that, so `@berthos/agents` also gives you two shortcuts that build the Computer for you behind the scenes, from whatever you pass as `apps`.
 
 The simplest version needs nothing but an app directory and a task. `llm` defaults to whichever of `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` is set, and `runAgent()` boots, runs one task, and cleans up in one call.
 
 ```ts
-import { runAgent } from "@berth/agents";
+import { runAgent } from "@berthos/agents";
 
 const result = await runAgent({
   apps: "apps/filesystem", // a single string is shorthand for a one-app Computer
@@ -121,7 +121,7 @@ const result = await runAgent({
 Same defaults, but here's the fuller form, for when you want to keep the `Agent`/`Computer` handles around to run more than one turn or call tools directly.
 
 ```ts
-import { createAgent, createAnthropicProvider } from "@berth/agents";
+import { createAgent, createAnthropicProvider } from "@berthos/agents";
 
 const { agent, computer } = await createAgent({
   apps: ["apps/filesystem"],
@@ -221,7 +221,7 @@ Governance is fully automated — `evaluate_action` is a policy check some app's
 
 ## Human-in-the-loop: gating a live tool call on a human decision
 
-Neither `Agent.run()` nor the governance gate above has an interrupt point — nothing like LangGraph's `interrupt()`/`Command(resume=...)`. `applyHumanApprovalGate(tools, options)` (`experimental/agents/src/approval.ts`) closes that by generalizing [`@berth/grants-server`](./capability-tokens-reference.md#human-admin-approval-berthgrants-server)'s existing approve/deny pattern from "container gets this filesystem capability" (decided *async*, taking effect only on the app's next boot) to "this agent gets to take its next action" (decided *live*, blocking the call that's asking):
+Neither `Agent.run()` nor the governance gate above has an interrupt point — nothing like LangGraph's `interrupt()`/`Command(resume=...)`. `applyHumanApprovalGate(tools, options)` (`experimental/agents/src/approval.ts`) closes that by generalizing [`@berthos/grants-server`](./capability-tokens-reference.md#human-admin-approval-berthgrants-server)'s existing approve/deny pattern from "container gets this filesystem capability" (decided *async*, taking effect only on the app's next boot) to "this agent gets to take its next action" (decided *live*, blocking the call that's asking):
 
 ```ts
 const { agent } = await createAgent({
@@ -248,7 +248,7 @@ Two things this deliberately does **not** do, both by design rather than oversig
 The governance gate above and human-in-the-loop both gate *tool calls*. Neither one looks at the model's own input or its final answer text — the seam OpenAI's Agents SDK guardrails, ADK's callbacks/plugins, and Semantic Kernel's filters all cover. `inputGuardrails`/`outputGuardrails` (`experimental/agents/src/guardrails.ts`) close that:
 
 ```ts
-import { createAgent, createKeywordGuardrail, createLlmGuardrail } from "@berth/agents";
+import { createAgent, createKeywordGuardrail, createLlmGuardrail } from "@berthos/agents";
 
 const { agent } = await createAgent({
   apps: "apps/filesystem",
@@ -345,10 +345,10 @@ The saved shape is `CrewCheckpoint<S>` — `{runId, kind, status: "running"|"don
 
 ## Sessions: shared conversation history across separate `run()` calls
 
-Checkpointing above is durable *run* resume — the same logical task, picked back up after a crash. A `Session` is a different thing: shared conversation history across *separate* `run()` calls, the seam OpenAI SDK Sessions, ADK's `SessionService`/`MemoryService`, and CrewAI's short-term memory all cover — a chat UI's turns, say, where each user message is its own `run()` call but the agent still needs everything said before it. "It's in Semantic FS" was an architecture claim before this, not an API `@berth/agents` exposed:
+Checkpointing above is durable *run* resume — the same logical task, picked back up after a crash. A `Session` is a different thing: shared conversation history across *separate* `run()` calls, the seam OpenAI SDK Sessions, ADK's `SessionService`/`MemoryService`, and CrewAI's short-term memory all cover — a chat UI's turns, say, where each user message is its own `run()` call but the agent still needs everything said before it. "It's in Semantic FS" was an architecture claim before this, not an API `@berthos/agents` exposed:
 
 ```ts
-import { createAgent, createSemanticFsSession } from "@berth/agents";
+import { createAgent, createSemanticFsSession } from "@berthos/agents";
 
 const { agent, computer } = await createAgent({ apps: "apps/filesystem" });
 const session = createSemanticFsSession(computer, "user-42-chat");
@@ -365,7 +365,7 @@ Two backends ship: `createInMemorySession(initial?)` (the default — ephemeral,
 
 ## Retrieval: a `search_context` tool over Semantic FS, not a vector-DB integration
 
-Semantic FS already does real hybrid keyword+embedding search (`query_context`), but nothing in `experimental/agents/src` referenced it as a retriever before this — and `query_context` alone only ever returns metadata (`path`/`task`/`relatedApps`/timestamps, see `@berth/sdk`'s `SemanticFsQueryResult`), never a hit's actual file content. Calling it directly forces the model into an N+1 round trip: one `query_context` call, then one `read_context_file` call per hit, before it has anything to actually reason over. `Retriever` (`experimental/agents/src/retrieval.ts`) collapses that into one call:
+Semantic FS already does real hybrid keyword+embedding search (`query_context`), but nothing in `experimental/agents/src` referenced it as a retriever before this — and `query_context` alone only ever returns metadata (`path`/`task`/`relatedApps`/timestamps, see `@berthos/sdk`'s `SemanticFsQueryResult`), never a hit's actual file content. Calling it directly forces the model into an N+1 round trip: one `query_context` call, then one `read_context_file` call per hit, before it has anything to actually reason over. `Retriever` (`experimental/agents/src/retrieval.ts`) collapses that into one call:
 
 ```ts
 const { agent, computer } = await createAgent({ apps: "apps/filesystem", retriever: "semantic-fs" });
@@ -380,7 +380,7 @@ await agent.run("what did we decide about the pricing page?");
 Before this, getting a document *into* Semantic FS meant calling `write_context_file`/`tag_context_file` yourself, whole, by hand — no chunking, no batteries-included path. `chunkText(text, {maxChars?, overlapChars?})` is a plain character-window splitter (no NLP dependency, same "real, and says so" honesty Semantic FS's own keyword-overlap ranking already has) that prefers breaking at a paragraph/sentence boundary over a hard mid-word cut, and gives adjacent chunks overlapping text so a fact split across a boundary isn't lost. `ingest(computer, source, text, options?)` writes each chunk through the exact same generic `write_context_file`/`tag_context_file` resolution `checkpoint.ts`'s `findExportTool` already uses — works with any app exposing that contract, not `apps/filesystem` specifically:
 
 ```ts
-import { ingest } from "@berth/agents";
+import { ingest } from "@berthos/agents";
 
 const paths = await ingest(computer, "onboarding-guide", longDocumentText);
 // writes ingested/onboarding-guide.txt (or -0.txt, -1.txt, ... once split), tagged and ready for query_context/retrieve()
@@ -395,7 +395,7 @@ const paths = await ingest(computer, "onboarding-guide", longDocumentText);
 `berth mcp` (see [`docs/mcp-bridge-reference.md`](./mcp-bridge-reference.md)) makes a Berth resident app's exports available to any MCP client — Claude Desktop, Claude Code, whatever. `createMcpClientTools()` (`experimental/agents/src/mcp-client.ts`) is the other direction: it lets a Berth `Agent` *be* that client, consuming any external MCP server's tools as ordinary `Tool`s. This is the highest-leverage answer to "only a handful of first-party tool integrations" — the entire MCP tool ecosystem becomes usable without writing a bespoke connector per integration, the same way `defineConnectorApp()` (see [`docs/sdk-reference.md`](./sdk-reference.md)) generalized REST integrations for resident apps.
 
 ```ts
-import { createAgent } from "@berth/agents";
+import { createAgent } from "@berthos/agents";
 
 const { agent, computer, mcpServers } = await createAgent({
   apps: "apps/filesystem",
@@ -466,7 +466,7 @@ const result = await crew.run("summarize this document"); // summarizeAgent's ou
 `berth test` (see the CLI reference) only checks manifest/export shape bijection — it never invokes an LLM or asserts anything about what an agent actually *does*. There's been no regression-suite primitive and no LLM-as-judge scaffolding anywhere in this package until now. `runEvalSuite()` (`experimental/agents/src/eval.ts`) closes that: a list of `{name, input, assertions}` cases, each run against anything shaped like an `Agent` (`{run(input): Promise<AgentRunResult>}` — an `Agent` satisfies this directly; a `Crew` needs a one-line adapter), reporting pass/fail per case plus a suite-level summary:
 
 ```ts
-import { runEvalSuite, containsText, calledTool, llmJudge } from "@berth/agents";
+import { runEvalSuite, containsText, calledTool, llmJudge } from "@berthos/agents";
 
 const suite = await runEvalSuite(agent, [
   { name: "answers with the price", input: "how much does it cost?", assertions: [containsText("$")] },
@@ -490,7 +490,7 @@ Built-in assertions cover the two things easy to check exactly (`containsText(su
 
 ```ts
 // eval/my-suite.ts
-import { createAgent, containsText } from "@berth/agents";
+import { createAgent, containsText } from "@berthos/agents";
 
 export default async function () {
   const { agent, computer } = await createAgent({ apps: "apps/filesystem" });
@@ -567,7 +567,7 @@ const { agent } = await createAgent({ apps: "apps/filesystem", trace: "otel" });
 await agent.run("long task", { runId: "task-42" }); // spans flow to whatever OTel SDK the host process registered
 ```
 
-`@opentelemetry/api` alone has no exporter and does nothing without a real SDK (`@opentelemetry/sdk-trace-base`/`@opentelemetry/sdk-trace-node` or similar) registered as the global tracer provider — wiring that up, and pointing it at a backend, is on the host application, same as instrumenting any other OTel-based service. `emit()` fires after a step already finished, not around a live span, so `createOtelStepTracer()` backdates each span's start time using the event's own `durationMs` and ends it immediately — there's no live in-flight span to attach child spans to, and no single parent span links every span from one run together (that's what `berth.run_id` is for instead). `createOtelStepTracer({ tracerName? })` takes an optional instrumentation-scope name, defaulting to `"@berth/agents"`.
+`@opentelemetry/api` alone has no exporter and does nothing without a real SDK (`@opentelemetry/sdk-trace-base`/`@opentelemetry/sdk-trace-node` or similar) registered as the global tracer provider — wiring that up, and pointing it at a backend, is on the host application, same as instrumenting any other OTel-based service. `emit()` fires after a step already finished, not around a live span, so `createOtelStepTracer()` backdates each span's start time using the event's own `durationMs` and ends it immediately — there's no live in-flight span to attach child spans to, and no single parent span links every span from one run together (that's what `berth.run_id` is for instead). `createOtelStepTracer({ tracerName? })` takes an optional instrumentation-scope name, defaulting to `"@berthos/agents"`.
 
 **What this does and doesn't fix:** usage accounting is per-turn only — nothing sums a whole run's or a whole `Crew`'s total cost, and there's still no dollar-cost conversion (providers report tokens, not price). Cross-`Crew` correlation is turn/tool-call-level for the manager/router and every directly-invoked step Agent, not for delegated `withManager`/`networked` workers (see above). `listAgentTraces()` lists cheaply (metadata only, no content fetch) but still requires `createSemanticFsStepTracer()`/`createAgentTracer()` to have been the tracer in use — a Context-Bus-only trace was never durable to begin with, so there's nothing to list. `trace: "otel"` and `trace: "full"` are mutually exclusive per `Agent` — running both means constructing two `Agent`s or a custom `StepTracer` that fans out to both backends yourself.
 
@@ -576,10 +576,10 @@ await agent.run("long task", { runId: "task-42" }); // spans flow to whatever OT
 A `Computer` is a full sandboxed OS with real networking, so agents built on separate computers can be genuine network peers, not just composed in-process. `bootNetworkedAgent({name, apps, llm, systemPrompt})` boots a `Computer` for the peer's own tool-providing apps, plus a synthesized companion app (`generateAgentServerApp`) that runs its own agent loop over those tools, exposed through one `run_task` export. The agent itself lives on that computer, not just its tools. `Crew.networked({manager, peers})` gives a manager agent one `Tool` per peer.
 
 Two small, real additions to existing infrastructure make this work:
-- `@berth/docker-orchestrator`'s `startContainer()` gained a `network?: string` option. It joins (creating if needed) a Docker user-defined bridge network, so peer containers can resolve each other by name through Docker's embedded DNS.
-- `@berth/sdk`'s `rpc.ts` gained an optional TCP listener (`BERTH_NETWORK_PORT`) alongside its existing stdio and Unix-socket transports, using the identical line-delimited JSON envelope.
+- `@berthos/docker-orchestrator`'s `startContainer()` gained a `network?: string` option. It joins (creating if needed) a Docker user-defined bridge network, so peer containers can resolve each other by name through Docker's embedded DNS.
+- `@berthos/sdk`'s `rpc.ts` gained an optional TCP listener (`BERTH_NETWORK_PORT`) alongside its existing stdio and Unix-socket transports, using the identical line-delimited JSON envelope.
 
-The synthesized agent-server app is generated on the fly (a `berth.yml` plus a plain, pre-built `dist/index.js`, no TypeScript compile step) and vendors `@berth/sdk` the same way `berth init` already does for apps outside the pnpm workspace (`packages/sdk/dist-external/berth-sdk.tgz`). Its runtime is deliberately self-contained. It dials sibling apps' RPC Unix sockets directly with `node:net` and calls the LLM API directly with `fetch()`, rather than importing `@berth/agents` itself, which would drag `@anthropic-ai/sdk`/`openai` (and their own vendoring) into the sandbox. Because a live `LLMProvider` object can't be serialized into generated source, networked peers are limited to the two built-in providers (`{provider: "anthropic" | "openai", model?, apiKeyEnvVar}`), not an arbitrary custom `LLMProvider`. In-process `Agent`s have no such limit.
+The synthesized agent-server app is generated on the fly (a `berth.yml` plus a plain, pre-built `dist/index.js`, no TypeScript compile step) and vendors `@berthos/sdk` the same way `berth init` already does for apps outside the pnpm workspace (`packages/sdk/dist-external/berth-sdk.tgz`). Its runtime is deliberately self-contained. It dials sibling apps' RPC Unix sockets directly with `node:net` and calls the LLM API directly with `fetch()`, rather than importing `@berthos/agents` itself, which would drag `@anthropic-ai/sdk`/`openai` (and their own vendoring) into the sandbox. Because a live `LLMProvider` object can't be serialized into generated source, networked peers are limited to the two built-in providers (`{provider: "anthropic" | "openai", model?, apiKeyEnvVar}`), not an arbitrary custom `LLMProvider`. In-process `Agent`s have no such limit.
 
 ### What's real, and what's still ahead
 
@@ -595,7 +595,7 @@ The synthesized agent-server app is generated on the fly (a `berth.yml` plus a p
 
 `bootNetworkedAgent({fleet: {adapter, port?}})` deploys a peer to a remote fleet instead of booting it as a local Docker container. The manager agent gets back an identical `Tool` either way — `Crew.networked()` needs no awareness of which transport a peer ended up on (see `NetworkedAgent.transport`, `"local" | "http"`, informational only).
 
-This is a different transport from the Docker-network path above, not an extension of it, and deliberately not the WireGuard mesh either — considered and ruled out, not overlooked: mesh-coordinator's own peer-lookup API (`GET /peers?name=`) requires the caller to already be a registered, mutually-matched peer, and every existing mesh participant is a container/pod running its own `mesh-daemon`. A host-side manager process (a plain Node process on a laptop or CI runner) has no way to join the mesh without an entirely new subsystem — a mesh-daemon-equivalent host client with its own keypair and `wg0` interface — which is out of scope here. So instead: a new HTTP RPC bridge (`@berth/sdk`'s `startHttpRpcServer`, gated by a per-boot bearer token) dispatched over whichever real, reachable URL the adapter can produce for the port — E2B's `getHost()`/Daytona's `getPreviewLink()` (the same real public HTTPS reverse-proxy URLs `previewUrl()` already uses) or, for K8s, a `NodePort` Service instead of `previewUrl()`'s `ClusterIP`-only one. See each adapter's `rpcUrl()`.
+This is a different transport from the Docker-network path above, not an extension of it, and deliberately not the WireGuard mesh either — considered and ruled out, not overlooked: mesh-coordinator's own peer-lookup API (`GET /peers?name=`) requires the caller to already be a registered, mutually-matched peer, and every existing mesh participant is a container/pod running its own `mesh-daemon`. A host-side manager process (a plain Node process on a laptop or CI runner) has no way to join the mesh without an entirely new subsystem — a mesh-daemon-equivalent host client with its own keypair and `wg0` interface — which is out of scope here. So instead: a new HTTP RPC bridge (`@berthos/sdk`'s `startHttpRpcServer`, gated by a per-boot bearer token) dispatched over whichever real, reachable URL the adapter can produce for the port — E2B's `getHost()`/Daytona's `getPreviewLink()` (the same real public HTTPS reverse-proxy URLs `previewUrl()` already uses) or, for K8s, a `NodePort` Service instead of `previewUrl()`'s `ClusterIP`-only one. See each adapter's `rpcUrl()`.
 
 **Real today:** deploying a peer via any `DeployAdapter` that implements `rpcUrl()` (E2B, Daytona, K8s all do), generating a per-boot auth token, waiting for the instance to report `running` and the bridge to answer `/healthz`, then dispatching real tool calls to it over that URL — verified end-to-end at the protocol level in `experimental/agents/src/fleet-computer.test.ts` and manually against a real (non-mocked) resident app's runtime.
 
@@ -606,7 +606,7 @@ This is a different transport from the Docker-network path above, not an extensi
 Everything above assumes an `Agent` driving something — a resident app, another agent. This is the other direction: the `Agent` itself as the thing being served to a frontend, the gap `examples/agents/agent-server`'s hand-rolled `server.mjs` was standing in for (ADK's `adk web`/`adk api_server`, AutoGen Studio, and CrewAI Studio all ship one; this repo didn't have a framework-level version of it before):
 
 ```ts
-import { createAgent, serveAgent } from "@berth/agents";
+import { createAgent, serveAgent } from "@berthos/agents";
 
 const { agent, computer } = await createAgent({ apps: "apps/filesystem" });
 const { close } = serveAgent(agent, { port: 8787 });
@@ -635,7 +635,7 @@ Three routes, both functions:
 **Consuming an external A2A agent as a Tool** — any A2A-compliant agent, not just another Berth one:
 
 ```ts
-import { createAgent, createA2aClientTool } from "@berth/agents";
+import { createAgent, createA2aClientTool } from "@berthos/agents";
 
 const remoteTool = await createA2aClientTool("https://some-a2a-agent.example.com/");
 const { agent: baseAgent, computer } = await createAgent({ apps: "apps/filesystem" });
@@ -650,7 +650,7 @@ await computer.stop();
 **Exposing a Berth Agent as an A2A server** — so ADK/LangGraph/Microsoft Agent Framework agents (or the reference SDK's own sample clients) can call into it:
 
 ```ts
-import { createAgent, serveAgentAsA2a } from "@berth/agents";
+import { createAgent, serveAgentAsA2a } from "@berthos/agents";
 
 const { agent, computer } = await createAgent({ apps: "apps/filesystem" });
 const { close } = serveAgentAsA2a(agent, { port: 41241 }); // 41241 matches the a2a-js SDK's own sample convention
@@ -686,7 +686,7 @@ trace: full
 ```
 
 ```ts
-import { createAgentFromYaml } from "@berth/agents";
+import { createAgentFromYaml } from "@berthos/agents";
 
 const { agent, computer } = await createAgentFromYaml("research-assistant.yml");
 await agent.run("summarize the open PRs and write the summary to a file");
@@ -711,7 +711,7 @@ agents:
 ```
 
 ```ts
-import { createCrewFromYaml } from "@berth/agents";
+import { createCrewFromYaml } from "@berthos/agents";
 
 const { crew, computers } = await createCrewFromYaml("writing-crew.yml"); // one real Computer per named agent
 await crew.run("write this sprint's release notes");
@@ -732,7 +732,7 @@ Or, again, no code: `berth crew run writing-crew.yml "write this sprint's releas
 
 ## Examples
 
-Start with [`examples/agents/simple-agent`](../examples/agents/simple-agent). It depends on `@berth/agents` as an ordinary `workspace:*` package dependency, the shape an external project's `package.json` would actually use, rather than a relative import into this repo's own build output.
+Start with [`examples/agents/simple-agent`](../examples/agents/simple-agent). It depends on `@berthos/agents` as an ordinary `workspace:*` package dependency, the shape an external project's `package.json` would actually use, rather than a relative import into this repo's own build output.
 
 ```bash
 cd examples/agents/simple-agent

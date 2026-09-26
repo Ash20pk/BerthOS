@@ -4,5 +4,5 @@
   "private": true,
   "type": "module",
   "scripts": { "start": "node index.mjs" },
-  "dependencies": { "@berth/audit": "workspace:*" }
+  "dependencies": { "@berthos/audit": "workspace:*" }
 }

@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { parse } from "yaml";
-import { loadManifest, ManifestValidationError, type BerthManifest } from "@berth/manifest-schema";
+import { loadManifest, ManifestValidationError, type BerthManifest } from "@berthos/manifest-schema";
 
 export interface OsAppSpec {
   name: string;
@@ -62,10 +62,10 @@ export async function loadOsConfigFile(configPath: string): Promise<ResolvedOsCo
 
 /**
  * Loads and validates one berth.yml per directory — the flat, no-primary
- * shape `berth os up` needs (unlike @berth/cli's resolveApps(), which is
+ * shape `berth os up` needs (unlike @berthos/cli's resolveApps(), which is
  * asymmetric primary+companions tied to running `berth dev` from inside one
- * specific app's directory). Mirrors @berth/agents' resolveComputerApps()
- * (duplicated rather than imported — pulling in @berth/agents here would
+ * specific app's directory). Mirrors @berthos/agents' resolveComputerApps()
+ * (duplicated rather than imported — pulling in @berthos/agents here would
  * drag its openai/anthropic SDK dependencies into the CLI for a ~15-line
  * helper), but exits on error like the rest of this CLI instead of throwing.
  */
@@ -99,7 +99,7 @@ function declaresCapabilityPrefix(manifest: BerthManifest, prefixes: string[]): 
 }
 
 /**
- * Same v1 constraints @berth/cli's multi-app.ts already enforces for `berth
+ * Same v1 constraints @berthos/cli's multi-app.ts already enforces for `berth
  * dev --apps=`/`berth test --apps=` (one Xvfb/VNC display, one ttyd port, one
  * wg0 interface per container) — reimplemented here against OsAppSpec[]
  * rather than sharing multi-app.ts's AppSpec[] (which carries a workspace-

@@ -138,7 +138,7 @@ test("resolveFleet stays quiet for a 0600 config, and for a loose one that carri
 });
 
 /**
- * The three provider adapters are optional peers: `@berth/cli` ships without
+ * The three provider adapters are optional peers: `@berthos/cli` ships without
  * them, because each pulls in a cloud SDK and a CLI used for local sandboxing
  * needs none of them. They were static imports, which made all three a runtime
  * dependency of every `berth` invocation — and would have meant a missing

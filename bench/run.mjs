@@ -52,6 +52,11 @@ function parseArgs(argv) {
 function startHostListener() {
   return new Promise((resolvePromise, reject) => {
     const server = createServer((socket) => {
+      // The probe only needs to learn whether it connected, so it can hang up
+      // before this write lands, and the kernel answers with a reset. Without
+      // a handler that ECONNRESET is an unhandled 'error' event, which killed
+      // the whole run mid-harness. The row was already decided by the connect.
+      socket.on("error", () => {});
       socket.end("the benchmark's host listener\n");
     });
     server.on("error", reject);

@@ -1,5 +1,5 @@
 import type { z } from "zod";
-import { redact, type Actor, type AuditSink } from "@berth/audit";
+import { redact, type Actor, type AuditSink } from "@berthos/audit";
 import { Computer, type BootComputerOptions, type ConnectComputerOptions } from "./computer.js";
 import { resolveLLMProvider, type LLMProviderConfig } from "./providers/auto.js";
 import { createSemanticFsCheckpointStore, type CheckpointedRun, type CheckpointStore } from "./checkpoint.js";

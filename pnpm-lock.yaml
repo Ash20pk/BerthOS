@@ -9,6 +9,9 @@ overrides:
   sharp: link:packages/sdk/vendor/sharp-stub
   protobufjs: ^8.7.1
   uuid: ^11.1.1
+  fast-uri@>=3.0.0 <3.1.6: ^3.1.6
+  fast-uri@>=4.0.0 <4.1.3: ^4.1.3
+  js-yaml@>=4.0.0 <4.3.2: ^4.3.2
 
 importers:
 
@@ -26,7 +29,7 @@ importers:
 
   apps/activity-feed:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
       zod:
@@ -42,7 +45,7 @@ importers:
 
   apps/browser-native:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
       playwright-core:
@@ -61,7 +64,7 @@ importers:
 
   apps/code-editor:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
       zod:
@@ -77,7 +80,7 @@ importers:
 
   apps/code-interpreter:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
       zod:
@@ -93,7 +96,7 @@ importers:
 
   apps/filesystem:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
       zod:
@@ -109,7 +112,7 @@ importers:
 
   apps/github-assistant:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
       undici:
@@ -128,7 +131,7 @@ importers:
 
   apps/notes:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
       zod:
@@ -144,7 +147,7 @@ importers:
 
   apps/terminal:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
       zod:
@@ -160,10 +163,10 @@ importers:
 
   bench:
     dependencies:
-      '@berth/docker-orchestrator':
+      '@berthos/docker-orchestrator':
         specifier: workspace:*
         version: link:../packages/docker-orchestrator
-      '@berth/manifest-schema':
+      '@berthos/manifest-schema':
         specifier: workspace:*
         version: link:../packages/manifest-schema
       dockerode:
@@ -172,7 +175,7 @@ importers:
 
   bench/fixtures/bench-probe-a:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../../packages/sdk
       zod:
@@ -181,7 +184,7 @@ importers:
 
   bench/fixtures/bench-probe-b:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../../packages/sdk
       zod:
@@ -190,13 +193,13 @@ importers:
 
   breakout:
     dependencies:
-      '@berth/audit':
+      '@berthos/audit':
         specifier: workspace:*
         version: link:../packages/audit
-      '@berth/docker-orchestrator':
+      '@berthos/docker-orchestrator':
         specifier: workspace:*
         version: link:../packages/docker-orchestrator
-      '@berth/manifest-schema':
+      '@berthos/manifest-schema':
         specifier: workspace:*
         version: link:../packages/manifest-schema
       dockerode:
@@ -205,7 +208,7 @@ importers:
 
   breakout/apps/breakout-target:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../../packages/sdk
       zod:
@@ -214,7 +217,7 @@ importers:
 
   breakout/apps/flag-keeper:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../../packages/sdk
       zod:
@@ -223,13 +226,13 @@ importers:
 
   examples/agents/agent-server:
     dependencies:
-      '@berth/agents':
+      '@berthos/agents':
         specifier: workspace:*
         version: link:../../../experimental/agents
 
   examples/agents/simple-agent:
     dependencies:
-      '@berth/agents':
+      '@berthos/agents':
         specifier: workspace:*
         version: link:../../../experimental/agents
 
@@ -238,7 +241,7 @@ importers:
       '@ai-sdk/openai':
         specifier: ^4.0.0
         version: 4.0.42(zod@4.4.3)
-      '@berth/agents':
+      '@berthos/agents':
         specifier: workspace:*
         version: link:../../../experimental/agents
       ai:
@@ -247,34 +250,34 @@ importers:
 
   examples/audit-trail:
     dependencies:
-      '@berth/audit':
+      '@berthos/audit':
         specifier: workspace:*
         version: link:../../packages/audit
 
   examples/kernel-says-no:
     dependencies:
-      '@berth/agents':
+      '@berthos/agents':
         specifier: workspace:*
         version: link:../../experimental/agents
 
   examples/no-egress:
     dependencies:
-      '@berth/agents':
+      '@berthos/agents':
         specifier: workspace:*
         version: link:../../experimental/agents
 
   examples/prompt-injection:
     dependencies:
-      '@berth/agents':
+      '@berthos/agents':
         specifier: workspace:*
         version: link:../../experimental/agents
-      '@berth/audit':
+      '@berthos/audit':
         specifier: workspace:*
         version: link:../../packages/audit
 
   examples/resident-apps/generic-connector:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../../packages/sdk
     devDependencies:
@@ -287,7 +290,7 @@ importers:
 
   examples/resident-apps/hello-world:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../../packages/sdk
       zod:
@@ -303,7 +306,7 @@ importers:
 
   examples/resident-apps/http-fetch:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../../packages/sdk
       zod:
@@ -319,7 +322,7 @@ importers:
 
   experimental/adapters/adapter-core:
     dependencies:
-      '@berth/manifest-schema':
+      '@berthos/manifest-schema':
         specifier: workspace:*
         version: link:../../../packages/manifest-schema
     devDependencies:
@@ -332,10 +335,10 @@ importers:
 
   experimental/adapters/adapter-daytona:
     dependencies:
-      '@berth/adapter-core':
+      '@berthos/adapter-core':
         specifier: workspace:*
         version: link:../adapter-core
-      '@berth/manifest-schema':
+      '@berthos/manifest-schema':
         specifier: workspace:*
         version: link:../../../packages/manifest-schema
       '@daytonaio/sdk':
@@ -351,10 +354,10 @@ importers:
 
   experimental/adapters/adapter-e2b:
     dependencies:
-      '@berth/adapter-core':
+      '@berthos/adapter-core':
         specifier: workspace:*
         version: link:../adapter-core
-      '@berth/manifest-schema':
+      '@berthos/manifest-schema':
         specifier: workspace:*
         version: link:../../../packages/manifest-schema
       e2b:
@@ -370,17 +373,17 @@ importers:
 
   experimental/adapters/adapter-k8s:
     dependencies:
-      '@berth/adapter-core':
+      '@berthos/adapter-core':
         specifier: workspace:*
         version: link:../adapter-core
-      '@berth/manifest-schema':
+      '@berthos/manifest-schema':
         specifier: workspace:*
         version: link:../../../packages/manifest-schema
       '@kubernetes/client-node':
         specifier: ^1.0.0
         version: 1.4.0
     devDependencies:
-      '@berth/docker-orchestrator':
+      '@berthos/docker-orchestrator':
         specifier: workspace:*
         version: link:../../../packages/docker-orchestrator
       '@types/node':
@@ -401,22 +404,22 @@ importers:
       '@anthropic-ai/sdk':
         specifier: ^0.117.1
         version: 0.117.1(zod@4.4.3)
-      '@berth/adapter-core':
+      '@berthos/adapter-core':
         specifier: workspace:*
         version: link:../adapters/adapter-core
-      '@berth/audit':
+      '@berthos/audit':
         specifier: workspace:*
         version: link:../../packages/audit
-      '@berth/docker-orchestrator':
+      '@berthos/docker-orchestrator':
         specifier: workspace:*
         version: link:../../packages/docker-orchestrator
-      '@berth/grants-server':
+      '@berthos/grants-server':
         specifier: workspace:*
         version: link:../grants-server
-      '@berth/manifest-schema':
+      '@berthos/manifest-schema':
         specifier: workspace:*
         version: link:../../packages/manifest-schema
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
       '@google/genai':
@@ -465,7 +468,7 @@ importers:
 
   experimental/agents/test/fixtures/crash-on-boot:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../../../../packages/sdk
       zod:
@@ -481,7 +484,7 @@ importers:
 
   experimental/agents/test/fixtures/governance-gate-tester:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../../../../packages/sdk
       zod:
@@ -497,7 +500,7 @@ importers:
 
   experimental/agents/test/fixtures/governance-peer-caller:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../../../../packages/sdk
       zod:
@@ -513,10 +516,10 @@ importers:
 
   experimental/grants-server:
     dependencies:
-      '@berth/audit':
+      '@berthos/audit':
         specifier: workspace:*
         version: link:../../packages/audit
-      '@berth/tls':
+      '@berthos/tls':
         specifier: workspace:*
         version: link:../../packages/tls
       fastify:
@@ -535,7 +538,7 @@ importers:
 
   experimental/mesh-coordinator:
     dependencies:
-      '@berth/tls':
+      '@berthos/tls':
         specifier: workspace:*
         version: link:../../packages/tls
       fastify:
@@ -551,10 +554,10 @@ importers:
 
   experimental/registry-server:
     dependencies:
-      '@berth/manifest-schema':
+      '@berthos/manifest-schema':
         specifier: workspace:*
         version: link:../../packages/manifest-schema
-      '@berth/tls':
+      '@berthos/tls':
         specifier: workspace:*
         version: link:../../packages/tls
       '@fastify/multipart':
@@ -613,19 +616,19 @@ importers:
 
   packages/cli:
     dependencies:
-      '@berth/audit':
+      '@berthos/audit':
         specifier: workspace:*
         version: link:../audit
-      '@berth/docker-orchestrator':
+      '@berthos/docker-orchestrator':
         specifier: workspace:*
         version: link:../docker-orchestrator
-      '@berth/manifest-schema':
+      '@berthos/manifest-schema':
         specifier: workspace:*
         version: link:../manifest-schema
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../sdk
-      '@berth/tls':
+      '@berthos/tls':
         specifier: workspace:*
         version: link:../tls
       '@inquirer/prompts':
@@ -653,22 +656,22 @@ importers:
         specifier: ^3.24.1
         version: 3.25.2(zod@4.4.3)
     devDependencies:
-      '@berth/adapter-core':
+      '@berthos/adapter-core':
         specifier: workspace:*
         version: link:../../experimental/adapters/adapter-core
-      '@berth/adapter-daytona':
+      '@berthos/adapter-daytona':
         specifier: workspace:*
         version: link:../../experimental/adapters/adapter-daytona
-      '@berth/adapter-e2b':
+      '@berthos/adapter-e2b':
         specifier: workspace:*
         version: link:../../experimental/adapters/adapter-e2b
-      '@berth/adapter-k8s':
+      '@berthos/adapter-k8s':
         specifier: workspace:*
         version: link:../../experimental/adapters/adapter-k8s
-      '@berth/agents':
+      '@berthos/agents':
         specifier: workspace:*
         version: link:../../experimental/agents
-      '@berth/registry-server':
+      '@berthos/registry-server':
         specifier: workspace:*
         version: link:../../experimental/registry-server
       '@types/dockerode':
@@ -689,10 +692,10 @@ importers:
 
   packages/docker-orchestrator:
     dependencies:
-      '@berth/audit':
+      '@berthos/audit':
         specifier: workspace:*
         version: link:../audit
-      '@berth/manifest-schema':
+      '@berthos/manifest-schema':
         specifier: workspace:*
         version: link:../manifest-schema
       chokidar:
@@ -723,7 +726,7 @@ importers:
 
   packages/docker-orchestrator/test/fixtures/boundary-app-a:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../../../sdk
       zod:
@@ -739,7 +742,7 @@ importers:
 
   packages/docker-orchestrator/test/fixtures/boundary-app-b:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../../../sdk
       zod:
@@ -755,7 +758,7 @@ importers:
 
   packages/docker-orchestrator/test/fixtures/boundary-app-c:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../../../sdk
       zod:
@@ -771,7 +774,7 @@ importers:
 
   packages/docker-orchestrator/test/fixtures/mesh-echo-browser:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../../../sdk
       zod:
@@ -787,7 +790,7 @@ importers:
 
   packages/docker-orchestrator/test/fixtures/mesh-echo-intruder:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../../../sdk
       zod:
@@ -803,7 +806,7 @@ importers:
 
   packages/docker-orchestrator/test/fixtures/mesh-echo-planner:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../../../sdk
       zod:
@@ -819,7 +822,7 @@ importers:
 
   packages/docker-orchestrator/test/fixtures/on-install-probe:
     dependencies:
-      '@berth/sdk':
+      '@berthos/sdk':
         specifier: workspace:*
         version: link:../../../../sdk
       zod:
@@ -851,7 +854,7 @@ importers:
 
   packages/sdk:
     dependencies:
-      '@berth/manifest-schema':
+      '@berthos/manifest-schema':
         specifier: workspace:*
         version: link:../manifest-schema
       '@xenova/transformers':
@@ -867,7 +870,7 @@ importers:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
-      '@berth/tls':
+      '@berthos/tls':
         specifier: workspace:*
         version: link:../tls
       '@types/node':
@@ -895,22 +898,22 @@ importers:
 
   redteam:
     dependencies:
-      '@berth/breakout-box':
+      '@berthos/breakout-box':
         specifier: workspace:*
         version: link:../breakout
-      '@berth/docker-orchestrator':
+      '@berthos/docker-orchestrator':
         specifier: workspace:*
         version: link:../packages/docker-orchestrator
 
   spec/attestation-record:
     dependencies:
-      '@berth/audit':
+      '@berthos/audit':
         specifier: workspace:*
         version: link:../../packages/audit
 
   spec/capability-manifest:
     dependencies:
-      '@berth/manifest-schema':
+      '@berthos/manifest-schema':
         specifier: workspace:*
         version: link:../../packages/manifest-schema
 
@@ -2701,11 +2704,11 @@ packages:
   fast-string-width@3.0.2:
     resolution: {integrity: sha512-gX8LrtNEI5hq8DVUfRQMbr5lpaS4nMIWV+7XEbXk2b8kiQIizgnlr12B4dA3ZEx3308ze0O4Q1R+cHts8kyUJg==}
 
-  fast-uri@3.1.5:
-    resolution: {integrity: sha512-gHwA1O9LDIcKunMKhObS/HimwtehO1nPUECKAu5TpKgaO19fcWEl4bliWe1jWxVFvIXztJjjQ4L8XQ1EU9f7Jw==}
+  fast-uri@3.1.8:
+    resolution: {integrity: sha512-GZMtZUTNRpOVIECoXwLNZS5xUGE+mVNbTB8h/7Rwh2TFWcBQiPzTgyZi05BF9UMZKkLJv8XBRJTlU7zg8+ZfMg==}
 
-  fast-uri@4.1.2:
-    resolution: {integrity: sha512-TyGmBcbDTZXcb2cj5MV89DrF42DKvb3y5DDUNh95iO+IMeAzMkVSxK1PZRrRIpc9yg8U2GhGdbofNa0LS/a4Bw==}
+  fast-uri@4.2.1:
+    resolution: {integrity: sha512-TmHQgewjHtMq1E5QKA0tOE0yeYGQs25KZC/ziJpubRtWI15W92e6vPFydWOeZBVROSHBYw/QhD9d5OefdD6LDg==}
 
   fast-wrap-ansi@0.2.2:
     resolution: {integrity: sha512-7F2Fl+TjRSenLqlU3UjSH0iyqopqoZIu7eZVpEirP2g1GtWa2G/ecEmBdgz31+Mxr+ELclgg6sokpSFIQiZ02Q==}
@@ -3013,8 +3016,8 @@ packages:
   js-tiktoken@1.0.21:
     resolution: {integrity: sha512-biOj/6M5qdgx5TKjDnFT1ymSpM5tbd3ylwDtrQvFQSu0Z7bBYko2dF+W/aUkXUPuk6IVpRxk/3Q2sHOzGlS36g==}
 
-  js-yaml@4.3.1:
-    resolution: {integrity: sha512-CY6crGq313MX8GkwvB7tzgp99vjQxY1++5y10/BKN/GUfHqWaOGQMNZkBvqSzsZKWk/ijwHlWzzkLulsGHhjWQ==}
+  js-yaml@4.3.2:
+    resolution: {integrity: sha512-SFNOvSJ+Dgf/9An904Yx+CgSlIPCkIpao4qo51lpee25TIRejdH3rhR4EZMGoNx3/TP3O+wzWuiTFl4sqbltzA==}
     hasBin: true
 
   jsep@1.4.0:
@@ -4292,7 +4295,7 @@ snapshots:
     dependencies:
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
-      fast-uri: 4.1.2
+      fast-uri: 4.2.1
 
   '@fastify/busboy@3.2.1': {}
 
@@ -4671,7 +4674,7 @@ snapshots:
       form-data: 4.0.6
       hpagent: 1.2.0
       isomorphic-ws: 5.0.0(ws@8.21.3)
-      js-yaml: 4.3.1
+      js-yaml: 4.3.2
       jsonpath-plus: 10.4.0
       node-fetch: 2.7.0
       openid-client: 6.8.4
@@ -5382,7 +5385,7 @@ snapshots:
   ajv@8.20.0:
     dependencies:
       fast-deep-equal: 3.1.3
-      fast-uri: 3.1.5
+      fast-uri: 3.1.8
       json-schema-traverse: 1.0.0
       require-from-string: 2.0.2
 
@@ -5903,7 +5906,7 @@ snapshots:
       '@fastify/merge-json-schemas': 0.2.1
       ajv: 8.20.0
       ajv-formats: 3.0.1(ajv@8.20.0)
-      fast-uri: 4.1.2
+      fast-uri: 4.2.1
       json-schema-ref-resolver: 3.0.0
       rfdc: 1.4.1
 
@@ -5923,9 +5926,9 @@ snapshots:
     dependencies:
       fast-string-truncated-width: 3.0.3
 
-  fast-uri@3.1.5: {}
+  fast-uri@3.1.8: {}
 
-  fast-uri@4.1.2: {}
+  fast-uri@4.2.1: {}
 
   fast-wrap-ansi@0.2.2:
     dependencies:
@@ -6249,7 +6252,7 @@ snapshots:
     dependencies:
       base64-js: 1.5.1
 
-  js-yaml@4.3.1:
+  js-yaml@4.3.2:
     dependencies:
       argparse: 2.0.1
 

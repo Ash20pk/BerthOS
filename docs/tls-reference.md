@@ -68,7 +68,7 @@ Loopback is exempt because nothing crosses a network there. Warning about it wou
 
 ## The RPC bridge
 
-`@berth/sdk`'s `startHttpRpcServer` (the bridge a deployed fleet instance exposes) takes a `tls` option, set from `BERTH_HTTP_RPC_TLS_CERT` / `BERTH_HTTP_RPC_TLS_KEY` — paths, deliberately, not PEMs in the environment, where they would sit in `docker inspect` beside the bearer token.
+`@berthos/sdk`'s `startHttpRpcServer` (the bridge a deployed fleet instance exposes) takes a `tls` option, set from `BERTH_HTTP_RPC_TLS_CERT` / `BERTH_HTTP_RPC_TLS_KEY` — paths, deliberately, not PEMs in the environment, where they would sit in `docker inspect` beside the bearer token.
 
 Whether you need it depends on how the port is exposed:
 

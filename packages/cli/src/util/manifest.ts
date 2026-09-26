@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { loadManifest, ManifestValidationError, type BerthManifest } from "@berth/manifest-schema";
+import { loadManifest, ManifestValidationError, type BerthManifest } from "@berthos/manifest-schema";
 
 /** Loads berth.yml from cwd (or a given dir) and prints readable errors instead of a raw stack trace. */
 export async function loadManifestOrExit(dir = process.cwd()): Promise<BerthManifest> {

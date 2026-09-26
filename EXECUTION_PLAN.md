@@ -80,7 +80,7 @@ No code. These are not tasks I can do; they are inputs I need.
 | D2 | **Is `@berth/agents` frozen, deleted, or spun to its own repo?** | Freeze = `experimental/` in-tree (Chunk 4 as written). Separate repo = extra history-preserving `git filter-repo` step | Freeze in-tree; splitting history is work with no user benefit yet |
 | D3 | **Publish to npm before or after the restructure?** | Publishing first means the 11 demoted packages ship at 0.1.0 and then vanish from the scope — an ugly first impression for anyone who installed them | After Chunk 4, so the first published surface is the one you intend to support |
 | D4 | **Who are the 3 design-partner candidates?** (review change #5) | The competitive doc in Chunk 1 should answer *their* objections, not generic ones | I proceed with a generic platform/security-team reader |
-| D5 | **New npm scope, product rename, or ask for `@berth`?** | The `@berth` scope is owned by an abandoned project (see Chunk 7). Blocks all publishing | `@berthos/*` — matches the GitHub repo, no product rename, Python names already free |
+| D5 | **New npm scope, product rename, or ask for `@berth`?** | The `@berth` scope is owned by an abandoned project (see Chunk 7). Blocks all publishing | `@berthos/*` — matches the GitHub repo, no product rename, Python names already free. **Decided 2026-09-26:** `@berthos/*` on npm, `berthos-sdk`/`berthos-agents` on PyPI, the command stays `berth`, and the README title is BerthOS |
 
 ---
 
@@ -265,7 +265,7 @@ reading `mac-enforcement.md`.
 
 ---
 
-## Chunk 7 — Publish to npm  *(BLOCKED: the `@berth` scope is not yours)*
+## Chunk 7 — Publish to npm  *(unblocked 2026-09-26: `@berthos` claimed, scope renamed)*
 
 Review change #4 / gap #7. The pipeline already exists (`publish-npm.yml`, manual-only,
 dry-run default, SBOM, provenance). **But the plan as originally written cannot run.**

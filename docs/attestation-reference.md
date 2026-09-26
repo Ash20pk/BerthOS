@@ -52,7 +52,7 @@ The verifier is a single file depending only on `node:crypto`. It checks:
    support the verdict. (Forging the measurements themselves is possible for
    whoever controls the emitting host — that is the trust model, below.)
 
-The same checks exist as a library (`verifyAttestation` in `@berth/audit`),
+The same checks exist as a library (`verifyAttestation` in `@berthos/audit`),
 and `berth attest` runs them against its own output before writing anything —
 a record the shipped verifier would reject is never emitted.
 

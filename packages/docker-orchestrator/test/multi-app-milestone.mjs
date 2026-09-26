@@ -12,7 +12,7 @@ import Docker from "dockerode";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { loadManifest } from "@berth/manifest-schema";
+import { loadManifest } from "@berthos/manifest-schema";
 import { buildImage, startContainer, stopContainer, invokeAppExport } from "../dist/index.js";
 import { resolveDevBindMount } from "../../cli/dist/util/workspace.js";
 

@@ -1,5 +1,5 @@
 import { Command } from "@oclif/core";
-import { listSnapshots } from "@berth/docker-orchestrator";
+import { listSnapshots } from "@berthos/docker-orchestrator";
 import { loadManifestOrExit } from "../../util/manifest.js";
 
 export default class SnapshotList extends Command {

@@ -1,5 +1,5 @@
-import { withTimeout, DEPLOY_CREATE_TIMEOUT_MS, DEPLOY_READ_TIMEOUT_MS } from "@berth/adapter-core";
-import type { DeployAdapter, DeployHandle, DeployStatus, DeployTarget } from "@berth/adapter-core";
+import { withTimeout, DEPLOY_CREATE_TIMEOUT_MS, DEPLOY_READ_TIMEOUT_MS } from "@berthos/adapter-core";
+import type { DeployAdapter, DeployHandle, DeployStatus, DeployTarget } from "@berthos/adapter-core";
 
 /**
  * `@daytonaio/sdk` is an optional peer dependency, mirroring adapter-e2b:
@@ -11,7 +11,7 @@ async function loadDaytona(): Promise<any> {
     return await import("@daytonaio/sdk");
   } catch {
     throw new Error(
-      '@berth/adapter-daytona requires the "@daytonaio/sdk" package. Install it with `pnpm add @daytonaio/sdk` to deploy to Daytona.',
+      '@berthos/adapter-daytona requires the "@daytonaio/sdk" package. Install it with `pnpm add @daytonaio/sdk` to deploy to Daytona.',
     );
   }
 }

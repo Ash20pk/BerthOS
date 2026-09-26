@@ -1,20 +1,20 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as http from "node:http";
-import type { DeployAdapter, DeployHandle, DeployTarget } from "@berth/adapter-core";
-import type { BerthManifest } from "@berth/manifest-schema";
+import type { DeployAdapter, DeployHandle, DeployTarget } from "@berthos/adapter-core";
+import type { BerthManifest } from "@berthos/manifest-schema";
 import { HttpBridgeComputer } from "./fleet-computer.js";
 import type { ComputerAppSpec } from "./resolve-apps.js";
 
 /**
  * Doesn't touch Docker or any real cloud provider — a fake DeployAdapter
  * whose start() boots a real local http.createServer speaking the exact
- * wire protocol @berth/sdk's startHttpRpcServer does (POST /rpc with a
+ * wire protocol @berthos/sdk's startHttpRpcServer does (POST /rpc with a
  * bearer token, {id,export,input} in, {id,result}/{id,error} out), using
  * the port/token HttpBridgeComputer.deploy() itself generates. This tests
  * the real dispatch/health-check/auth logic in fleet-computer.ts end-to-end
  * at the protocol level, without needing an E2B/Daytona/K8s account or
- * reaching into @berth/sdk's internals — same mocked-adapter posture
+ * reaching into @berthos/sdk's internals — same mocked-adapter posture
  * adapter-e2b/adapter-daytona's own tests already use for the parts that
  * need a live account.
  */

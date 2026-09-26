@@ -29,7 +29,7 @@ on_agent_ready:
 **`src/index.ts`** is the code behind those exports:
 
 ```ts
-import { defineApp } from "@berth/sdk";
+import { defineApp } from "@berthos/sdk";
 import { z } from "zod";
 
 export default defineApp((app) => {

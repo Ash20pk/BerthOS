@@ -17,7 +17,7 @@ recipe that turns a Mac into an enforcing host with no kernel build.
 | Demo | What it proves | Needs a kernel? | Needs an API key? |
 |------|----------------|:---------------:|:-----------------:|
 | [`kernel-says-no`](./kernel-says-no) | The manifest line is the boundary: a write outside `filesystem:write:/workspace` dies in `open(2)`. No model, no agent — just the boundary. | yes | no |
-| [`prompt-injection`](./prompt-injection) | A **fully compromised model** obeys an injected instruction to persist a backdoor in `/etc`; the kernel refuses anyway, and the attempt lands in a tamper-evident audit trail. The real `@berth/agents` loop, a scripted jailbroken LLM. | yes | no |
+| [`prompt-injection`](./prompt-injection) | A **fully compromised model** obeys an injected instruction to persist a backdoor in `/etc`; the kernel refuses anyway, and the attempt lands in a tamper-evident audit trail. The real `@berthos/agents` loop, a scripted jailbroken LLM. | yes | no |
 | [`no-egress`](./no-egress) | The code-interpreter runs attacker-chosen code to completion, and every outbound path — TCP (Landlock), DNS/UDP (seccomp), `curl` — is refused because `berth.yml` declared no network. Egress is a capability, not a default. | yes | no |
 | [`audit-trail`](./audit-trail) | The hash-chained audit record catches a single-record edit at the exact record — and then demonstrates its own limit (a full rewrite re-verifies). Tamper-evident, not tamper-proof, proven both ways. | no | no |
 
@@ -39,13 +39,13 @@ fails the build: [`.github/workflows/prompt-injection-milestone.yml`](../.github
 |------|---------------|
 | [`agents/simple-agent`](./agents/simple-agent) | `runAgent({ apps, task })` — boot a Computer from a resident app, run one task, clean up. Auto-detects `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`. |
 | [`agents/agent-server`](./agents/agent-server) | An `Agent` behind an HTTP server (`POST /task`, `POST /chat`). |
-| [`agents/with-vercel-ai-sdk`](./agents/with-vercel-ai-sdk) | A booted Computer's tools handed to the Vercel AI SDK's `generateText` — Berth's sandbox with no `@berth/agents` `Agent` anywhere in it. |
+| [`agents/with-vercel-ai-sdk`](./agents/with-vercel-ai-sdk) | A booted Computer's tools handed to the Vercel AI SDK's `generateText` — Berth's sandbox with no `@berthos/agents` `Agent` anywhere in it. |
 | [`resident-apps`](./resident-apps) | Writing the resident apps the demos above run on: `hello-world`, `http-fetch`, `generic-connector`. |
 
 ## Running any of them
 
 ```bash
-pnpm install && pnpm build     # from the repo root, once — @berth/* is not on npm yet
+pnpm install && pnpm build     # from the repo root, once — @berthos/* is not on npm yet
 cd examples/<name>
 pnpm start                     # docker build chatter goes to stderr; add 2>/dev/null for just the demo
 ```

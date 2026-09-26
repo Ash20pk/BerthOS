@@ -25,7 +25,7 @@ packages/
 
 ## Why these are here
 
-`@berth/cli` used to depend on `@berth/agents` and on all three cloud adapters
+`@berthos/cli` used to depend on `@berthos/agents` and on all three cloud adapters
 at runtime. Installing the thing that holds the kernel boundary therefore pulled
 in an LLM framework, three provider SDKs, and their transitive trees — the
 substrate depending on the layers above it. Both are now optional peers loaded
@@ -56,5 +56,5 @@ on demand, and the packages themselves live here.
 ## If you depend on one of these
 
 Nothing changed for you. The package names are the same, the APIs are the same,
-and they are still workspace members. `npm install @berth/agents` alongside
-`@berth/cli` is now an explicit step rather than something that happened to you.
+and they are still workspace members. `npm install @berthos/agents` alongside
+`@berthos/cli` is now an explicit step rather than something that happened to you.

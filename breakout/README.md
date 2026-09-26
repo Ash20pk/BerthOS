@@ -41,7 +41,7 @@ public deployment; the default bind is loopback.
   contained.
 - `GET /attestation` — the box's boot attestation (M2.1): the enforcement
   *measured* live at boot, not asserted.
-- `GET /log` — every attempt, hash-chained (`@berth/audit`). Tamper-evident,
+- `GET /log` — every attempt, hash-chained (`@berthos/audit`). Tamper-evident,
   not tamper-proof.
 
 ## Files

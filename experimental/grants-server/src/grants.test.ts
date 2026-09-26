@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createMemoryAuditSink, type AuditSink } from "@berth/audit";
+import { createMemoryAuditSink, type AuditSink } from "@berthos/audit";
 import { addOperator, createGrantsServer, loadOperatorRegistry } from "./index.js";
 
 const OPERATOR_TOKEN = "test-operator-token";

@@ -1,5 +1,5 @@
 {
-  "name": "@berth/redteam",
+  "name": "@berthos/redteam",
   "version": "0.1.0",
   "private": true,
   "description": "Red-team mutation suite + claims inventory linter (BUILD_PLAN M2.4)",
@@ -9,7 +9,7 @@
     "lint:claims": "node claims-linter.mjs"
   },
   "dependencies": {
-    "@berth/breakout-box": "workspace:*",
-    "@berth/docker-orchestrator": "workspace:*"
+    "@berthos/breakout-box": "workspace:*",
+    "@berthos/docker-orchestrator": "workspace:*"
   }
 }

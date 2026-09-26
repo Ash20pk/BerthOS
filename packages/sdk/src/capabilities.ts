@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import * as path from "node:path";
-import { loadManifest, matchesCapability, type CapabilityRequest } from "@berth/manifest-schema";
+import { loadManifest, matchesCapability, type CapabilityRequest } from "@berthos/manifest-schema";
 
 export interface CapabilityGrant {
   granted: boolean;

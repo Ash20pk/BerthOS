@@ -30,7 +30,7 @@
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { loadManifest } from "@berth/manifest-schema";
+import { loadManifest } from "@berthos/manifest-schema";
 import Docker from "dockerode";
 import { buildImage, startContainer, stopContainer, sidecarName } from "../dist/index.js";
 
@@ -70,14 +70,20 @@ async function execCapture(container, cmd) {
 // The daemon's uid, read from /proc by exact argv[0] match — comm is
 // truncated at 15 chars and a substring match would find this very exec's
 // own shell, whose command line contains the daemon's name.
-const UID_OF_CONTEXT_BUS = `for d in /proc/[0-9]*; do [ "$(tr '\\0' '\\n' < "$d/cmdline" 2>/dev/null | head -n1)" = "/usr/local/bin/context-bus-daemon" ] && awk '/^Uid:/{print $2}' "$d/status" && break; done`;
+//
+// `2>/dev/null` comes before `<` on purpose: redirections apply left to
+// right, so with it after, a process that exited between the glob and the
+// read made the shell itself print "can't open '/proc/443/cmdline'" to
+// stderr, and the first number in the output (443, a pid) was read back as
+// the uid. The value is tagged UID= and parsed by tag for the same reason.
+const UID_OF_CONTEXT_BUS = `for d in /proc/[0-9]*; do [ "$(tr '\\0' '\\n' 2>/dev/null < "$d/cmdline" | head -n1)" = "/usr/local/bin/context-bus-daemon" ] && awk '/^Uid:/{print "UID=" $2}' "$d/status" 2>/dev/null && break; done`;
 
 async function contextBusUid(container) {
   // The daemon starts before the apps but agent-init's own work is async
   // relative to this exec — poll briefly rather than read once.
   for (let i = 0; i < 20; i++) {
     const result = await execCapture(container, ["sh", "-c", UID_OF_CONTEXT_BUS]);
-    const uid = result.output.replace(/[^0-9]/g, " ").trim().split(/\s+/)[0];
+    const uid = /UID=(\d+)/.exec(result.output)?.[1];
     if (uid) return uid;
     await new Promise((resolve) => setTimeout(resolve, 500));
   }

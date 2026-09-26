@@ -5,7 +5,7 @@
 // It exposes nothing an attacker can call. Its RPC socket is reachable only
 // through the 0710 directory owned by its own uid, which is itself one of the
 // things a challenger is invited to get past.
-import { defineApp } from "@berth/sdk";
+import { defineApp } from "@berthos/sdk";
 import { z } from "zod";
 
 export default defineApp((app) => {

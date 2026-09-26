@@ -36,7 +36,7 @@ const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})
 const ENFORCEMENT_STATUSES = new Set(["ACTIVE", "NOT_ENFORCED", "UNDETERMINED"]);
 const PROBE_STATUSES = new Set(["enforcing", "present_not_enforcing", "unsupported", "unknown"]);
 
-/** Stable-key JSON — must byte-match @berth/audit's canonicalize(). */
+/** Stable-key JSON — must byte-match @berthos/audit's canonicalize(). */
 function canonicalize(value) {
   if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
   if (Array.isArray(value)) return `[${value.map(canonicalize).join(",")}]`;

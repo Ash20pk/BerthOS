@@ -9,7 +9,7 @@
     "test": "node --test dist/*.test.js"
   },
   "dependencies": {
-    "@berth/sdk": "workspace:*",
+    "@berthos/sdk": "workspace:*",
     "undici": "^8.10.0",
     "zod": "^4.4.3"
   },

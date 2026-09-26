@@ -99,10 +99,10 @@ RUN apk add --no-cache \
     # machine), so on_install hooks like the PRD's `pip install -r
     # requirements.txt` are expected to work without a virtualenv dance.
     && rm -f /usr/lib/python3*/EXTERNALLY-MANAGED \
-    # @berth/sdk-python's own runtime deps — baked into every image (not a
+    # @berthos/sdk-python's own runtime deps — baked into every image (not a
     # per-app on_install step) since run_lifecycle.py itself needs to import
     # berth_sdk (and thus pydantic/pyyaml) before any app-specific on_install
-    # has had a chance to run; the same reason @berth/sdk's node_modules is
+    # has had a chance to run; the same reason @berthos/sdk's node_modules is
     # already resolvable before a TS app's own on_install runs.
     && pip install --no-cache-dir pydantic pyyaml protobuf
 
@@ -181,11 +181,11 @@ ENV NODE_ENV=development
 # a manifest with no on_install.
 COPY on-install /berth-install-ctx
 RUN /usr/local/bin/berth-run-on-install /berth-install-ctx && rm -rf /berth-install-ctx
-CMD ["node", "node_modules/@berth/sdk/dist/runtime.js"]
+CMD ["node", "node_modules/@berthos/sdk/dist/runtime.js"]
 
 # --- production target: source + a real (non-symlinked) node_modules ---
 # already materialized host-side into the build context by
-# @berth/docker-orchestrator's stageProductionSource() — via `pnpm deploy
+# @berthos/docker-orchestrator's stageProductionSource() — via `pnpm deploy
 # --legacy` for workspace members, or a plain prod install for standalone
 # apps — so no install step runs here at all.
 FROM base AS production
@@ -203,4 +203,4 @@ COPY . /app
 # /app, so there's nothing to stage twice and the working directory is the
 # one the app will actually run from. REMEDIATION.md 1.5.
 RUN /usr/local/bin/berth-run-on-install /app
-CMD ["node", "node_modules/@berth/sdk/dist/runtime.js"]
+CMD ["node", "node_modules/@berthos/sdk/dist/runtime.js"]

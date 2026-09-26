@@ -3,11 +3,11 @@
 // resident app's built code, cross-checks its exports against berth.yml
 // (the same check runtime.ts does at real boot), then generates a
 // schema-valid stub payload for every declared export and invokes it
-// through the app's own handler. Lives inside @berth/sdk for the same
+// through the app's own handler. Lives inside @berthos/sdk for the same
 // package-resolution reason as run-lifecycle.ts.
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
-import { loadManifest } from "@berth/manifest-schema";
+import { loadManifest } from "@berthos/manifest-schema";
 import type { BerthApp } from "./app.js";
 
 const MANIFEST_PATH = process.env.BERTH_MANIFEST_PATH ?? join(process.cwd(), "berth.yml");

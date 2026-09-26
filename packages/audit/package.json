@@ -1,5 +1,5 @@
 {
-  "name": "@berth/audit",
+  "name": "@berthos/audit",
   "version": "0.1.0",
   "description": "Structured audit records with a verifiable actor, a hash-chained file sink, and payload redaction",
   "type": "module",

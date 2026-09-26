@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { homedir } from "node:os";
-import { combineAuditSinks, createConsoleAuditSink, createFileAuditSink, defaultAuditPath } from "@berth/audit";
-import { resolveServerTlsFromEnv, schemeFor } from "@berth/tls";
+import { combineAuditSinks, createConsoleAuditSink, createFileAuditSink, defaultAuditPath } from "@berthos/audit";
+import { resolveServerTlsFromEnv, schemeFor } from "@berthos/tls";
 import { addOperator, createGrantsServer, loadOperatorRegistry, singleTokenRegistry } from "./index.js";
 
 const port = Number(process.env.BERTH_GRANTS_PORT ?? 4874);

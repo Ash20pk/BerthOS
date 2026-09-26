@@ -2,7 +2,7 @@
 
 > **Setting it up?** [mcp-quickstart.md](./mcp-quickstart.md) is the 5-minute path — the client config for Claude Code/Desktop/Cursor, the `--warm` step, and how to read a denial. This page is the mechanics.
 
-`berth mcp --app=<name>` exposes one resident app's declared `berth.yml` exports as [MCP](https://modelcontextprotocol.io) tools, so an MCP client (Claude Desktop, Claude Code, etc.) can call them directly — no new transport, just a protocol translator over the same mechanisms `berth rpc`/`berth logs` already use to reach an app's runtime from the host. This doc covers Berth as an MCP *server*. For the other direction — a Berth `Agent` consuming an *external* MCP server's tools — see `createMcpClientTools()` in [`docs/agents-reference.md`](./agents-reference.md#consuming-an-external-mcp-server-createmcpclienttools) (TypeScript) or `create_mcp_client_tools()` in `docs/agents-python-reference.md` (Python); that's a separate feature in `@berth/agents`/`berth_agents`, not part of this bridge.
+`berth mcp --app=<name>` exposes one resident app's declared `berth.yml` exports as [MCP](https://modelcontextprotocol.io) tools, so an MCP client (Claude Desktop, Claude Code, etc.) can call them directly — no new transport, just a protocol translator over the same mechanisms `berth rpc`/`berth logs` already use to reach an app's runtime from the host. This doc covers Berth as an MCP *server*. For the other direction — a Berth `Agent` consuming an *external* MCP server's tools — see `createMcpClientTools()` in [`docs/agents-reference.md`](./agents-reference.md#consuming-an-external-mcp-server-createmcpclienttools) (TypeScript) or `create_mcp_client_tools()` in `docs/agents-python-reference.md` (Python); that's a separate feature in `@berthos/agents`/`berth_agents`, not part of this bridge.
 
 ## How it's wired
 
@@ -12,7 +12,7 @@
 - A tool call's error is passed through `explainAppError()` (`packages/cli/src/util/capability-errors.ts`) before it's returned as `isError` content — see [Denials as the API](#denials-as-the-api) below.
 - `packages/cli/src/util/mcp-tools.ts` maps each `berth.yml` export's flat `input` map (`IOSpec`, e.g. `{ path: string, content: string }`) to a Zod raw shape — the form `@modelcontextprotocol/sdk`'s `McpServer.registerTool()` expects for `inputSchema`. `IOSpec` has no nesting, so this is a direct one-to-one field mapping (`string`→`z.string()`, `object`→`z.record(...)`, `array`→`z.array(z.unknown())`, etc.) — no schema inference beyond what the manifest already declares.
 - `packages/cli/src/commands/mcp.ts` builds an `McpServer`, registers one tool per export, and connects it over `StdioServerTransport` — so `berth mcp --app=<name>` itself becomes a stdio MCP server process an MCP client spawns directly.
-- Each tool's handler calls `@berth/docker-orchestrator`'s `createStdioRpcClient()` (new — `packages/docker-orchestrator/src/stdio-rpc.ts`), which speaks the app runtime's line-delimited JSON RPC protocol over `container.attach()`, reusing one connection for every tool call for the lifetime of the `berth mcp` process.
+- Each tool's handler calls `@berthos/docker-orchestrator`'s `createStdioRpcClient()` (new — `packages/docker-orchestrator/src/stdio-rpc.ts`), which speaks the app runtime's line-delimited JSON RPC protocol over `container.attach()`, reusing one connection for every tool call for the lifetime of the `berth mcp` process.
 
 ## Why this needed a new RPC client, not `berth rpc`'s existing one
 

@@ -54,9 +54,9 @@ carry.
 Against the reference implementations, from the repo root:
 
 ```sh
-pnpm --filter @berth/audit build
-pnpm --filter @berth/spec-attestation-record conformance          # standalone verifier
-pnpm --filter @berth/spec-attestation-record conformance:library  # @berth/audit
+pnpm --filter @berthos/audit build
+pnpm --filter @berthos/spec-attestation-record conformance          # standalone verifier
+pnpm --filter @berthos/spec-attestation-record conformance:library  # @berthos/audit
 ```
 
 There are deliberately two reference implementations — a standalone script
@@ -78,7 +78,7 @@ case is reported and never counted as a pass.
 ## The suite's own control
 
 ```sh
-pnpm --filter @berth/spec-attestation-record selftest
+pnpm --filter @berthos/spec-attestation-record selftest
 ```
 
 Runs the suite three times and requires all three: both reference verifiers

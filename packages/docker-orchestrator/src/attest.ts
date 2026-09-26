@@ -1,6 +1,6 @@
 import Docker from "dockerode";
 import { PassThrough } from "node:stream";
-import type { DoctorProbeResult, PolicyDigest, RulesetReport } from "@berth/audit";
+import type { DoctorProbeResult, PolicyDigest, RulesetReport } from "@berthos/audit";
 import { enforcementStatusForBoot } from "./doctor.js";
 
 /**

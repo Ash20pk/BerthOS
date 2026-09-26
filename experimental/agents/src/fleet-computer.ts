@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import type { DeployAdapter, DeployHandle, DeployTarget } from "@berth/adapter-core";
+import type { DeployAdapter, DeployHandle, DeployTarget } from "@berthos/adapter-core";
 import { withReadyRetry, READY_RETRY_CEILING_MS, type ComputerHandle } from "./computer.js";
 import { computerToolsFor } from "./tools.js";
 import { applyGovernanceGate, type GovernanceGateOptions } from "./governance.js";
@@ -8,7 +8,7 @@ import type { Tool } from "./types.js";
 
 export interface DeployComputerOptions {
   adapter: DeployAdapter;
-  /** Port the deployed instance's HTTP RPC bridge listens on — see @berth/sdk's startHttpRpcServer. */
+  /** Port the deployed instance's HTTP RPC bridge listens on — see @berthos/sdk's startHttpRpcServer. */
   port: number;
   imageRef: string;
   manifest: DeployTarget["manifest"];
@@ -27,7 +27,7 @@ export interface DeployComputerOptions {
  * Backs a Computer-shaped object with a peer deployed to a remote fleet
  * (E2B, Daytona, K8s) instead of a local Docker container — see
  * bootNetworkedAgent({fleet}) in network.ts. Dispatches over the HTTP RPC
- * bridge (@berth/sdk's startHttpRpcServer) via the adapter's rpcUrl(),
+ * bridge (@berthos/sdk's startHttpRpcServer) via the adapter's rpcUrl(),
  * since none of these providers' SDKs expose anything like Computer's own
  * dockerode-specific invokeAppExport()/createStdioRpcClient() (confirmed:
  * no DeployAdapter implementation can docker-exec/attach into an already-

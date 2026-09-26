@@ -29,7 +29,7 @@ const DEFAULT_TOP_K = 5;
  * the same way checkpointing/tracing reach write_context_file et al.
  *
  * query_context alone only ever returns metadata (path/task/relatedApps/
- * timestamps — see @berth/sdk's SemanticFsQueryResult), never the file's
+ * timestamps — see @berthos/sdk's SemanticFsQueryResult), never the file's
  * actual content, so calling it directly forces the model into an N+1
  * round trip (one query_context call, then one read_context_file call per
  * hit) just to get anything it can reason over. retrieve() collapses that

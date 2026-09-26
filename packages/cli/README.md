@@ -1,17 +1,17 @@
-# @berth/cli
+# @berthos/cli
 
 The berth CLI — init, dev, test, publish, deploy.
 
 Part of [Berth](https://github.com/Ash20pk/BerthOS) — IAM for agents — declared capabilities, kernel-enforced, audit-trailed. The `berth.yml` capability line is the boundary; Landlock + seccomp hold it.
 
 ```sh
-npm install @berth/cli
+npm install @berthos/cli
 ```
 
 ## Usage
 
 ```sh
-npm install -g @berth/cli
+npm install -g @berthos/cli
 berth init my-app     # scaffold a resident app with a berth.yml manifest
 berth doctor          # verify the host actually enforces (Landlock/seccomp probe)
 berth dev             # boot the sandbox and run your app inside it

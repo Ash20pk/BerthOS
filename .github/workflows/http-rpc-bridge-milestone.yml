@@ -7,7 +7,7 @@ name: HTTP RPC Bridge Milestone
 # client, see experimental/agents-python's Computer.connect()) uses to call a
 # resident app's exports. Separate from Agents Milestone's
 # computer-http-rpc-milestone.mjs, which exercises the same feature through
-# @berth/agents' Computer.boot({httpRpc}) using a production-target image —
+# @berthos/agents' Computer.boot({httpRpc}) using a production-target image —
 # this workflow's test uses a dev-target image specifically so it verifies
 # the bridge mechanism itself, not entangled with Landlock enforcement.
 on:

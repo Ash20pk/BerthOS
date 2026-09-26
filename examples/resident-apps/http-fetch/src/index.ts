@@ -1,4 +1,4 @@
-import { defineApp, configureEgressProxy } from "@berth/sdk";
+import { defineApp, configureEgressProxy } from "@berthos/sdk";
 import { z } from "zod";
 
 // The one line this app needs for entrypoint.sh's egress broker (started

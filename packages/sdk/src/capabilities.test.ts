@@ -113,5 +113,5 @@ test("a grant carries no token — REMEDIATION.md 1.10 removed them", async () =
   }
 
   const sdk = (await import(`./index.js?t=${Date.now()}`)) as Record<string, unknown>;
-  assert.equal("verifyCapabilityToken" in sdk, false, "@berth/sdk should no longer export verifyCapabilityToken");
+  assert.equal("verifyCapabilityToken" in sdk, false, "@berthos/sdk should no longer export verifyCapabilityToken");
 });

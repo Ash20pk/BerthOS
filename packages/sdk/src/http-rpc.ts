@@ -6,7 +6,7 @@ import { invokeExport, type RpcRequest } from "./rpc.js";
 
 /**
  * The RPC bridge for a resident app deployed to a remote fleet (E2B, Daytona,
- * K8s) — see @berth/agents's bootNetworkedAgent({fleet}). None of those
+ * K8s) — see @berthos/agents's bootNetworkedAgent({fleet}). None of those
  * providers expose anything like docker-orchestrator's invokeAppExport
  * (container.exec/attach), but they do give a real, publicly reachable HTTPS
  * URL for an exposed port (E2B's getHost, Daytona's getPreviewLink, or a

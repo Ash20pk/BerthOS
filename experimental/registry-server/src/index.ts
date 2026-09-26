@@ -1,7 +1,7 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import multipart from "@fastify/multipart";
 import { join } from "node:path";
-import type { ServerTlsOptions } from "@berth/tls";
+import type { ServerTlsOptions } from "@berthos/tls";
 import { RegistryDb } from "./db.js";
 import { BlobStore } from "./storage.js";
 import { registerRegistryRoutes } from "./routes.js";
@@ -15,7 +15,7 @@ export interface CreateRegistryServerOptions {
   now?: () => string;
   /**
    * Serve HTTPS instead of plain HTTP. Built by `resolveServerTls()` from
-   * cert/key paths — see @berth/tls and docs/tls-reference.md. Undefined
+   * cert/key paths — see @berthos/tls and docs/tls-reference.md. Undefined
    * means plain HTTP, which is the default and what every existing
    * deployment keeps getting (REMEDIATION.md 5.3).
    */

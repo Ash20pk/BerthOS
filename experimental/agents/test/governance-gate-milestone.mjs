@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import Docker from "dockerode";
 import { Computer, GovernanceDeniedError } from "../dist/index.js";
-import { invokeAppExport } from "@berth/docker-orchestrator";
+import { invokeAppExport } from "@berthos/docker-orchestrator";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");

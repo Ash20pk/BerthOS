@@ -19,7 +19,7 @@ thing: the enforcement-tier vocabulary.
 
 It lives in this repository because Berth wrote it, not because Berth owns it.
 Nothing here imports Berth except the reference adapter, and where the
-specification and `@berth/manifest-schema` disagree, the specification is right
+specification and `@berthos/manifest-schema` disagree, the specification is right
 and the package has a bug (SPEC.md Appendix B).
 
 ## Why a spec, and why the tier vocabulary is in it
@@ -40,8 +40,8 @@ That is the part worth exporting. The grammar is just a grammar.
 Against the reference implementation, from the repo root:
 
 ```sh
-pnpm --filter @berth/manifest-schema build
-pnpm --filter @berth/spec-capability-manifest conformance
+pnpm --filter @berthos/manifest-schema build
+pnpm --filter @berthos/spec-capability-manifest conformance
 ```
 
 Against your own implementation — write an adapter speaking the JSON-Lines
@@ -58,7 +58,7 @@ and never counted as a pass.
 ## The suite's own control
 
 ```sh
-pnpm --filter @berth/spec-capability-manifest selftest
+pnpm --filter @berthos/spec-capability-manifest selftest
 ```
 
 Runs the suite twice and requires *both*: the reference adapter passes, and

@@ -9,8 +9,8 @@ import {
   declaresTerminalCapability,
   needsBrowserPorts,
   needsTerminalPort,
-} from "@berth/docker-orchestrator";
-import type { BerthManifest } from "@berth/manifest-schema";
+} from "@berthos/docker-orchestrator";
+import type { BerthManifest } from "@berthos/manifest-schema";
 import { loadManifestOrExit } from "../util/manifest.js";
 import { bootDevContainer } from "../util/dev-boot.js";
 import {

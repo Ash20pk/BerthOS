@@ -24,7 +24,7 @@
 
 import { openai } from "@ai-sdk/openai";
 import { generateText, stepCountIs } from "ai";
-import { Computer, toAiSdkTools } from "@berth/agents";
+import { Computer, toAiSdkTools } from "@berthos/agents";
 
 const computer = await Computer.boot({ apps: ["apps/filesystem"] });
 

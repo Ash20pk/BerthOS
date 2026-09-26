@@ -8,7 +8,7 @@ import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import tarFs from "tar-fs";
 import type Docker from "dockerode";
-import type { BerthManifest } from "@berth/manifest-schema";
+import type { BerthManifest } from "@berthos/manifest-schema";
 import { restoreSnapshot, createSnapshot, type SnapshotMetadata } from "./snapshot.js";
 
 /**

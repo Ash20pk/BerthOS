@@ -2,8 +2,8 @@
 // Runs inside the container before agent-init applies kernel-level
 // enforcement (see packages/agent-init). Translates berth.yml's declared
 // `capabilities:` into a small JSON policy agent-init can read without
-// needing a YAML parser or capability-glob logic in Rust — @berth/sdk (via
-// @berth/manifest-schema, already a dependency) is the single place that
+// needing a YAML parser or capability-glob logic in Rust — @berthos/sdk (via
+// @berthos/manifest-schema, already a dependency) is the single place that
 // understands the capability-string grammar.
 //
 // Phase 3 scope: filesystem:write:<path> always translates into real kernel
@@ -19,7 +19,7 @@
 // skips building a per-port ruleset entirely rather than enumerating all
 // 65535 ports. Every other declared capability (browser:navigate:*,
 // github:*, ...) is still just recorded in `declaredCapabilities` for
-// @berth/sdk's requestCapability() to report on — see
+// @berthos/sdk's requestCapability() to report on — see
 // docs/capability-tokens-reference.md.
 //
 // network:peer:<name> (see docs/mesh-reference.md) collects declared peer
@@ -33,7 +33,7 @@
 import { writeFile, mkdir } from "node:fs/promises";
 import { realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { loadManifest, parseCapability, capabilityIssue, CapabilityString, type ParsedCapability } from "@berth/manifest-schema";
+import { loadManifest, parseCapability, capabilityIssue, CapabilityString, type ParsedCapability } from "@berthos/manifest-schema";
 
 const MANIFEST_PATH = process.env.BERTH_MANIFEST_PATH ?? join(process.cwd(), "berth.yml");
 const POLICY_PATH = process.env.BERTH_CAPABILITY_POLICY ?? join(process.cwd(), ".berth", "capability-policy.json");
@@ -198,7 +198,7 @@ async function fetchApprovedCapabilities(appName: string): Promise<string[]> {
  * so its two callers — the static manifest's own `capabilities:` list and
  * the grants server's `approved` response — go through the exact same
  * validation. That second caller matters: unlike `manifest.capabilities`,
- * which @berth/manifest-schema's CapabilityString regex already validated
+ * which @berthos/manifest-schema's CapabilityString regex already validated
  * at loadManifest() time, an `approved` grant string arrives straight from
  * an HTTP JSON response with no schema check at all — a malformed or
  * adversarial grants-server response (compromised server, or just a bug)
@@ -218,7 +218,7 @@ export function compileCapabilityPolicy(appName: string, rawCapabilities: string
   let needsGithubBrokerCa = false;
 
   for (const capability of rawCapabilities) {
-    // CapabilityString mirrors the exact regex @berth/manifest-schema
+    // CapabilityString mirrors the exact regex @berthos/manifest-schema
     // already enforced on manifest.capabilities — re-validating here is
     // what makes it safe to feed grants-server strings into the same loop.
     const validated = CapabilityString.safeParse(capability);
@@ -414,7 +414,7 @@ async function main(): Promise<void> {
 // so the guard changes nothing about production behavior.
 //
 // process.argv[1] must be realpath'd before comparing: every real
-// invocation goes through the node_modules/@berth/sdk pnpm SYMLINK (every
+// invocation goes through the node_modules/@berthos/sdk pnpm SYMLINK (every
 // resident app has one), and Node's ESM loader resolves import.meta.url
 // through that symlink to the package's real location
 // (.../packages/sdk/dist/...) while leaving process.argv[1] as the
@@ -422,7 +422,7 @@ async function main(): Promise<void> {
 // matches, so main() silently never ran and this file never wrote a policy
 // at all. Confirmed by hand inside a real container: import.meta.url
 // resolved to the real packages/sdk path, process.argv[1] stayed the
-// symlinked apps/<app>/node_modules/@berth/sdk path, and the guard was
+// symlinked apps/<app>/node_modules/@berthos/sdk path, and the guard was
 // false on every single real boot. realpathSync() on the argv side is what
 // makes both sides agree.
 function isRunDirectly(): boolean {

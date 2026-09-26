@@ -44,7 +44,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @berth/manifest-schema build
+      - run: pnpm --filter @berthos/manifest-schema build
       - name: Reference implementation passes the conformance suite
         run: node spec/capability-manifest/conformance/run.mjs
              --adapter "node spec/capability-manifest/conformance/adapters/berth.mjs"
@@ -71,7 +71,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @berth/audit build
+      - run: pnpm --filter @berthos/audit build
       - name: Standalone verifier passes the conformance suite
         run: node spec/attestation-record/conformance/run.mjs
              --adapter "node spec/attestation-record/conformance/adapters/berth.mjs --impl standalone"

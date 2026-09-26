@@ -1,8 +1,8 @@
 # `agent-server` example
 
-The other direction from [`../simple-agent`](../simple-agent). Instead of an agent driving something (a file, a shell), the **agent itself is the thing being served**. `server.mjs` boots a `Computer` and `Agent` once at startup and hands it to `@berth/agents`' `serveAgent()` — a real framework primitive (`experimental/agents/src/server.ts`), not hand-rolled `http` boilerplate: `GET /health` reports the tools it has loaded, `POST /task { task: string }` runs it and returns `{ text, toolCalls }`, and `POST /chat { messages: UIMessage[] }` streams a Vercel AI SDK `useChat`-compatible response — point `useChat`'s `api` option straight at `http://localhost:8787/chat` and it works with zero glue code.
+The other direction from [`../simple-agent`](../simple-agent). Instead of an agent driving something (a file, a shell), the **agent itself is the thing being served**. `server.mjs` boots a `Computer` and `Agent` once at startup and hands it to `@berthos/agents`' `serveAgent()` — a real framework primitive (`experimental/agents/src/server.ts`), not hand-rolled `http` boilerplate: `GET /health` reports the tools it has loaded, `POST /task { task: string }` runs it and returns `{ text, toolCalls }`, and `POST /chat { messages: UIMessage[] }` streams a Vercel AI SDK `useChat`-compatible response — point `useChat`'s `api` option straight at `http://localhost:8787/chat` and it works with zero glue code.
 
-Depends on `@berth/agents` as an ordinary `workspace:*` package dependency, same as every other example under `examples/agents/`. Nothing here reaches into this monorepo's source or build output by relative path.
+Depends on `@berthos/agents` as an ordinary `workspace:*` package dependency, same as every other example under `examples/agents/`. Nothing here reaches into this monorepo's source or build output by relative path.
 
 ## Why boot once, not per request
 
@@ -12,7 +12,7 @@ A naive version of this would call `createAgent()` inside the request handler. T
 
 ```bash
 pnpm install
-pnpm build          # from the repo root, builds @berth/agents and its deps
+pnpm build          # from the repo root, builds @berthos/agents and its deps
 ```
 
 A local Docker daemon needs to be running, and either `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` needs to be set. The script prints `SKIP` and exits cleanly if neither is, rather than failing.

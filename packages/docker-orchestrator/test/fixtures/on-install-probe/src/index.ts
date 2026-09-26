@@ -6,9 +6,9 @@
 //
 // Reads are unrestricted here because the manifest declares no
 // filesystem:read: capability, which leaves read scoping at its open default
-// (see @berth/sdk's generate-capability-policy.ts). That's what lets this app
+// (see @berthos/sdk's generate-capability-policy.ts). That's what lets this app
 // look at /etc without being able to write there.
-import { defineApp } from "@berth/sdk";
+import { defineApp } from "@berthos/sdk";
 import { z } from "zod";
 import { readFile } from "node:fs/promises";
 

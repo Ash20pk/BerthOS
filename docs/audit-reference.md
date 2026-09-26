@@ -1,6 +1,6 @@
 # Audit trail reference
 
-`@berth/audit` is the record of what happened on a Berth installation and who did it: governance verdicts, capability-grant decisions, failed authentication attempts, and — optionally — every step an agent took.
+`@berthos/audit` is the record of what happened on a Berth installation and who did it: governance verdicts, capability-grant decisions, failed authentication attempts, and — optionally — every step an agent took.
 
 It exists because none of that was written down. `REMEDIATION.md` 5.1: governance denials threw silently, no server logged a request, `AgentStepEvent` recorded tool names and no actor, and `decided_by` on a grant was free text from the request body. A gate that blocks a hundred calls used to leave exactly the same trace as a gate nobody ever consulted.
 
@@ -35,8 +35,8 @@ An agent step that threw is recorded as `allowed` with a `reason`, not as `denie
 ## Turning it on
 
 ```ts
-import { createFileAuditSink, defaultAuditPath } from "@berth/audit";
-import { createAgent } from "@berth/agents";
+import { createFileAuditSink, defaultAuditPath } from "@berthos/audit";
+import { createAgent } from "@berthos/agents";
 import { homedir } from "node:os";
 
 const audit = createFileAuditSink({ path: defaultAuditPath(homedir()) });
@@ -98,7 +98,7 @@ Each record's `hash` covers `prevHash` plus its own canonical JSON, so a record 
   install that had rotated past its retention window `audit verify` reported `BROKEN` at
   record 0 and `attest` refused to emit at all — a routine rotation was indistinguishable
   from tampering, in the direction that cries wolf. Fixed by `verifyAuditSegments()` in
-  `@berth/audit`, which both commands now share.
+  `@berthos/audit`, which both commands now share.
 - **`agent-init`'s boot events** are separate — they go to container stderr, not to this sink, since they run inside the sandbox before any of this exists. They are parseable JSON with a `"source":"agent-init"` field (the old `[agent-init] ` prefix made them unparseable, also 5.1).
 
 ## What is still open

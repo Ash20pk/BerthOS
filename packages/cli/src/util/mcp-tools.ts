@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { BerthManifest, ExportSpecType, JsonPrimitiveTypeName } from "@berth/manifest-schema";
+import type { BerthManifest, ExportSpecType, JsonPrimitiveTypeName } from "@berthos/manifest-schema";
 
 /**
  * Maps one IOSpec field's primitive type name to a Zod schema, so a

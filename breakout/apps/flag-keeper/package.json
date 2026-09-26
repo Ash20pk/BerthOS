@@ -5,7 +5,7 @@
   "type": "module",
   "main": "src/index.js",
   "dependencies": {
-    "@berth/sdk": "workspace:*",
+    "@berthos/sdk": "workspace:*",
     "zod": "^4.4.3"
   }
 }

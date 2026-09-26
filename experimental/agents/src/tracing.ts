@@ -1,4 +1,4 @@
-import type { Actor, AuditSink } from "@berth/audit";
+import type { Actor, AuditSink } from "@berthos/audit";
 import type { ComputerHandle } from "./computer.js";
 import { findExportTool } from "./checkpoint.js";
 

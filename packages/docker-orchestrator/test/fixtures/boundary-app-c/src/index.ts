@@ -5,7 +5,7 @@
 // no path validation of its own here: any escape must be caught by the
 // kernel (Landlock), not by app code, or the test proves nothing about
 // enforcement.
-import { defineApp } from "@berth/sdk";
+import { defineApp } from "@berthos/sdk";
 import { z } from "zod";
 import { writeFile, readFile, mkdir } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";

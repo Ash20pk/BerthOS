@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Real, running verification that @berth/sdk-python's RPC framing is
-// byte-compatible with @berth/sdk's rpc.ts: boots a real apps/hello-world-py
+// Real, running verification that @berthos/sdk-python's RPC framing is
+// byte-compatible with @berthos/sdk's rpc.ts: boots a real apps/hello-world-py
 // container (BERTH_APP_RUNTIME=python), sends a real {id,export,input} line
 // over its actual container stdio (the exact same attach-and-write pattern
 // every other milestone test in this repo uses against Node apps), and
@@ -24,7 +24,7 @@ import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { rm } from "node:fs/promises";
-import { loadManifest } from "@berth/manifest-schema";
+import { loadManifest } from "@berthos/manifest-schema";
 import { buildImage, startContainer, stopContainer } from "../dist/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -99,7 +99,7 @@ async function main() {
 
     rpc.close();
     console.log(
-      "\nPASS — @berth/sdk-python's runtime, RPC framing, and manifest loading are byte-compatible with the " +
+      "\nPASS — @berthos/sdk-python's runtime, RPC framing, and manifest loading are byte-compatible with the " +
         "TypeScript SDK's, proven by a real container boot and a real stdio RPC round trip, not a unit test in isolation.",
     );
   } finally {
@@ -129,7 +129,7 @@ async function createRpcClient(container) {
   const stream = await container.attach({ stream: true, stdin: true, stdout: true, stderr: true, hijack: true });
   // Terminates the attach options object docker-modem sends as this POST's
   // body straight into the container's stdin, so it can't concatenate onto the
-  // first real request — see @berth/docker-orchestrator's stdio-rpc.ts for the
+  // first real request — see @berthos/docker-orchestrator's stdio-rpc.ts for the
   // full explanation.
   stream.write("\n");
   const stdout = new PassThrough();

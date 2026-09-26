@@ -1,7 +1,7 @@
 import { readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { DeployAdapter } from "@berth/adapter-core";
+import type { DeployAdapter } from "@berthos/adapter-core";
 
 interface FleetAlias {
   adapter: "e2b" | "daytona" | "k8s";
@@ -74,16 +74,16 @@ async function loadFleetConfig(configPath: string): Promise<FleetConfig> {
  */
 async function instantiate(adapterName: "e2b" | "daytona" | "k8s"): Promise<DeployAdapter> {
   try {
-    if (adapterName === "e2b") return (await import("@berth/adapter-e2b")).createE2bAdapter();
-    if (adapterName === "daytona") return (await import("@berth/adapter-daytona")).createDaytonaAdapter();
-    return (await import("@berth/adapter-k8s")).createK8sAdapter();
+    if (adapterName === "e2b") return (await import("@berthos/adapter-e2b")).createE2bAdapter();
+    if (adapterName === "daytona") return (await import("@berthos/adapter-daytona")).createDaytonaAdapter();
+    return (await import("@berthos/adapter-k8s")).createK8sAdapter();
   } catch (err) {
     const code = (err as { code?: string }).code;
     if (code === "ERR_MODULE_NOT_FOUND" || code === "MODULE_NOT_FOUND") {
       throw new Error(
         `deploying to "${adapterName}" needs its adapter, which is not installed.\n\n` +
-          `  npm install @berth/adapter-${adapterName}\n\n` +
-          `@berth/cli ships without the cloud adapters: each pulls in a provider SDK, and a CLI ` +
+          `  npm install @berthos/adapter-${adapterName}\n\n` +
+          `@berthos/cli ships without the cloud adapters: each pulls in a provider SDK, and a CLI ` +
           `used for local sandboxing needs none of them. Install only the one you deploy to.`,
       );
     }

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { ComputerHandle } from "./computer.js";
 import type { Tool } from "./types.js";
-import { agentActor, createMemoryAuditSink } from "@berth/audit";
+import { agentActor, createMemoryAuditSink } from "@berthos/audit";
 import {
   createAgentTracer,
   createContextBusStepTracer,

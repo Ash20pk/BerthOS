@@ -1,5 +1,5 @@
 {
-  "name": "@berth/adapter-core",
+  "name": "@berthos/adapter-core",
   "version": "0.1.0",
   "description": "Shared DeployAdapter interface implemented by adapter-e2b and adapter-daytona",
   "type": "module",
@@ -45,7 +45,7 @@
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
-    "@berth/manifest-schema": "workspace:*"
+    "@berthos/manifest-schema": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^7.0.2",

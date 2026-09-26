@@ -1,7 +1,7 @@
 import { Command, Flags } from "@oclif/core";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { generateSelfSignedCerts } from "@berth/tls";
+import { generateSelfSignedCerts } from "@berthos/tls";
 
 const DEFAULT_DIR = join(homedir(), ".berth", "tls");
 

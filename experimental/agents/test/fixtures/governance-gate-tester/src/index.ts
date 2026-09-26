@@ -1,4 +1,4 @@
-import { defineApp } from "@berth/sdk";
+import { defineApp } from "@berthos/sdk";
 import { z } from "zod";
 
 // governance-gate-milestone.mjs's fixture governance app: denies write_file

@@ -9,7 +9,7 @@ import {
   describeContainerFailure,
   formatContainerFailure,
   type StdioRpcClient,
-} from "@berth/docker-orchestrator";
+} from "@berthos/docker-orchestrator";
 import { resolveComputerApps, type ComputerAppSpec } from "./resolve-apps.js";
 import { buildComputerImage } from "./build.js";
 import { computerToolsFor } from "./tools.js";
@@ -26,7 +26,7 @@ export interface BootComputerOptions {
   /** Passed through to applyGovernanceGate() when this Computer has a `governs: true` app loaded — see GovernanceGateOptions. Defaults to "fail-closed" since REMEDIATION.md 1.11: an unreachable governor refuses the call rather than letting it run. */
   governance?: GovernanceGateOptions;
   /**
-   * Also starts @berth/sdk's HTTP RPC bridge inside the container (see
+   * Also starts @berthos/sdk's HTTP RPC bridge inside the container (see
    * container.ts's `httpRpc` option) and exposes it on the returned handle's
    * `httpRpc` field — the one way a process with no Docker API access (a
    * Python client, see experimental/agents-python's `Computer.connect()`) can

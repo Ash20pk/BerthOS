@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { resolveServerTlsFromEnv, schemeFor } from "@berth/tls";
+import { resolveServerTlsFromEnv, schemeFor } from "@berthos/tls";
 import { createMeshCoordinatorServer } from "./index.js";
 
 const port = Number(process.env.BERTH_MESH_COORDINATOR_PORT ?? 4875);

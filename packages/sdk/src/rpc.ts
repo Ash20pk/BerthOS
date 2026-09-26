@@ -60,7 +60,7 @@ export function startRpcServer(app: BerthApp, options?: { socketPath?: string; n
 
 /**
  * The TCP listener is opt-in and, today, opted into by hand: nothing in
- * @berth/agents or the orchestrator sets either of these variables —
+ * @berthos/agents or the orchestrator sets either of these variables —
  * `Crew.networked()` reaches a remote peer over the authenticated HTTP RPC
  * bridge (`startHttpRpcServer`) instead. So this is a door an app author
  * opens deliberately, which is exactly why the governance gate has to sit on

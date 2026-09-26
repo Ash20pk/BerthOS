@@ -1,4 +1,4 @@
-# `@berth/agents` examples
+# `@berthos/agents` examples
 
 Runnable, narrative demonstrations of `Computer` -> `Agent` -> `Crew`. These
 print what they're doing and what came back — for hard-assertion
@@ -9,7 +9,7 @@ verification of the same code paths, see `../test/*-milestone.mjs` instead
 
 ```bash
 pnpm install
-pnpm build          # from the repo root, or `pnpm --filter @berth/agents... build`
+pnpm build          # from the repo root, or `pnpm --filter @berthos/agents... build`
 ```
 
 A local Docker daemon must be running — every example boots at least one

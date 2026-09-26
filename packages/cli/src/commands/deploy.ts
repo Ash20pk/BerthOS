@@ -1,13 +1,13 @@
 import { Command, Flags } from "@oclif/core";
-import { warnIfCredentialOverPlaintext } from "@berth/tls";
+import { warnIfCredentialOverPlaintext } from "@berthos/tls";
 import { loadManifestOrExit } from "../util/manifest.js";
 import { buildProductionImage, productionImageTag } from "../util/build.js";
 import { resolveFleet } from "../util/fleet.js";
 import { resolveApps, assertAtMostOneBrowserApp } from "../util/multi-app.js";
 import { appendFleetInstances } from "../util/fleet-state.js";
-import type { DeployHandle } from "@berth/adapter-core";
-import type { BerthManifest } from "@berth/manifest-schema";
-import { declaresBrowserCapability, declaresTerminalCapability } from "@berth/docker-orchestrator";
+import type { DeployHandle } from "@berthos/adapter-core";
+import type { BerthManifest } from "@berthos/manifest-schema";
+import { declaresBrowserCapability, declaresTerminalCapability } from "@berthos/docker-orchestrator";
 
 const NOVNC_PORT = 6080;
 const TERMINAL_PORT = 7681;

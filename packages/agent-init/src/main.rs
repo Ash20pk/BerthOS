@@ -2,7 +2,7 @@
 //
 // Sits between entrypoint.sh and the resident app's actual command (the SDK
 // runtime, check-exports.js, npm test, ...). Reads the capability policy
-// generated from berth.yml (see @berth/sdk's generate-capability-policy.ts),
+// generated from berth.yml (see @berthos/sdk's generate-capability-policy.ts),
 // applies a Landlock ruleset restricting write-ish filesystem access to only
 // the declared paths, then exec()s into the original command. Landlock
 // restrictions are inherited across execve() and can never be lifted, so
@@ -53,7 +53,7 @@ struct CapabilityPolicy {
     // exists purely so it's captured in the audit line below.
     #[serde(rename = "meshPeers", default)]
     mesh_peers: Vec<String>,
-    // Ports this app is allowed to bind()/listen() on — e.g. @berth/sdk's
+    // Ports this app is allowed to bind()/listen() on — e.g. @berthos/sdk's
     // HTTP RPC bridge (see docs/agents-reference.md's "Reaching a Computer
     // from outside Node/Docker" section). Separate from network_ports because
     // Landlock separates AccessNet::BindTcp from ConnectTcp: listening is a
@@ -561,7 +561,7 @@ fn access_rights_for(path: &str) -> BitFlags<AccessFs> {
 }
 
 /// Path prefixes a declared write path may live under. A deliberate duplicate
-/// of ALLOWED_FILESYSTEM_SCOPE_PREFIXES in @berth/manifest-schema's
+/// of ALLOWED_FILESYSTEM_SCOPE_PREFIXES in @berthos/manifest-schema's
 /// capability.ts — that's the layer that rejects a bad `berth.yml` with a
 /// line-numbered error, but *this* process is the one that runs
 /// create_dir_all() as uid 0 with CAP_SYS_ADMIN, so it re-checks rather than
@@ -577,7 +577,7 @@ fn access_rights_for(path: &str) -> BitFlags<AccessFs> {
 const ALLOWED_WRITE_PATH_PREFIXES: [&str; 4] = ["/workspace", "/context", "/tmp", "/app"];
 
 /// Device paths the *compiler* injects — never something a `berth.yml` can
-/// declare, which is why `@berth/manifest-schema`'s copy of the prefix list
+/// declare, which is why `@berthos/manifest-schema`'s copy of the prefix list
 /// above deliberately does not grow to match. `/dev/null` goes to every app;
 /// `/dev/pts` and `/dev/ptmx` only to one declaring `terminal:*` (see
 /// generate-capability-policy.ts, which also records why `/dev/tty` is not

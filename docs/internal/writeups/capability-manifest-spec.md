@@ -98,7 +98,7 @@ The uncatchable defect is the honest boundary of what conformance means.*
 
 ## Pre-publish checklist
 
-- [ ] `pnpm --filter @berth/spec-capability-manifest selftest` green on the
+- [ ] `pnpm --filter @berthos/spec-capability-manifest selftest` green on the
       publishing machine; paste the real numbers, don't reuse the ones above.
 - [ ] Every §3 tier claim still matches `docs/internal/claims.md` — if K20 got
       its denial test since drafting, §3's example is stale and the whole point

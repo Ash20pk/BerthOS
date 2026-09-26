@@ -1,9 +1,9 @@
 /**
  * Berth tools, usable from the OpenAI Agents SDK.
  *
- * BUILD_PLAN M3.3, seam 1. The premise is the same one `@berth/agents`'s
+ * BUILD_PLAN M3.3, seam 1. The premise is the same one `@berthos/agents`'s
  * `toAiSdkTools`/`toLangChainTools` were built on and which CONTRIBUTING.md
- * names as the supported path: `@berth/agents` should not be the price of
+ * names as the supported path: `@berthos/agents` should not be the price of
  * admission for the thing Berth is differentiated on. A team already running
  * `@openai/agents` has a working loop; what they don't have is a filesystem
  * tool whose write scope is refused by the kernel, a shell whose blast radius
@@ -16,10 +16,10 @@
  *   });
  *   const result = await run(agent, "summarize every file in /workspace");
  *
- * This lives in its own package rather than in `@berth/agents/interop` for two
+ * This lives in its own package rather than in `@berthos/agents/interop` for two
  * reasons. The agents package is frozen (CONTRIBUTING.md § "The agents packages
  * are frozen"), and a seam is a substrate concern, not a framework feature.
- * Nothing here imports `@berth/agents` at runtime — only its `Tool` *type*,
+ * Nothing here imports `@berthos/agents` at runtime — only its `Tool` *type*,
  * which is three fields and a method.
  *
  * `@openai/agents` is an **optional peer dependency**, imported dynamically.
@@ -31,7 +31,7 @@
 
 /**
  * The shape this adapter needs from a Berth tool. Structurally identical to
- * `@berth/agents`'s `Tool`, restated rather than imported so that this package
+ * `@berthos/agents`'s `Tool`, restated rather than imported so that this package
  * has no runtime dependency on the frozen agents package — and so a caller
  * holding tools from anywhere else (the SDK directly, a future non-agents
  * `Computer`) can use the adapter unchanged.
@@ -126,7 +126,7 @@ export async function toOpenAIAgentTools(
  * A single error message for a missing optional peer, rather than the
  * module-not-found a bare dynamic import produces — which names an internal
  * file path and doesn't tell the reader the package is deliberately not a
- * dependency. Same treatment `@berth/agents`'s interop module gives `ai` and
+ * dependency. Same treatment `@berthos/agents`'s interop module gives `ai` and
  * `@langchain/core`.
  */
 async function importOpenAIAgents(): Promise<OpenAIAgentsModule> {
@@ -134,7 +134,7 @@ async function importOpenAIAgents(): Promise<OpenAIAgentsModule> {
     return (await import("@openai/agents")) as OpenAIAgentsModule;
   } catch (err) {
     throw new Error(
-      `toOpenAIAgentTools() needs the "@openai/agents" package, which @berth/seam-openai-agents ` +
+      `toOpenAIAgentTools() needs the "@openai/agents" package, which @berthos/seam-openai-agents ` +
         `deliberately does not depend on — install it alongside this package to use the adapter. ` +
         `(${err instanceof Error ? err.message : String(err)})`,
     );

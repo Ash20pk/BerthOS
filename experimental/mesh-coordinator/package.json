@@ -1,5 +1,5 @@
 {
-  "name": "@berth/mesh-coordinator",
+  "name": "@berthos/mesh-coordinator",
   "version": "0.1.0",
   "description": "Coordination service for Berth's WireGuard mesh: allocates stable mesh IPs, exchanges public keys, and mutually-matches peers before introducing them (see docs/mesh-reference.md)",
   "type": "module",
@@ -50,7 +50,7 @@
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
-    "@berth/tls": "workspace:*",
+    "@berthos/tls": "workspace:*",
     "fastify": "^5.12.0"
   },
   "devDependencies": {

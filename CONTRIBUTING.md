@@ -49,7 +49,7 @@ Use the issue templates in `.github/ISSUE_TEMPLATE/`. The most useful reports ri
 
 Berth is a **substrate** — capability-scoped, kernel-enforced sandboxes with a
 manifest grammar, an audit trail, and adapter seams — not an agent framework.
-`@berth/agents` and `berth-agents` (Python) exist as **reference consumers**:
+`@berthos/agents` and `berthos-agents` (Python) exist as **reference consumers**:
 they prove the substrate is usable from an agent loop, and they stay exactly
 as capable as they are today. Their API surface is frozen — no new `Crew`
 shapes, no new providers, no framework-parity features will be accepted, and

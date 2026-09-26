@@ -55,7 +55,7 @@
 
 /**
  * The shape this adapter needs from a Berth tool. Structurally identical to
- * `@berth/agents`'s `Tool`, restated rather than imported: the agents package
+ * `@berthos/agents`'s `Tool`, restated rather than imported: the agents package
  * is frozen, and a seam must not depend on it.
  */
 export interface BerthTool {
@@ -303,7 +303,7 @@ async function importClaudeAgentSdk(): Promise<ClaudeAgentSdkModule> {
   } catch (err) {
     throw new Error(
       `berthSandboxBackend() needs the "@anthropic-ai/claude-agent-sdk" package, which ` +
-        `@berth/seam-claude-agent-sdk deliberately does not depend on — install it alongside this package ` +
+        `@berthos/seam-claude-agent-sdk deliberately does not depend on — install it alongside this package ` +
         `to use the adapter. (${err instanceof Error ? err.message : String(err)})`,
     );
   }

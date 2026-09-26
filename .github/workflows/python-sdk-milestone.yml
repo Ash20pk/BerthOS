@@ -1,7 +1,7 @@
 name: Python SDK Milestone
 
-# Real, running verification that @berth/sdk-python's RPC framing is
-# byte-compatible with @berth/sdk's — see
+# Real, running verification that @berthos/sdk-python's RPC framing is
+# byte-compatible with @berthos/sdk's — see
 # packages/docker-orchestrator/test/python-sdk-milestone.mjs. Boots a real
 # apps/hello-world-py container and drives it with a real RPC round trip
 # over its actual container stdio.

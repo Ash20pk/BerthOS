@@ -15,7 +15,7 @@
 // request's real method+path are checked against the declared
 // github:read:*/github:write:* capabilities (translated to a synthetic
 // capability string and matched with the same glob logic egress-broker.cjs
-// already duplicates from @berth/manifest-schema, for the same reason: this
+// already duplicates from @berthos/manifest-schema, for the same reason: this
 // script runs standalone, outside any app's own node_modules resolution).
 // Allowed requests are then re-encrypted as a brand new, real outbound TLS
 // connection to the actual GitHub API (or, for the milestone test, a

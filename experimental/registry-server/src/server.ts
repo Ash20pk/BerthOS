@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { resolveServerTlsFromEnv, schemeFor } from "@berth/tls";
+import { resolveServerTlsFromEnv, schemeFor } from "@berthos/tls";
 import { createRegistryServer } from "./index.js";
 
 const port = Number(process.env.BERTH_REGISTRY_PORT ?? 4873);

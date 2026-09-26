@@ -11,7 +11,7 @@
 // `defineApp` and `zod` are passed in rather than imported here: this file
 // lives outside any package, and Node resolves a bare specifier by walking up
 // from the importing file, which from bench/shared reaches no node_modules
-// holding @berth/sdk. The fixtures own the imports; this file owns the logic,
+// holding @berthos/sdk. The fixtures own the imports; this file owns the logic,
 // so bench-probe-a and bench-probe-b cannot drift apart in what they probe.
 import { runCheck, runAll } from "../probe/probe.mjs";
 

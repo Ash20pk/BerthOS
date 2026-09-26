@@ -9,7 +9,7 @@
     "test": "node --test dist/*.test.js"
   },
   "dependencies": {
-    "@berth/sdk": "workspace:*"
+    "@berthos/sdk": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^7.0.2",

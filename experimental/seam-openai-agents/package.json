@@ -1,5 +1,5 @@
 {
-  "name": "@berth/seam-openai-agents",
+  "name": "@berthos/seam-openai-agents",
   "version": "0.1.0",
   "description": "Berth tools as OpenAI Agents SDK function tools — kernel-enforced capabilities inside a loop you already run",
   "type": "module",

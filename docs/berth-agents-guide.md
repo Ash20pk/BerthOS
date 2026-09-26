@@ -1,8 +1,8 @@
-# Building with `@berth/agents`
+# Building with `@berthos/agents`
 
-> **Frozen subsystem.** This lives in [`experimental/`](../experimental/README.md) and is not part of the core artifact (a `berth.yml` compiled into a kernel-enforced policy, plus the evidence for it). It still builds, still runs its tests, and nothing was deleted — it simply is not what `npm install @berth/cli` gives you. See [`experimental/README.md`](../experimental/README.md) for why.
+> **Frozen subsystem.** This lives in [`experimental/`](../experimental/README.md) and is not part of the core artifact (a `berth.yml` compiled into a kernel-enforced policy, plus the evidence for it). It still builds, still runs its tests, and nothing was deleted — it simply is not what `npm install @berthos/cli` gives you. See [`experimental/README.md`](../experimental/README.md) for why.
 
-`@berth/agents` is the reference consumer of the Berth substrate: computer, then
+`@berthos/agents` is the reference consumer of the Berth substrate: computer, then
 agent, then tool. It is optional — [using Berth from the framework you already
 have](./why-berth.md#use-it-from-your-existing-framework) is a first-class path,
 and the substrate is the product. Full API surface:
@@ -10,10 +10,10 @@ and the substrate is the product. Full API surface:
 
 ## Building a Berth Agent
 
-Most frameworks wire agent straight to tool. `@berth/agents` flips that around: computer, then agent, then tool. Build the computer first, load it with whichever resident apps this agent needs, first-party and custom mixed freely, there's no separate mechanism reserved for either one. Then build the agent on top of it. Every export the computer's apps have becomes a tool for whatever LLM provider you plug in.
+Most frameworks wire agent straight to tool. `@berthos/agents` flips that around: computer, then agent, then tool. Build the computer first, load it with whichever resident apps this agent needs, first-party and custom mixed freely, there's no separate mechanism reserved for either one. Then build the agent on top of it. Every export the computer's apps have becomes a tool for whatever LLM provider you plug in.
 
 ```ts
-import { Computer, createAgent } from "@berth/agents";
+import { Computer, createAgent } from "@berthos/agents";
 
 const computer = await Computer.boot({
   apps: ["apps/filesystem", "./my-custom-app"],
@@ -40,12 +40,12 @@ const { agent: writer } = await createAgent({ computer: writerComputer, llm: { p
 
 ## Shortcuts for the common case
 
-Building the computer yourself pays off when you need to limit which apps an agent sees, mix in a custom resident app, or reuse one Computer across several agents. Most of the time you don't need any of that, so `@berth/agents` also gives you two shortcuts that build the Computer for you behind the scenes, from whatever you pass as `apps`.
+Building the computer yourself pays off when you need to limit which apps an agent sees, mix in a custom resident app, or reuse one Computer across several agents. Most of the time you don't need any of that, so `@berthos/agents` also gives you two shortcuts that build the Computer for you behind the scenes, from whatever you pass as `apps`.
 
 The simplest version needs nothing but an app directory and a task. `llm` figures itself out from whichever of `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` is set, and `runAgent()` boots, runs, and cleans up in one call.
 
 ```ts
-import { runAgent } from "@berth/agents";
+import { runAgent } from "@berthos/agents";
 
 const result = await runAgent({
   apps: "apps/filesystem",
@@ -56,7 +56,7 @@ const result = await runAgent({
 Need more than one turn, but don't need to touch the Computer yourself? Keep the `Agent` and `Computer` handles around with `createAgent({ apps })` instead of `createAgent({ computer })`.
 
 ```ts
-import { createAgent, createAnthropicProvider } from "@berth/agents";
+import { createAgent, createAnthropicProvider } from "@berthos/agents";
 
 const { agent, computer } = await createAgent({
   apps: ["apps/filesystem"],
@@ -96,7 +96,7 @@ Most frameworks compose agents in-process: a manager calls a worker's function, 
 `Crew.networked()` goes further, because it can: each peer is a full Berth OS with its own `Agent` and its own LLM loop, not just a function call. `bootNetworkedAgent()` boots one independent `Computer` per peer — its own resident apps, its own synthesized agent-server companion — joined to a shared Docker network. A manager `Agent` then gets one delegation `Tool` per peer, over a real network, not an in-process call:
 
 ```ts
-import { Agent, Crew, createOpenAIProvider, bootNetworkedAgent } from "@berth/agents";
+import { Agent, Crew, createOpenAIProvider, bootNetworkedAgent } from "@berthos/agents";
 
 const filer = await bootNetworkedAgent({ name: "filer", apps: ["apps/filesystem"], llm: { provider: "openai", apiKeyEnvVar: "OPENAI_API_KEY" } });
 const notetaker = await bootNetworkedAgent({ name: "notetaker", apps: ["apps/notes"], llm: { provider: "openai", apiKeyEnvVar: "OPENAI_API_KEY" } });

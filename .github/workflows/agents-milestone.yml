@@ -1,6 +1,6 @@
 name: Agents Milestone
 
-# Real, running verification that @berth/agents's Computer boots a
+# Real, running verification that @berthos/agents's Computer boots a
 # live sandbox and produces a callable tool list from resident-app exports —
 # see experimental/agents/test/computer-boot-milestone.mjs,
 # computer-multi-app-milestone.mjs, computer-http-rpc-milestone.mjs,

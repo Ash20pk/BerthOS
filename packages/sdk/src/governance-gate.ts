@@ -4,7 +4,7 @@ import * as net from "node:net";
  * The governance gate at the SDK's own RPC dispatch — REMEDIATION.md 1.13's
  * second half.
  *
- * @berth/agents already gates what goes through a Computer, and that covers
+ * @berthos/agents already gates what goes through a Computer, and that covers
  * the agent loop, `computer.call()`, MCP tools and agent-as-tool delegation.
  * What it cannot cover are the *other* ways into the same container: `berth
  * rpc`, `berth mcp`, the HTTP RPC bridge, the TCP listener, and a sibling
@@ -15,11 +15,11 @@ import * as net from "node:net";
  * They do all converge: every one of them ends at `invokeExport()` in
  * rpc.ts. This is the check that runs there.
  *
- * ## Why this is not a dependency on @berth/agents
+ * ## Why this is not a dependency on @berthos/agents
  *
  * A governor is a *resident app* in the same container, declaring `governs:
  * true` and exporting `evaluate_action` (both enforced by
- * @berth/manifest-schema). So asking it for a verdict is an ordinary
+ * @berthos/manifest-schema). So asking it for a verdict is an ordinary
  * app-to-app RPC over the peer socket entrypoint.sh already provisions —
  * this file speaks the same line-delimited JSON as everything else here and
  * imports nothing from the agents package.
@@ -27,7 +27,7 @@ import * as net from "node:net";
  * ## Fail-closed, and what that costs
  *
  * A governor that is unreachable, slow, or crashed denies the call rather
- * than waving it through, matching the default @berth/agents adopted in
+ * than waving it through, matching the default @berthos/agents adopted in
  * REMEDIATION.md 1.11: a policy check that did not happen must never quietly
  * become a policy check that passed.
  *
@@ -41,7 +41,7 @@ import * as net from "node:net";
  * module does nothing and costs one undefined check per request.
  */
 
-/** How long a governor gets to answer before the call is refused. Matches @berth/agents' own evaluate_action timeout. */
+/** How long a governor gets to answer before the call is refused. Matches @berthos/agents' own evaluate_action timeout. */
 const EVALUATE_TIMEOUT_MS = Number(process.env.BERTH_GOVERNANCE_TIMEOUT_MS || 5000);
 
 export interface GateDecision {
@@ -74,7 +74,7 @@ function gateConfig(): { governor: string; self: string } | null {
   const self = process.env.BERTH_APP_NAME ?? "";
   // The governor's own exports are never gated: routing evaluate_action
   // through the gate would call evaluate_action to decide whether
-  // evaluate_action may run. @berth/agents states the same rule at its own
+  // evaluate_action may run. @berthos/agents states the same rule at its own
   // dispatch; both are enforced, neither is inferred from a name lookup.
   if (self && self === governor) return null;
   // An app that declared `governance: { exempt: true }` in its manifest.

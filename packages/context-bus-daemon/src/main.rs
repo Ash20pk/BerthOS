@@ -7,7 +7,7 @@
 // apps react to each other without explicit orchestration (PRD Outcome 3).
 //
 // Wire format: length-prefixed (4-byte big-endian) protobuf Envelope frames,
-// defined once in proto/context_bus.proto and shared with @berth/sdk's
+// defined once in proto/context_bus.proto and shared with @berthos/sdk's
 // TypeScript client rather than re-specified on each side.
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -272,7 +272,7 @@ fn send_ack(tx: &mpsc::Sender<Payload>, ok: bool, error: &str) {
     let mut buf = Vec::new();
     if ack.encode(&mut buf).is_ok() {
         // Safe to drop under backpressure exactly like a forwarded event: the
-        // TypeScript client (see @berth/sdk's context-bus/unix-socket.ts)
+        // TypeScript client (see @berthos/sdk's context-bus/unix-socket.ts)
         // already treats register/publish/subscribe acks as fire-and-forget
         // and never blocks waiting for one, so there's no caller left hanging.
         try_send_payload(tx, buf, "ack");

@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { loadManifest, type BerthManifest } from "@berth/manifest-schema";
+import { loadManifest, type BerthManifest } from "@berthos/manifest-schema";
 
 export interface ComputerAppSpec {
   name: string;
@@ -9,7 +9,7 @@ export interface ComputerAppSpec {
 }
 
 /**
- * Loads and validates one berth.yml per directory. Unlike @berth/cli's
+ * Loads and validates one berth.yml per directory. Unlike @berthos/cli's
  * resolveApps(), this doesn't require the apps to be siblings in one pnpm
  * workspace (production image staging works for arbitrary standalone
  * directories) and throws plain Errors instead of calling process.exit() —
