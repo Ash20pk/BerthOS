@@ -30,6 +30,14 @@ const BERTH_BIN = join(REPO_ROOT, "packages", "cli", "bin", "berth.js");
 const docker = new Docker();
 
 async function main() {
+  // Test 5 needs boundary-app-b's data directory to exist, so that its denial
+  // is the one under test: a write *into* another app's directory. On a fresh
+  // runner nothing boots boundary-app-b, so the first refused call would be
+  // mkdir(2) of the directory itself, whose (correct) fix is write on the
+  // parent. Created here, before any sandbox runs: on Linux the first boot
+  // creates .berth/dev-workspace as root, and the runner can't mkdir in it
+  // after that. /workspace is the repo root in every boot below.
+  await mkdir(join(REPO_ROOT, ".berth", "dev-workspace", "boundary-app-b"), { recursive: true });
   const manifest = await loadManifest(join(FILESYSTEM_APP_DIR, "berth.yml"));
 
   console.log("Building filesystem's dev image...");
@@ -257,12 +265,6 @@ async function verifyFixLine() {
   await stopContainer(docker.getContainer(containerName)).catch(() => {});
 
   console.log(`\n--- Test 5: a grantable denial names the exact berth.yml line (${containerName}) ---`);
-  // The sibling's data directory has to exist for this to be the denial under
-  // test: a write *into* another app's directory. On a fresh runner nothing
-  // has booted boundary-app-b, so the first refused call was mkdir(2) of the
-  // directory itself, and the (correct) fix for that is write on the parent.
-  // /workspace is the repo root here, so create it on the host side.
-  await mkdir(join(REPO_ROOT, ".berth", "dev-workspace", "boundary-app-b"), { recursive: true });
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [BERTH_BIN, "mcp", "--app=boundary-app-a", `--app-dir=${BOUNDARY_APP_DIR}`, `--container=${containerName}`],
