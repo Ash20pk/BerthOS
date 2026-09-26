@@ -84,10 +84,10 @@
     "typescript": "^7.0.2"
   },
   "peerDependencies": {
-    "@berthos/adapter-daytona": "*",
-    "@berthos/adapter-e2b": "*",
-    "@berthos/adapter-k8s": "*",
-    "@berthos/agents": "*"
+    "@berthos/adapter-daytona": "workspace:^",
+    "@berthos/adapter-e2b": "workspace:^",
+    "@berthos/adapter-k8s": "workspace:^",
+    "@berthos/agents": "workspace:^"
   },
   "peerDependenciesMeta": {
     "@berthos/adapter-daytona": {
