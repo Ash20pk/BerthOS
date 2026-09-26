@@ -1,4 +1,4 @@
-# berth-agents
+# berthos-agents
 
 > **Frozen surface.** Like `@berthos/agents`, this package is a *reference
 > consumer* of the Berth substrate, not a competing agent framework. Its API
@@ -8,7 +8,7 @@
 The Python half of [Berth](https://github.com/Ash20pk/BerthOS)'s agent framework: a provider-agnostic `Agent` tool-use loop and six of `@berthos/agents`' seven `Crew` composition shapes (all but `networked`), mirroring the TypeScript package field-for-field where it covers the same ground.
 
 ```bash
-pip install berth-agents
+pip install berthos-agents
 ```
 
 ```python

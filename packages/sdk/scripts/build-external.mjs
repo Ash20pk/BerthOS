@@ -123,7 +123,7 @@ const packEnv = Object.fromEntries(
 );
 await execFileAsync("npm", ["pack", "--silent", "--pack-destination", OUT_DIR], { cwd: OUT_DIR, env: packEnv });
 
-// npm names the tarball from the scoped package name (@berthos/sdk -> berth-sdk-<version>.tgz);
+// npm names the tarball from the scoped package name (@berthos/sdk -> berthos-sdk-<version>.tgz);
 // give it a fixed name so consumers don't need to know the version to find it.
 const tgz = (await readdir(OUT_DIR)).find((f) => f.endsWith(".tgz"));
 await cp(join(OUT_DIR, tgz), join(OUT_DIR, "berth-sdk.tgz"));
