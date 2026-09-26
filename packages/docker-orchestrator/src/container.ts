@@ -362,11 +362,12 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
   // (BUILD_PLAN M1.1, docs/internal/design/sys-admin-drop.md), so the
   // sandbox itself gets no SYS_ADMIN, no /dev/fuse, and no AppArmor
   // exception — `mount(2)` inside it fails EPERM for every process, root
-  // daemons included. If the sidecar's mount cannot propagate on this host
-  // (or BERTH_DISABLE_FS_SIDECAR=1 forces it), fall back to the pre-M1.1
-  // in-sandbox mount — with the capability, and with a loud warning, so
-  // `docker inspect` always tells the truth about which posture this
-  // container has. /dev/net/tun + NET_ADMIN are added only when an app
+  // daemons included. If the sidecar's mount cannot propagate on this host,
+  // the boot goes on without /context rather than quietly taking the pre-M1.1
+  // in-sandbox mount; BERTH_DISABLE_FS_SIDECAR=1 asks for that posture
+  // explicitly, with the
+  // capability and a loud warning, so `docker inspect` always tells the
+  // truth about which posture this container has. /dev/net/tun + NET_ADMIN are added only when an app
   // actually declares network:peer:* (see docs/mesh-reference.md).
   const devices: { PathOnHost: string; PathInContainer: string; CgroupPermissions: string }[] = [];
   const capAdd: string[] = [];
@@ -387,7 +388,7 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
   // than silently wrong results — see runtime.ts's createUnavailableSemanticFs.
   // Defaulting this on would mean deciding for the caller which of those they
   // use, and the failure is remote from the cause, so the caller declares it.
-  const semanticFsDisabled = process.env.BERTH_NO_SEMANTIC_FS === "1";
+  let semanticFsDisabled = process.env.BERTH_NO_SEMANTIC_FS === "1";
   if (semanticFsDisabled) {
     // The entrypoint needs to know too, or it starts the in-container daemon
     // and then polls /proc/mounts for 5s waiting on a mount nobody will make.
@@ -426,8 +427,21 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
         appUidMap,
       });
     } catch (err) {
+      // Degrade to less, never to more. This used to fall through to the
+      // in-sandbox mount, so a host problem the caller never saw handed
+      // CAP_SYS_ADMIN to the app container — the one capability the
+      // sandbox's no-mount(2) claim rests on. It is always the case on
+      // Docker Desktop for Mac, whose file sharing isn't a shared mount.
+      // Now the boot takes the BERTH_NO_SEMANTIC_FS=1 posture instead: no
+      // /context, no capability, and @berthos/sdk's /context calls throw
+      // (createUnavailableSemanticFs) rather than return empty results.
+      semanticFsDisabled = true;
+      env.BERTH_NO_SEMANTIC_FS = "1";
       console.warn(
-        `[berth] WARNING: semantic-fs sidecar failed — falling back to the in-sandbox FUSE mount, which puts CAP_SYS_ADMIN back on this container (pre-M1.1 posture). ${(err as Error).message}`,
+        `[berth] WARNING: semantic-fs sidecar failed, so this boot has no /context (and no CAP_SYS_ADMIN): ` +
+          `/context reads, writes and queries will throw. ${(err as Error).message}\n` +
+          `  To mount /context inside the sandbox instead, accepting CAP_SYS_ADMIN on it: BERTH_DISABLE_FS_SIDECAR=1\n` +
+          `  To silence this on a host that never needs /context: BERTH_NO_SEMANTIC_FS=1`,
       );
     }
   }
@@ -439,6 +453,11 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
     // through to the branch below would hand SYS_ADMIN to a boot that
     // explicitly said it does not want a FUSE mount at all.
   } else {
+    // Only reachable by asking: BERTH_DISABLE_FS_SIDECAR=1. A failed sidecar
+    // no longer lands here (it turns semantic FS off above).
+    console.warn(
+      "[berth] WARNING: BERTH_DISABLE_FS_SIDECAR=1 — mounting /context inside the sandbox, which puts CAP_SYS_ADMIN, /dev/fuse and apparmor:unconfined on this container (pre-M1.1 posture).",
+    );
     devices.push({ PathOnHost: "/dev/fuse", PathInContainer: "/dev/fuse", CgroupPermissions: "rwm" });
     capAdd.push("SYS_ADMIN");
     // The default docker-default AppArmor profile denies the FUSE mount(2)
@@ -709,21 +728,18 @@ export async function stopContainer(
   container: Docker.Container,
   options: { secretsRunDir?: string; docker?: Docker } = {},
 ): Promise<void> {
-  // Before stopping, because inspect() is the only way back to the container
-  // *name* the secrets file was written under, and a removed container can no
-  // longer be inspected. Best-effort throughout: the file is 0600 in a 0700
-  // directory and is overwritten by the next boot of the same name, so
-  // failing to unlink it must not turn a successful teardown into an error.
-  await removeSecretsForContainer(container, options.secretsRunDir);
-  // The semantic-fs sidecar lives and dies with its sandbox. Best-effort and
-  // before the stop, for the same inspect()-needs-a-live-container reason.
+  // inspect() is the only way back to the container's *name*, which both the
+  // secrets directory and the sidecar are keyed by, and a removed container
+  // can no longer be inspected — so read it once, first.
+  let name: string | undefined;
   try {
-    const info = await container.inspect();
-    const name = info.Name?.replace(/^\//, "");
-    if (name) await stopSemanticFsSidecar(name, options.docker ?? new Docker());
+    // Docker reports names with a leading slash ("/berth-dev-app").
+    name = (await container.inspect()).Name?.replace(/^\//, "");
   } catch {
-    // No sidecar (legacy boot), or the container is already gone.
+    // Already gone, or the daemon went away.
   }
+  // The semantic-fs sidecar lives and dies with its sandbox. Best-effort.
+  if (name) await stopSemanticFsSidecar(name, options.docker ?? new Docker()).catch(() => {});
   try {
     await container.stop();
   } catch (err) {
@@ -733,24 +749,15 @@ export async function stopContainer(
     }
   }
   await container.remove({ force: true });
-}
-
-/**
- * Deliberately not called from `restartContainer()`: a restart re-runs
- * entrypoint.sh, which sources the secrets file again, so removing it there
- * would leave the app's second life without the credentials its first one
- * had.
- */
-async function removeSecretsForContainer(container: Docker.Container, secretsRunDir?: string): Promise<void> {
-  try {
-    const info = await container.inspect();
-    // Docker reports names with a leading slash ("/berth-dev-app").
-    const name = info.Name?.replace(/^\//, "");
-    if (name) await removeContainerSecretsDir(name, secretsRunDir);
-  } catch {
-    // Already gone, or the daemon went away — nothing to clean up that the
-    // next boot of this name won't overwrite anyway.
-  }
+  // Last, not first. The sidecar's host directory (<runDir>/<name>/fs) sits
+  // inside this one, and its FUSE mount propagates back to the host (rshared),
+  // so removing the directory while the sidecar ran failed on the live mount —
+  // silently, since this is best-effort — and left the credentials file
+  // behind on every Linux host. Colima's file sharing doesn't carry the mount
+  // to the macOS side, which is why it only showed in CI. Best-effort still:
+  // the file is 0600 in a 0700 directory and the next boot of this name
+  // overwrites it, so failing to unlink must not fail a successful teardown.
+  if (name) await removeContainerSecretsDir(name, options.secretsRunDir);
 }
 
 /**
@@ -759,6 +766,11 @@ async function removeSecretsForContainer(container: Docker.Container, secretsRun
  * restart via the marker file (see @berthos/sdk's run-lifecycle.ts), so this stays fast —
  * a finer-grained "restart just the app process" is a later optimization,
  * not required for the Phase 1 workflow to feel responsive.
+ *
+ * Deliberately leaves the secrets directory alone, unlike stopContainer(): a
+ * restart re-runs entrypoint.sh, which sources the secrets file again, so
+ * removing it here would leave the app's second life without the credentials
+ * its first one had.
  */
 export async function restartContainer(container: Docker.Container): Promise<void> {
   await container.restart();

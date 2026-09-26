@@ -1,4 +1,5 @@
 import Docker from "dockerode";
+import { applyDockerContext, describeDockerHost } from "./docker-host.js";
 
 /**
  * Host and kernel preflight for Berth's enforcement claims.
@@ -171,7 +172,34 @@ export async function findProbeImage(docker: Docker): Promise<string | undefined
   // A Berth app image is the safest bet: it is the thing that will actually be
   // booted, so probing it answers the question about the image in play, not
   // about some other image that happens to be lying around.
-  return tags.find((t) => t.startsWith("berth/")) ?? tags.find((t) => /^(python|.*\/python):/.test(t));
+  // Both prefixes Berth tags with: `berth/<app>:dev` from `berth dev`, and
+  // `berth-agent/<app>:<ts>` from a Computer/demo boot. Missing the second
+  // meant a user who had just run the hero demo still got UNKNOWN.
+  return (
+    tags.find((t) => t.startsWith("berth/") || t.startsWith("berth-agent/")) ??
+    tags.find((t) => /^(python|.*\/python):/.test(t))
+  );
+}
+
+/**
+ * Pulled only when no local image qualifies — which is every fresh install,
+ * since the README has people run `berth doctor` before they build anything.
+ * Landlock support is a property of the kernel, not the image, so any
+ * image with python3 answers the same question. Small, official, pinned by
+ * tag; `--image` or `--no-probe` avoid the pull entirely.
+ */
+export const PROBE_FALLBACK_IMAGE = "python:3.13-alpine";
+
+async function pullProbeImage(docker: Docker): Promise<string | undefined> {
+  try {
+    const stream = await docker.pull(PROBE_FALLBACK_IMAGE);
+    await new Promise<void>((resolve, reject) =>
+      docker.modem.followProgress(stream, (err: Error | null) => (err ? reject(err) : resolve())),
+    );
+    return PROBE_FALLBACK_IMAGE;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -261,6 +289,10 @@ export interface RunDoctorOptions {
    * Defaults to `BERTH_RUNTIME`, same resolution `startContainer()` uses.
    */
   runtime?: string;
+  /** Pull PROBE_FALLBACK_IMAGE when no local image qualifies. Default true. */
+  pullProbeImage?: boolean;
+  /** Test seam for that pull; resolves to the image pulled, or undefined. */
+  pull?: (docker: Docker) => Promise<string | undefined>;
 }
 
 /**
@@ -269,8 +301,13 @@ export interface RunDoctorOptions {
  * has to survive a broken daemon and say what it found.
  */
 export async function runDoctor(options: RunDoctorOptions = {}): Promise<DoctorReport> {
+  // Which daemon, and why — the first thing to know when the answer is
+  // surprising. Only meaningful when we chose it; a caller-supplied client
+  // (--fix's re-check against Colima) says its own endpoint.
+  const endpoint = options.docker ? undefined : applyDockerContext();
   const docker = options.docker ?? new Docker();
   const checks: DoctorCheck[] = [];
+  const via = endpoint ? ` — via ${describeDockerHost(endpoint)}` : "";
   let daemon: DoctorReport["daemon"];
   let daemonRuntimes: { names: string[]; default?: string } | undefined;
   const envRuntime = process.env.BERTH_RUNTIME;
@@ -283,6 +320,10 @@ export async function runDoctor(options: RunDoctorOptions = {}): Promise<DoctorR
   // ping(), so a stopped daemon surfaced as a raw dockerode socket error.
   let dockerReachable = false;
   try {
+    // The `docker` CLI refuses a selected context it can't find, rather than
+    // quietly dialing the default socket — which on a Mac is Docker Desktop,
+    // the very daemon a user who selected Colima was moving away from.
+    if (endpoint?.problem) throw new Error("the selected Docker context can't be used");
     await docker.ping();
     const info = (await docker.info()) as {
       KernelVersion?: string;
@@ -306,15 +347,17 @@ export async function runDoctor(options: RunDoctorOptions = {}): Promise<DoctorR
       id: "docker",
       title: "Docker daemon reachable",
       status: "ok",
-      detail: `${daemon.operatingSystem} (${daemon.serverVersion}), kernel ${daemon.kernelVersion} on ${daemon.arch}`,
+      detail: `${daemon.operatingSystem} (${daemon.serverVersion}), kernel ${daemon.kernelVersion} on ${daemon.arch}${via}`,
     });
   } catch (err) {
     checks.push({
       id: "docker",
       title: "Docker daemon reachable",
       status: "fail",
-      detail: `could not reach the Docker daemon: ${err instanceof Error ? err.message : String(err)}`,
-      remedy: "Start Docker (Docker Desktop, Colima, or `systemctl start docker`) and run `berth doctor` again.",
+      detail: `could not reach the Docker daemon: ${err instanceof Error ? err.message : String(err)}${via}`,
+      remedy: endpoint?.problem
+        ? `${endpoint.problem}. Start it (e.g. \`colima start\`), or pick another with \`docker context use <name>\`, then run \`berth doctor\` again.`
+        : "Start Docker (Docker Desktop, Colima, or `systemctl start docker`) and run `berth doctor` again.",
     });
   }
 
@@ -376,7 +419,12 @@ export async function runDoctor(options: RunDoctorOptions = {}): Promise<DoctorR
   }
 
   // --- the kernel probe --------------------------------------------------
-  const probeImage = options.image ?? (dockerReachable ? await findProbeImage(docker).catch(() => undefined) : undefined);
+  let probeImage = options.image ?? (dockerReachable ? await findProbeImage(docker).catch(() => undefined) : undefined);
+  let pulledProbeImage = false;
+  if (!probeImage && dockerReachable && !options.skipProbe && options.pullProbeImage !== false) {
+    probeImage = await (options.pull ?? pullProbeImage)(docker);
+    pulledProbeImage = probeImage !== undefined;
+  }
 
   const runtimeMissing = checks.find((c) => c.id === "runtime")?.status === "fail";
   if (options.skipProbe || !dockerReachable || !probeImage || runtimeMissing) {
@@ -386,16 +434,18 @@ export async function runDoctor(options: RunDoctorOptions = {}): Promise<DoctorR
         ? `not run — the requested runtime "${runtime}" is not registered with the daemon, so the probe container cannot start under it`
         : options.skipProbe
           ? "not run — probe skipped"
-          : "not run — no local image with python3 to probe in";
+          : `not run — no local image with python3 to probe in, and pulling ${PROBE_FALLBACK_IMAGE} failed (offline?)`;
     const remedy = !dockerReachable || options.skipProbe || runtimeMissing
       ? undefined
-      : "Build any Berth app (`berth dev <app>` builds one), or pass `--image <image>` to probe a specific one.";
+      : `Pull ${PROBE_FALLBACK_IMAGE}, build any Berth app (\`berth dev <app>\` builds one), or pass \`--image <image>\` to probe a specific one.`;
     checks.push({ id: "landlock", title: "Landlock enforcement in the container kernel", status: "unknown", detail, remedy });
     checks.push({ id: "fuse", title: "/dev/fuse available to a sandbox", status: "unknown", detail, remedy });
   } else {
     try {
       const probe = await (options.probe ?? probeKernel)(docker, probeImage, runtime);
-      checks.push(landlockCheck(probe, runtime));
+      const landlock = landlockCheck(probe, runtime);
+      if (pulledProbeImage) landlock.detail += ` (probed in ${probeImage}, pulled because no local Berth image was found)`;
+      checks.push(landlock);
       checks.push({
         id: "fuse",
         title: "/dev/fuse available to a sandbox",

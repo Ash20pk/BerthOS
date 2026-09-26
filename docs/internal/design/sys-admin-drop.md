@@ -110,6 +110,11 @@ mount and say so** (doctor check + boot banner), exactly the honesty pattern
 `berth doctor` already uses. The fallback keeps `CapAdd: [SYS_ADMIN]`, so
 `docker inspect` tells the truth in both modes.
 
+> **Superseded 2026-09-26.** The automatic fallback is gone: a failed sidecar
+> now boots with semantic FS off (no `/context`, no capability), and the in-sandbox mount is reachable only by setting
+> `BERTH_DISABLE_FS_SIDECAR=1`. A warning is not consent, and the capability
+> it re-granted is the one the sandbox's no-`mount(2)` claim rests on.
+
 ## Deviations found during implementation
 
 1. **The backing store and control socket live on named volumes, not the

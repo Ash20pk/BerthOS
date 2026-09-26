@@ -1,3 +1,15 @@
+import { applyDockerContext } from "./docker-host.js";
+
+// Before anything here constructs a Docker client: follow the selected
+// Docker context the way the `docker` CLI does. See docker-host.ts.
+applyDockerContext();
+
+export {
+  resolveDockerHost,
+  applyDockerContext,
+  describeDockerHost,
+  type DockerHostResolution,
+} from "./docker-host.js";
 export { buildImage, type BuildImageOptions, type BuildTarget } from "./image.js";
 export {
   startContainer,
@@ -18,6 +30,7 @@ export {
   runDoctor,
   probeKernel,
   findProbeImage,
+  PROBE_FALLBACK_IMAGE,
   type DoctorReport,
   type DoctorCheck,
   type CheckStatus,

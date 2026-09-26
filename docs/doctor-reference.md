@@ -49,8 +49,9 @@ Homebrew if missing, starts the VM with the flags
 --mount-type virtiofs --mount "$HOME:w"`), and then **re-runs the same checks
 against the Colima socket** — success is only ever claimed from that second,
 observed run. It exits non-zero if the re-check still can't observe
-enforcement, and finishes by printing the `DOCKER_HOST` export line a child
-process cannot apply to your shell. On Linux it refuses with an explanation:
+enforcement, and finishes by printing how to keep Berth on Colima: `docker
+context use colima` once (Berth follows the current Docker context), or the
+`DOCKER_HOST` export per shell. On Linux it refuses with an explanation:
 enforcement there is a property of the running kernel's LSM stack, not
 something a VM swap fixes.
 

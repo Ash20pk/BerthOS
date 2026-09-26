@@ -77,8 +77,12 @@ export interface RunningSidecar {
   sandboxEnv: Record<string, string>;
 }
 
-async function execCapture(container: Docker.Container, cmd: string[]): Promise<{ output: string; exitCode: number | null }> {
-  const exec = await container.exec({ Cmd: cmd, AttachStdout: true, AttachStderr: true });
+async function execCapture(
+  container: Docker.Container,
+  cmd: string[],
+  options: { privileged?: boolean } = {},
+): Promise<{ output: string; exitCode: number | null }> {
+  const exec = await container.exec({ Cmd: cmd, AttachStdout: true, AttachStderr: true, Privileged: options.privileged ?? false });
   const stream = await exec.start({ hijack: true });
   const chunks: Buffer[] = [];
   for await (const chunk of stream) chunks.push(chunk as Buffer);
@@ -88,9 +92,9 @@ async function execCapture(container: Docker.Container, cmd: string[]): Promise<
 
 /**
  * Starts the sidecar and waits until the FUSE mount is live at
- * <hostDir>/mnt. Throws on any failure — the caller decides whether that
- * means "fall back to the legacy in-sandbox mount" (startContainer does,
- * loudly) or "fail the boot".
+ * <hostDir>/mnt. Throws on any failure — the caller decides what that means
+ * (startContainer boots with semantic FS off, loudly, rather than taking the
+ * in-sandbox mount on its own).
  */
 export function sidecarVolumeNames(sandboxName: string): { varVolume: string; ctlVolume: string } {
   return { varVolume: `${sandboxName}-fs-var`, ctlVolume: `${sandboxName}-fs-ctl` };
@@ -208,7 +212,27 @@ export async function startSemanticFsSidecar(options: StartSidecarOptions): Prom
 
 /** Best-effort teardown, same posture as removeContainerSecretsDir. */
 export async function stopSemanticFsSidecar(sandboxName: string, docker: Docker): Promise<void> {
-  await docker.getContainer(sidecarName(sandboxName)).remove({ force: true }).catch(() => {});
+  const container = docker.getContainer(sidecarName(sandboxName));
+  // Unmount before removing. The rshared bind carries every mount under
+  // SIDECAR_EXPORT_DIR back to the host — the FUSE mount, which is the point,
+  // and the var/ctl volume mounts, which are not — and removing the container
+  // drops its namespace without unmounting any of them, so the host kept all
+  // three after every boot. That left <runDir>/<name>/fs undeletable, and with
+  // it the per-container secrets directory around it. An unmount inside the
+  // sidecar propagates to the host's copy (they share a peer group).
+  // Privileged because the daemon empties its own bounding set once mounted
+  // (M1.2), so the container no longer holds CAP_SYS_ADMIN for this; the exec
+  // lasts for one umount and dies with the container a moment later.
+  await execCapture(
+    container,
+    [
+      "sh",
+      "-c",
+      `for m in ${SIDECAR_EXPORT_DIR}/mnt-* ${SIDECAR_EXPORT_DIR}/var ${SIDECAR_EXPORT_DIR}/ctl; do umount -l "$m" 2>/dev/null; done; true`,
+    ],
+    { privileged: true },
+  ).catch(() => {});
+  await container.remove({ force: true }).catch(() => {});
   const { varVolume, ctlVolume } = sidecarVolumeNames(sandboxName);
   for (const volume of [varVolume, ctlVolume]) {
     await docker.getVolume(volume).remove().catch(() => {});

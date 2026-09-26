@@ -23,7 +23,7 @@ import { buildImage, startContainer, stopContainer } from "../dist/index.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");
 const FILESYSTEM_APP_DIR = join(REPO_ROOT, "apps", "filesystem");
-const GRANTS_SERVER_ENTRY = join(REPO_ROOT, "packages", "grants-server", "dist", "server.js");
+const GRANTS_SERVER_ENTRY = join(REPO_ROOT, "experimental", "grants-server", "dist", "server.js");
 const GRANTS_PORT = 56514;
 const GRANTED_CAPABILITY = "network:connect:8443";
 const OPERATOR_TOKEN = "milestone-test-operator-token";
