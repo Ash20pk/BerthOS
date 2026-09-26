@@ -31,6 +31,8 @@ export interface MacFixPlan {
   dockerHost: string;
   /** The line the user must put in their shell — a child process cannot. */
   exportLine: string;
+  /** The Docker context Colima registers for the profile; selecting it is the persistent alternative. */
+  contextName: string;
 }
 
 /**
@@ -93,5 +95,8 @@ export function planMacEnforcementFix(facts: MacFixFacts): MacFixPlan {
     steps,
     dockerHost,
     exportLine: `export DOCKER_HOST="${dockerHost}"`,
+    // The Docker context Colima registers for this profile. Berth follows
+    // the current context now, so selecting it once covers every shell.
+    contextName: profile === "default" ? "colima" : `colima-${profile}`,
   };
 }

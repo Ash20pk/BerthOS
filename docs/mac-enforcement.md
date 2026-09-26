@@ -62,18 +62,23 @@ Each flag is load-bearing:
 ### 3. Point Berth at the Colima daemon
 
 ```bash
+docker context use colima
+```
+
+`colima start` usually does this for you. Berth follows the current Docker
+context the way the `docker` CLI does (`DOCKER_HOST`, then `DOCKER_CONTEXT`,
+then `currentContext` in `~/.docker/config.json`), so once `docker info`
+reports the Ubuntu kernel, `berth doctor` probes that same daemon. Its first
+line names the socket it used and why, e.g. `via unix:///Users/you/.colima/default/docker.sock
+(current Docker context "colima")`. Before 2026-09-26 Berth ignored contexts
+and needed `DOCKER_HOST` exported by hand; that still works, and still wins
+over any context, if you'd rather pin it per shell:
+
+```bash
 export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"
 ```
 
-**`docker context use colima` is not enough**, and this is the one step that
-will silently waste your afternoon. `colima start` switches the *Docker CLI's*
-context for you, so `docker info` immediately reports the Ubuntu kernel — but
-Berth talks to the daemon through dockerode, which reads `DOCKER_HOST` and does
-not read Docker CLI contexts. Skip the export and `berth doctor` cheerfully
-probes Docker Desktop's linuxkit kernel and reports `NOT ACTIVE` while
-`docker info` two lines earlier said Ubuntu. Verified the hard way.
-
-Put it in your shell profile, or let doctor do the whole thing:
+Or let doctor do the whole thing:
 
 ```bash
 berth doctor --fix                    # install + start colima, then re-check against it
@@ -120,7 +125,7 @@ contract and the full verdict table.
 ### 5. Going back to Docker Desktop
 
 ```bash
-unset DOCKER_HOST
+unset DOCKER_HOST           # only if you exported it in step 3
 docker context use desktop-linux
 colima stop                 # or `colima delete` to reclaim the disk
 ```

@@ -1,4 +1,5 @@
 import Docker from "dockerode";
+import { applyDockerContext, describeDockerHost } from "./docker-host.js";
 
 /**
  * Host and kernel preflight for Berth's enforcement claims.
@@ -269,8 +270,13 @@ export interface RunDoctorOptions {
  * has to survive a broken daemon and say what it found.
  */
 export async function runDoctor(options: RunDoctorOptions = {}): Promise<DoctorReport> {
+  // Which daemon, and why — the first thing to know when the answer is
+  // surprising. Only meaningful when we chose it; a caller-supplied client
+  // (--fix's re-check against Colima) says its own endpoint.
+  const endpoint = options.docker ? undefined : applyDockerContext();
   const docker = options.docker ?? new Docker();
   const checks: DoctorCheck[] = [];
+  const via = endpoint ? ` — via ${describeDockerHost(endpoint)}` : "";
   let daemon: DoctorReport["daemon"];
   let daemonRuntimes: { names: string[]; default?: string } | undefined;
   const envRuntime = process.env.BERTH_RUNTIME;
@@ -283,6 +289,10 @@ export async function runDoctor(options: RunDoctorOptions = {}): Promise<DoctorR
   // ping(), so a stopped daemon surfaced as a raw dockerode socket error.
   let dockerReachable = false;
   try {
+    // The `docker` CLI refuses a selected context it can't find, rather than
+    // quietly dialing the default socket — which on a Mac is Docker Desktop,
+    // the very daemon a user who selected Colima was moving away from.
+    if (endpoint?.problem) throw new Error("the selected Docker context can't be used");
     await docker.ping();
     const info = (await docker.info()) as {
       KernelVersion?: string;
@@ -306,15 +316,17 @@ export async function runDoctor(options: RunDoctorOptions = {}): Promise<DoctorR
       id: "docker",
       title: "Docker daemon reachable",
       status: "ok",
-      detail: `${daemon.operatingSystem} (${daemon.serverVersion}), kernel ${daemon.kernelVersion} on ${daemon.arch}`,
+      detail: `${daemon.operatingSystem} (${daemon.serverVersion}), kernel ${daemon.kernelVersion} on ${daemon.arch}${via}`,
     });
   } catch (err) {
     checks.push({
       id: "docker",
       title: "Docker daemon reachable",
       status: "fail",
-      detail: `could not reach the Docker daemon: ${err instanceof Error ? err.message : String(err)}`,
-      remedy: "Start Docker (Docker Desktop, Colima, or `systemctl start docker`) and run `berth doctor` again.",
+      detail: `could not reach the Docker daemon: ${err instanceof Error ? err.message : String(err)}${via}`,
+      remedy: endpoint?.problem
+        ? `${endpoint.problem}. Start it (e.g. \`colima start\`), or pick another with \`docker context use <name>\`, then run \`berth doctor\` again.`
+        : "Start Docker (Docker Desktop, Colima, or `systemctl start docker`) and run `berth doctor` again.",
     });
   }
 
