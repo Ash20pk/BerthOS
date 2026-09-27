@@ -152,6 +152,8 @@ Releases run from GitHub: **Actions → Release → Run workflow**, enter a vers
 
 If a publish step fails after the tag is pushed, use **Re-run failed jobs** on the same run. Both registries skip versions already published.
 
+After a release, **Actions → Fresh install → Run workflow** checks the published version the way a new user meets it: it installs the CLI from npm with pnpm 10 and pnpm 11, runs `berth doctor`, scaffolds and tests an app, boots it with `berth mcp`, and imports `berthos-sdk` from PyPI.
+
 The workflow relies on one-time repository settings: GitHub environments `npm` and `pypi`, each limited to `main` with a required reviewer; an `NPM_TOKEN` secret with publish rights to the `@berthos` scope; and a PyPI trusted publisher on `berthos-sdk` pointing at `release.yml` and the `pypi` environment. The top of the workflow file describes each.
 
 The agent framework under `experimental/` is not released.
