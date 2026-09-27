@@ -1,47 +1,48 @@
 # BerthOS
 
-**IAM for agents: declare what your agent may touch, and the kernel enforces it.**
+**Your agent decides what to call. Berth decides what those calls can touch, and the Linux kernel enforces it.**
 
-The cloud solved this for humans and services decades ago — declared policy, enforced by the platform rather than the application, with an audit trail compliance can run on. Agents have none of that: frameworks trust the model, sandboxes are permission-blind *inside* the box, guardrails filter words rather than actions. Berth is the missing layer — the **agent trust layer**.
+Agents act through tools: a filesystem, a shell, a browser, a code interpreter. Berth runs those tools in a sandbox and gives each one a manifest listing exactly what it may touch. Before the tool's first line of code runs, the manifest is compiled into kernel rules. So when a prompt-injected model tries to write outside its folder, it isn't talked out of it by a system prompt. The write fails with `EACCES`.
 
-Your agent gets a persistent, sandboxed computer — a **Berth OS** — where what it's allowed to touch is a line in a manifest compiled into a [Landlock](https://docs.kernel.org/userspace-api/landlock.html) policy, applied before the app's own code runs. `filesystem:write:/workspace` means a write anywhere else dies on `EACCES` in the kernel, not in a `try/catch` and not in a system prompt the model can be talked out of. Every action lands in a hash-chained, actor-attributed [audit trail](./docs/audit-reference.md). And the third IAM leg — per-run *proof* — exists as a first cut: [`berth attest <runId>`](./docs/attestation-reference.md) emits a record binding the run's audit-chain slice to the enforcement status *as measured* for its boot, with a verdict derived from the embedded measurements — so on a host where nothing enforces, it says `NOT_ENFORCED` to your face. A standalone script verifies it with no Berth install. Tamper-evident, not tamper-proof — [the record says so itself](./docs/attestation-reference.md#what-this-does-not-prove).
+Keep your agent and keep your framework. Berth sits underneath the tools.
 
-> Agents are not functions. They are workers. Workers need desks — and permissions.
+## How it works
 
-## Run it
+```mermaid
+flowchart LR
+  subgraph agent["Your agent, unchanged"]
+    MCP["Claude Code · Cursor · Claude Desktop<br/>any MCP client"]
+    LOOP["Vercel AI SDK · LangChain<br/>any tool-calling loop"]
+  end
 
-```bash
-npm install -g @berthos/cli
-berth doctor --fix      # macOS: provisions a Colima host whose kernel actually enforces
-berth init my-app && cd my-app && berth dev
+  subgraph berth["Berth sandbox"]
+    APP["Resident app<br/>(the tool, e.g. filesystem)"]
+    MANIFEST["berth.yml<br/>filesystem:write:/workspace"]
+    KERNEL{"Linux kernel<br/>Landlock + seccomp"}
+    MANIFEST -. "compiled into a policy<br/>before the app starts" .-> KERNEL
+    APP -- "syscall" --> KERNEL
+  end
+
+  MCP -- "MCP (berth mcp)" --> APP
+  LOOP -- "toAiSdkTools / toLangChainTools" --> APP
+  KERNEL -- "declared: allowed" --> OK["write /workspace/report.md"]
+  KERNEL -- "undeclared: EACCES" --> NO["write /etc/passwd"]
 ```
 
-`berth doctor --fix` is the honest step most sandboxes skip: it checks whether
-*your* Docker host's kernel can enforce Landlock, and on a default Mac (where
-Docker Desktop's kernel can't) it offers to install and start the
-[Colima host](./docs/mac-enforcement.md) that can — then re-checks and refuses
-to claim enforcement it didn't observe.
+1. **Declare.** Every tool is a *resident app* with a `berth.yml` that names the capabilities it needs (`filesystem:write:/workspace`, `network:connect:443`) and the functions it exports.
+2. **Enforce.** When the sandbox boots, Berth compiles those capabilities into a Landlock and seccomp policy and applies it before the app starts. Anything undeclared is denied by default: files, outbound connections, raw sockets.
+3. **Connect.** The app's exports show up in your agent as ordinary tools, over MCP or through adapters for the Vercel AI SDK and LangChain. Your agent's code doesn't change; what its tools can reach does.
 
-Working from source instead:
+## See it in 60 seconds
+
+No API key and no LLM needed: this demo calls the tool directly, the way an agent would.
 
 ```bash
 git clone https://github.com/Ash20pk/BerthOS && cd BerthOS
 corepack enable && pnpm install && pnpm build
-node packages/cli/bin/berth.js doctor           # first: does your kernel enforce?
-cd examples/kernel-says-no && pnpm start         # no API key needed
+node packages/cli/bin/berth.js doctor --fix     # can this machine's kernel enforce anything?
+cd examples/kernel-says-no && pnpm start
 ```
-
-> **macOS/Windows: do the `doctor` step first.** The capability demos show a
-> *real kernel denial*, which needs a host kernel that provides Landlock —
-> Docker Desktop's VM does not, so on a stock Mac the demos exit non-zero and
-> tell you nothing was enforced (that refusal-to-pretend is the point). One
-> `brew install colima` + the [four-flag recipe in docs/mac-enforcement.md](./docs/mac-enforcement.md)
-> gets you an enforcing host with no kernel build; `berth doctor` then reports
-> `enforcement: ACTIVE`. Linux 5.13+ enforces out of the box.
-
-## The demo
-
-[`examples/kernel-says-no`](./examples/kernel-says-no) boots a Berth OS with one resident app — `apps/filesystem`, which declares `filesystem:write:/workspace` and nothing else — and calls the same `write_file` tool an agent would call, twice:
 
 ```
 --- inside the declared scope ---
@@ -53,22 +54,26 @@ write /etc/berth-should-not-exist.txt -> EACCES: permission denied, open '/etc/b
 PASS — the capability line in berth.yml is the boundary, and the kernel is the one holding it.
 ```
 
-Nothing in that script, in `@berthos/agents`, or in the app's own code inspects the second path. The manifest's capability list was compiled into a Landlock ruleset and applied by `agent-init` before the app's first line ran, so the write dies in `open(2)`. An agent that gets prompt-injected into trying it gets the same answer.
+Nothing in that script, or in the app's own code, checks the second path. The kernel refused it.
 
-**The honest part:** that denial needs a host kernel that provides Landlock. Docker Desktop for Mac does not, and the example says so and exits non-zero rather than printing a denial it can't attribute to the kernel. On macOS, [docs/mac-enforcement.md](./docs/mac-enforcement.md) is a four-flag Colima recipe (no kernel build) where it's real — verified on Apple silicon, Landlock ABI 4. Run [`berth doctor`](./docs/doctor-reference.md) to see which host you're on. What is and isn't enforced, per capability and per tier: [docs/kernel-enforcement.md](./docs/kernel-enforcement.md).
+> **On a Mac, run `doctor` first.** Docker Desktop's VM has no Landlock, so nothing would be enforced, and the demo says so and exits non-zero rather than faking a pass. `berth doctor --fix` sets up a [Colima](./docs/mac-enforcement.md) VM whose kernel can enforce. Linux 5.13+ works out of the box.
 
-**More of the same, each proving one claim:** [`examples/prompt-injection`](./examples/prompt-injection) hands a *fully compromised* model an injected instruction to backdoor `/etc` and watches the kernel refuse it anyway; [`examples/no-egress`](./examples/no-egress) runs attacker-chosen code in the interpreter and shows every outbound path (TCP, DNS, `curl`) refused because no network was declared; [`examples/audit-trail`](./examples/audit-trail) catches a tampered audit record and then demonstrates its own tamper-evident-not-tamper-proof limit. The full catalog, with which demos need a kernel and which need an API key, is in [examples/README.md](./examples/README.md).
+More demos, each proving one boundary: a [fully compromised model](./examples/prompt-injection) told to backdoor `/etc`, [attacker-chosen code with no network](./examples/no-egress), and a [tamper-evident audit trail](./examples/audit-trail) catching an edited record. See the [catalog](./examples/README.md).
 
-## The fastest way in: point your agent at it over MCP
+## Plug in the agent you already have
 
-No framework, no SDK call, no `Agent` class — Berth is an MCP server, so the agent you already use can hold the sandbox directly:
+### Any MCP client, no code
+
+`berth mcp` is an MCP server. It boots the sandbox itself, exposes the app's exports as tools, and shuts the sandbox down when your client disconnects.
 
 ```bash
+node packages/cli/bin/berth.js mcp --app filesystem --app-dir apps/filesystem --warm   # build the image once
+
 claude mcp add berth-filesystem -- node /abs/path/BerthOS/packages/cli/bin/berth.js \
   mcp --app filesystem --app-dir /abs/path/BerthOS/apps/filesystem
 ```
 
-`berth mcp` boots the sandbox itself, exposes exactly the exports `apps/filesystem`'s manifest declares, and stops the sandbox when your client disconnects. Ask your agent to write to `/etc` and it gets this back, rather than an errno:
+Ask your agent to write to `/etc` and it gets back a denial that tells it why, not just an error code:
 
 ```
 BERTH CAPABILITY DENIAL
@@ -77,48 +82,111 @@ denied-by: the kernel — a Landlock ruleset compiled from "filesystem"'s berth.
 fix: none available — a berth.yml filesystem scope may only name /workspace, /context, /tmp, /app
 ```
 
-Denials name the manifest line that would allow them (or say honestly that none would), and `denied-by:` says `the kernel` only where the kernel really did it. Run `--warm` once first, then read [docs/mcp-quickstart.md](./docs/mcp-quickstart.md) — setup for Claude Desktop/Cursor, scoping with `--only`, and pointing it at Colima.
+Setup for Claude Desktop, Cursor and Colima: [MCP quickstart](./docs/mcp-quickstart.md).
 
-## Keep the agent framework you already have
+### Your own tool-calling loop
 
-Berth's differentiator is what its tools are *made of*, so adopting a whole framework isn't the price of reaching it. Boot a `Computer`, hand its tools to the loop you already run:
+Boot a sandbox, hand its tools to the loop you already run:
 
-| Your stack | The call |
+```ts
+import { openai } from "@ai-sdk/openai";
+import { generateText, stepCountIs } from "ai";
+import { Computer, toAiSdkTools } from "@berthos/agents";
+
+const computer = await Computer.boot({ apps: ["apps/filesystem"] });
+const tools = await toAiSdkTools(computer.tools);
+
+await generateText({
+  model: openai("gpt-4o"),
+  tools,
+  stopWhen: stepCountIs(5),
+  prompt: "Write a summary to /workspace/notes.md",
+});
+await computer.stop();
+```
+
+| Your stack | Call |
 |---|---|
-| Vercel AI SDK | `await toAiSdkTools(computer.tools)` → pass as `tools` to `generateText`/`streamText`/`useChat` |
-| LangChain / LangGraph | `await toLangChainTools(computer.tools)` → pass to `createReactAgent({ tools })`, `ToolNode`, `bindTools` |
-| Claude Code, Cursor, any MCP client | `berth mcp --app <name>` — a real MCP server, no adapter at all ([5-minute setup](./docs/mcp-quickstart.md)) |
-| Anything else | `toToolSpecs(computer.tools)` — name, description, JSON Schema, and a call function |
+| Vercel AI SDK | `toAiSdkTools(computer.tools)` |
+| LangChain / LangGraph | `toLangChainTools(computer.tools)` |
+| Anything else | `toToolSpecs(computer.tools)`: name, description, JSON Schema, and a call function |
 
-[`examples/agents/with-vercel-ai-sdk`](./examples/agents/with-vercel-ai-sdk) is the demo above with a real model in the loop and no Berth `Agent` anywhere in the file. Details, and why both adapters are optional peer dependencies: [docs/why-berth.md](./docs/why-berth.md#use-it-from-your-existing-framework).
+Both adapters are optional peer dependencies. Full example: [`examples/agents/with-vercel-ai-sdk`](./examples/agents/with-vercel-ai-sdk).
 
-Or use the framework in the box: `@berthos/agents` is a full one — providers, agents, multi-agent crews, `runAgent()` for the simple case. It's the reference consumer of everything above, and it's optional. See [docs/berth-agents-guide.md](./docs/berth-agents-guide.md).
+## Bring your own tools
 
-## Where to read next
+A resident app is a manifest plus a handler. This is the whole of one:
 
-| Read this | For |
+```yaml
+# berth.yml
+name: hello-world
+version: 0.1.0
+capabilities: []          # touches nothing, so it can reach nothing
+exports:
+  - name: ping
+    output: { message: string }
+```
+
+```ts
+// src/index.ts
+import { defineApp } from "@berthos/sdk";
+import { z } from "zod";
+
+export default defineApp((app) => {
+  app.export({
+    name: "ping",
+    output: z.object({ message: z.string() }),
+    handler: () => ({ message: "pong" }),
+  });
+});
+```
+
+```bash
+berth init my-app && cd my-app
+berth dev      # boots it in the sandbox, reloads on save
+berth test     # checks the exports match the manifest and calls each one
+```
+
+The rest is in [Resident apps](./docs/resident-apps.md) and the [manifest reference](./docs/manifest-reference.md).
+
+## Tools in the box
+
+| App | What it gives an agent | Declares |
+|---|---|---|
+| [`filesystem`](./apps/filesystem) | Read and write files | `filesystem:read/write:/workspace` |
+| [`code-interpreter`](./apps/code-interpreter) | Run Python, JavaScript or shell | `filesystem:write:/workspace`, no network |
+| [`terminal`](./apps/terminal) | A real shell you can watch live in the browser | `filesystem:write:/workspace` |
+| [`browser-native`](./apps/browser-native) | Headless Chromium you can watch over VNC | `browser:navigate:*` |
+| [`github-assistant`](./apps/github-assistant) | Read repos, open issues | `github:read:repos`, `github:write:issues` |
+| [`notes`](./apps/notes) | Stateful notes, persisted to disk | `filesystem:write:/workspace` |
+
+Several apps can share one sandbox, and each keeps its own policy and its own uid.
+
+## What it guarantees, and what it doesn't
+
+- **Kernel-enforced:** filesystem read and write scopes, outbound TCP, UDP and raw sockets, namespace creation, and isolation between apps. This is real on any Linux 5.13+ kernel.
+- **Broker-enforced:** browser hostnames and GitHub API verbs go through a proxy that checks them, because the kernel sees ports, not hostnames. Which capability is enforced at which level: [enforcement](./docs/kernel-enforcement.md).
+- **It won't pretend.** On a kernel that can't enforce, `berth doctor` says so and the demos fail. `berth attest <runId>` produces a record of a run and the enforcement measured for its boot, checkable with a standalone script, and it says `NOT_ENFORCED` when nothing was.
+- **Not a defence against root on the host.** Anyone who can `docker exec` into the container bypasses all of it. What's in scope and what isn't: [threat model](./docs/threat-model.md).
+
+## Docs
+
+| | |
 |---|---|
-| [MCP quickstart](./docs/mcp-quickstart.md) | Adding Berth to Claude Code, Claude Desktop, or Cursor; what a denial looks like and how to read it |
-| [Quickstart](./docs/quickstart.md) | Prerequisites, install and build, running an agent, running and scaffolding resident apps, the CLI reference, repository layout |
-| [Enforcement](./docs/kernel-enforcement.md) | Kernel enforcement by platform, every capability and what enforces it, the kernel/broker/recorded tiers, **what isn't enforced yet** |
-| [Threat model](./docs/threat-model.md) | Adversaries, trust boundaries, what holds each one, what's permanently out of scope |
-| [Why Berth](./docs/why-berth.md) | The problem, the use cases, what `@berthos/agents` gives you, using Berth from your existing framework |
-| [Resident apps](./docs/resident-apps.md) | Building one: `berth.yml`, `defineApp()`, the gotchas, the context bus, the semantic filesystem |
-| [`@berthos/agents` guide](./docs/berth-agents-guide.md) | `Computer`/`createAgent`/`runAgent`, what a Berth OS is, multi-agent crews, the governance gate |
-| [`berth doctor`](./docs/doctor-reference.md) · [Mac enforcement](./docs/mac-enforcement.md) | Whether your host enforces anything, and how to get a Mac that does |
+| [MCP quickstart](./docs/mcp-quickstart.md) | Berth in Claude Code, Claude Desktop or Cursor in five minutes |
+| [Quickstart](./docs/quickstart.md) | Install, run, scaffold, the CLI reference, releasing |
+| [Resident apps](./docs/resident-apps.md) | Building your own tools |
+| [Enforcement](./docs/kernel-enforcement.md) | Every capability and what enforces it, per platform |
+| [Threat model](./docs/threat-model.md) | What holds, against whom, and what's out of scope |
+| [Roadmap](./ROADMAP.md) | What's real today |
 
-Reference docs for individual subsystems live in [docs/](./docs): [manifest](./docs/manifest-reference.md), [SDK](./docs/sdk-reference.md) ([Python](./docs/sdk-python-reference.md)), [agents](./docs/agents-reference.md) ([Python](./docs/agents-python-reference.md)), [Berth OS](./docs/berth-os-reference.md), [semantic FS](./docs/semantic-fs-reference.md), [context bus](./docs/context-bus-reference.md), [egress broker](./docs/egress-broker-reference.md), [GitHub API scoping](./docs/github-api-scoping-reference.md), [TLS](./docs/tls-reference.md), [secrets](./docs/secrets-reference.md), [capability enforcement](./docs/capability-tokens-reference.md), [governance](./docs/governance-reference.md), [audit trail](./docs/audit-reference.md), [attestation](./docs/attestation-reference.md), [containment benchmark](./bench/README.md), [break-out box](./breakout/README.md), [multi-app](./docs/multi-app-reference.md), [mesh](./docs/mesh-reference.md), [MCP bridge](./docs/mcp-bridge-reference.md), [app registry](./docs/app-registry-reference.md), [snapshots](./docs/computer-snapshots-reference.md), [K8s adapter](./docs/k8s-adapter-reference.md). Status of what's real: [ROADMAP.md](./ROADMAP.md). The manifest grammar as a standalone, independently versioned spec anyone can implement — with a conformance suite and a mandatory enforcement-tier declaration: [spec/capability-manifest](./spec/capability-manifest). The attestation record's format, its canonical digest, the rule that a verdict must be derived from the measurements rather than asserted, and the verifier algorithm — same treatment, separately versioned: [spec/attestation-record](./spec/attestation-record).
+Every subsystem has a reference page in [`docs/`](./docs). The manifest format and the attestation record are also standalone, versioned specs: [capability manifest](./spec/capability-manifest), [attestation record](./spec/attestation-record).
 
-## Two things to know before you build on it
+## Status
 
-- **`@berthos/*` isn't on npm yet.** You build it from source — that's what `pnpm build` above is for. Releases go out from a one-click GitHub workflow that has not been run for real yet; see [Releasing](./docs/quickstart.md#releasing). Not to be confused with the unrelated `@berth/*` packages on npm: they belong to a different project, and nothing here is published under that scope.
-- **Kernel-enforced filesystem and network scoping is real and testable today, and so is in-container privilege isolation.** Berth is a strong boundary around what an agent's *code* can touch — including code a determined attacker runs inside the container, who gets one app's uid, one Landlock domain, and no `CAP_SYS_ADMIN` anywhere in the sandbox. The residuals that bound that claim (the mesh daemon's retained root + `CAP_NET_ADMIN` is the largest — and it starts only for a container that declares `network:peer:`, so it is absent unless you ask for the mesh), with evidence: [what isn't enforced yet](./docs/kernel-enforcement.md#what-isnt-enforced-yet) and [docs/threat-model.md](./docs/threat-model.md).
+Early, and built by one maintainer, so expect APIs to move before 1.0. Packages publish to npm under `@berthos/*` (`npm install -g @berthos/cli`); the first-party apps and the demos live in this repo. The unrelated `@berth/*` packages on npm belong to a different project.
 
-## Something not working?
-
-Run **`berth doctor`** first. It reports whether the kernel that runs your apps can enforce anything at all, whether Docker is reachable, and what to do about each answer — most "it built but nothing is being enforced" reports on macOS are answered by its first line. Full output contract: [docs/doctor-reference.md](./docs/doctor-reference.md).
-
-Found a [bug](./.github/ISSUE_TEMPLATE/bug_report.md), something confusing about the [workflow](./.github/ISSUE_TEMPLATE/workflow_feedback.md), or want to pitch a [resident app](./.github/ISSUE_TEMPLATE/resident_app_proposal.md)? Tell us. Those reports are exactly what we need right now. [CONTRIBUTING.md](./CONTRIBUTING.md) has the wishlist and the PR path.
+Something not working? Run `berth doctor` first; it answers most "it built but nothing was enforced" reports in one line. Then [file a bug](./.github/ISSUE_TEMPLATE/bug_report.md), send [workflow feedback](./.github/ISSUE_TEMPLATE/workflow_feedback.md), or [pitch a resident app](./.github/ISSUE_TEMPLATE/resident_app_proposal.md). [CONTRIBUTING.md](./CONTRIBUTING.md) has the wishlist.
 
 ## License
 
