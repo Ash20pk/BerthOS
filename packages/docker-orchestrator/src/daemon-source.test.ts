@@ -41,3 +41,19 @@ test("a sibling folder without the daemon's manifest isn't mistaken for its sour
   mkdirSync(join(pkgRoot, "..", "mesh-daemon"));
   assert.equal(daemonSourceDir("mesh-daemon", pkgRoot), join(pkgRoot, "daemons", "mesh-daemon"));
 });
+
+test("an app's own pnpm-workspace.yaml doesn't make it a workspace member", async () => {
+  // berth init writes pnpm-workspace.yaml into every scaffolded project. The
+  // production build treated that as a monorepo and ran `pnpm deploy`, which
+  // fails for a standalone app.
+  const { workspaceRootAbove } = await import("./image.js");
+  const root = mkdtempSync(join(tmpdir(), "berth-ws-"));
+  const app = join(root, "my-app");
+  mkdirSync(app);
+  writeFileSync(join(app, "pnpm-workspace.yaml"), "allowBuilds:\n  protobufjs: true\n");
+  assert.equal(workspaceRootAbove(app), undefined);
+
+  // A real monorepo root above the app still counts.
+  writeFileSync(join(root, "pnpm-workspace.yaml"), "packages:\n  - my-app\n");
+  assert.equal(workspaceRootAbove(app), root);
+});
