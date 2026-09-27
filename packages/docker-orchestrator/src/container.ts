@@ -544,8 +544,8 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
       // every container automatically; native Linux Docker (e.g. GitHub
       // Actions' ubuntu-latest runners) does not, unless told to via this
       // special host-gateway value (Docker 20.10+) — several milestone
-      // tests reach a host-side mock/grants server through that name
-      // (grants-server-milestone.mjs, github-assistant-milestone.mjs), which
+      // tests reach a host-side mock server through that name
+      // (github-assistant-milestone.mjs, the bench harnesses), which
       // otherwise silently fails to resolve in CI while working locally on
       // a Mac, masking the difference until the request itself times out.
       // A no-op wherever host.docker.internal already resolves.

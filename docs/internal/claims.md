@@ -15,7 +15,7 @@ uses, so the two cannot drift without one of them being obviously wrong.
 | Tier | What enforces the claim | What a bypass would mean |
 |---|---|---|
 | **kernel** | Landlock, seccomp, the capability bounding-set drop, or the per-app uid split — the kernel refuses the action | a vulnerability: a Kernel-tier bypass is the most serious thing you can report |
-| **broker** | a Berth process on the path (egress/GitHub broker, the governance gate, the grants server) refuses or rewrites the request | a vulnerability, subject to the broker actually being in the path |
+| **broker** | a Berth process on the path (egress/GitHub broker, the governance gate) refuses or rewrites the request | a vulnerability, subject to the broker actually being in the path |
 | **recorded** | nothing is prevented; the action is *detected* and written to a tamper-evident record after the fact | not a boundary, and never claimed as one — the value is evidence, not prevention |
 | **unenforced** | documented as out of scope; no mechanism stands here | expected — but a *worse-than-documented* version is still worth reporting |
 
@@ -72,7 +72,6 @@ a positive control (a legitimate version of the action succeeding).
 | B12. The SDK-side gate takes caller identity from the listener, not the request; fail-closed | broker | `packages/sdk/src/governance-gate.test.ts` (unit) | unit test — not a milestone |
 | B13. `evaluate_action` error/timeout throws rather than allowing (fail-closed default) | broker | `experimental/agents/src/governance.test.ts` (unit) | unit test |
 | B14. An MCP tool-call denial returns an explained refusal (`denied-by:`), not a bare errno | broker | `packages/docker-orchestrator/test/mcp-milestone.mjs` — Test 3 CAPABILITY DENIAL; cross-app write via MCP denied | positive: an allowed call and a write-back read |
-| B15. A grant requester cannot self-approve without the operator token (401) | broker | `packages/docker-orchestrator/test/grants-server-milestone.mjs` — token-less approve 401 | positive: a token'd approve succeeds and lands in policy |
 
 ## Host-tier claims (port publishing, secret delivery)
 

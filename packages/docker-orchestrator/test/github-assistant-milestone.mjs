@@ -36,14 +36,15 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");
 const BROKER_SCRIPT = join(__dirname, "..", "docker", "github-api-broker.cjs");
 const APP_DIR = join(REPO_ROOT, "apps", "github-assistant");
-const GRANTS_SERVER_ENTRY = join(REPO_ROOT, "experimental", "grants-server", "dist", "server.js");
-const GRANTS_PORT = 56902;
-const MOCK_GITHUB_PORT = 56900;
-const GRANTED_CAPABILITY = `network:connect:${MOCK_GITHUB_PORT}`;
+// The mock stands in for api.github.com on the port the app already declares
+// for the GitHub API broker (network:connect:8092 in its berth.yml). Landlock
+// scopes outbound TCP by port, not host, so host.docker.internal:8092 is
+// reachable under that same declaration; the broker binds 8092 only inside
+// the container's own network namespace, so the two never meet.
+const MOCK_GITHUB_PORT = 8092;
 const BROKER_UPSTREAM_MOCK_PORT = 56904;
 const ROUTE_TABLE_BROKER_PORT = 56906;
 const ROUTE_TABLE_UPSTREAM_PORT = 56908;
-const OPERATOR_TOKEN = "milestone-test-operator-token";
 
 const docker = new Docker();
 
@@ -211,28 +212,13 @@ function brokerRequest(brokerPort, caCertPath, method, path) {
 async function runBypassScenario() {
   const manifest = await loadManifest(join(APP_DIR, "berth.yml"));
 
-  const dataDir = await mkdtemp(join(tmpdir(), "berth-github-assistant-milestone-"));
-  const grantsServer = await startGrantsServer(dataDir);
   const mock = await startMockGithub(MOCK_GITHUB_PORT);
 
   try {
-    console.log(`\n--- Requesting+approving ${GRANTED_CAPABILITY} for "github-assistant" ---`);
-    const created = await grantsFetch("/grants", {
-      method: "POST",
-      body: JSON.stringify({ appName: "github-assistant", capability: GRANTED_CAPABILITY, reason: "milestone test" }),
-    });
-    assert(created.status === "pending", `expected a fresh grant to be pending, got ${created.status}`);
-    const approved = await grantsFetch(`/grants/${created.id}/approve`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${OPERATOR_TOKEN}` },
-      body: JSON.stringify({ decidedBy: "milestone-test" }),
-    });
-    assert(approved.status === "approved", `expected approval to stick, got ${approved.status}`);
-
     console.log("\n--- Building github-assistant's dev image ---");
     await buildImage({ appDir: APP_DIR, tag: "berth/github-assistant:dev", target: "dev", docker });
 
-    console.log("\n--- Booting github-assistant's sandbox, pointed at the mock GitHub + grants server ---");
+    console.log("\n--- Booting github-assistant's sandbox, pointed at the mock GitHub ---");
     const running = await startContainer({
       image: "berth/github-assistant:dev",
       name: "berth-github-assistant-milestone",
@@ -243,7 +229,6 @@ async function runBypassScenario() {
         GITHUB_TOKEN: "milestone-test-token",
         GITHUB_REPO: "octocat/hello-world",
         GITHUB_API_BASE_URL: `http://host.docker.internal:${MOCK_GITHUB_PORT}`,
-        BERTH_GRANTS_SERVER_URL: `http://host.docker.internal:${GRANTS_PORT}`,
       },
       docker,
     });
@@ -254,8 +239,8 @@ async function runBypassScenario() {
       const policyLine = containerLog.text().match(/\[berth:capability-policy\] wrote.*$/m)?.[0] ?? "";
       console.log("\npolicy line:", policyLine);
       assert(
-        /networkPorts=.*\b56900\b/.test(policyLine),
-        `expected the approved ${GRANTED_CAPABILITY} to appear in the written policy's networkPorts: ${policyLine || "(no policy line seen)"}`,
+        /networkPorts=.*\b8092\b/.test(policyLine),
+        `expected the declared network:connect:8092 to appear in the written policy's networkPorts: ${policyLine || "(no policy line seen)"}`,
       );
 
       await waitFor(() => /"github-assistant" ready/.test(containerLog.text()), 20000, "github-assistant runtime ready");
@@ -285,16 +270,14 @@ async function runBypassScenario() {
       rpc.close();
       console.log(
         "\nPASS — apps/github-assistant, now a real deployed app, made real HTTP requests to (a mock of) the " +
-          "GitHub API over a capability granted through a real grants-server round trip.",
+          "GitHub API over the port its berth.yml declares.",
       );
     } finally {
       await containerLog.stop();
       await stopContainer(running.container);
     }
   } finally {
-    grantsServer.kill();
     mock.close();
-    await rm(dataDir, { recursive: true, force: true });
   }
 }
 
@@ -483,36 +466,6 @@ async function execInContainer(container, cmd) {
   return out;
 }
 
-async function startGrantsServer(dataDir) {
-  const proc = spawn(process.execPath, [GRANTS_SERVER_ENTRY], {
-    env: {
-      ...process.env,
-      BERTH_GRANTS_PORT: String(GRANTS_PORT),
-      BERTH_GRANTS_HOST: "0.0.0.0",
-      BERTH_GRANTS_DATA_DIR: dataDir,
-      BERTH_GRANTS_OPERATOR_TOKEN: OPERATOR_TOKEN,
-    },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-
-  let ready = false;
-  proc.stdout.on("data", (chunk) => {
-    if (chunk.toString("utf-8").includes("listening on")) ready = true;
-  });
-  proc.stderr.on("data", (chunk) => process.stderr.write(`[berth-grants] ${chunk}`));
-
-  await waitFor(() => ready, 10000, "berth-grants server to start listening");
-  return proc;
-}
-
-async function grantsFetch(path, init) {
-  const res = await fetch(`http://127.0.0.1:${GRANTS_PORT}${path}`, {
-    ...init,
-    headers: { "content-type": "application/json", ...init?.headers },
-  });
-  if (!res.ok) throw new Error(`grants-server ${path} -> HTTP ${res.status}: ${await res.text()}`);
-  return res.json();
-}
 
 /** Stands in for api.github.com — records every request it receives and serves fixed JSON, so assertions can check the app made a real HTTP call with the right method/path/body/headers. */
 async function startMockGithub(port) {

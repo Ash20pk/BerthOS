@@ -5,7 +5,6 @@ import { resolveLLMProvider, type LLMProviderConfig } from "./providers/auto.js"
 import { createSemanticFsCheckpointStore, type CheckpointedRun, type CheckpointStore } from "./checkpoint.js";
 import { combineStepTracers, createAgentTracer, createAuditStepTracer, type StepTracer } from "./tracing.js";
 import { createOtelStepTracer } from "./otel-tracer.js";
-import { applyHumanApprovalGate, HumanApprovalDeniedError, type HumanApprovalGateOptions } from "./approval.js";
 import {
   parseStructuredOutput,
   structuredOutputRepairPrompt,
@@ -150,7 +149,7 @@ export interface StructuredOutputRunOptions<T> {
  * REMEDIATION 3.4, and governance.ts for why that gate is advisory by design.
  */
 function isRefusal(err: unknown): boolean {
-  return err instanceof HumanApprovalDeniedError || err instanceof GuardrailTripwireError;
+  return err instanceof GuardrailTripwireError;
 }
 
 /**
@@ -755,14 +754,6 @@ export interface CreateAgentOptions extends Pick<BootComputerOptions, "network" 
   /** Capture redacted tool arguments and results. See AgentOptions.tracePayloads. */
   tracePayloads?: boolean;
   /**
-   * Wraps `computer.tools` through applyHumanApprovalGate() before
-   * constructing the Agent — every gated tool call blocks on a human
-   * decision via a running grants-server instance instead of executing
-   * immediately. `requesterName` defaults to this Agent's own `name`. See
-   * approval.ts.
-   */
-  humanApproval?: Omit<HumanApprovalGateOptions, "requesterName"> & { requesterName?: string };
-  /**
    * "semantic-fs" builds a Retriever over this Computer's own
    * query_context/read_context_file tools (see createSemanticFsRetriever)
    * and adds it to the tool list as a single "search_context" tool — a real
@@ -837,12 +828,7 @@ export async function createAgent(
     stepTracer && auditTracer ? combineStepTracers(stepTracer, auditTracer) : (stepTracer ?? auditTracer);
   const retriever = options.retriever === "semantic-fs" ? createSemanticFsRetriever(computer) : options.retriever;
   const mcpServers = options.mcpServers ? await Promise.all(options.mcpServers.map((server) => createMcpClientTools(server))) : [];
-  const gatedTools = options.humanApproval
-    ? applyHumanApprovalGate(computer.tools, {
-        ...options.humanApproval,
-        requesterName: options.humanApproval.requesterName ?? options.name ?? "agent",
-      })
-    : computer.tools;
+  const gatedTools = computer.tools;
   // MCP tools used to be concatenated *after* the governance gate, so a
   // governed Computer gated every resident-app tool and none of the MCP ones
   // — REMEDIATION.md 1.13. They don't reach the Computer's dispatch (they

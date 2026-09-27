@@ -63,10 +63,9 @@ export interface ToOpenAIAgentToolsOptions {
    * *interruption* the caller must approve or reject before Berth is invoked
    * at all.
    *
-   * This is deliberately plumbed rather than left out. Berth already has a
-   * human-in-the-loop story (the grants-server, `docs/capability-tokens-reference.md`),
-   * and a caller running someone else's loop should be able to reach it
-   * without leaving that loop. Note what it is and is not: an approval gate in
+   * This is deliberately plumbed rather than left out: a caller running
+   * someone else's loop should be able to put a human in front of a tool
+   * call without leaving that loop. Note what it is and is not: an approval gate in
    * *this* process, in front of the RPC call — broker tier at best, and
    * bypassable by anything that can talk to the app socket directly. It is not
    * a substitute for the manifest, which is what the kernel enforces whether or

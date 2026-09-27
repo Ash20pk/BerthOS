@@ -20,7 +20,6 @@ Built after the initial 5 phases. Most have their own milestone test and CI work
 
 - **WireGuard mesh networking** (`network:peer:<name>`) — real mesh, not simulated, coordinated by `mesh-coordinator` and reconciled by `mesh-daemon`. A crash-resilience test (`mesh-coordinator-resilience-milestone.mjs`, proves the tunnel survives a coordinator SIGKILL) is CI-wired too, sharing `.github/workflows/mesh-milestone.yml` with the main mesh test rather than getting its own workflow
 - **Egress broker** — scoped outbound HTTP/browser access by hostname pattern, at the host level
-- **Grants server** — human-in-the-loop approval for capability requests, instead of just declare-and-deny
 - **Governance gate** — any app declaring `governs: true` can review other apps' tool calls before they execute
 - **Snapshot / restore** — checkpoint a whole Berth OS (files, semantic-fs tags, context) and restore it, including after a hard crash (`snapshot-crash-milestone.mjs` kills the container with a real `SIGKILL` mid-write)
 - **Deploy adapters** — E2B, Daytona, and Kubernetes, behind one `DeployAdapter` interface

@@ -197,8 +197,8 @@ test("leaves non-filesystem scopes alone — they're hosts, ports and peer names
 });
 
 test("filesystemScopeIssue is exported for callers that validate capabilities outside a manifest", () => {
-  // @berthos/sdk's generate-capability-policy.ts uses this on grants-server
-  // strings, which never pass through BerthManifestSchema at all.
+  // @berthos/sdk's generate-capability-policy.ts uses this on any string
+  // list, not only one that passed through BerthManifestSchema.
   assert.equal(filesystemScopeIssue("/workspace/notes"), undefined);
   assert.ok(filesystemScopeIssue("/etc"));
   assert.ok(capabilityIssue("filesystem:write:/etc"));

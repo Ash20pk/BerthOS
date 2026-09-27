@@ -133,7 +133,6 @@ berth deploy --fleet=e2b          # or --fleet=daytona, --fleet=k8s, or an alias
 | `berth publish --registry=<url> [--token=<value>]` | Build and publish the app to a running app registry — `--token` is required to publish a new version of a name someone already published |
 | `berth snapshot create\|list\|restore [--fleet=<name>]` | Checkpoint and restore a container plus its semantic-fs context data — `--fleet` pauses/resumes (E2B) or snapshots (Daytona) a remote instance instead |
 | `berth snapshot fork <app> --fleet=<name>` | Fork a running remote instance into a new, independent clone (Daytona only) |
-| `berth grants list\|approve\|deny [--token=<value>]` | Review and resolve pending human-approval capability requests — `approve`/`deny` need the grants-server operator token |
 | `berth fleet status <fleet>` | Check the state of a configured remote fleet (`e2b`, `daytona`, or a `~/.berthrc` alias) |
 | `berth fleet scale <fleet> --count=<n>` | Manually scale this app's instances on a fleet up or down to a target count — not automatic load-based autoscaling |
 | `berth os up\|down\|status` | Boot a long-lived Berth OS once, then reconnect to it instantly instead of rebuilding on every dev iteration |
@@ -164,7 +163,6 @@ packages/
   agent-init/          Rust binary that applies a kernel-enforced (Landlock) capability policy before exec-ing the runtime
   semantic-fs-daemon/  Go/FUSE daemon, a filesystem searchable by its files' tags, backed by a SQLite metadata index
   registry-server/     local app registry for publish, discover, and install (Fastify + SQLite)
-  grants-server/       human approval service for capability grants (Fastify + SQLite)
   mesh-coordinator/    coordination service for the WireGuard mesh: allocates IPs, exchanges keys, mutually matches peers
   mesh-daemon/         Rust daemon that reconciles a sandbox's WireGuard config against mesh-coordinator's state
   adapters/            deploy adapters for E2B, Daytona, and Kubernetes

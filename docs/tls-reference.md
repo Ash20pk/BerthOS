@@ -10,7 +10,6 @@ Every server reads the same four variables under its own prefix:
 
 | Server | Prefix |
 |---|---|
-| `berth-grants` | `BERTH_GRANTS` |
 | `berth-registry` | `BERTH_REGISTRY` |
 | `berth-mesh-coordinator` | `BERTH_MESH_COORDINATOR` |
 
@@ -20,9 +19,9 @@ Every server reads the same four variables under its own prefix:
 - `<PREFIX>_TLS_REQUIRE_CLIENT_CERT` — `1`/`true` to require one
 
 ```
-BERTH_GRANTS_TLS_CERT=/etc/berth/server.crt \
-BERTH_GRANTS_TLS_KEY=/etc/berth/server.key \
-berth-grants
+BERTH_REGISTRY_TLS_CERT=/etc/berth/server.crt \
+BERTH_REGISTRY_TLS_KEY=/etc/berth/server.key \
+berth-registry
 ```
 
 The server prints the scheme it actually bound, so `listening on https://…` is the confirmation.
@@ -44,8 +43,6 @@ Mints a local CA and a server certificate under `~/.berth/tls` (keys 0600, direc
 ## Clients
 
 ```
-berth grants list   --server https://grants.internal:4874 --ca /path/to/ca.crt
-berth grants approve <id> --server https://grants.internal:4874 --ca /path/to/ca.crt
 berth publish --registry https://registry.internal:4873 --ca /path/to/ca.crt
 berth init --registry https://registry.internal:4873 --ca /path/to/ca.crt
 ```
@@ -58,10 +55,10 @@ berth init --registry https://registry.internal:4873 --ca /path/to/ca.crt
 
 ### The plaintext warning
 
-Commands that send a credential — `berth grants approve/deny`, `berth publish`, and `berth deploy --grants-server` — warn when the target is plain HTTP on a non-loopback host:
+Commands that send a credential — `berth publish --registry` and the mesh coordinator's owner-token calls — warn when the target is plain HTTP on a non-loopback host:
 
 ```
-[berth] WARNING: sending an operator token to http://grants.internal:4874 over plain HTTP — it crosses the network in the clear.
+[berth] WARNING: sending an operator token to http://registry.internal:4873 over plain HTTP — it crosses the network in the clear.
 ```
 
 Loopback is exempt because nothing crosses a network there. Warning about it would be noise, and noise is how people learn to ignore the warning that matters.
@@ -83,7 +80,7 @@ TLS is not a substitute for the token, and the bridge still requires it either w
 
 Server-side support exists: set `<PREFIX>_TLS_CA` and `<PREFIX>_TLS_REQUIRE_CLIENT_CERT=1` and the server demands a client certificate signed by that CA.
 
-**No client in this repo presents one.** It is the right control for service-to-service traffic and the wrong thing to impose on an operator running `berth grants approve` from a laptop — there is no CA to issue them a certificate from, because no identity system exists yet (`REMEDIATION.md` 5.2). Turning this on today locks out every first-party client.
+**No client in this repo presents one.** It is the right control for service-to-service traffic and the wrong thing to impose on an operator running `berth publish` from a laptop — there is no CA to issue them a certificate from, because no identity system exists yet (`REMEDIATION.md` 5.2). Turning this on today locks out every first-party client.
 
 ## What is still open
 
@@ -91,5 +88,4 @@ Server-side support exists: set `<PREFIX>_TLS_CA` and `<PREFIX>_TLS_REQUIRE_CLIE
 - **No HTTPS by default**, and no redirect from HTTP — a server configured for TLS serves TLS on its one port and nothing listens on plain HTTP to redirect from.
 - **No certificate reloading.** A renewed certificate needs a server restart.
 - **No cipher, curve, or minimum-version pinning** — Node's defaults apply.
-- **`POST /grants` is unauthenticated** regardless of transport. TLS protects it in flight; it does not make the requester known.
 - **The context bus, semantic-fs control socket, and peer RPC sockets are Unix sockets**, not TCP, so TLS does not apply. They are protected by filesystem permissions and `SO_PEERCRED` (see [per-app uid design](./per-app-uid-design.md)).

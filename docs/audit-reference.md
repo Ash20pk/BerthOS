@@ -50,7 +50,7 @@ const { agent } = await createAgent({
 
 `audit` on `createAgent` wires the sink into both the step tracer and the Computer's governance gate — turning on half an audit trail is rarely what anyone means. For a `Computer` you built yourself, pass it directly: `Computer.boot({ governance: { audit, actor } })`.
 
-`berth-grants` writes to the same default path with no configuration, and `BERTH_AUDIT_PATH` overrides it.
+`BERTH_AUDIT_PATH` overrides the default path.
 
 ### Payload capture
 
@@ -107,4 +107,3 @@ Each record's `hash` covers `prevHash` plus its own canonical JSON, so a record 
 - **No encryption at rest** (5.4). Records are plaintext, which is why payload capture is opt-in.
 - **No retention or legal-hold policy** beyond size-based rotation.
 - **HTTP access logs are Fastify's**, not audit records — they go to stdout and are not chained.
-- **Grant requests are unauthenticated.** `POST /grants` takes an app name from the request body over plain HTTP, so `grant.request` records are `self-asserted` by construction.

@@ -10,7 +10,7 @@ export default class TlsInit extends Command {
     "Mint a local CA and server certificate for running Berth's servers over HTTPS in development or on a closed network";
   static override examples = [
     "<%= config.bin %> tls init",
-    "<%= config.bin %> tls init --host grants.internal --host 10.0.0.7",
+    "<%= config.bin %> tls init --host registry.internal --host 10.0.0.7",
     "<%= config.bin %> tls init --dir ./certs --force",
   ];
   static override flags = {
@@ -38,12 +38,12 @@ export default class TlsInit extends Command {
     this.log(`Server key:         ${keyPath}  (0600)`);
     this.log("");
     this.log("Point a server at it:");
-    this.log(`  BERTH_GRANTS_TLS_CERT=${certPath} \\`);
-    this.log(`  BERTH_GRANTS_TLS_KEY=${keyPath} \\`);
-    this.log("  berth-grants");
+    this.log(`  BERTH_REGISTRY_TLS_CERT=${certPath} \\`);
+    this.log(`  BERTH_REGISTRY_TLS_KEY=${keyPath} \\`);
+    this.log("  berth-registry");
     this.log("");
     this.log("Then tell clients to trust the CA:");
-    this.log(`  berth grants list --server https://localhost:4874 --ca ${caCertPath}`);
+    this.log(`  berth publish --registry https://localhost:4873 --ca ${caCertPath}`);
     this.log(`  # or, for every TLS client in the process: NODE_EXTRA_CA_CERTS=${caCertPath}`);
     this.log("");
     // Said here rather than only in the docs: this is the moment someone

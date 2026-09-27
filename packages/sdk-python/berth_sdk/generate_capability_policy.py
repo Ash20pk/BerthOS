@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import os
-import urllib.request
 from pathlib import Path
 
 from .manifest import load_manifest, parse_capability
@@ -50,29 +49,13 @@ def _strip_trailing_glob(scope: str) -> str:
     return scope[:-2] if scope.endswith("/*") else scope
 
 
-def _fetch_approved_capabilities(app_name: str) -> list[str]:
-    grants_server_url = os.environ.get("BERTH_GRANTS_SERVER_URL")
-    if not grants_server_url:
-        return []
-    try:
-        url = f"{grants_server_url.rstrip('/')}/grants?status=approved&app={app_name}"
-        with urllib.request.urlopen(url, timeout=3) as resp:
-            grants = json.loads(resp.read())
-        return [g["capability"] for g in grants]
-    except Exception as err:  # best-effort — degrades to static-only, never fails the boot
-        print(
-            f"[berth:capability-policy] WARNING: couldn't reach grants server at {grants_server_url} ({err}) — using statically declared capabilities only",
-        )
-        return []
-
 
 def main() -> None:
     manifest_path = os.environ.get("BERTH_MANIFEST_PATH", str(Path.cwd() / "berth.yml"))
     policy_path = Path(os.environ.get("BERTH_CAPABILITY_POLICY", str(Path.cwd() / ".berth" / "capability-policy.json")))
 
     manifest = load_manifest(manifest_path)
-    approved = _fetch_approved_capabilities(manifest.name)
-    effective_capabilities = [*manifest.capabilities, *approved]
+    effective_capabilities = list(manifest.capabilities)
 
     write_paths = set(_baseline_write_paths(manifest.name))
     declared_read_paths: set[str] = set()

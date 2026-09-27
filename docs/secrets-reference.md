@@ -53,7 +53,6 @@ This is belt and braces: because `berth snapshot create` builds its `env` by rea
 | `~/.berth/run/<container>/secrets.env` | this boot's container credentials | 0600 in a 0700 dir, deleted on stop |
 | `~/.berth/os/<name>.json` | `berth os up --http-rpc`'s bearer token | 0600 in a 0700 dir |
 | `~/.berth/snapshots/<app>/<id>/` | committed image, context-data, `env.json` | 0700 dir, `env.json` 0600 |
-| `<grants data dir>/operator.token` | grants-server operator token | 0600 (unchanged — this one was always right) |
 | `~/.berthrc` | fleet alias adapters **and their `env`**, i.e. provider keys for remote deploys | **yours to set.** `berth` warns, once, when a credential-carrying one is group- or world-readable |
 
 Berth chmods files it creates. It does not chmod `~/.berthrc`: that is the developer's own file, silently rewriting its mode is a surprise in the other direction, and refusing to read it would break every existing `--fleet` invocation on upgrade. The warning names the fix (`chmod 600 ~/.berthrc`) and only fires when an alias actually carries `env`.

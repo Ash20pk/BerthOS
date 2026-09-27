@@ -4,47 +4,19 @@ import { loadManifest, matchesCapability, type CapabilityRequest } from "@bertho
 
 export interface CapabilityGrant {
   granted: boolean;
-  /**
-   * True if this denial was submitted to a berth-grants server
-   * (BERTH_GRANTS_SERVER_URL) as a pending request for human approval — see
-   * `berth grants list/approve/deny`. Approval takes effect on this app's
-   * NEXT container restart (generate-capability-policy.ts re-reads approved
-   * grants at boot), never live — Landlock rulesets can't be widened once
-   * applied to a running process.
-   */
-  pending?: boolean;
 }
 
 const MANIFEST_PATH = process.env.BERTH_MANIFEST_PATH ?? path.join(process.cwd(), "berth.yml");
 // Same default generate-capability-policy.ts itself uses — this is the file
-// it writes at boot, merging berth.yml's static `capabilities:` with
-// whatever's been approved via `berth grants approve` since.
+// it writes at boot from berth.yml's `capabilities:`, and the one agent-init
+// and the brokers enforce against.
 const CAPABILITY_POLICY_PATH = process.env.BERTH_CAPABILITY_POLICY ?? path.join(process.cwd(), ".berth", "capability-policy.json");
-const GRANTS_SERVER_URL = process.env.BERTH_GRANTS_SERVER_URL;
-
-/** Best-effort: an unreachable/misconfigured grants server never blocks the caller, just skips the pending-request step. */
-async function submitPendingGrant(appName: string, capability: string): Promise<boolean> {
-  if (!GRANTS_SERVER_URL) return false;
-  try {
-    const res = await fetch(new URL("/grants", GRANTS_SERVER_URL), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ appName, capability }),
-      signal: AbortSignal.timeout(3000),
-    });
-    return res.ok;
-  } catch (err) {
-    console.error(`[capabilities] WARNING: couldn't submit pending grant to ${GRANTS_SERVER_URL} (${err})`);
-    return false;
-  }
-}
 
 /**
- * The policy file's `declaredCapabilities` is berth.yml's static list merged
- * with whatever's been approved via `berth grants approve` since (see
- * generate-capability-policy.ts's `main()`) — reading it, rather than
- * berth.yml directly, is what lets requestCapability() ever see an approved
- * grant at all. Returns undefined (not an empty array) when the file isn't
+ * The policy file's `declaredCapabilities` is the list that was actually
+ * compiled into this boot's enforced policy, so it is the authority on what
+ * is granted; berth.yml is the fallback for a process running outside a real
+ * Berth container. Returns undefined (not an empty array) when the file isn't
  * there or isn't parseable JSON, so the caller can fall back to berth.yml
  * rather than treating "no policy file" as "nothing is granted."
  */
@@ -105,9 +77,8 @@ export async function requestCapability(appName: string, capability: string): Pr
   const granted = declared.some((grantedCapability) => matchesCapability(grantedCapability, capability));
 
   if (!granted) {
-    const pending = await submitPendingGrant(appName, capability);
-    console.debug(`[capabilities] denied`, request, pending ? "(submitted for human approval)" : "(not declared in berth.yml)");
-    return { granted: false, pending };
+    console.debug(`[capabilities] denied`, request, "(not declared in berth.yml)");
+    return { granted: false };
   }
 
   console.debug(`[capabilities] granted`, request);

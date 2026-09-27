@@ -1,5 +1,4 @@
 import { Command, Flags } from "@oclif/core";
-import { warnIfCredentialOverPlaintext } from "@berthos/tls";
 import { loadManifestOrExit } from "../util/manifest.js";
 import { buildProductionImage, productionImageTag } from "../util/build.js";
 import { resolveFleet } from "../util/fleet.js";
@@ -48,10 +47,6 @@ export default class Deploy extends Command {
     count: Flags.integer({ description: "how many instances to start — overrides the fleet alias's own count (default 1)" }),
     region: Flags.string({ description: "provider region/zone — meaning differs per adapter (Daytona: snapshot regionId; k8s: a topology.kubernetes.io/region nodeSelector; e2b: no-op, the SDK has no region concept)" }),
     apps: Flags.string({ description: "comma-separated workspace-relative paths of companion resident apps to run alongside this one" }),
-    "grants-server": Flags.string({
-      description:
-        "berth-grants server URL to consult for human-approved capability grants — must be reachable from the deployed fleet, not just localhost",
-    }),
   };
 
   async run(): Promise<void> {
@@ -75,13 +70,6 @@ export default class Deploy extends Command {
     const appsEnv: Record<string, string> = {};
     if (apps.length > 1) {
       appsEnv.BERTH_APPS = JSON.stringify(apps.map((a) => ({ name: a.name, workingDir: `/app/apps/${a.name}` })));
-    }
-    if (flags["grants-server"]) {
-      // This URL is reachable from the fleet by definition, so it is a
-      // network hop by definition — the one case REMEDIATION.md 5.3 names
-      // outright. Every capability request and its verdict crosses it.
-      warnIfCredentialOverPlaintext(flags["grants-server"], "capability grant requests");
-      appsEnv.BERTH_GRANTS_SERVER_URL = flags["grants-server"];
     }
     const target = { imageRef, manifest, env: { ...env, ...appsEnv }, region };
 

@@ -2,8 +2,8 @@
  * The agent loop's error taxonomy — REMEDIATION 4.8.
  *
  * Typed errors existed only at the edges before this (StructuredOutputError,
- * GuardrailTripwireError, GovernanceDeniedError, HumanApprovalDeniedError,
- * TruncatedResponseError, CheckpointReadError). Everything the *core loop*
+ * GuardrailTripwireError, GovernanceDeniedError, TruncatedResponseError,
+ * CheckpointReadError). Everything the *core loop*
  * itself raised was a bare `Error` distinguishable only by matching on its
  * message: exceeding maxTurns, resuming without a checkpoint store, resuming
  * a runId that has no checkpoint, calling a tool that doesn't exist.
@@ -56,8 +56,7 @@ export type BerthAgentErrorCode =
  *
  * Note what is deliberately *not* re-parented onto this: the pre-existing
  * edge errors (StructuredOutputError, GuardrailTripwireError,
- * HumanApprovalDeniedError, GovernanceDeniedError, TruncatedResponseError,
- * CheckpointReadError) keep extending `Error` directly. Re-parenting them
+ * GovernanceDeniedError, TruncatedResponseError, CheckpointReadError) keep extending `Error` directly. Re-parenting them
  * would be a breaking change for anyone whose `catch` narrows on them today,
  * for no benefit — they are already typed, already exported, and already
  * distinguishable. This class exists for the errors that had *no* type at all.

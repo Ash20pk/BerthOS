@@ -337,9 +337,6 @@ importers:
       '@berthos/docker-orchestrator':
         specifier: workspace:*
         version: link:../../packages/docker-orchestrator
-      '@berthos/grants-server':
-        specifier: workspace:*
-        version: link:../grants-server
       '@berthos/manifest-schema':
         specifier: workspace:*
         version: link:../../packages/manifest-schema
@@ -437,28 +434,6 @@ importers:
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
-
-  experimental/grants-server:
-    dependencies:
-      '@berthos/audit':
-        specifier: workspace:*
-        version: link:../../packages/audit
-      '@berthos/tls':
-        specifier: workspace:*
-        version: link:../../packages/tls
-      fastify:
-        specifier: ^5.12.5
-        version: 5.12.5
-    devDependencies:
-      '@types/node':
-        specifier: ^26.6.2
-        version: 26.6.2
-      typescript:
-        specifier: ^7.0.2
-        version: 7.0.2
-      undici:
-        specifier: ^8.11.0
-        version: 8.11.0
 
   experimental/seam-claude-agent-sdk:
     dependencies:

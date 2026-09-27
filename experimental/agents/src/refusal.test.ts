@@ -1,18 +1,17 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Agent } from "./agent.js";
-import { HumanApprovalDeniedError } from "./approval.js";
 import { GuardrailTripwireError } from "./guardrails.js";
 import { GovernanceDeniedError } from "./governance.js";
 import type { CheckpointStore } from "./checkpoint.js";
 import type { LLMProvider, Tool, LLMTurn } from "./types.js";
 
 /**
- * REMEDIATION 3.4. HumanApprovalDeniedError was thrown from inside
- * tool.invoke, so the loop's own tool-error handling caught it and fed it
- * back as an `{error}` tool result — the model could then re-issue the
- * identical call and open a fresh grant request. Documented as fail-closed,
- * behaving as advisory.
+ * REMEDIATION 3.4. A refusal (a guardrail tripping, a nested agent's stop)
+ * was thrown from inside tool.invoke, so the loop's own tool-error handling
+ * caught it and fed it back as an `{error}` tool result — the model could
+ * then re-issue the identical call. Documented as fail-closed, behaving as
+ * advisory.
  */
 
 /** An LLM that asks for the same tool call on every turn until told to stop. */
@@ -42,31 +41,6 @@ function toolThatThrows(name: string, err: Error, invocations: { count: number }
     },
   };
 }
-
-test("a denied human approval ends the run instead of becoming a tool result", async () => {
-  const turns = { count: 0 };
-  const invocations = { count: 0 };
-  const agent = new Agent({
-    name: "gated",
-    llm: insistentLLM("deploy", turns),
-    tools: [toolThatThrows("deploy", new HumanApprovalDeniedError("deploy", "not on a Friday"), invocations)],
-  });
-
-  await assert.rejects(
-    () => agent.run("ship it"),
-    (err: unknown) => {
-      assert.ok(err instanceof HumanApprovalDeniedError);
-      assert.equal(err.toolName, "deploy");
-      assert.equal(err.reason, "not on a Friday");
-      return true;
-    },
-  );
-
-  // The heart of the bug: before this, the denial came back as a tool result
-  // and the model simply asked again, opening a fresh grant each time.
-  assert.equal(invocations.count, 1, `the denied tool was re-invoked ${invocations.count} times`);
-  assert.equal(turns.count, 1, "the model got another turn after being refused");
-});
 
 test("a guardrail tripped inside a nested agent-as-tool ends the outer run too", async () => {
   const turns = { count: 0 };
@@ -181,10 +155,10 @@ test("a refusal checkpoints the run as an error rather than leaving it running",
   const agent = new Agent({
     name: "gated",
     llm: insistentLLM("deploy", { count: 0 }),
-    tools: [toolThatThrows("deploy", new HumanApprovalDeniedError("deploy", "no"), { count: 0 })],
+    tools: [toolThatThrows("deploy", new GuardrailTripwireError("output", "no"), { count: 0 })],
     checkpoint: store,
   });
 
-  await assert.rejects(() => agent.run("ship it", { runId: "run-9" }), HumanApprovalDeniedError);
+  await assert.rejects(() => agent.run("ship it", { runId: "run-9" }), GuardrailTripwireError);
   assert.equal(saved.at(-1)?.status, "error", `last checkpoint was ${JSON.stringify(saved.at(-1))}`);
 });

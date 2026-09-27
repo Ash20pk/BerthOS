@@ -71,7 +71,7 @@ const SECRET_NAME_SUFFIXES = ["_KEY", "_PAT"] as const;
  * Credentials whose names give nothing away, and so cannot be pattern-
  * matched at all. Empty today — every credential Berth itself sets
  * (`BERTH_HTTP_RPC_TOKEN`, `BERTH_TERMINAL_CREDENTIAL`, `BERTH_VNC_PASSWORD`,
- * `BERTH_GRANTS_TOKEN`, `BERTH_REGISTRY_TOKEN`) is caught by a fragment. It
+ * `BERTH_REGISTRY_TOKEN`) is caught by a fragment. It
  * exists because the alternative, when the first such name shows up, is
  * broadening a fragment until it catches that one name and a hundred others.
  */
@@ -296,8 +296,7 @@ export function containerSecretsDir(containerName: string, runDir: string = DEFA
 
 /**
  * Writes one container's secrets to a host file at mode 0600 inside a 0700
- * directory — the same shape grants-server's operator token has always used
- * (`operator-token.ts`), applied here rather than left at whatever the
+ * directory — applied here rather than left at whatever the
  * process umask happened to be.
  *
  * `chmod` after `writeFile` rather than trusting `writeFile`'s `mode`, which

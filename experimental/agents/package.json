@@ -59,7 +59,6 @@
     "@berthos/adapter-core": "workspace:*",
     "@berthos/audit": "workspace:*",
     "@berthos/docker-orchestrator": "workspace:*",
-    "@berthos/grants-server": "workspace:*",
     "@berthos/manifest-schema": "workspace:*",
     "@berthos/sdk": "workspace:*",
     "@google/genai": "^2.24.0",

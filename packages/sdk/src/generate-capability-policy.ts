@@ -37,7 +37,6 @@ import { loadManifest, parseCapability, capabilityIssue, CapabilityString, type 
 
 const MANIFEST_PATH = process.env.BERTH_MANIFEST_PATH ?? join(process.cwd(), "berth.yml");
 const POLICY_PATH = process.env.BERTH_CAPABILITY_POLICY ?? join(process.cwd(), ".berth", "capability-policy.json");
-const GRANTS_SERVER_URL = process.env.BERTH_GRANTS_SERVER_URL;
 const MESH_COORDINATOR_PORT = Number(process.env.BERTH_MESH_COORDINATOR_PORT ?? 4875);
 
 // Always writable regardless of what's declared, and — apart from /dev/null —
@@ -177,33 +176,12 @@ function stripTrailingGlob(scope: string): string {
   return scope.endsWith("/*") ? scope.slice(0, -2) : scope;
 }
 
-/** Best-effort: an unreachable/misconfigured grants server degrades to static-only policy, never fails the boot. */
-async function fetchApprovedCapabilities(appName: string): Promise<string[]> {
-  if (!GRANTS_SERVER_URL) return [];
-  try {
-    const url = `${GRANTS_SERVER_URL.replace(/\/$/, "")}/grants?status=approved&app=${encodeURIComponent(appName)}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const grants = (await res.json()) as { capability: string }[];
-    return grants.map((g) => g.capability);
-  } catch (err) {
-    console.error(`[berth:capability-policy] WARNING: couldn't reach grants server at ${GRANTS_SERVER_URL} (${err}) — using statically declared capabilities only`);
-    return [];
-  }
-}
-
 /**
  * The pure namespace:action:scope -> CapabilityPolicy compiler, split out
- * from main() so it can be fuzzed directly (no filesystem/network I/O) and
- * so its two callers — the static manifest's own `capabilities:` list and
- * the grants server's `approved` response — go through the exact same
- * validation. That second caller matters: unlike `manifest.capabilities`,
- * which @berthos/manifest-schema's CapabilityString regex already validated
- * at loadManifest() time, an `approved` grant string arrives straight from
- * an HTTP JSON response with no schema check at all — a malformed or
- * adversarial grants-server response (compromised server, or just a bug)
- * must never crash policy generation entirely, since agent-init's own
- * fallback for "no policy file" is to warn and run *unrestricted* (see
+ * from main() so it can be fuzzed directly (no filesystem I/O). It
+ * re-validates every string rather than trusting its caller: a malformed
+ * capability must never crash policy generation entirely, since agent-init's
+ * own fallback for "no policy file" is to warn and run *unrestricted* (see
  * packages/agent-init/src/main.rs) — the opposite of what an invalid
  * capability string should ever cause.
  */
@@ -219,8 +197,8 @@ export function compileCapabilityPolicy(appName: string, rawCapabilities: string
 
   for (const capability of rawCapabilities) {
     // CapabilityString mirrors the exact regex @berthos/manifest-schema
-    // already enforced on manifest.capabilities — re-validating here is
-    // what makes it safe to feed grants-server strings into the same loop.
+    // already enforced on manifest.capabilities — re-validated here so the
+    // compiler is safe on any input, not only a loadManifest()-checked one.
     const validated = CapabilityString.safeParse(capability);
     if (!validated.success) {
       console.error(`[berth:capability-policy] WARNING: ignoring malformed capability string ${JSON.stringify(capability)} (${validated.error.issues[0]?.message ?? "invalid format"})`);
@@ -236,9 +214,9 @@ export function compileCapabilityPolicy(appName: string, rawCapabilities: string
 
     // The filesystem-scope allowlist, re-checked here for the same reason the
     // CapabilityString regex above is: a manifest's own capabilities were
-    // already rejected by BerthManifestSchema's superRefine, but a
-    // grants-server `approved` string arrives with no schema check at all,
-    // and every path in this policy is one agent-init will mkdir as root
+    // already rejected by BerthManifestSchema's superRefine, but this
+    // compiler takes any string list, and every path in this policy is one
+    // agent-init will mkdir as root
     // before enforcement. Skipped with a warning rather than thrown, matching
     // the malformed-string handling above — agent-init's fallback for "no
     // policy file" is to run *unrestricted*, so failing policy generation is
@@ -381,8 +359,7 @@ export function computeBindPorts(
 
 async function main(): Promise<void> {
   const manifest = await loadManifest(MANIFEST_PATH);
-  const approved = await fetchApprovedCapabilities(manifest.name);
-  const policy = compileCapabilityPolicy(manifest.name, [...manifest.capabilities, ...approved]);
+  const policy = compileCapabilityPolicy(manifest.name, manifest.capabilities);
   // Union, not overwrite: computeBindPorts() contributes the orchestration-level
   // ports (the HTTP RPC bridge, ttyd) while compileCapabilityPolicy() contributes
   // whatever the manifest declared with network:bind:<port>.

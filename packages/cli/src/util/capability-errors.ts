@@ -155,7 +155,6 @@ export function explainAppError(raw: string, ctx: ExplainContext): string {
     ...missing.map((capability) => `  - ${capability}`),
     ...(action ? [] : [`note: ${syscall}(2) is used for both reading and writing, so declare whichever this export actually needs — not both.`]),
     `declared: ${ctx.manifest.capabilities.join(", ") || "(none)"}`,
-    `alternative: \`berth grants\` requests the same capability with a human in the loop instead of editing the manifest (docs/capability-tokens-reference.md).`,
   ].join("\n");
 }
 
