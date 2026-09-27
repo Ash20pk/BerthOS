@@ -22,6 +22,7 @@
     "dist",
     "proto",
     "models",
+    "scripts/prefetch-embedding-model.mjs",
     "!dist/**/*.test.*"
   ],
   "license": "Apache-2.0",
