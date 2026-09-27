@@ -136,6 +136,19 @@ jobs:
             exit 1
           fi
 
+      # Install exactly what was packed into an empty project, the way a user
+      # would, before anything can be published. Tests run against the
+      # workspace; only this catches a package that is broken as shipped
+      # (0.2.1's @berthos/sdk ran a postinstall script it didn't include, so
+      # every install of it, and of the CLI, failed).
+      - name: Install the packed npm packages from scratch
+        run: |
+          smoke="$RUNNER_TEMP/install-check"
+          mkdir -p "$smoke" && cd "$smoke"
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund "$GITHUB_WORKSPACE"/dist/npm/*.tgz
+          npx --no-install berth --version
+
       - name: Build the Python SDK
         run: |
           pip install build twine
