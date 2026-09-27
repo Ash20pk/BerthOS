@@ -130,7 +130,9 @@ berth deploy --fleet=e2b          # or --fleet=daytona, --fleet=k8s, or an alias
 
 ## Releasing
 
-`@berthos/*` is not published to npm yet, but the pipeline is real and dry-run-verified: `pnpm publish:npm:dry-run` (root `package.json`) builds every workspace package and packs each non-private one (everything under `packages/`, skipping `apps/`/`examples/`/test fixtures, which are all `"private": true`) exactly as `npm publish` would, without uploading. `.github/workflows/publish-npm.yml` and `.github/workflows/publish-pypi.yml` run that same pipeline (plus the `berth-agents` PyPI package's own build) from CI — both `workflow_dispatch`-only, dry-run by default, and only publish for real when a human explicitly flips `dry_run` to `false` on a manual run.
+Releases are cut from GitHub, never from a laptop: **Actions → Release → Run workflow**, enter a version (`x.y.z`), and leave *dry run* ticked to rehearse. `.github/workflows/release.yml` sets that version on all 15 public `@berthos/*` npm packages and on the `berthos-sdk` and `berthos-agents` Python packages in lockstep (`scripts/set-version.mjs`), runs the same build, lint and test gate as every PR, and packs the exact files to publish. A dry run stops there. A real run then pushes a `chore(release): vx.y.z` commit and a `vx.y.z` tag to `main`, publishes the packed files to npm (with provenance) and PyPI (trusted publishing), and creates a GitHub Release with generated notes and an SBOM attached. If a publish step fails after the tag is pushed, **Re-run failed jobs** on the same run: both registries skip versions already published.
+
+Nothing has been published yet. The first real run needs two one-time settings the workflow can't make itself: an `NPM_TOKEN` repository secret with publish rights to the `@berthos` scope, and a PyPI trusted publisher on each Python project pointing at `release.yml` and the `pypi` environment. Both are described at the top of the workflow file.
 
 ## CLI reference
 
