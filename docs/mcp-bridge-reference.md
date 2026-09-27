@@ -35,7 +35,7 @@ Verified end to end in `packages/docker-orchestrator/test/mcp-milestone.mjs` (Te
 
 **Real:** a running local `berth dev` container's exports are genuinely reachable as MCP tools from any real MCP client — verified end-to-end in `packages/docker-orchestrator/test/mcp-milestone.mjs` using the actual `@modelcontextprotocol/sdk` `Client`/`StdioClientTransport` on the test side too (not a mock of the MCP protocol on either end).
 
-**Real, as of gap #26's closure (2026-08-06):** `--only=<export1>,<export2>` (comma-separated) scopes which exports get bridged at all, instead of blanket "everything this app declares." `packages/cli/src/util/mcp-tools.ts`'s `parseOnlyExports()` validates every named export actually exists in the manifest, erroring loudly on a typo rather than silently bridging fewer tools than intended — the same least-privilege shape `applyHumanApprovalGate()`'s own `only` option already has for Agent tool calls (see `docs/agents-reference.md`).
+**Real, as of gap #26's closure (2026-08-06):** `--only=<export1>,<export2>` (comma-separated) scopes which exports get bridged at all, instead of blanket "everything this app declares." `packages/cli/src/util/mcp-tools.ts`'s `parseOnlyExports()` validates every named export actually exists in the manifest, erroring loudly on a typo rather than silently bridging fewer tools than intended.
 
 **Real, as of launch-plan 1.5 (2026-08-19):** self-booting (`--no-boot` opts out), `--warm`, and the explained denials above.
 

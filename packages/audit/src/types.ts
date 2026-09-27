@@ -33,7 +33,7 @@ export interface AuditEvent {
   /** Monotonic within one sink instance, so records that share a timestamp still order. */
   seq: number;
   actor: Actor;
-  /** Dotted verb: "governance.evaluate", "grant.approve", "agent.tool-call", "http.request". */
+  /** Dotted verb: "governance.evaluate", "agent.tool-call", "http.request". */
   action: string;
   /** What the action was performed on — an app/export pair, a grant id, a route. */
   target?: string;

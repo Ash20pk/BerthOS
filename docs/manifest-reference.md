@@ -142,7 +142,7 @@ namespace:action:scope
 - `action` — what's being done (`read`, `write`, `navigate`, `screenshot`, `connect`, `peer`, ...)
 - `scope` — what it applies to; may contain a `*` glob (e.g. `*.github.com` matches `api.github.com` but not `example.com`)
 
-`@berthos/manifest-schema`'s `matchesCapability(granted, requested)` implements glob matching on `scope` while requiring exact matches on `namespace`/`action` — this is the exact function the kernel-level token issuer calls to decide grants.
+`@berthos/manifest-schema`'s `matchesCapability(granted, requested)` implements glob matching on `scope` while requiring exact matches on `namespace`/`action` — the same function `requestCapability()` and `berth mcp`'s denial messages use to decide whether a declared line covers a request.
 
 `app:invoke:<name>` lets this app call another resident app's exports directly, inside the same container. It is the *only* way to do so: since REMEDIATION 1.4 an app's own socket at `/run/berth/<app>/rpc.sock` is mode `0600`, reachable by that app and by root (the host relay) and nobody else. Declaring this capability gets the caller its own socket instead — `/run/berth/<target>/peers/<caller>/rpc.sock`, in a directory only the caller can traverse — created at boot. An app that declares nothing gets `EACCES` on `connect(2)`, from the kernel rather than from a check in the SDK. `@berthos/agents` emits one of these per sibling whose exports it embeds as tools in a synthesized agent app.
 

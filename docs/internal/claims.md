@@ -104,13 +104,12 @@ protected against".
 
 | Claim / non-claim | Tier | Where it is documented |
 |---|---|---|
-| U1. `docker exec` bypasses the sandbox — root on the host reaches everything | unenforced | threat-model.md:113; used as the *negative control* in capability-enforcement Test 12 and red in `bench` — proven as a bypass, not a boundary |
-| U2. The mesh daemon retains uid 0 + `CAP_NET_ADMIN` behind a control socket that trusts self-declared identity (largest in-container escalation path, *1.14*) | unenforced | threat-model.md:127 |
-| U3. No per-syscall denial audit logging (Landlock has no deny hook) | unenforced | threat-model.md:108 |
-| U4. One egress broker per container, not per app; GitHub broker unshared across multi-app | unenforced | threat-model.md:111–112 |
-| U5. Human-approval-swallowed-by-tool-error-handler (*3.4*) is a named open defect | unenforced | threat-model.md:47 |
-| U6. K8s adapter needs `SYS_ADMIN` + `/dev/fuse` hostPath; not the confined posture | unenforced | threat-model.md:115 |
-| U7. Enterprise ops: no identity/RBAC (*5.2*), nothing encrypted at rest (*5.4*), no rate-limit/`/health` (*5.6*), no migration runner (*5.7*), unauth first-publish registry | unenforced | threat-model.md:101 |
+| U1. `docker exec` bypasses the sandbox — root on the host reaches everything | unenforced | threat-model.md:129; used as the *negative control* in capability-enforcement Test 12 and red in `bench` — proven as a bypass, not a boundary |
+| U2. The mesh daemon retains uid 0 + `CAP_NET_ADMIN` behind a control socket that trusts self-declared identity (largest in-container escalation path, *1.14*) | unenforced | threat-model.md:109 |
+| U3. No per-syscall denial audit logging (Landlock has no deny hook) | unenforced | threat-model.md:124 |
+| U4. One egress broker per container, not per app; GitHub broker unshared across multi-app | unenforced | threat-model.md:127–128 |
+| U6. K8s adapter needs `SYS_ADMIN` + `/dev/fuse` hostPath; not the confined posture | unenforced | threat-model.md:131 |
+| U7. Enterprise ops: no identity/RBAC (*5.2*), nothing encrypted at rest (*5.4*), no rate-limit/`/health` (*5.6*), no migration runner (*5.7*), unauth first-publish registry | unenforced | threat-model.md:117 |
 | U8. Operator→servers is plain HTTP with shared bearer tokens; TLS built but off by default | unenforced | threat-model.md:55 (B9) |
 | U9. Secrets are not a vault: no protection against the docker-socket holder, undeclared secrets stay shared, root daemons, remote-fleet env in a provider control plane | unenforced | secrets-reference.md §"what this does not protect against" |
 
@@ -136,8 +135,6 @@ denial test with a control.
    proven; the event itself is asserted by no milestone. **Minor.**
 6. **Daemon length-header bounded allocation** (K15) — survival is asserted; the
    fix has no mutation control beyond the oversized frame itself. **Minor.**
-7. **Human-approval-swallowed-by-tool-error** (*3.4*, U5) — a documented open
-   defect, not a fixed boundary. **UNPROVEN as closed, on purpose.**
 
 Anything marked UNPROVEN here is fair game for the break-out box and for
 external reviewers — that is what the inventory is for.

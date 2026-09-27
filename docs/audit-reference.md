@@ -1,15 +1,15 @@
 # Audit trail reference
 
-`@berthos/audit` is the record of what happened on a Berth installation and who did it: governance verdicts, capability-grant decisions, failed authentication attempts, and — optionally — every step an agent took.
+`@berthos/audit` is the record of what happened on a Berth installation and who did it: governance verdicts, failed authentication attempts, and — optionally — every step an agent took.
 
-It exists because none of that was written down. `REMEDIATION.md` 5.1: governance denials threw silently, no server logged a request, `AgentStepEvent` recorded tool names and no actor, and `decided_by` on a grant was free text from the request body. A gate that blocks a hundred calls used to leave exactly the same trace as a gate nobody ever consulted.
+It exists because none of that was written down. `REMEDIATION.md` 5.1: governance denials threw silently, no server logged a request, `AgentStepEvent` recorded tool names and no actor A gate that blocks a hundred calls used to leave exactly the same trace as a gate nobody ever consulted.
 
 ## What a record looks like
 
 One JSON object per line, hash-chained, written 0600:
 
 ```json
-{"ts":"2026-08-16T09:14:22.104Z","seq":41,"actor":{"kind":"operator","id":"alice","verifiedBy":"token"},"action":"grant.approve","target":"grant:9f2a…","decision":"allowed","meta":{"appName":"browser-native","capability":"network:connect:443"},"prevHash":"…","hash":"…"}
+{"ts":"2026-08-16T09:14:22.104Z","seq":41,"actor":{"kind":"operator","id":"alice","verifiedBy":"token"},"action":"governance.evaluate","target":"filesystem.write_file","decision":"denied","reason":"path outside /workspace/reports","durationMs":12,"meta":{"mode":"fail-closed"},"prevHash":"…","hash":"…"}
 ```
 
 ### The actor, and how much it is worth
@@ -83,7 +83,7 @@ Each record's `hash` covers `prevHash` plus its own canonical JSON, so a record 
 
 ## Operational notes
 
-- **Writes are synchronous.** A record buffered when the process dies is a record that does not exist, and these are the events a crash would otherwise erase. Volume is low: a line per governance verdict and grant decision, not per HTTP request.
+- **Writes are synchronous.** A record buffered when the process dies is a record that does not exist, and these are the events a crash would otherwise erase. Volume is low: a line per governance verdict, not per HTTP request.
 - **A failing sink never fails the audited action.** It reports on stderr and drops the record. Both the sink and every call site catch — a monitoring backend having a bad day must not become a failed tool call.
 - **Rotation** defaults to 16MB and 5 files. There is no retention policy beyond that; pruning older segments is left to whatever already manages the host.
 - **Once rotation has pruned the genesis segment, the chain no longer starts at genesis.** The
