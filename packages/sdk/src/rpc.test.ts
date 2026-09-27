@@ -52,7 +52,7 @@ test("invokeExport returns an error when input fails validation", async () => {
   assert.ok("error" in response);
 });
 
-// --- The TCP listener's port resolution (claims.md 1 — the transport the
+// --- The TCP listener's port resolution (the transport the
 // governance gate sits on that nothing in the product opens for you) ---
 
 /** Restores whatever the ambient environment had, so these tests don't leak into each other. */

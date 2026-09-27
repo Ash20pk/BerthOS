@@ -592,7 +592,7 @@ async function main() {
     //
     // Deliberately not "can app A write into app B's socket directory": an app
     // does not need write access to *connect* to a pathname socket (Landlock
-    // hooks neither, and the design doc works through why), so the only
+    // does not gate connect(2) on a pathname socket), so the only
     // meaningful assertion is the connect itself.
     console.log("\n--- App A attempting to CONNECT to app B's RPC socket (the 1.4 exploit) ---");
     const ownSocket = await invokeAppExport(boundaryRunning.container, "boundary-app-a", {

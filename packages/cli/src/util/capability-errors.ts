@@ -142,7 +142,7 @@ export function explainAppError(raw: string, ctx: ExplainContext): string {
     return [
       ...header,
       enforcementLine(ctx.enforcement, ctx.appName),
-      `fix: not a missing declaration — "${ctx.appName}" already declares ${wanted.join(" and ")}. Likely file ownership (apps run as their own uid, see docs/per-app-uid-design.md) or a path that exists outside the granted directory via a symlink. Check the container's agent-init line for which paths the ruleset actually got.`,
+      `fix: not a missing declaration — "${ctx.appName}" already declares ${wanted.join(" and ")}. Likely file ownership (apps run as their own uid, see docs/threat-model.md) or a path that exists outside the granted directory via a symlink. Check the container's agent-init line for which paths the ruleset actually got.`,
       `declared: ${ctx.manifest.capabilities.join(", ") || "(none)"}`,
       `docs: docs/capability-tokens-reference.md`,
     ].join("\n");

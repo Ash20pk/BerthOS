@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // BUILD_PLAN M1.1: a booted sandbox carries no container-wide CAP_SYS_ADMIN.
 // The /context FUSE mount is performed by a per-sandbox sidecar container
-// and propagates in as a bind (docs/internal/design/sys-admin-drop.md), so:
+// and propagates in as a bind, so:
 //
 //   Sidecar boot:
 //     1. `docker inspect` on the sandbox: no SYS_ADMIN in CapAdd, no

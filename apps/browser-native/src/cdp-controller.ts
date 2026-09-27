@@ -74,8 +74,7 @@ export function launchChromium(): Promise<Browser> {
           // filter refuses for every app unconditionally and deliberately
           // (REMEDIATION 1.3). Enabling one means punching a hole in the
           // other, for the app with the largest remote attack surface — the
-          // wrong app to make the exception for. See
-          // docs/per-app-uid-design.md § Blocker 5. So this stays, and the
+          // wrong app to make the exception for. So this stays, and the
           // loopback bind above is what limits the blast radius: a renderer
           // exploit here lands as root in the container.
           "--no-sandbox",

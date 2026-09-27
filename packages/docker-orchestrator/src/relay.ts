@@ -10,7 +10,7 @@ import { PassThrough } from "node:stream";
  * The relay below is unaffected by that: `docker exec` enters as root, and
  * root traverses a 0710 directory regardless of owner. That asymmetry is
  * deliberate and documented — the uid boundary is between apps, never between
- * the host and an app (docs/per-app-uid-design.md § Blocker 7).
+ * the host and an app.
  */
 export const RPC_SOCKET_DIR = "/run/berth";
 

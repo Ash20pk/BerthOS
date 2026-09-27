@@ -359,7 +359,7 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
   }
 
   // /context's FUSE mount comes from a per-sandbox sidecar container
-  // (BUILD_PLAN M1.1, docs/internal/design/sys-admin-drop.md), so the
+  // (BUILD_PLAN M1.1), so the
   // sandbox itself gets no SYS_ADMIN, no /dev/fuse, and no AppArmor
   // exception — `mount(2)` inside it fails EPERM for every process, root
   // daemons included. If the sidecar's mount cannot propagate on this host,

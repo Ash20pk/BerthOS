@@ -54,8 +54,7 @@ const MESH_COORDINATOR_PORT = Number(process.env.BERTH_MESH_COORDINATOR_PORT ?? 
 // *Binding* one is a different question — that goes through path_mknod, which
 // Landlock does hook as AccessFs::MakeSock — so narrowing this list stops an
 // app squatting a path, and DAC (the 0710 owner-only directory these two paths
-// now live in) is what stops it connecting. Both halves are needed; see
-// docs/per-app-uid-design.md.
+// now live in) is what stops it connecting. Both halves are needed.
 //
 // The three daemon control sockets stay at /tmp/berth-*.sock and stay
 // reachable by every app, which is deliberate (see the socket table in that
@@ -111,8 +110,7 @@ function appRunDir(appName: string): string {
 // mount, not on the ptys this app happens to have allocated. Per-app uids
 // narrow it in practice (a pty's slave is owned by whoever allocated it, so
 // DAC refuses what this rule permits) but not in the ruleset itself. It is
-// still the one container-wide grant left in this file. See
-// docs/per-app-uid-design.md § Blocker 6.
+// still the one container-wide grant left in this file.
 const TERMINAL_WRITE_PATHS = ["/dev/pts", "/dev/ptmx"];
 
 // Only added when read scoping is actually enabled (i.e. the app declared at

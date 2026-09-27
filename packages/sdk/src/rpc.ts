@@ -141,8 +141,7 @@ function startSocketServer(app: BerthApp, socketPath: string): void {
  *
  * The obvious implementation is `SO_PEERCRED`, which is what the two daemons
  * in this repo use (context-bus-daemon's `src/peer.rs`, semantic-fs-daemon's
- * `internal/control/peer.go`) and what docs/per-app-uid-design.md's Step 4
- * specified. Node exposes no `getsockopt` and no way to read ancillary
+ * `internal/control/peer.go`). Node exposes no `getsockopt` and no way to read ancillary
  * credentials on a Unix socket, so it is not available here without a native
  * addon — which this SDK is vendored into images as a tarball and has no
  * build step for. A directory per caller gets the same property from the same

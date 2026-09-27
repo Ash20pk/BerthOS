@@ -80,7 +80,6 @@ start_display_stack() {
 
 # Creates the uid, gid, and directories one app runs as, and exports
 # BERTH_APP_UID/BERTH_APP_GID for agent-init to drop to just before exec.
-# Step 1 of docs/per-app-uid-design.md.
 #
 # uid = 10000 + the app's index in BERTH_APPS (single-app mode is always
 # index 0, so uid 10000). Index-derived rather than name-hashed because a
@@ -109,8 +108,7 @@ provision_app_identity() {
     return 0
   fi
   # The one identity shared between apps: what it grants is /context and the
-  # three daemon control sockets, all of which are shared by design (see the
-  # socket table in docs/per-app-uid-design.md).
+  # three daemon control sockets, all of which are shared by design.
   addgroup "$user" berth 2>/dev/null || true
   # /dev/ptmx and the devpts mount are root:tty, so allocating a pty is a DAC
   # question as well as a Landlock one (REMEDIATION.md 1.15 covers the latter).
@@ -120,7 +118,7 @@ provision_app_identity() {
     addgroup "$user" tty 2>/dev/null || true
   fi
 
-  # Where this app's RPC socket lives, since Step 3 of the design doc took it
+  # Where this app's RPC socket lives, since per-app uids took it
   # out of world-writable /tmp/berth-rpc (REMEDIATION.md 1.4).
   #
   # 0711 — traverse, but not list. Nothing in here is reachable by a sibling by
@@ -143,13 +141,12 @@ provision_app_identity() {
 
   # .berth only — deliberately NOT the app directory itself. That directory is
   # the developer's own repository under `berth dev`'s bind mount, and
-  # chown -R'ing someone's working tree is option 1 in Blocker 1 of
-  # docs/per-app-uid-design.md, rejected there for that reason. .berth is
+  # chown -R'ing someone's working tree was rejected for that reason. .berth is
   # different in kind: Berth creates it, it is gitignored, and in a real
   # `berth dev` it is a Docker-owned named volume (container.ts's
   # appStateVolume) rather than a host directory at all.
   #
-  # The cost is Blocker 1's, unchanged: an app that declares a write path
+  # The cost is unchanged: an app that declares a write path
   # inside a host-owned bind mount cannot write it as a non-root uid. 1.6
   # made that mount read-only, so for `berth dev` the question is now mostly
   # moot; where it is not, the app gets a truthful EACCES rather than Berth
@@ -358,8 +355,8 @@ export_app_environment() {
   fi
 }
 
-# The one host-owned directory a `berth dev` app still has to write, and the
-# whole of what is left of Blocker 1 in docs/per-app-uid-design.md. The
+# The one host-owned directory a `berth dev` app still has to write, and all
+# that is left of the host-ownership problem per-app uids created. The
 # workspace root itself is read-only since REMEDIATION.md 1.6, so this is not
 # the repository — it is `.berth/dev-workspace`, which Berth creates,
 # gitignores, and mounts specifically to hold app data.
@@ -877,7 +874,7 @@ run_app() {
 # Anything that already exists is left completely alone — /tmp, /context, a
 # bind mount, and each app's own /run/berth/<app> and /tmp/<app> from
 # provision_app_identity. Taking ownership of a directory somebody else made
-# is Blocker 1's mistake and is not this pass's business.
+# is not this pass's business.
 precreate_declared_paths() {
   local tsv="$1"
   local decls="/tmp/.berth-declared-write-paths"

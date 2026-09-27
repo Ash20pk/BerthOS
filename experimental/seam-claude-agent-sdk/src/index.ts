@@ -38,8 +38,8 @@
  * `filesystem:write:/workspace` in `apps/terminal`'s manifest is a Landlock
  * write domain applied before the app execs, so a `Bash` call that writes
  * outside `/workspace` gets `EACCES` from the kernel, not a refusal from a
- * model or a regex in a permission callback. `docs/internal/claims.md` K1–K4
- * name the tests behind that.
+ * model or a regex in a permission callback. `capability-enforcement.mjs`
+ * in docker-orchestrator is the test behind that.
  *
  * It does not sandbox the *harness*. `query()` still runs in your process with
  * your privileges; a WebFetch, an MCP server you added yourself, or a

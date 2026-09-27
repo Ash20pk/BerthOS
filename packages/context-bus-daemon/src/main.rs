@@ -73,7 +73,7 @@ fn try_send_payload(sender: &mpsc::Sender<Payload>, payload: Payload, context: &
 /// created under the default umask is 0755 — reachable by root and nobody
 /// else. Every app in the sandbox is meant to reach this daemon (that is what
 /// the bus *is*), so the moment apps stop being uid 0 this is what keeps it
-/// true. See docs/per-app-uid-design.md's socket table.
+/// true.
 ///
 /// Deliberately not fatal. A missing group or a filesystem that refuses the
 /// chown leaves the daemon reachable by root, which is strictly better than

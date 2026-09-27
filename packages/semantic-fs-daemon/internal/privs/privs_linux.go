@@ -17,7 +17,7 @@
 // cannot mount tmpfs over the backing store, and — because the bounding set
 // is empty and no_new_privs is set — cannot get any of it back via exec of a
 // setuid/file-caps binary. The uid stays 0: the backing tree's root:berth
-// ownership model (docs/per-app-uid-design.md Blocker 2) is built around it,
+// ownership model is built around it,
 // and CAP_CHOWN/CAP_FOWNER without uid 0 would still need most of the same
 // trust. Named residual, not an accident.
 //

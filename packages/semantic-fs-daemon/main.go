@@ -81,8 +81,7 @@ func main() {
 	}()
 
 	// AllowOther and DefaultPermissions are a pair, and shipping either one
-	// alone would be a mistake in opposite directions (Blocker 2 of
-	// docs/per-app-uid-design.md).
+	// alone would be a mistake in opposite directions.
 	//
 	// Without allow_other, a FUSE mount is accessible *only to the mounting
 	// uid* — the kernel refuses every other uid at the VFS layer, before any

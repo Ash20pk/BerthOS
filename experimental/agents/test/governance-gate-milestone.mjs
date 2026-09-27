@@ -137,7 +137,7 @@ async function assertTransportsAreGated(computer) {
 }
 
 /**
- * The sibling peer socket — claims.md's second UNPROVEN row.
+ * The sibling peer socket — previously unproven at milestone tier.
  *
  * capability-enforcement K14 already proves the *identity* half: a request
  * arriving on `/run/berth/filesystem/peers/<caller>/rpc.sock` is attributed to
@@ -177,8 +177,8 @@ async function assertPeerSocketIsGated(container) {
 }
 
 /**
- * The cross-container TCP listener — claims.md's first UNPROVEN row, which
- * this run closes in the opposite direction to the one the row expected.
+ * The cross-container TCP listener — previously unproven at milestone tier,
+ * which this run closes in the opposite direction to the one expected.
  *
  * The row asked whether the governance gate covers the TCP transport. On a
  * kernel that enforces, the question does not arise: **the listener cannot

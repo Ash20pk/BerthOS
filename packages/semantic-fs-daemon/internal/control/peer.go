@@ -23,8 +23,7 @@ import (
 // socket at connect(2) time, and a process cannot lie about either without
 // already being able to become that uid.
 //
-// It carried no information until every app got a uid of its own
-// (docs/per-app-uid-design.md Step 2); this is Step 4 for that reason.
+// It carried no information until every app got a uid of its own.
 //
 // Deliberately duplicated, not shared: context-bus-daemon implements the same
 // three rules in Rust (src/peer.rs). A shared library would mean vendoring Go
@@ -42,7 +41,6 @@ type peerIdentity struct {
 	name string
 	// privileged is uid 0: the host relay (docker exec), the daemons
 	// themselves, anything that already has full authority in this container.
-	// See docs/per-app-uid-design.md § Blocker 7.
 	privileged bool
 }
 

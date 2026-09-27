@@ -212,7 +212,7 @@ fn drop_all_capabilities() -> Result<(), Box<dyn std::error::Error>> {
 /// Absent means "stay root", and that is a supported state, not a failure:
 /// provisioning warns and continues if adduser fails, `agent-init` is run
 /// directly by several tests, and neither should be forced into a uid that
-/// doesn't exist. Step 2 of docs/per-app-uid-design.md.
+/// doesn't exist.
 struct AppIdentity {
     uid: u32,
     gid: u32,
@@ -465,8 +465,7 @@ fn main() {
 
     // Genuinely last, after Landlock, the capability drop, and both seccomp
     // filters — every one of those needs root, and none of them can be
-    // reapplied once this returns. See docs/per-app-uid-design.md's ordering
-    // note. Landlock's domain is inode-based and seccomp's filter is
+    // reapplied once this returns. Landlock's domain is inode-based and seccomp's filter is
     // process-wide; neither cares about the uid change, and both survive it
     // and the exec() below.
     match app_identity() {
@@ -752,8 +751,7 @@ fn apply_policy(policy_path: &str) -> Result<(CapabilityPolicy, RulesetStatus), 
                 //
                 // Only paths created here. An existing one belongs to
                 // somebody — /tmp, /context, a bind mount — and taking
-                // ownership of it is not agent-init's call to make (see
-                // Blocker 1 in docs/per-app-uid-design.md).
+                // ownership of it is not agent-init's call to make.
                 give_to_app(path);
             }
         }

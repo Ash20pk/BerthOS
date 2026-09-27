@@ -8,8 +8,7 @@
 // connecting process's uid onto the socket at connect(2) time, and a process
 // cannot lie about it without already being able to become that uid.
 //
-// This carried no information until every app got a uid of its own
-// (docs/per-app-uid-design.md Step 2); it is Step 4 for that reason.
+// This carried no information until every app got a uid of its own.
 //
 // Deliberately duplicated, not shared: semantic-fs-daemon implements the same
 // three rules in Go (internal/control/peer.go). A shared crate would mean
@@ -21,7 +20,7 @@
 pub enum PeerIdentity {
     /// uid 0. The host relay (`docker exec`), the daemons themselves, and
     /// anything else that already has full authority inside this container —
-    /// see docs/per-app-uid-design.md § Blocker 7. A root caller's own claim
+    /// the uid boundary is between apps, never between the host and an app. A root caller's own claim
     /// about which app it is stands, because it could set that uid anyway.
     Privileged,
     /// A resident app, named by resolving its uid through the user database

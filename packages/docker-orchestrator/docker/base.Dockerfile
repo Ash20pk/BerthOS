@@ -111,7 +111,7 @@ RUN apk add --no-cache \
 # reachable once apps stop being uid 0 — today that is the semantic filesystem
 # backing /context (root:berth, see semantic-fs-daemon's ownership.go) and the
 # three daemon control sockets. Everything else an app touches is either its
-# own or nobody's. See docs/per-app-uid-design.md.
+# own or nobody's.
 #
 # A fixed gid rather than an allocated one: /var/berth is a persistent volume,
 # so the numeric gid stamped into its files has to mean the same thing in the
