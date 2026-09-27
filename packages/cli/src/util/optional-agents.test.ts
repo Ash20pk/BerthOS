@@ -50,7 +50,8 @@ test("a real failure inside the framework is not classified as missing", () => {
 test("the missing-framework message names the command, the install, and why", () => {
   const msg = describeMissingFramework("agent run");
   assert.match(msg, /berth agent run/, "someone sees this after typing a command — it should name that command");
-  assert.match(msg, /npm install @berthos\/agents/, "the fix must be copy-pasteable");
+  assert.match(msg, /not published to npm/, "it must not send anyone to install a package that isn't there");
+  assert.match(msg, /github\.com\/Ash20pk\/BerthOS/, "the fix must say where the framework does live");
   assert.match(msg, /does not depend on it/, "it should explain why it is not already there, or it reads as a packaging bug");
   assert.ok(!/ERR_MODULE_NOT_FOUND/.test(msg), "the errno is noise to someone who just needs to install a package");
 });

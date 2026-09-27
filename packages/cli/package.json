@@ -86,8 +86,7 @@
   "peerDependencies": {
     "@berthos/adapter-daytona": "workspace:^",
     "@berthos/adapter-e2b": "workspace:^",
-    "@berthos/adapter-k8s": "workspace:^",
-    "@berthos/agents": "workspace:^"
+    "@berthos/adapter-k8s": "workspace:^"
   },
   "peerDependenciesMeta": {
     "@berthos/adapter-daytona": {
@@ -97,9 +96,6 @@
       "optional": true
     },
     "@berthos/adapter-k8s": {
-      "optional": true
-    },
-    "@berthos/agents": {
       "optional": true
     }
   }

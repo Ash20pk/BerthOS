@@ -4,9 +4,7 @@ computer -> agent -> tool: boots a Berth computer loaded with resident apps, gen
 
 Part of [Berth](https://github.com/Ash20pk/BerthOS) — IAM for agents — declared capabilities, kernel-enforced, audit-trailed. The `berth.yml` capability line is the boundary; Landlock + seccomp hold it.
 
-```sh
-npm install @berthos/agents
-```
+Not published to npm: this package is experimental, and releases ship the sandbox only. Use it from a clone of the repository, where it is a workspace package (`"@berthos/agents": "workspace:*"`).
 
 > **Frozen surface.** This package is a *reference consumer* of the Berth
 > substrate, not a competing agent framework. Its API is frozen: bug and
