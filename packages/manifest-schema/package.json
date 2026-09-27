@@ -1,6 +1,6 @@
 {
   "name": "@berthos/manifest-schema",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Schema, validation, and capability-string parsing for berth.yml",
   "type": "module",
   "main": "./dist/index.js",

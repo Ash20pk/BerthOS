@@ -1,6 +1,6 @@
 {
   "name": "@berthos/adapter-core",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Shared DeployAdapter interface implemented by adapter-e2b, adapter-daytona and adapter-k8s",
   "type": "module",
   "main": "./dist/index.js",
