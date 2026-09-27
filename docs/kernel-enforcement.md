@@ -69,7 +69,7 @@ gVisor doesn't implement Landlock, so under `runsc` you lose the kernel level en
 
 ## Limits
 
-- Full enforcement needs Linux 6.7+ (Landlock ABI 4, which adds network rules). On 5.13 to 6.6 the policy is only partly applied, and a production image refuses to start. `berth doctor` checks that Landlock works, not its version, so it can report `ACTIVE` on those kernels.
+- Full enforcement needs Linux 6.7+ (Landlock ABI 4, which adds network rules). On 5.13 to 6.6 the policy is only partly applied, and a production image refuses to start. `berth doctor` reports `NOT ACTIVE` there, naming the kernel's ABI, and `berth dev` prints a partial-enforcement banner.
 - An app that declares any `network:connect:` port can use UDP to any destination, because it needs DNS.
 - `docker exec` or root on the host bypasses all of this.
 

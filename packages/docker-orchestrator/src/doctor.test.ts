@@ -10,7 +10,9 @@ import {
   findProbeImage,
   PROBE_FALLBACK_IMAGE,
   unenforcedBanner,
+  partialEnforcementBanner,
   enforcementStatusForBoot,
+  MIN_LANDLOCK_ABI,
   type LandlockProbeResult,
 } from "./doctor.js";
 
@@ -45,6 +47,36 @@ test("an enforcing kernel yields ACTIVE — the branch a macOS host can never re
   assert.deepEqual(report.reasons, []);
   assert.equal(report.checks.find((c) => c.id === "landlock")?.status, "ok");
   assert.equal(report.checks.find((c) => c.id === "fuse")?.status, "ok");
+});
+
+test("Landlock below ABI 4 is NOT ACTIVE: the probe's write is refused, but Berth's policy is only partly applied", async () => {
+  // Linux 5.13-6.6: an empty ruleset denies a write, so a write-only probe used
+  // to say ACTIVE, while agent-init's ruleset (which always handles network
+  // rights, ABI 4) came back PartiallyEnforced and production images refused
+  // to start.
+  for (const abi of [1, 2, 3]) {
+    const report = await runDoctor({
+      docker: fakeDocker({ info: { KernelVersion: "6.1.0-generic", Architecture: "x86_64", SecurityOptions: ["name=seccomp,profile=builtin"] } }),
+      probe: probeReturning({ status: "enforcing", abi, reason: "write refused with Permission denied", fuse: true }),
+    });
+    const landlock = report.checks.find((c) => c.id === "landlock");
+    assert.equal(report.enforcementActive, false, `ABI ${abi} must not read as active`);
+    assert.equal(report.enforcementDetermined, true, "it was measured, so it is determined");
+    assert.equal(landlock?.status, "fail");
+    assert.match(landlock?.detail ?? "", new RegExp(`ABI ${abi}.*needs ABI ${MIN_LANDLOCK_ABI} \\(Linux 6\\.7\\+\\)`));
+    assert.match(landlock?.detail ?? "", /production image refuses to start/);
+    assert.match(report.verdict, /^enforcement: NOT ACTIVE/);
+  }
+});
+
+test("ABI 4 and above is ACTIVE, and a probe with no ABI reading is not penalised", async () => {
+  for (const abi of [4, 6, undefined]) {
+    const report = await runDoctor({
+      docker: fakeDocker(),
+      probe: probeReturning({ status: "enforcing", abi, reason: "write refused with Permission denied", fuse: true }),
+    });
+    assert.equal(report.enforcementActive, true, `ABI ${abi} should be active`);
+  }
 });
 
 test("landlock present but not in the LSM stack is a failure, and says which shape it is", async () => {
@@ -278,6 +310,22 @@ test("the banner names the consequence, not just the condition", () => {
   assert.match(banner, /undeclared write or connection will\n {2}succeed/);
   assert.match(banner, /berth doctor/);
   assert.match(banner, /not a security boundary/);
+});
+
+test("the partial banner says writes are refused and connections are not", () => {
+  const banner = partialEnforcementBanner("This kernel's Landlock is ABI 3.");
+  assert.match(banner, /ONLY PARTLY ACTIVE/);
+  assert.match(banner, /undeclared write is refused/);
+  assert.match(banner, /outbound connection is\n {2}not/);
+  assert.doesNotMatch(banner, /not refusing anything/);
+});
+
+test("the boot path carries the ABI through the cache", async () => {
+  const { home, docker } = cacheHarness("unsupported", "enforcing");
+  const fresh = await withBerthHome(home, () => enforcementStatusForBoot(docker, "img", undefined, { fresh: true }));
+  assert.equal(fresh.abi, 4, "a fresh probe reports its ABI");
+  const cached = await withBerthHome(home, () => enforcementStatusForBoot(docker, "img"));
+  assert.equal(cached.abi, 4, "and the cache hit written by it keeps the ABI");
 });
 
 // --- "unknown" is not "off" ---------------------------------------------
