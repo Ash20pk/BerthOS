@@ -56,7 +56,7 @@ PASS — the capability line in berth.yml is the boundary, and the kernel is the
 
 Nothing in that script, or in the app's own code, checks the second path. The kernel refused it.
 
-> **On a Mac, run `doctor` first.** Docker Desktop's VM has no Landlock, so nothing would be enforced, and the demo says so and exits non-zero rather than faking a pass. `berth doctor --fix` sets up a [Colima](./docs/mac-enforcement.md) VM whose kernel can enforce. Linux 5.13+ works out of the box.
+> **On a Mac, run `doctor` first.** Docker Desktop's VM has no Landlock, so nothing would be enforced, and the demo says so and exits non-zero rather than faking a pass. `berth doctor --fix` sets up a [Colima](./docs/mac-enforcement.md) VM whose kernel can enforce. Linux 6.7+ works out of the box.
 
 More demos, each proving one boundary: a [fully compromised model](./examples/prompt-injection) told to backdoor `/etc`, [attacker-chosen code with no network](./examples/no-egress), and a [tamper-evident audit trail](./examples/audit-trail) catching an edited record. See the [catalog](./examples/README.md).
 
@@ -164,7 +164,7 @@ Several apps can share one sandbox, and each keeps its own policy and its own ui
 
 ## What it guarantees, and what it doesn't
 
-- **Kernel-enforced:** filesystem read and write scopes, outbound TCP, UDP and raw sockets, namespace creation, and isolation between apps. This is real on any Linux 5.13+ kernel.
+- **Kernel-enforced:** filesystem read and write scopes, outbound TCP, UDP and raw sockets, namespace creation, and isolation between apps. This is real on any Linux 6.7+ kernel.
 - **Broker-enforced:** browser hostnames and GitHub API verbs go through a proxy that checks them, because the kernel sees ports, not hostnames. Which capability is enforced at which level: [enforcement](./docs/kernel-enforcement.md).
 - **It won't pretend.** On a kernel that can't enforce, `berth doctor` says so and the demos fail. `berth attest <runId>` produces a record of a run and the enforcement measured for its boot, checkable with a standalone script, and it says `NOT_ENFORCED` when nothing was.
 - **Not a defence against root on the host.** Anyone who can `docker exec` into the container bypasses all of it. What's in scope and what isn't: [threat model](./docs/threat-model.md).
