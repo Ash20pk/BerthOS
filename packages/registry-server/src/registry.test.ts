@@ -26,12 +26,12 @@ async function withServer(fn: (app: Awaited<ReturnType<typeof createRegistryServ
   }
 }
 
-function multipartBody(fields: Record<string, string>, boundary: string): string {
+function multipartBody(fields: Record<string, string>, boundary: string, bundle = "FAKE-TARBALL-BYTES"): string {
   let body = "";
   for (const [name, value] of Object.entries(fields)) {
     body += `--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`;
   }
-  body += `--${boundary}\r\nContent-Disposition: form-data; name="bundle"; filename="bundle.tar.gz"\r\nContent-Type: application/gzip\r\n\r\nFAKE-TARBALL-BYTES\r\n`;
+  body += `--${boundary}\r\nContent-Disposition: form-data; name="bundle"; filename="bundle.tar.gz"\r\nContent-Type: application/gzip\r\n\r\n${bundle}\r\n`;
   body += `--${boundary}--\r\n`;
   return body;
 }
@@ -95,6 +95,30 @@ test("rejects republishing the same name+version", async () => {
     });
     assert.equal(second.statusCode, 409);
     assert.match(JSON.parse(second.body).error, /already published/);
+  });
+});
+
+test("a rejected republish leaves the stored bundle untouched", async () => {
+  // The regression: the route wrote the new bytes to the version's blob path
+  // and only then hit the duplicate-version check, so a 409 still replaced
+  // what that version downloads as.
+  await withServer(async (app) => {
+    const boundary = "----berthtest-immutable";
+    const headers = { "content-type": `multipart/form-data; boundary=${boundary}` };
+    const first = await app.inject({ method: "POST", url: "/apps", headers, payload: multipartBody({ manifest: MANIFEST }, boundary, "ORIGINAL-BYTES") });
+    assert.equal(first.statusCode, 201);
+    const ownerToken = JSON.parse(first.body).ownerToken;
+
+    const second = await app.inject({
+      method: "POST",
+      url: "/apps",
+      headers: { ...headers, authorization: `Bearer ${ownerToken}` },
+      payload: multipartBody({ manifest: MANIFEST }, boundary, "REPLACEMENT-BYTES"),
+    });
+    assert.equal(second.statusCode, 409);
+
+    const download = await app.inject({ method: "GET", url: "/apps/sample-app/1.0.0/download" });
+    assert.equal(download.body, "ORIGINAL-BYTES", "the version must still serve the bytes it was published with");
   });
 });
 

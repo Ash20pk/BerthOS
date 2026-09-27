@@ -14,6 +14,7 @@ import { pipeline } from "node:stream/promises";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { loadManifest } from "@berthos/manifest-schema";
 import { sdkDependency } from "../util/sdk-dependency.js";
+import { SCAFFOLD_BUILD_APPROVALS } from "../util/build-approvals.js";
 
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -131,15 +132,12 @@ async function vendorSdk(targetDir: string): Promise<void> {
     await writeFile(pkgJsonPath, JSON.stringify(pkgJson, null, 2) + "\n");
   }
 
-  // pnpm (10.21+) refuses to run a fresh dependency's install script until
-  // it's explicitly approved, and protobufjs (an @berthos/sdk dependency, via
-  // its context-bus client) has a benign one (scripts/postinstall — just an
-  // optional-dep advisory). Outside this monorepo there's no prior approval
-  // on record, so a first-time `pnpm install` would otherwise hard-fail —
-  // pre-approve it so scaffolding a project actually finishes installable.
+  // Outside this monorepo pnpm has no record of which dependencies may run
+  // install scripts, and pnpm 11 fails the first install over any it wasn't
+  // told about. util/build-approvals.ts has the decision for each one.
   const workspaceYamlPath = join(targetDir, "pnpm-workspace.yaml");
   if (!existsSync(workspaceYamlPath)) {
-    await writeFile(workspaceYamlPath, stringifyYaml({ allowBuilds: { protobufjs: true } }));
+    await writeFile(workspaceYamlPath, stringifyYaml({ allowBuilds: SCAFFOLD_BUILD_APPROVALS }));
   }
 }
 

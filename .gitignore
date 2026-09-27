@@ -46,3 +46,6 @@ __pycache__/
 # recreated relative to the repo root. Nothing in the current tree does this,
 # but the shape is easy to reintroduce and trivially easy to `git add -A`.
 /var/
+
+# Daemon source copied into the published package by scripts/bundle-daemons.mjs
+packages/docker-orchestrator/daemons/

@@ -1,6 +1,6 @@
 {
   "name": "@berthos/adapter-e2b",
-  "version": "0.2.1",
+  "version": "0.2.4",
   "description": "DeployAdapter implementation targeting E2B sandboxes",
   "type": "module",
   "main": "./dist/index.js",

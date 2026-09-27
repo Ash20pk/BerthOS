@@ -62,12 +62,13 @@ Each check prints `✔` ok, `!` warn, `✘` fail or `?` unknown, with what was o
 
 ### How the Landlock check works
 
-Landlock can be missing in two ways:
+Landlock can fall short in three ways:
 
 1. **The syscalls aren't there.** They return `ENOSYS`. Docker Desktop for Mac's kernel is like this.
 2. **The syscalls are there but Landlock isn't active in the kernel.** Every call succeeds and nothing is ever denied.
+3. **Landlock works, but it's too old.** Berth's policy needs Landlock ABI 4 (Linux 6.7+), which adds network rules. On Linux 5.13 to 6.6 file rules are enforced but network rules aren't, and a production image refuses to start. `doctor` reports this as `NOT ACTIVE`, naming the kernel's ABI.
 
-The second is the dangerous one, because everything looks fine. So the probe doesn't ask the kernel what it supports. It builds a Landlock ruleset that grants nothing and tries to write a file. An enforcing kernel refuses the write. The probe needs no special privileges.
+The second is the dangerous one, because everything looks fine. So the probe doesn't ask the kernel what it supports. It builds a Landlock ruleset that grants nothing and tries to write a file. An enforcing kernel refuses the write. The probe then checks the ABI the kernel reported. It needs no special privileges.
 
 The probe tests the kernel, not your app's policy.
 

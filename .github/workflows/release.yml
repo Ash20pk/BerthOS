@@ -136,6 +136,41 @@ jobs:
             exit 1
           fi
 
+      # Install exactly what was packed into an empty project, the way a user
+      # would, before anything can be published. Tests run against the
+      # workspace; only this catches a package that is broken as shipped
+      # (0.2.1's @berthos/sdk ran a postinstall script it didn't include, so
+      # every install of it, and of the CLI, failed).
+      - name: Install the packed npm packages from scratch
+        run: |
+          smoke="$RUNNER_TEMP/install-check"
+          mkdir -p "$smoke" && cd "$smoke"
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund "$GITHUB_WORKSPACE"/dist/npm/*.tgz
+          npx --no-install berth --version
+
+      # Then use it: scaffold an app with the packed CLI and build a real
+      # production image with `berth test`. That is the first thing a user
+      # does after installing, and it needs everything the image build takes
+      # from the package (0.2.2 couldn't: the daemon sources it compiles were
+      # never shipped). The app's @berthos/* dependencies point at the packed
+      # tarballs, since this version isn't on the registry yet.
+      - name: Build an app image with the packed packages
+        run: |
+          smoke="$RUNNER_TEMP/install-check"
+          berth="$smoke/node_modules/.bin/berth"
+          cd "$smoke"
+          "$berth" init smoke-app --template hello-world || true
+          cd smoke-app
+          # The SDK's own @berthos/* dependencies aren't on the registry at
+          # this version either, so the app is pointed at their tarballs too.
+          for dep in sdk manifest-schema; do
+            npm pkg set "dependencies.@berthos/${dep}=file:$(ls "$GITHUB_WORKSPACE"/dist/npm/berthos-${dep}-[0-9]*.tgz)"
+          done
+          npm install --no-audit --no-fund
+          npm run build
+          "$berth" test
+
       - name: Build the Python SDK
         run: |
           pip install build twine

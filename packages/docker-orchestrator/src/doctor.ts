@@ -146,6 +146,22 @@ out["fuse"] = os.path.exists("/dev/fuse")
 print(json.dumps(out))
 `;
 
+/**
+ * The Landlock ABI Berth's policy needs to be fully enforced. agent-init always
+ * handles network rights (AccessNet, ABI 4, Linux 6.7), and write rights
+ * including truncate (ABI 3). On an older ABI its best-effort ruleset drops what
+ * the kernel can't do and reports PartiallyEnforced, which a production image
+ * (BERTH_REQUIRE_ENFORCEMENT=1) refuses to run under. A probe that only checks
+ * whether a ruleset denies a write says ACTIVE on those kernels, so the ABI is
+ * part of the verdict.
+ */
+export const MIN_LANDLOCK_ABI = 4;
+
+/** True when a probe that enforces did so below the ABI Berth's policy needs. */
+function belowRequiredAbi(abi: number | null | undefined): abi is number {
+  return typeof abi === "number" && abi < MIN_LANDLOCK_ABI;
+}
+
 /** Raw probe result, as parsed from the container's stdout. */
 export interface LandlockProbeResult {
   status: "enforcing" | "present_not_enforcing" | "unsupported";
@@ -505,6 +521,15 @@ function landlockCheck(probe: LandlockProbeResult, runtime?: string): DoctorChec
   };
   switch (probe.status) {
     case "enforcing":
+      if (belowRequiredAbi(probe.abi)) {
+        return {
+          ...base,
+          status: "fail",
+          detail: `Landlock enforces here, but at ABI ${probe.abi}; Berth's policy needs ABI ${MIN_LANDLOCK_ABI} (Linux 6.7+), so it is only partly applied: network rules are not, and a production image refuses to start`,
+          remedy:
+            "Run Berth on a Linux 6.7+ kernel. `berth dev` still runs here with the rules this kernel supports, but outbound network is not restricted by Landlock. On macOS, `berth doctor --fix` sets up a VM with a new enough kernel.",
+        };
+      }
       return {
         ...base,
         status: "ok",
@@ -559,7 +584,7 @@ import { dirname, join } from "node:path";
 
 interface CacheFile {
   /** Keyed by the daemon's kernel + arch: the answer changes only when that does. */
-  [kernelAndArch: string]: { status: LandlockProbeResult["status"]; reason?: string; probedAt: string };
+  [kernelAndArch: string]: { status: LandlockProbeResult["status"]; abi?: number | null; reason?: string; probedAt: string };
 }
 
 function cachePath(): string {
@@ -610,6 +635,27 @@ export function unenforcedBanner(detail: string): string {
 }
 
 /**
+ * The banner for a kernel that enforces Landlock, but below the ABI Berth's
+ * policy needs. Separate from unenforcedBanner() because "nothing is refused"
+ * would be false here: undeclared writes are refused, undeclared connections
+ * are not.
+ */
+export function partialEnforcementBanner(detail: string): string {
+  const line = "─".repeat(72);
+  return [
+    line,
+    "  ENFORCEMENT IS ONLY PARTLY ACTIVE ON THIS HOST",
+    "",
+    `  ${detail}`,
+    "",
+    "  An undeclared write is refused, but an undeclared outbound connection is",
+    "  not. Treat this host as unrestricted on the network. Run `berth doctor`",
+    "  for the details.",
+    line,
+  ].join("\n");
+}
+
+/**
  * Determines, and caches, whether the daemon's kernel can enforce Landlock.
  *
  * Cached because this is a property of a kernel, not of a boot, and re-probing
@@ -632,7 +678,7 @@ export async function enforcementStatusForBoot(
   image: string,
   runtime?: string,
   opts: { fresh?: boolean } = {},
-): Promise<{ status: LandlockProbeResult["status"] | "unknown"; reason?: string }> {
+): Promise<{ status: LandlockProbeResult["status"] | "unknown"; abi?: number | null; reason?: string }> {
   let key: string;
   try {
     const info = (await docker.info()) as { KernelVersion?: string; Architecture?: string };
@@ -647,14 +693,14 @@ export async function enforcementStatusForBoot(
   const cache = readCache();
   if (!opts.fresh) {
     const hit = cache[key];
-    if (hit) return { status: hit.status, reason: hit.reason };
+    if (hit) return { status: hit.status, abi: hit.abi, reason: hit.reason };
   }
 
   try {
     const probe = await probeKernel(docker, image, runtime);
-    cache[key] = { status: probe.status, reason: probe.reason, probedAt: new Date().toISOString() };
+    cache[key] = { status: probe.status, abi: probe.abi, reason: probe.reason, probedAt: new Date().toISOString() };
     writeCache(cache);
-    return { status: probe.status, reason: probe.reason };
+    return { status: probe.status, abi: probe.abi, reason: probe.reason };
   } catch {
     // Deliberately not cached: a probe that failed to run tells us nothing about
     // the kernel, and caching it would suppress the banner until the kernel
@@ -677,8 +723,15 @@ export async function warnIfEnforcementInactive(docker: Docker, image: string, r
   if (process.env.BERTH_NO_ENFORCEMENT_BANNER === "1") return;
 
   try {
-    const { status, reason } = await enforcementStatusForBoot(docker, image, runtime);
-    if (status === "unsupported") {
+    const { status, abi, reason } = await enforcementStatusForBoot(docker, image, runtime);
+    if (status === "enforcing" && belowRequiredAbi(abi)) {
+      bannerPrinted = true;
+      console.warn(
+        partialEnforcementBanner(
+          `This kernel's Landlock is ABI ${abi}; Berth's policy needs ABI ${MIN_LANDLOCK_ABI} (Linux 6.7+), and a production image will refuse to start here.`,
+        ),
+      );
+    } else if (status === "unsupported") {
       bannerPrinted = true;
       console.warn(
         unenforcedBanner(

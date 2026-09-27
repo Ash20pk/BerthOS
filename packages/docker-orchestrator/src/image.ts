@@ -14,14 +14,25 @@ const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 /** packages/docker-orchestrator/docker — shipped alongside dist/ via the package's "files" field. */
 const DOCKER_ASSETS_DIR = join(__dirname, "..", "docker");
-/** packages/context-bus-daemon — a sibling workspace package, staged into every build context so base.Dockerfile's builder stage can compile it. */
-const CONTEXT_BUS_DAEMON_DIR = join(__dirname, "..", "..", "context-bus-daemon");
-/** packages/agent-init — same reasoning as CONTEXT_BUS_DAEMON_DIR. */
-const AGENT_INIT_DIR = join(__dirname, "..", "..", "agent-init");
-/** packages/semantic-fs-daemon — same reasoning as CONTEXT_BUS_DAEMON_DIR. */
-const SEMANTIC_FS_DAEMON_DIR = join(__dirname, "..", "..", "semantic-fs-daemon");
-/** packages/mesh-daemon — same reasoning as CONTEXT_BUS_DAEMON_DIR. */
-const MESH_DAEMON_DIR = join(__dirname, "..", "..", "mesh-daemon");
+/**
+ * Where a sandbox daemon's source is, for the builder stages in
+ * base.Dockerfile to compile. In this repository it's the sibling package
+ * (packages/<daemon>); a published @berthos/docker-orchestrator carries a copy
+ * under daemons/ instead (scripts/bundle-daemons.mjs), since npm installs no
+ * sibling. The checkout wins when both exist, so local edits to a daemon are
+ * what gets built.
+ */
+export function daemonSourceDir(daemon: string, pkgRoot = join(__dirname, "..")): string {
+  const sibling = join(pkgRoot, "..", daemon);
+  return existsSync(join(sibling, daemon === "semantic-fs-daemon" ? "go.mod" : "Cargo.toml"))
+    ? sibling
+    : join(pkgRoot, "daemons", daemon);
+}
+
+const CONTEXT_BUS_DAEMON_DIR = daemonSourceDir("context-bus-daemon");
+const AGENT_INIT_DIR = daemonSourceDir("agent-init");
+const SEMANTIC_FS_DAEMON_DIR = daemonSourceDir("semantic-fs-daemon");
+const MESH_DAEMON_DIR = daemonSourceDir("mesh-daemon");
 
 export type BuildTarget = "dev" | "production";
 
@@ -69,6 +80,19 @@ function findWorkspaceRoot(startDir: string): string | undefined {
 }
 
 /**
+ * The pnpm workspace `appDir` is a member of, if any. A pnpm-workspace.yaml in
+ * the app's own directory doesn't count: that makes the app its own root, not a
+ * member, and `berth init` writes exactly that file into every project it
+ * scaffolds (to pre-approve protobufjs's install script). Treating it as a
+ * workspace sent every scaffolded app down `pnpm --filter <app> deploy`, which
+ * fails for a standalone project, so `berth test` failed on a fresh project.
+ */
+export function workspaceRootAbove(appDir: string): string | undefined {
+  const parent = dirname(appDir);
+  return parent === appDir ? undefined : findWorkspaceRoot(parent);
+}
+
+/**
  * What never belongs in a build context, whichever of the three copies below
  * is doing the copying.
  *
@@ -105,7 +129,7 @@ function excludedFromBuildContext(appDir: string, src: string): boolean {
  * directory. Standalone (non-workspace) apps just get a normal prod install.
  */
 async function stageProductionSource(appDir: string, stagingDir: string): Promise<void> {
-  const workspaceRoot = findWorkspaceRoot(appDir);
+  const workspaceRoot = workspaceRootAbove(appDir);
 
   if (workspaceRoot) {
     const pkgJson = JSON.parse(await readFile(join(appDir, "package.json"), "utf-8")) as { name: string };
@@ -292,6 +316,13 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
     }
 
     await cp(DOCKER_ASSETS_DIR, join(stagingDir, "docker"), { recursive: true });
+    for (const dir of [CONTEXT_BUS_DAEMON_DIR, AGENT_INIT_DIR, SEMANTIC_FS_DAEMON_DIR, MESH_DAEMON_DIR]) {
+      if (!existsSync(dir)) {
+        throw new Error(
+          `daemon source not found at ${dir}: this @berthos/docker-orchestrator has neither the repository's packages/ nor a bundled daemons/ copy (run its build, which bundles them)`,
+        );
+      }
+    }
     await cp(CONTEXT_BUS_DAEMON_DIR, join(stagingDir, "context-bus-daemon"), {
       recursive: true,
       // target/ is Cargo's build output — large, and rebuilt fresh inside

@@ -1,6 +1,6 @@
 {
   "name": "@berthos/sdk",
-  "version": "0.2.1",
+  "version": "0.2.4",
   "description": "Resident app SDK: defineApp(), lifecycle hooks, context bus client — runs inside the sandbox",
   "type": "module",
   "main": "./dist/index.js",
@@ -22,6 +22,7 @@
     "dist",
     "proto",
     "models",
+    "scripts/prefetch-embedding-model.mjs",
     "!dist/**/*.test.*"
   ],
   "license": "Apache-2.0",
