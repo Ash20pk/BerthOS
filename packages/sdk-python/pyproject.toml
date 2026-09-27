@@ -1,6 +1,6 @@
 [project]
 name = "berthos-sdk"
-version = "0.1.0"
+version = "0.2.0"
 description = "Python resident-app SDK for Berth — reuses the same wire protocols as @berthos/sdk (RPC newline-JSON framing, the manifest shape), with idiomatic Python runtime glue rather than a port of the TypeScript code."
 readme = "README.md"
 license = "Apache-2.0"
