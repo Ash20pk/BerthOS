@@ -1,35 +1,75 @@
-# Kubernetes Adapter Reference
+# Kubernetes adapter reference
 
-`@berthos/adapter-k8s` implements the same `DeployAdapter` interface as `adapter-e2b`/`adapter-daytona` (`packages/adapters/adapter-core/src/index.ts`), targeting a Kubernetes cluster instead of a managed sandbox provider. Select it via `--fleet=k8s`, or a `~/.berthrc` alias with `"adapter": "k8s"`.
+`@berthos/adapter-k8s` deploys a Berth sandbox to a Kubernetes cluster as a Pod. Use it when you want to run resident apps on your own cluster rather than on E2B or Daytona.
 
-## Why K8s wasn't built alongside E2B/Daytona
+## Use it
 
-`K8s` is one of four supported infra backends, and self-hosted Kubernetes comes up for enterprise deployments — but of the originally planned build phases, only "Deploy to E2B / Daytona via adapters" (Phase 1) was ever actually committed to. A K8s adapter had no phase, milestone, or owner in that original scope; it was architecture-table/vision/GTM language, not a scheduled build item. This adapter closes that specific gap as a standalone addition.
+Install the adapter and the Kubernetes client where the CLI is installed (add `-g` if the CLI is global):
+
+```bash
+npm install @berthos/adapter-k8s @kubernetes/client-node
+```
+
+Make sure the cluster can pull the image, then deploy from the app's directory:
+
+```bash
+berth deploy --fleet=k8s
+berth deploy --fleet=k8s --count=3 --region=us-east-1
+```
+
+`berth deploy` builds the production image and starts it, but the adapter doesn't push it anywhere. Push it to a registry the cluster can pull from, or for a local [kind](https://kind.sigs.k8s.io) cluster, `kind load docker-image <image>`.
+
+The adapter uses your default kubeconfig (`KUBECONFIG` or `~/.kube/config`) and deploys to the namespace in `BERTH_K8S_NAMESPACE` (default `default`).
+
+To keep settings under a name, add an alias to `~/.berthrc` and deploy with `--fleet=prod`:
+
+```json
+{
+  "prod": {
+    "adapter": "k8s",
+    "count": 2,
+    "region": "us-east-1",
+    "env": { "ANTHROPIC_API_KEY": "..." }
+  }
+}
+```
+
+`--count` and `--region` on the command line override the alias. If the alias carries `env`, keep the file private (`chmod 600 ~/.berthrc`); `berth` warns when it isn't. `berth fleet status k8s` lists the live Pods. `berth fleet scale` can add instances but can't remove them, because the adapter can't reconnect to an existing Pod by id; delete surplus Pods with `kubectl`.
 
 ## How it maps to `DeployAdapter`
 
-- **`upload()`** is a documented no-op, returning `target.imageRef` unchanged. Kubernetes has no platform-owned image registry the way E2B/Daytona do — this assumes the image is already resolvable by the cluster (pushed to a registry it can pull from in production, or loaded directly into a node via `kind load docker-image` for local dev/test, as this adapter's own milestone test does). A real registry-push step is a separate, larger addition, out of scope here.
-- **`start()`** creates a real `Pod` (`CoreV1Api.createNamespacedPod`) via `metadata.generateName` (letting Kubernetes assign a unique name rather than inventing an id-generation scheme), labeled `app.kubernetes.io/managed-by: berth`, `berth.dev/app-name: <name>`, and `berth.dev/instance: <randomly generated id>` — a per-instance label, generated before the Pod exists specifically so `previewUrl()` can later target this exact instance, not every instance sharing the same app name (relevant once `--count` starts more than one). If `berth.yml` declares `resources:`, the container spec gets `resources.requests` **and** `resources.limits` set equal for each declared field (Guaranteed QoS) — see the [manifest reference](./manifest-reference.md#resources-default-) for the full `cpu`/`memory_mb`/`gpu` mapping. Declaring none (the default) sends no `resources` field at all, unchanged from before this existed. `berth deploy --region=<value>` becomes a `nodeSelector: {"topology.kubernetes.io/region": <value>}` on the Pod spec — a real, standard topology label most managed clusters (EKS/GKE/AKS) set on every node; a cluster whose nodes don't carry it leaves the Pod genuinely unschedulable, the honest failure mode rather than a silent no-op.
-- **`teardown()`**/**`DeployHandle.stop()`** calls `CoreV1Api.deleteNamespacedPod`.
-- **`list()`** calls `CoreV1Api.listNamespacedPod` with the `app.kubernetes.io/managed-by=berth` selector (`LABEL_SELECTOR` in `packages/adapters/adapter-k8s/src/index.ts`), wrapping each result the same way `start()` does. Note: this is not scoped per app-name, unlike what you might expect — it filters only on the shared `managed-by` label, so it returns every Berth-managed Pod across every app in the namespace, not one app's instances.
-- **`streamLogs()`** uses the dedicated `Log` class (`@kubernetes/client-node`'s purpose-built log-follow API, not the generic `readNamespacedPodLog` REST call, which buffers a full response body rather than streaming) — it writes into a `PassThrough` stream, which is consumed as an `AsyncIterable` directly.
-- **`status()`** maps `pod.status.phase` (`Pending`→`starting`, `Running`→`running`, `Succeeded`/`Failed`→`stopped`/`error`).
-- **`previewUrl(handle, port)`** creates a real `ClusterIP` `Service` selecting on that instance's own `berth.dev/instance` label (so it targets exactly one Pod, not every instance of the app) and reports the in-cluster DNS name (`<service>.<namespace>.svc.cluster.local:<port>`). Only ever called by the CLI when the deployed app opted in via `berth.yml`'s `expose.preview: true` — see the [manifest reference](./manifest-reference.md#expose-default-browser-true-terminal-true-preview-false). This is in-cluster-only: a real public URL needs the cluster's own Ingress or a `LoadBalancer`-typed Service, neither of which this adapter provisions — same honesty as `upload()`'s no-op above. Kubernetes creates the Service's DNS entry regardless of whether anything is actually listening on the target port yet, so a Service existing isn't proof the app itself is serving that port — it only proves the DNS wiring is real.
-- **`rpcUrl(handle, port)`** — unlike `previewUrl()`, creates a `NodePort` `Service` (same per-instance `berth.dev/instance` selector) instead of a `ClusterIP` one, because this URL needs to be reachable from outside the cluster: the host-side manager process driving `bootNetworkedAgent({fleet})` (see [docs/agents-reference.md](./agents-reference.md#networked-crew-over-a-remote-fleet-e2b-daytona-k8s)) is neither a Pod nor in-cluster. Returns `http://<node-ip>:<assigned-node-port>`, preferring a node's `ExternalIP` and falling back to `InternalIP` (`reachableNodeIp()` in `packages/adapters/adapter-k8s/src/index.ts`) — the latter is what makes this reachable from a local `kind` cluster at all, since `kind`'s nodes have no `ExternalIP`. On a repeat call for the same instance/port, it reads the existing Service back instead of erroring on the duplicate create. **Real caveat:** a managed cloud cluster that firewalls node IPs from outside the cluster network has no reachable answer here — same caveat class `previewUrl()`'s in-cluster-only limitation already documents, just failing in the opposite direction (reachable in-cluster vs. reachable from outside it).
+The adapter implements the same `DeployAdapter` interface as the E2B and Daytona adapters.
 
-## A real, named rough edge: FUSE in a Pod
+| Method | What it does on Kubernetes |
+|---|---|
+| `upload()` | Nothing. Returns the image reference unchanged; the cluster must already be able to pull it. |
+| `start()` | Creates one Pod per instance, named `<app>-<random>`, with `restartPolicy: Never`. Labels: `app.kubernetes.io/managed-by: berth`, `berth.dev/app-name: <name>`, `berth.dev/instance: <id>`. |
+| `status()` | Maps the Pod phase: `Pending` → `starting`, `Running` → `running`, `Succeeded` → `stopped`, `Failed` → `error`. |
+| `streamLogs()` | Follows the container's logs. |
+| `list()` | Every Pod labeled `app.kubernetes.io/managed-by=berth` in the namespace, across all apps. |
+| `previewUrl(handle, port)` | Creates a `ClusterIP` Service for that one instance and returns `<service>.<namespace>.svc.cluster.local:<port>`. Reachable from inside the cluster only. Used when `berth.yml` sets [`expose.preview: true`](./manifest-reference.md#expose-default-browser-true-terminal-true-preview-false). |
+| `rpcUrl(handle, port)` | Creates a `NodePort` Service for that instance and returns `http://<node-ip>:<node-port>`, using a node's `ExternalIP`, or its `InternalIP` if none has one (as on kind). Used to reach an agent from outside the cluster ([networked crews](./agents-reference.md#networked-crew-over-a-remote-fleet-e2b-daytona-k8s)). |
+| `teardown()` / `stop()` | Deletes the Pod, and on teardown also the Services created for it. |
 
-Every Berth image runs `semantic-fs-daemon`, which mounts FUSE at `/context` — `docker-orchestrator`'s own container start already requests `--device /dev/fuse --cap-add SYS_ADMIN` for this. A Pod spec has no `Devices` field; the closest equivalent (what this adapter does) is a `hostPath` volume for `/dev/fuse` plus an explicit `SYS_ADMIN` capability grant on the container's `securityContext`. This is **not guaranteed to work under every cluster's Pod Security Admission policy** — `SYS_ADMIN` is a broad capability, and a cluster enforcing the "restricted" PSA level will reject it outright. This is named here deliberately rather than silently reached for `privileged: true` as an unexamined workaround. A cluster that needs to run Berth Pods under a stricter PSA level would need either a Pod Security Admission exemption for Berth's namespace, or a rework of semantic-fs-daemon's FUSE requirement — both out of scope for this adapter.
+Pod settings that come from the manifest and flags:
 
-## Verification
+- **`resources:`** in `berth.yml` sets both `requests` and `limits` to the same values (Guaranteed QoS): `cpu` → `cpu`, `memory_mb` → `memory` in `Mi`, `gpu` → `nvidia.com/gpu`. No `resources:` means no resource fields on the Pod. See the [manifest reference](./manifest-reference.md#resources-default-).
+- **`--region`** becomes `nodeSelector: {"topology.kubernetes.io/region": <value>}`. If no node carries that label, the Pod stays unschedulable.
+- **`env`** from a fleet alias becomes plain container environment variables in the Pod spec.
+- **`/context`** needs FUSE, so every Pod mounts `/dev/fuse` from the host and adds the `SYS_ADMIN` capability.
 
-Unlike `adapter-e2b` — which has a mocked unit test (`start()`/`previewUrl()` only, against a fake `e2b` module, never a live account) — and `adapter-daytona` — which has a mocked unit test (`upload()`/`start()`/`previewUrl()`, against a fake `@daytonaio/sdk` module, never a live account) — both need a live paid account to verify anything beyond that. This adapter gets a genuine local integration test via `kind` (Kubernetes-in-Docker), which needs no cloud account at all: `packages/adapters/adapter-k8s/test/k8s-adapter-milestone.mjs` provisions a throwaway `kind` cluster, builds and loads a real Berth production image, and exercises the full lifecycle (`upload` → `start` → `status` reaching `running` → `list` → `streamLogs` carrying real container output → `previewUrl()` creating a real `Service` whose DNS name is confirmed to resolve from inside the cluster → `teardown` actually deleting the Pod) against the live cluster's real API — wired into CI via `.github/workflows/k8s-adapter-milestone.yml`.
+## Limits
 
-`rpcUrl()` itself isn't exercised by that `kind` milestone test — it has mocked-adapter unit test coverage only (same posture E2B/Daytona's `rpcUrl()` implementations already have), not a live-cluster NodePort-reachability check. See [docs/agents-reference.md](./agents-reference.md#networked-crew-over-a-remote-fleet-e2b-daytona-k8s)'s caveats for what "real" means for this path today.
+- **Pod Security Admission.** The `SYS_ADMIN` capability is rejected under the `restricted` level. Berth's namespace needs a policy that allows it.
+- **Kernel enforcement depends on the node.** The node's kernel needs Landlock (Linux 6.7+) for any capability to be enforced; see [enforcement](./kernel-enforcement.md).
+- **Credentials are visible in the Pod spec.** Alias `env` values are not stored as Kubernetes `Secret` objects, so `kubectl get pod -o yaml` shows them. See [secrets](./secrets-reference.md#what-this-does-not-protect-against).
+- **`rpcUrl()` needs reachable node IPs.** A cluster that firewalls its nodes from outside has no usable RPC URL.
 
 ## What's deliberately out of scope
 
-- Real registry-push authentication for `upload()` (ECR/GCR/Docker Hub, etc.) — today's no-op assumes the image is already reachable.
-- Anything beyond a single-container Pod per instance — no Deployments/StatefulSets, no readiness/liveness probes. Resource `requests`/`limits` themselves are now wired (see `start()` above) — what's still out is a GPU vendor other than NVIDIA's `nvidia.com/gpu` device-plugin resource name, and any autoscaling on top of a fixed request/limit.
-- Namespace provisioning, RBAC, or PSA-policy configuration — this adapter assumes a namespace and appropriate permissions already exist (`BERTH_K8S_NAMESPACE`, default `default`).
-- Pause/resume/fork/snapshot — a Pod has no native equivalent without cluster-level CRIU tooling this adapter doesn't set up, unlike E2B's pause/resume or Daytona's fork/snapshot (see [Computer Snapshots reference](./computer-snapshots-reference.md#remote-fleets-e2bdaytona-via---fleet)). `adapter-k8s` simply doesn't implement `DeployAdapter`'s optional `pause`/`resume`/`fork`/`snapshot` methods.
+- Pushing images to a registry, or registry authentication (ECR, GCR, Docker Hub).
+- Anything beyond one single-container Pod per instance: no Deployments or StatefulSets, no readiness or liveness probes, no autoscaling.
+- GPUs other than NVIDIA's `nvidia.com/gpu` resource.
+- Public URLs. The adapter creates no Ingress or `LoadBalancer` Service.
+- Creating namespaces, RBAC or Pod Security policy. The namespace and permissions must already exist.
+- Pause, resume, fork and snapshot. The adapter doesn't implement these optional `DeployAdapter` methods (see [computer snapshots](./computer-snapshots-reference.md#remote-fleets-e2bdaytona-via---fleet)).

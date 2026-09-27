@@ -1,84 +1,100 @@
-# App Registry Reference (Phase 5)
+# App registry reference
 
-Phase 5 opens the framework to external developers: a place to publish resident apps, discover what others have published, and scaffold a new project from a published one — plus making `@berthos/sdk` itself something a genuinely external project can depend on. This phase's registry/marketplace and SDK-openness goals are in scope here; usage-based billing and a hosted, multi-tenant service are not — those remain longer-term goals, not a Phase 5 build item (see [Scope](#scope) below).
+The app registry is a small server you run yourself for sharing resident apps. `berth publish` uploads an app to it, and `berth init --registry` starts a new project from one. Use it to share apps inside a team or on a closed network.
 
-## Architecture
+## Use it
 
-`@berthos/registry-server` (`packages/registry-server`) is a small Fastify HTTP API backed by `node:sqlite` (Node's built-in SQLite — same "real database, no ORM" instinct as Phase 4's sidecar index, minus an extra dependency) for metadata and a plain directory tree for blob storage.
+Start a registry:
 
-```
-berth publish --registry=<url> ──► POST /apps (multipart: manifest + bundle.tar.gz)
-                                        │
-                                        ▼
-                              validateManifest() (same Zod schema berth.yml
-                              validation always used) — malformed or
-                              republished name+version is rejected, not
-                              silently overwritten (versions are immutable,
-                              same as npm)
-                                        │
-                                        ▼
-                         SQLite index (name, version, description,
-                         author, capabilities, exports, published_at)
-                                        │
-                                        ▼
-                    blob store: <dataDir>/blobs/<name>/<version>/bundle.tar.gz
-
-berth init --registry=<url> --template=<name> ──► GET /apps/:name/latest
-                                                    GET /apps/:name/:version/download
-                                                        │
-                                                        ▼
-                                          extract into the new project,
-                                          rewrite berth.yml's name,
-                                          vendor @berthos/sdk (see below)
+```bash
+npm install -g @berthos/registry-server
+berth-registry     # listens on http://127.0.0.1:4873
 ```
 
-Run the server standalone with `pnpm --filter @berthos/registry-server exec node dist/server.js` (env: `BERTH_REGISTRY_PORT`, `BERTH_REGISTRY_HOST`, `BERTH_REGISTRY_DATA_DIR`), or embed it via `createRegistryServer({ dataDir })` (returns a Fastify instance — call `.listen()` yourself; this is what the milestone test below does in-process on an ephemeral port).
+Publish an app from its directory:
+
+```bash
+berth publish --registry http://localhost:4873
+```
+
+The first publish of a name prints an owner token. Save it; it isn't shown again. Every later version of that name needs it:
+
+```bash
+berth publish --registry http://localhost:4873 --token <owner-token>
+# or: BERTH_REGISTRY_TOKEN=<owner-token> berth publish --registry http://localhost:4873
+```
+
+Start a new project from a published app:
+
+```bash
+berth init my-app --registry http://localhost:4873 --template notes
+```
+
+For a registry on another machine, serve it over HTTPS so the owner token isn't sent in the clear. See [TLS](./tls-reference.md).
+
+## How it works
+
+`berth publish` builds the app's production Docker image, packs the app directory into `dist-bundle/publish-bundle.tar.gz` (skipping `node_modules`, `dist-bundle` and `vendor`), and uploads the bundle with the app's `berth.yml`. The registry validates the manifest with the same schema `berth dev` uses, stores the metadata in SQLite and the bundle on disk. The Docker image stays local; only the source bundle is uploaded.
+
+`berth init --registry` downloads the latest version of the named app, extracts it as the new project, sets `name:` in its `berth.yml` to the new project's name, vendors the SDK (see below), runs `pnpm install` and validates the manifest.
+
+Without `--registry`, `berth publish` still builds the image and writes the bundle locally, and uploads nothing.
+
+## Commands
+
+| Command | Flags |
+|---|---|
+| `berth publish` | `--registry <url>`, `--token <value>` (or `BERTH_REGISTRY_TOKEN`), `--author <name>`, `--ca <path>`, `--insecure` |
+| `berth init [name]` | `--registry <url>`, `--template <app name>` (prompted if omitted), `--ca <path>`, `--insecure` |
+
+`--ca` and `--insecure` are described in [TLS](./tls-reference.md#clients).
+
+## Server configuration
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `BERTH_REGISTRY_PORT` | `4873` | Port to listen on |
+| `BERTH_REGISTRY_HOST` | `127.0.0.1` | Address to bind. Set `0.0.0.0` to accept remote connections. |
+| `BERTH_REGISTRY_DATA_DIR` | `./.berth-registry-data` | Holds `registry.sqlite` and `blobs/<name>/<version>/bundle.tar.gz` |
+| `BERTH_REGISTRY_TLS_*` | unset | Serve HTTPS. See [TLS](./tls-reference.md). |
+
+To embed it, `createRegistryServer({ dataDir, tls?, logger? })` returns a Fastify instance; call `.listen()` yourself.
+
+Uploads are limited to 100 MB.
 
 ## Endpoints
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/apps` | Publish — multipart fields `manifest` (raw `berth.yml` text), `bundle` (the gzipped tarball), `author` (optional). `Authorization: Bearer <ownerToken>` required for any name after its first publish. |
-| `GET` | `/apps` | List the latest version of every published app; `?q=` filters by name/description substring |
-| `GET` | `/apps/:name` | All published versions of one app, newest first |
-| `GET` | `/apps/:name/:version` | One version's metadata (`:version` may be `latest`) |
-| `GET` | `/apps/:name/:version/download` | The raw `bundle.tar.gz` bytes |
+| `POST` | `/apps` | Publish. Multipart fields: `manifest` (the `berth.yml` text), `bundle` (the gzipped tarball), `author` (optional). Needs `Authorization: Bearer <ownerToken>` for any name already published. Returns `201` with `name`, `version`, `publishedAt`, and `ownerToken` on a name's first publish. |
+| `GET` | `/apps` | Latest version of every app. `?q=` filters by name or description. |
+| `GET` | `/apps/:name` | Every version of one app, newest first |
+| `GET` | `/apps/:name/:version` | One version's metadata. `:version` may be `latest`. |
+| `GET` | `/apps/:name/:version/download` | The `bundle.tar.gz` bytes |
+| `GET` | `/health` | `{"status":"ok"}` |
 
-## `berth publish --registry=<url>`
+Metadata fields: `name`, `version`, `description`, `author`, `capabilities`, `exports`, `publishedAt`.
 
-Unchanged from Phase 1 up through building the production Docker image and writing `dist-bundle/publish-bundle.tar.gz` locally. What's new: that bundle is now **actually gzipped** (it was previously a plain tar mislabeled `.tar.gz` — harmless when nothing consumed it, but the registry serves it as `application/gzip` and `berth init --registry` gunzips it back down, so this got fixed as part of wiring publish up for real). With `--registry=<url>`, the CLI reads `berth.yml` and the bundle, and `POST`s both as multipart form data — no separate "create" step.
+Errors are JSON `{"error": "..."}`:
 
-**Namespace ownership, npm/PyPI-style.** The first-ever publish of an app *name* needs no credential and mints that name's owner token, returned once in the response (`berth publish` prints it — save it, it's never shown again). Every later publish of that same name must present it as `Authorization: Bearer <token>` (`--token`, or `BERTH_REGISTRY_TOKEN`), or the registry returns `401`. This closes the gap where anyone reaching the registry could publish a colliding-name version over an existing app with no identity check at all — it does not add a user/org model or rate limiting (see Scope below); it's specifically "does the next publish of this name belong to whoever published it first."
+| Status | When |
+|---|---|
+| `400` | Missing `manifest` or `bundle`, or the manifest is invalid |
+| `401` | The name is already published and the owner token is missing or wrong |
+| `404` | No such app or version |
+| `409` | That name and version are already published |
 
-## `berth init --registry=<url> --template=<name>`
-
-Resolves `<name>`'s latest version, downloads and extracts the bundle as the new project, then rewrites the extracted `berth.yml`'s `name:` field to whatever the new project was named (a downloaded bundle is a real published app with its own name baked in, not a `{{name}}`-templated scaffold like the local `hello-world`/`browser-native` templates).
+`latest` means the highest version number, not the most recently published. Publishing `1.5.0` after `2.0.0` leaves `2.0.0` as latest.
 
 ## Making `@berthos/sdk` installable outside this monorepo
 
-This is the other half of Phase 5's "open SDK for external developers" — and the part that surfaced the most real bugs, because it's the first time anything in this repo tried to run `@berthos/sdk` **outside** the pnpm workspace that has always resolved it via symlinks.
+A scaffolded project has to install `@berthos/sdk` without this repo's pnpm workspace. So `berth init` copies a self-contained SDK tarball into the project as `vendor/berth-sdk.tgz` and points `package.json` at it with `"@berthos/sdk": "file:./vendor/berth-sdk.tgz"`. It also writes a `pnpm-workspace.yaml` with `allowBuilds: { protobufjs: true }`, so pnpm 10+ runs the SDK dependency's install script without asking.
 
-`packages/sdk/scripts/build-external.mjs` (run as part of `pnpm --filter @berthos/sdk build`) produces `packages/sdk/dist-external/berth-sdk.tgz`: an esbuild bundle of `index.ts`/`runtime.ts` with `@berthos/manifest-schema` (the one workspace-internal dependency) inlined, `zod`/`protobufjs`/`yaml` (real npm packages) kept as declared `dependencies`, and hand-mirrored `.d.ts` declarations (including a copy of `@berthos/manifest-schema`'s types, since `BerthManifest` leaks into `AppContext`'s public shape) so a consuming app's own `tsc` still type-checks — packaged with `npm pack` so it's a standard, installable tarball, not a hand-rolled archive.
-
-`berth init`'s `vendorSdk()` (`packages/cli/src/commands/init.ts`) copies that tarball into the new project as `vendor/berth-sdk.tgz` and rewrites `package.json`'s `"@berthos/sdk"` entry to `"file:./vendor/berth-sdk.tgz"` — replacing whatever was there (`"^0.1.0"` in the local templates, `"workspace:*"` in a real first-party app pulled from the registry; **neither resolves** once the project is copied anywhere outside this repo's pnpm workspace). It also pre-approves protobufjs's `postinstall` script via a generated `pnpm-workspace.yaml` (`allowBuilds: { protobufjs: true }`) — pnpm 10+ refuses to run any dependency's install script without explicit approval, and outside this monorepo there's no prior approval on record, so a first `pnpm install` would otherwise hard-fail on a script that's just a benign optional-dependency advisory.
-
-This makes the vendoring step, not tarball construction, the part worth trusting: `vendor/berth-sdk.tgz` travels with the scaffolded project, so `pnpm install && pnpm build` succeeds with zero access to this monorepo — verified for real below, not assumed.
+The tarball, `packages/sdk/dist-external/berth-sdk.tgz`, is built by `pnpm --filter @berthos/sdk build`. It bundles the SDK and its manifest types, and depends on `zod`, `protobufjs` and `yaml` from npm. If `berth init` can't find it, it warns and leaves the dependency unchanged.
 
 ## Scope
 
-- **Single-node.** No user/org model, no API key beyond the per-name owner token above, no rate limiting. Fine for a local registry or a trusted internal one; not what you'd run as a public multi-tenant service.
-- **No billing/usage metering.** Usage-based revenue for a published app's author, and any "first external revenue" milestone, aren't implemented — they need a real payments integration and real paying users, neither of which exists yet.
-- **`latest` means highest semver**, not most-recently-published — publishing `1.5.0` after `2.0.0` doesn't make `1.5.0` "latest".
-
-## Verification status
-
-**Fully verified**, via `packages/cli/test/registry-milestone.mjs` (real Fastify server, real SQLite, real filesystem blob storage — no mocks): it scaffolds a throwaway app from the local `hello-world` template, publishes it (a real Docker image build, same as any other `berth publish`) to a live registry instance, confirms the registry indexed and can list/search/serve it back, has a *second* `berth init` install it from the registry into a separate OS temp directory outside this repo's pnpm workspace, confirms `@berthos/sdk` was correctly re-vendored there, runs a real `pnpm install` + `pnpm build`, and boots the scaffolded app's own vendored `@berthos/sdk` runtime — asserting a real `ping` RPC round-trip over stdio.
-
-## Running it yourself
-
-```bash
-pnpm build   # needed once so @berthos/sdk's dist-external/ bundle exists
-node packages/cli/test/registry-milestone.mjs
-```
-
-Requires Docker Desktop running (the publish step builds a real production image).
+- **Self-hosted, single node.** No users, organisations or rate limiting. The only credential is the per-name owner token. Fine for a local or trusted internal registry, not for a public service.
+- **Owner tokens can't be recovered or rotated.** Lose the token and you can't publish new versions of that name.
+- **No billing or usage metering.**
+- A public, hosted registry is on the [roadmap](../ROADMAP.md#later).

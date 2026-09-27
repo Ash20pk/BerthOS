@@ -1,51 +1,85 @@
-# Egress Broker Reference
+# Egress broker reference
 
-`browser:navigate:<pattern>`, `network:host:<pattern>`, and `github:*` capabilities are declared and parsed like any other, but Landlock has no way to enforce them — they're API/host scopes, not filesystem paths or bare TCP ports. `packages/docker-orchestrator/docker/egress-broker.cjs` closes that gap for host-level scoping.
+The egress broker is a small HTTP proxy inside the sandbox that lets an app reach only the hostnames its manifest declares. Use it when an app needs to browse or call an HTTP API on specific hosts. The kernel can scope outbound traffic by port but not by hostname, so this part is enforced by the proxy.
 
-**`browser:navigate:<pattern>` and `network:host:<pattern>` are the same mechanism under two names.** `browser:navigate:*` is `apps/browser-native`'s own name for it (Chromium's `--proxy-server` launch flag already points at this broker); `network:host:<pattern>` is the generic form — declare it and **any** resident app gets the identical broker treatment, not just one that also drives a browser. Before this generalized, the broker only ever recognized `browser:navigate:`, so a plain `fetch()`-based integration had no standardized way to get host-scoped egress at all — its only options were the coarse, explicitly-discouraged `network:connect:<port>` escape hatch, or building an entire bespoke MITM broker like `github-api-broker.cjs`'s (real overkill for something that doesn't need path/verb-level scoping). See `examples/resident-apps/http-fetch` for a real, non-browser app using `network:host:*`, and `examples/resident-apps/generic-connector` (`@berthos/sdk`'s `defineConnectorApp()`) for a whole *category* of apps — a declarative REST-API-integration pattern — built on this same generalized capability rather than one bespoke integration at a time. See [sdk-reference.md](./sdk-reference.md#defineconnectorappconfig-a-resident-app-from-a-declarative-rest-api-description).
+## Use it
 
-## What a pattern covers, and what it never covers
+Declare the hosts the app may reach, plus the broker's local port so the kernel lets the app connect to it:
 
-A scope names a host glob and, optionally, a port: `example.com`, `*.github.com`, `network:host:internal-db.corp:5432`, `network:host:example.com:*`.
+```yaml
+# berth.yml
+capabilities:
+  - network:host:example.com
+  - network:connect:8090      # the broker's port; the only outbound port the app gets
+```
 
-- **Ports.** A scope that names no port covers **80 and 443** — what a browser needs. Anything else has to be declared. The port used to be parsed and never checked, so `CONNECT internal-db.corp:5432` went through for an app declaring `browser:navigate:*`.
-- **`*` is not a skeleton key.** Loopback, RFC1918, link-local (including `169.254.169.254`, cloud instance metadata), CGNAT and multicast are refused under **every** pattern. `browser:navigate:*` means "any site on the internet", not "and the metadata service, and the Docker bridge, and the host". `host.docker.internal` is caught by the address check rather than by name, since `container.ts` wires it to `host-gateway`.
-- **The address is pinned.** The name is resolved once, that address is validated, and that address is dialled. A check on the name followed by a second resolution inside `connect()` is what DNS rebinding exploits.
-- **Only `*` is a wildcard.** `?` is escaped rather than treated as a regex quantifier.
-- **A host a dedicated broker owns is refused here.** If the same policy declares a `github:*` capability — exactly when `entrypoint.sh` starts `github-api-broker.cjs`, which enforces method and path for `api.github.com` — then `api.github.com` is refused by this broker under every pattern, so the coarse host capability can't route around the fine one. An app declaring no `github:*` has no dedicated broker running and reaches it normally.
+Then route the app's `fetch()` through the broker, once, at module load:
 
-One honest limit: when `BERTH_EGRESS_UPSTREAM_PROXY` is set, the upstream proxy makes the outbound connection and does its own resolution, so there is no address here to validate. The host and port check still applies; the address deny-list cannot.
+```ts
+import { configureEgressProxy } from "@berthos/sdk";
 
-## Why no TLS interception is needed
+configureEgressProxy();   // no-op when no host capability is declared
+const res = await fetch("https://example.com/");
+```
 
-A forward proxy's `CONNECT host:port` line names its target in cleartext by protocol design — that's how HTTPS proxying has always worked, tunnel bytes after the CONNECT without ever decrypting them. So enforcing **host-level** scoping (`browser:navigate:*.github.com`, `network:host:api.example.com`) needs no CA generation, no cert injection, no MITM: the broker reads the target host straight off the CONNECT request, checks it against the app's declared `browser:navigate:<pattern>`/`network:host:<pattern>` capabilities (reusing the same glob-match logic as `@berthos/manifest-schema`'s `matchesCapability()`, duplicated rather than imported — see the file's own header comment on why), and either tunnels the bytes through unmodified or refuses before any flow.
+`browser:navigate:<pattern>` is the same capability under the name a browser app uses. `apps/browser-native` declares `browser:navigate:*` and points Chromium at the broker with its `--proxy-server` launch option instead of `configureEgressProxy()`.
 
-What this broker can't do: **path/verb-level** API scoping (`github:read:repos` vs `github:write:issues`) needs to see inside the TLS session, which does need real interception. That gap is closed by a second, genuinely different broker — `github-api-broker.cjs` — which does real MITM (CA generation, a per-host leaf cert for `api.github.com`, decrypt/decide/re-encrypt). See `docs/github-api-scoping-reference.md`. Neither `browser:navigate:*` nor `network:host:*` attempts this harder problem — reach for the MITM pattern only when verb/path-level scoping actually matters for what you're building.
+Working examples: [`examples/resident-apps/http-fetch`](../examples/resident-apps/http-fetch) (plain `fetch()`) and [`examples/resident-apps/generic-connector`](../examples/resident-apps/generic-connector), which uses `defineConnectorApp()` from the SDK ([reference](./sdk-reference.md#defineconnectorappconfig-a-resident-app-from-a-declarative-rest-api-description)).
 
-## How it's wired
+## How it works
 
-- `entrypoint.sh` starts the broker (`node /usr/local/bin/berth-egress-broker.js`, listening on `127.0.0.1:${BERTH_EGRESS_BROKER_PORT:-8090}`) for whichever app declares a `browser:navigate:*` or `network:host:*` capability, right after that app's `capability-policy.json` is generated. Xvfb/VNC startup is a separate check, still keyed to a bare `browser:*` capability — a `network:host:*` app never gets a display, only the broker.
-- The broker reads that same `capability-policy.json`'s `declaredCapabilities` at startup (no new config file) and filters for `browser:navigate:*`/`network:host:*` entries, treating them identically.
-- Once the broker's running, `entrypoint.sh` exports **`BERTH_EGRESS_PROXY_URL=http://127.0.0.1:<port>`** — the standardized variable any resident app's own code reads. `apps/browser-native/src/cdp-controller.ts` reaches the broker via Chromium's native `proxy: { server: ... }` launch option instead (a Playwright option mapping to `--proxy-server`, applying browser-wide); any other app calls `@berthos/sdk`'s `configureEgressProxy()` once at module load, which reads that same env var and routes its global `fetch()`/undici traffic through it — one line, no bespoke proxy-wiring code, no Chromium required.
-- The declaring app's `berth.yml` narrows its Landlock network grant from unrestricted (`network:connect:*`) to just the broker's own port (e.g. `network:connect:8090`) — the kernel becomes the backstop forcing traffic through the broker; the broker does the host-matching. **Caveat:** Landlock's network scoping is port-only, not address-scoped, so this technically permits connecting to that port on any host, not just `127.0.0.1` — the real enforcement is the broker's own refusal, not this Landlock rule in isolation.
-- **Multi-app mode limitation:** entrypoint.sh's multi-app path starts one shared broker instance for the whole container (reading one app's own policy), and the CLI's `assertAtMostOneEgressBrokerApp` refuses to boot more than one `browser:navigate:*`/`network:host:*` app together — the same "at most one, shared-port resource" constraint Xvfb/mesh already apply to their own single-instance daemons. Real per-app-isolated broker instances (own port, own pattern list per app, mirroring how multi-app Landlock rulesets already work) would be the fuller fix and isn't built yet.
+When an app declares `browser:navigate:*` or `network:host:*`, the sandbox starts the broker on `127.0.0.1:8090` and sets `BERTH_EGRESS_PROXY_URL` for the app. The broker reads the app's declared host patterns from its compiled capability policy.
+
+For HTTPS, the app sends `CONNECT host:port`, which names the target in cleartext. The broker checks the host and port, then either tunnels the encrypted bytes through untouched or refuses. It never decrypts anything. Plain `http://` requests get the same check.
+
+Keep the broker's port as the app's only `network:connect` grant. The kernel then blocks every other outbound port, so traffic can't go around the broker.
+
+## What a pattern covers
+
+A scope is a host glob with an optional port: `example.com`, `*.github.com`, `internal-db.corp:5432`, `example.com:*`.
+
+- **Ports.** A pattern with no port covers 80 and 443 only. Name any other port explicitly (`network:host:internal-db.corp:5432`), or use `:*` for any port.
+- **Wildcards.** Only `*` is a wildcard. `?` and other characters match literally.
+- **Internal addresses are always refused.** Loopback, private ranges (10/8, 172.16/12, 192.168/16), link-local (including the cloud metadata address `169.254.169.254`), CGNAT (100.64/10), `0.0.0.0/8` and multicast are blocked under every pattern, `*` included. So is `host.docker.internal`, which resolves to the Docker host. The check runs on the resolved address, not the name.
+- **The checked address is the one dialled.** The broker resolves the name once, checks that address and connects to it, so a DNS answer that changes between check and connect (DNS rebinding) can't slip through.
+- **IPv4 only.** Names are resolved to A records.
+- **`api.github.com` belongs to the GitHub proxy.** If the app also declares any `github:*` capability, the [GitHub proxy](./github-api-scoping-reference.md) enforces method and path for `api.github.com`, and this broker refuses that host under every pattern. An app with no `github:*` capability reaches it normally.
 
 ## Optional: chaining through an upstream proxy (e.g. residential)
 
-Every real navigation `browser-native` makes egresses from wherever this container's own network sits — a cloud VM's or CI runner's datacenter IP range in most deployments. Plenty of real sites (anything behind Cloudflare/PerimeterX-style bot detection, and Google/Bing's own search results specifically) treat that as a signal and block or challenge it, independent of anything `browser:navigate:<pattern>` scoping controls.
+Some sites block or challenge traffic from datacenter IP ranges. To send allowed traffic out through another proxy, such as a residential proxy provider, set `BERTH_EGRESS_UPSTREAM_PROXY` in the container's environment:
 
-Setting **`BERTH_EGRESS_UPSTREAM_PROXY`** on the container (a plain proxy URL, credentials optional — `http://user:pass@residential-proxy.example.com:8000`) makes the broker hop every *allowed* CONNECT through that proxy instead of connecting to the target directly, standard proxy-chaining (the broker issues its own `CONNECT host:port` to the upstream proxy, with a `Proxy-Authorization: Basic ...` header when credentials are present, then splices the two tunnels together once the upstream confirms). The target site sees the upstream proxy's IP, not the container's — this is what actually lets `browser-native` present as a normal residential visitor to a site that would otherwise block it.
+```bash
+BERTH_EGRESS_UPSTREAM_PROXY=http://user:pass@residential-proxy.example.com:8000
+```
 
-Two things that don't change: the host-allow check (`isHostAllowed`) still runs **first**, exactly as without an upstream proxy — a host outside every declared `browser:navigate:<pattern>` is refused before the upstream proxy is ever contacted, so a denied navigation never costs that proxy's bandwidth or quota either. And credentials are never written to any log — only `host:port` (never the URL's `user:pass@` portion) appears in the broker's own stderr lines, including the new `"viaUpstreamProxy": true/false` field on every `navigate_allowed`/`navigate_denied` log line.
+- The host check still runs first. A denied host never reaches the upstream proxy.
+- Credentials are optional. When present, the broker sends them as `Proxy-Authorization: Basic ...`. Only `host:port` is ever logged, never the credentials.
+- Any provider that accepts plain HTTP `CONNECT` works.
+- The upstream proxy does its own DNS resolution, so the internal-address block above can't apply. The host and port check still does.
 
-This works with any provider that speaks plain HTTP CONNECT + optional `Proxy-Authorization: Basic` — Bright Data, Oxylabs, Smartproxy, and similar all expose exactly that interface, so nothing provider-specific lives in `egress-broker.cjs`. Worth being deliberate about before reaching for this: residential proxy networks are legally and ethically murkier than datacenter ones (many are peer-bandwidth-sharing SDKs with thin end-user consent), and routing traffic through one specifically to defeat a site's bot detection can itself violate that site's terms of service — this repo doesn't take a position on any specific provider or use case, only on making the plumbing correct once you've decided you need it.
+Routing traffic through a residential network to get past a site's bot detection may break that site's terms of service. That decision is yours.
 
-## Verification
+## Reference
 
-`packages/docker-orchestrator/test/egress-broker-milestone.mjs`, wired into CI via `.github/workflows/egress-broker-milestone.yml`:
+| Variable | Set by | Meaning |
+|---|---|---|
+| `BERTH_EGRESS_PROXY_URL` | the sandbox | `http://127.0.0.1:<port>`. Read by `configureEgressProxy()`. Unset when no host capability is declared. |
+| `BERTH_EGRESS_BROKER_PORT` | you, optional | Port the broker listens on. Default `8090`. Declare the matching `network:connect:<port>`. |
+| `BERTH_EGRESS_UPSTREAM_PROXY` | you, optional | Upstream proxy URL to chain allowed connections through. |
 
-- **Part A** runs the broker directly (no Docker) against a hand-written capability policy declaring a narrow `browser:navigate:` pattern, and proves both a real allowed CONNECT (200) and a real refused one (403) — `browser-native`'s own shipped manifest declares `browser:navigate:*` (any host, since navigating anywhere is its whole point), so a denial can't be demonstrated against the real app; this is what actually exercises the refusal path.
-- **Part A1** proves the generalization itself: the exact same broker script, given a policy declaring only `network:host:<pattern>` — zero `browser:navigate:` capability anywhere in it — enforces host-matching identically. Not a claim resting on reading the source.
-- **Part A2** covers `BERTH_EGRESS_UPSTREAM_PROXY` chaining against a real (if fake, hand-rolled for the test) second CONNECT proxy — no Docker needed, same shape as Part A. Asserts an allowed CONNECT genuinely reaches that second proxy with the expected target and `Proxy-Authorization` header (not silently ignored), and that a denied host never reaches it at all, proving the enforcement-before-chaining ordering described above.
-- **Part B** boots the real `browser-native` sandbox and drives an actual headless Chromium navigation through it, confirming the wiring end-to-end: the broker's own allow-log line for the real target host is asserted, proving Chromium's traffic is actually flowing through the broker rather than around it.
-- **Part C** boots `examples/resident-apps/http-fetch` — a plain `fetch()`-based app, no `browser:*` capability at all — through Docker, and asserts Xvfb never starts for it, the broker does, its `configureEgressProxy()`-routed `fetch_text` call succeeds, and the broker's own allow-log shows it. This is the real proof the pipeline isn't special-cased to `browser-native`.
+Responses:
+
+| Status | When |
+|---|---|
+| `403` | Host or port not covered by a declared pattern, address is internal, or the host is owned by the GitHub proxy |
+| `502` | The name didn't resolve, the connection failed, or the upstream proxy refused |
+| `400` | A plain request without an absolute URL (not a proxy request) |
+
+The broker logs each decision to stderr as JSON, for example `{"event":"navigate_denied","host":"...","port":443,"viaUpstreamProxy":false}`. Other events: `navigate_allowed`, `blocked_address`, `dedicated_broker_host`.
+
+## Limits
+
+- **One broker per sandbox.** In a multi-app sandbox, only one app may declare `browser:navigate:*` or `network:host:*`. `berth dev` and `berth os up` refuse to boot more than one.
+- **The kernel grant is port-only.** `network:connect:8090` allows port 8090 on any address, not just the broker. The broker's own checks are what enforce the hostname.
+- **Hostnames only, not paths or methods.** For per-endpoint scoping of the GitHub API, see the [GitHub proxy](./github-api-scoping-reference.md).
