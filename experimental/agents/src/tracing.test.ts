@@ -206,7 +206,7 @@ test("listAgentTraces() respects limit", async () => {
   assert.equal(traces.length, 2);
 });
 
-// --- Audit-backed tracing and actors (REMEDIATION.md 5.1) ----------------
+// --- Audit-backed tracing and actors ----------------
 
 function step(overrides: Partial<AgentStepEvent> = {}): AgentStepEvent {
   return { runId: "run-1", agentName: "researcher", turn: 0, kind: "tool-call", toolName: "write_file", durationMs: 12, ...overrides };

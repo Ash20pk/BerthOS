@@ -1,5 +1,5 @@
 /**
- * Passed to `Tool.invoke()` as an optional second argument — REMEDIATION 4.2.
+ * Passed to `Tool.invoke()` as an optional second argument.
  *
  * Optional, and second, so that every Tool written before this existed stays
  * valid: an `invoke: async (input) => ...` simply ignores it. A tool that
@@ -60,7 +60,7 @@ export type LLMStopReason = "end" | "tool_calls" | "length" | "content_filter" |
  * by a content filter, or declined by the model. Before this, such a turn
  * came back with `toolCalls: []` and the loop returned the fragment as the
  * final answer; with a `responseSchema` it burned every repair attempt on
- * half-JSON that could never parse. See REMEDIATION 3.2.
+ * half-JSON that could never parse.
  *
  * `partialText` is whatever the model did produce, for a caller that wants to
  * log or salvage it — the same affordance StructuredOutputError's `rawText`
@@ -92,7 +92,7 @@ export interface LLMTurn {
    * a real final answer apart from a truncated or suppressed one — before
    * this existed, a response cut off at the token cap came back with
    * `toolCalls: []` and was returned to the caller as the final answer.
-   * See REMEDIATION 3.2.
+   *
    */
   stopReason?: LLMStopReason;
   /** Token accounting for this one call, when the provider's API reports it. Absent, not zero, when a provider doesn't. */
@@ -109,7 +109,7 @@ export interface LLMTurn {
  * Computer/Agent/Crew references a specific vendor.
  */
 /**
- * What every LLMProvider call receives. `signal` is REMEDIATION 4.2: without
+ * What every LLMProvider call receives. `signal` is cancellation: without
  * it a cancelled run still held an in-flight completion open to its natural
  * end, so `abort()` stopped the *loop* while the tokens kept being paid for.
  * Every built-in provider forwards it to its vendor SDK, all of which accept

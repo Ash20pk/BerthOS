@@ -1,5 +1,5 @@
 /**
- * Cancellation plumbing for the agent loop — REMEDIATION 4.2.
+ * Cancellation plumbing for the agent loop.
  *
  * Before this there was no `AbortSignal` anywhere in either package: no way
  * to stop a run, no per-tool timeout, no wall-clock deadline, and nothing but

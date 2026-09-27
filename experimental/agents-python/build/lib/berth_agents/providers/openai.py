@@ -54,8 +54,8 @@ def _tools_param(tools: list[Tool]) -> dict[str, Any]:
     feature was broken against OpenAI, Azure, Bedrock and Ollama (all four
     share the implementation below).
 
-    This is REMEDIATION 3.1, which was fixed in `providers/openai.ts` and
-    stayed live here — the Python adapters had no tests, which is 3.7, and
+    This bug was fixed in `providers/openai.ts` and
+    stayed live here — the Python adapters had no tests, and
     this is what that absence was costing. Returned as a dict to be splatted
     into the request so the key simply doesn't exist rather than being set to
     None, exactly as `toolsParam()` does in the TypeScript adapter."""

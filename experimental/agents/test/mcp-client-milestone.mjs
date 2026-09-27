@@ -56,7 +56,7 @@ async function main() {
   // got their own uid: the checkout belongs to whoever cloned it, the app is
   // uid 10000, and a Linux bind mount preserves that, so the write below was a
   // plain EACCES. (Docker Desktop virtualizes bind-mount ownership, so it only
-  // ever failed on CI.) The root is read-only since REMEDIATION.md 1.6 and app
+  // ever failed on CI.) The root is read-only and app
   // data goes to the shared dev-workspace directory, which entrypoint.sh
   // chgrp's to the `berth` group precisely so a non-root app can write it.
   const { bindMount, extraBinds, workingDir, workspaceRoot } = resolveDevBindMount(FILESYSTEM_APP_DIR);

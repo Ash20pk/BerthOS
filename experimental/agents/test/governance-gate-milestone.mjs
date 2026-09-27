@@ -26,8 +26,8 @@ function assert(condition, message) {
 
 async function main() {
   console.log("Booting a Computer with apps/filesystem + the governance-gate-tester and governance-peer-caller fixtures...");
-  // httpRpc so the bridge — one of the transports REMEDIATION.md 1.13 lists
-  // as ungated — actually exists in this container to be tested.
+  // httpRpc so the bridge — one of the transports that used to be
+  // ungated — actually exists in this container to be tested.
   const computer = await Computer.boot({
     apps: [FILESYSTEM_APP_DIR, GOVERNANCE_APP_DIR, PEER_CALLER_APP_DIR],
     httpRpc: true,
@@ -74,7 +74,7 @@ async function main() {
 }
 
 /**
- * REMEDIATION.md 1.13's second half: the same denial, through the transports
+ * The same denial, through the transports
  * that never touch a Computer. Before the SDK-dispatch gate, each of these
  * reached the app's export with no governor anywhere on the path — so an
  * agent denied `write_file` above could simply ask again over one of these

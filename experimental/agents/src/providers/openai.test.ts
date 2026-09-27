@@ -19,7 +19,7 @@ function provider(url: string) {
 }
 
 /**
- * REMEDIATION 3.1. The OpenAI API rejects `tools: []` outright, and both LLM
+ * The OpenAI API rejects `tools: []` outright, and both LLM
  * judge features (createLlmGuardrail, llmJudge) call chat() with exactly that.
  * The key has to be absent, not empty — this asserts on the serialized body
  * rather than on `body.tools.length`, because "present but empty" is the bug.
@@ -195,7 +195,7 @@ test("an LLM-judge-shaped call round-trips end to end", async () => {
   }
 });
 
-// --- REMEDIATION 3.7: message mapping, tool round trips, streaming deltas ---
+// --- Message mapping, tool round trips, streaming deltas ---
 
 test("maps system prompt, roles, and tool results onto the Chat Completions shape", async () => {
   const server = await startMockLLMServer();

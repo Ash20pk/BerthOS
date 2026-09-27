@@ -67,7 +67,7 @@ export function checkpointKeyFor(runId: string): string {
  * checkpoint was an interleaved mixture of unrelated runs, and `resume(runId)`
  * replayed it as though it were one. The trace side was already a known race
  * (tracing.ts's read-modify-write note); the checkpoint side was not.
- * See REMEDIATION 3.3.
+ *
  *
  * The index comes before the name and is what actually guarantees uniqueness:
  * Agent's default name is "agent", so a crew built from agents nobody named

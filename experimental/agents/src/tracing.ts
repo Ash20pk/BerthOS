@@ -10,7 +10,7 @@ export interface AgentStepEvent {
    * therefore self-asserted — an Agent names itself in its own process and
    * nothing corroborates it. Set it explicitly to carry a real caller
    * (the operator who started the run, the tenant it belongs to) through
-   * into the trace. REMEDIATION.md 5.1: a step event with no actor cannot
+   * into the trace. A step event with no actor cannot
    * answer "who did this", only "what happened".
    */
   actor?: Actor;
@@ -25,7 +25,7 @@ export interface AgentStepEvent {
    * to fit the window. Emitted because compaction is otherwise invisible:
    * the model quietly stops being able to refer to earlier turns, which is
    * indistinguishable from the model just forgetting unless there's a record.
-   * See REMEDIATION 4.1.
+   *
    */
   droppedMessages?: number;
   /** Set when the LLM call or tool.invoke() threw — the same message Agent.run()'s {error} tool result carries for tool-calls. */
@@ -38,7 +38,7 @@ export interface AgentStepEvent {
    * `tracePayloads: true`.
    *
    * Off by default for the same reason the audit sink's capture is: traces
-   * land in Semantic FS as plaintext files (REMEDIATION.md 5.4), and a tool
+   * land in Semantic FS as plaintext files, and a tool
    * argument is the most likely place for a customer record to show up. The
    * tool *name* alone was 5.1's complaint, so this closes it without making
    * every run write its inputs to disk by default.

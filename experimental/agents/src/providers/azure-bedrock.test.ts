@@ -5,7 +5,7 @@ import { createBedrockProvider } from "./bedrock.js";
 import { startMockLLMServer, openAICompletion } from "./mock-server.js";
 
 /**
- * REMEDIATION 3.7. Azure and Bedrock share every line of message-mapping and
+ * Azure and Bedrock share every line of message-mapping and
  * tool-calling logic with the OpenAI adapter (openai.test.ts covers that
  * once), so the only thing left that can be uniquely wrong in these two files
  * is how each constructs its client: the URL a request lands on and the

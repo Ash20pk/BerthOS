@@ -24,7 +24,7 @@ export interface FallbackProviderOptions {
 }
 
 /**
- * Whether an error is worth trying the next provider over — REMEDIATION 4.8.
+ * Whether an error is worth trying the next provider over.
  *
  * Before the taxonomy existed this was unconditionally `true`, because there
  * was nothing to branch on. Two costs came out of that. A malformed request

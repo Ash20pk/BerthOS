@@ -8,7 +8,7 @@ import type { ComputerAppSpec } from "./resolve-apps.js";
 
 // The synthesized agent app is the one place in this repo where an app calls
 // another app's exports directly, so it is also the only consumer of
-// REMEDIATION.md 1.4's `app:invoke:` grant and of the per-caller socket path
+// the `app:invoke:` grant and of the per-caller socket path
 // that carries the caller's identity. Neither is exercised by a milestone test
 // without an API key (crew-networked-milestone.mjs skips without one), and
 // both are pure codegen — a contract with entrypoint.sh and @berthos/sdk's

@@ -167,7 +167,7 @@ test("fail-closed mode still denies an explicitly-denied call the normal way, no
   await assert.rejects(() => gated[0]!.invoke({}), GovernanceDeniedError);
 });
 
-test("mode defaults to fail-closed when omitted (REMEDIATION.md 1.11 inverted this)", async () => {
+test("mode defaults to fail-closed when omitted", async () => {
   const governor = appSpec("gatekeeper", { governs: true, exports: ["evaluate_action"] });
   const filesystem = appSpec("filesystem", { exports: ["write_file"] });
   const allApps = [governor, filesystem];
@@ -218,7 +218,7 @@ test("an app can opt out via governance.exempt even when in scope", async () => 
   assert.equal(evaluateCalls, 0, "exempt app's calls must never be routed through evaluate_action");
 });
 
-// --- REMEDIATION.md 1.13 -----------------------------------------------------
+// --- Gate coverage ---------------------------------------------------------
 // The gate used to be applied by mapping over one Tool[], so it protected
 // exactly what was in that array and nothing else. These cover the two shapes
 // that replaced it.
@@ -322,7 +322,7 @@ test("resolveGovernanceGate is undefined when no app governs — callers then pa
   );
 });
 
-// --- Audit trail (REMEDIATION.md 5.1) ------------------------------------
+// --- Audit trail ------------------------------------
 //
 // The finding these cover is not "denials behave wrong" — they always threw
 // correctly. It is that they left no record, so an operator asking "was this

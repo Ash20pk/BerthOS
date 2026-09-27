@@ -7,7 +7,7 @@ import type { CheckpointStore } from "./checkpoint.js";
 import type { LLMProvider, Tool, LLMTurn } from "./types.js";
 
 /**
- * REMEDIATION 3.4. A refusal (a guardrail tripping, a nested agent's stop)
+ * A refusal (a guardrail tripping, a nested agent's stop)
  * was thrown from inside tool.invoke, so the loop's own tool-error handling
  * caught it and fed it back as an `{error}` tool result — the model could
  * then re-issue the identical call. Documented as fail-closed, behaving as

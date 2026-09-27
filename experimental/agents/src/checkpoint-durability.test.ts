@@ -6,7 +6,7 @@ import type { ComputerHandle } from "./computer.js";
 import type { LLMProvider, LLMTurn, Tool } from "./types.js";
 
 /**
- * REMEDIATION 3.5. Three separate defects: checkpoints were written once per
+ * Three separate defects: checkpoints were written once per
  * turn rather than per tool call, so a crash partway through a multi-call
  * turn lost every call in it and re-executed them all on resume — side
  * effects included; save() has no atomicity; and load() swallowed every error

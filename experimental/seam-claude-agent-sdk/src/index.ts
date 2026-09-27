@@ -1,8 +1,8 @@
 /**
  * Berth as the Claude Agent SDK's sandbox backend.
  *
- * BUILD_PLAN M3.3, seam 2 — and a different shape from every seam Berth has
- * shipped so far. `berth mcp`, `toAiSdkTools`, `toLangChainTools`, and M3.3's
+ * The second vendor seam — and a different shape from every seam Berth has
+ * shipped so far. `berth mcp`, `toAiSdkTools`, `toLangChainTools`, and the
  * OpenAI Agents adapter all *add* Berth tools to someone else's loop, next to
  * whatever that loop already had. This one *replaces* the loop's own execution
  * surface: after `berthSandboxBackend()`, the Claude Agent SDK harness still
@@ -49,7 +49,7 @@
  *
  * `@anthropic-ai/claude-agent-sdk` is an **optional peer dependency**, imported
  * dynamically, and a devDependency here so the adapter is tested against the
- * real library rather than a hand-written idea of its shape (REMEDIATION 3.7's
+ * real library rather than a hand-written idea of its shape (the
  * bar for an adapter).
  */
 
