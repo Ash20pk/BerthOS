@@ -1,29 +1,23 @@
-# `agent-server` example
+# `agent-server`
 
-The other direction from [`../simple-agent`](../simple-agent). Instead of an agent driving something (a file, a shell), the **agent itself is the thing being served**. `server.mjs` boots a `Computer` and `Agent` once at startup and hands it to `@berthos/agents`' `serveAgent()` — a real framework primitive (`experimental/agents/src/server.ts`), not hand-rolled `http` boilerplate: `GET /health` reports the tools it has loaded, `POST /task { task: string }` runs it and returns `{ text, toolCalls }`, and `POST /chat { messages: UIMessage[] }` streams a Vercel AI SDK `useChat`-compatible response — point `useChat`'s `api` option straight at `http://localhost:8787/chat` and it works with zero glue code.
+Serve an agent over HTTP. [`server.mjs`](./server.mjs) boots a sandbox with [`apps/filesystem`](../../../apps/filesystem) and an agent once at startup, then hands the agent to `serveAgent()` from `@berthos/agents`. The `/chat` endpoint speaks the Vercel AI SDK's `useChat` protocol, so you can point `useChat`'s `api` option at `http://localhost:8787/chat` with no glue code.
 
-Depends on `@berthos/agents` as an ordinary `workspace:*` package dependency, same as every other example under `examples/agents/`. Nothing here reaches into this monorepo's source or build output by relative path.
+It uses the experimental agent framework, `@berthos/agents`, which isn't published. Run it from a clone.
 
-## Why boot once, not per request
+## Run it
 
-A naive version of this would call `createAgent()` inside the request handler. That rebuilds a Docker image and boots a fresh container on every single HTTP request, which makes the cold-start problem worse, not better. `server.mjs` boots (or connects) exactly once, before `listen()`, and reuses the same `Agent`/`Computer` for every request that comes in.
-
-## Prerequisites
+Needs Docker, and `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`. Without a key the script prints `SKIP` and exits cleanly.
 
 ```bash
-pnpm install
-pnpm build          # from the repo root, builds @berthos/agents and its deps
-```
-
-A local Docker daemon needs to be running, and either `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` needs to be set. The script prints `SKIP` and exits cleanly if neither is, rather than failing.
-
-## Running
-
-```bash
+pnpm install && pnpm build            # once, from the repo root
 cd examples/agents/agent-server
 export ANTHROPIC_API_KEY=sk-ant-...   # or OPENAI_API_KEY
 pnpm start
 ```
+
+On a machine whose kernel can't enforce (Docker Desktop on macOS or Windows), the boot is refused. Prefix the command with `BERTH_ALLOW_UNENFORCED=1` to run it unenforced.
+
+Then call it:
 
 ```bash
 curl http://localhost:8787/health
@@ -37,20 +31,35 @@ curl -X POST http://localhost:8787/chat \
   -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"write a file called hello.txt with the text hi, then read it back"}]}]}'
 ```
 
-`PORT` overrides the default `8787`. `/task` accepts an optional `sessionId` to share history across separate requests (see [`docs/agents-reference.md`](../../../docs/agents-reference.md)'s Sessions section) — `/chat` doesn't need one, since `useChat` already sends the full message history on every request.
+## Endpoints
 
-## Pairing with `berth os up`
+| Endpoint | Body | Returns |
+|---|---|---|
+| `GET /health` | | `{ ok: true, tools: string[] }` |
+| `POST /task` | `{ task, runId?, sessionId? }` | `{ text, toolCalls }` |
+| `POST /chat` | `{ messages: UIMessage[] }` | A `useChat`-compatible UI message stream |
 
-Booting once at server startup already avoids per-request cold start, but the server process itself still pays the full build and boot cost every time it restarts, say on every code change during development. Point it at an already-running `berth os up` instance instead.
+Pass the same `sessionId` to `/task` to share history across requests (see Sessions in the [agents reference](../../../docs/agents-reference.md)). `/chat` doesn't need one, because `useChat` sends the full history on every request.
+
+| Env var | Default | What it does |
+|---|---|---|
+| `PORT` | `8787` | Port to listen on |
+| `BERTH_OS_CONNECT` | unset | Attach to a running `berth os up <name>` instance instead of booting a new sandbox |
+
+The sandbox boots once, before the server starts listening, and every request reuses it.
+
+## Skip the boot on restart
+
+The server still pays the build and boot cost each time it restarts. Point it at a running `berth os up` instance instead:
 
 ```bash
 # from the repo root
 berth os up my-agent --apps=apps/filesystem
 
 cd examples/agents/agent-server
-BERTH_OS_CONNECT=my-agent pnpm start   # connects in milliseconds, no build or boot
+BERTH_OS_CONNECT=my-agent pnpm start   # connects in milliseconds
 
 berth os down my-agent                 # from the repo root, when you're done
 ```
 
-Shutting down the server (Ctrl+C) always calls `computer.stop()`, which is a no-op when `BERTH_OS_CONNECT` was used, so it never tears down a shared OS other processes might still be using. See [`docs/berth-os-reference.md`](../../../docs/berth-os-reference.md).
+Ctrl+C always calls `computer.stop()`, which does nothing when `BERTH_OS_CONNECT` is set, so the server never tears down a shared instance. See the [Berth OS reference](../../../docs/berth-os-reference.md).

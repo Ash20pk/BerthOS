@@ -1,12 +1,26 @@
 # activity-feed
 
-A resident app that fans context-bus events **in** from other first-party apps into one queryable feed — the mirror image of [`apps/code-editor`](../code-editor/README.md), which fans **out** by reacting to a single event.
+Gives an agent one place to see what the other apps in its sandbox just did. It listens for events from [`filesystem`](../filesystem) and [`notes`](../notes) on the context bus and keeps them in a feed the agent can query.
 
-## Export
+## Run it
 
-| Export | Input | Output | Does |
-|---|---|---|---|
-| `get_recent_activity` | — | `{ events: Event[] }` | Returns up to the last 50 events, most-recent-first. Each `Event` is `{ topic, payload, receivedAt }`. |
+It's only useful next to apps that publish events, so run it with them in one sandbox:
+
+```bash
+cd apps/activity-feed
+berth dev --apps=apps/filesystem,apps/notes
+```
+
+`berth` is the CLI: `npm install -g @berthos/cli`, or `node ../../packages/cli/bin/berth.js` from a clone. `--apps` paths are relative to the repo root; see [multi-app sandboxes](../../docs/multi-app-reference.md).
+
+Then make something happen and read the feed:
+
+```bash
+berth rpc notes --container berth-dev-activity-feed --export add_note --input '{"text":"ship it"}'
+berth rpc activity-feed --export get_recent_activity
+```
+
+`berth test` runs the app's tests, which drive it against the SDK's in-process context bus.
 
 ## Capabilities
 
@@ -14,37 +28,25 @@ A resident app that fans context-bus events **in** from other first-party apps i
 capabilities: []
 ```
 
-None — this app only listens on the context bus, which every app gets regardless of declared capabilities.
+None. Every app can use the context bus without declaring anything.
 
-## What it subscribes to
+## Exports
 
-The context bus has no wildcard subscribe (see [docs/context-bus-reference.md](../../docs/context-bus-reference.md)), so fanning in means naming every topic another first-party app is known to publish — the same explicit-topic-string dependency `apps/code-editor` already has on `apps/filesystem`'s `fs.file_created`:
+| Export | Input | Output | What it does |
+|---|---|---|---|
+| `get_recent_activity` | | `{ events: Event[] }` | Returns up to the last 50 events, newest first. Each is `{ topic, payload, receivedAt }`. |
+
+## Topics it listens to
+
+The context bus has no wildcard subscribe, so the app names each topic:
 
 | Topic | Published by |
 |---|---|
-| `fs.file_created` | [`apps/filesystem`](../filesystem/README.md) (`write_file`) |
-| `notes.added` | [`apps/notes`](../notes/README.md) (`add_note`) |
-| `notes.completed` | [`apps/notes`](../notes/README.md) (`complete_note`) |
+| `fs.file_created` | `filesystem` (`write_file`) |
+| `notes.added` | `notes` (`add_note`) |
+| `notes.completed` | `notes` (`complete_note`) |
 
-## Known limitations
+## Limits
 
-Same as `apps/code-editor`'s: no message replay (a subscriber only sees events published after it subscribes) and a publisher never gets its own event echoed back. The feed itself is in-memory only — it resets on restart, and only the most recent 50 events are kept.
-
-## Running it
-
-Only interesting alongside apps that actually publish something. In multi-app mode (see [docs/multi-app-reference.md](../../docs/multi-app-reference.md)):
-
-```bash
-cd apps/activity-feed
-pnpm exec berth dev --apps=apps/filesystem,apps/notes
-```
-
-Call `apps/filesystem`'s `write_file` or `apps/notes`' `add_note`/`complete_note`, then call this app's `get_recent_activity` (e.g. via `berth rpc` or the MCP bridge) to see them show up.
-
-## Testing
-
-```bash
-pnpm exec berth test
-```
-
-`src/index.test.ts` drives the app against `@berthos/sdk`'s local (in-process) context bus directly — the same fallback the real runtime uses when no daemon is reachable — publishing across all three known topics and asserting ordering and the 50-event cap.
+- It only sees events published after it subscribed. There is no replay.
+- The feed is in memory: it keeps the latest 50 events and resets on restart.

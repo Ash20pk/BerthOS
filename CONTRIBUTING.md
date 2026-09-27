@@ -1,76 +1,98 @@
 # Contributing to Berth
 
-Berth is early and solo-maintained right now — see [ROADMAP.md](./ROADMAP.md) for what's actually shipped versus planned. I'm the only reviewer at the moment, so PR and issue response times will vary; I'll get to everything, but not always fast. If a few days pass with no reply, a friendly ping is welcome, not annoying.
+Thanks for helping. The most useful things you can do are build a resident app and tell us where the `berth init` → `berth dev` workflow got in your way. [ROADMAP.md](./ROADMAP.md) lists what works today and what's next.
 
-The single most useful thing you can do right now is build a resident app or give feedback on the `berth init` → `berth dev` workflow.
+Berth has one maintainer, so reviews can take a few days. If you hear nothing for a while, a friendly ping on the PR or issue is welcome.
 
-## Building a resident app
+## Set up
 
-This is the fastest path from clone to a merged PR.
+You need Node.js 22+, pnpm (through corepack) and Docker.
 
 ```bash
+git clone https://github.com/Ash20pk/BerthOS && cd BerthOS
 corepack enable
 pnpm install
 pnpm build
-
-pnpm exec berth init my-app     # scaffolds berth.yml + SDK boilerplate from a template
-cd my-app
-pnpm exec berth dev             # hot-reloading dev loop
+node packages/cli/bin/berth.js doctor --fix   # can this machine's kernel enforce anything?
 ```
 
-From there:
+The commands below write `berth` for `node packages/cli/bin/berth.js`. Enforcement needs a Linux 6.7+ kernel with Landlock. Docker Desktop doesn't have it; on a Mac, `berth doctor --fix` sets up a Colima VM that does.
 
-- Edit `src/index.ts` and `berth.yml` — see [Resident apps](./docs/resident-apps.md) for the manifest/export/capability model, and [docs/sdk-reference.md](./docs/sdk-reference.md) for the full SDK surface.
-- `pnpm exec berth test` builds the production image and validates your exports before you open a PR.
-- Open the PR against `main`. No need to touch anything under `packages/` for this path.
+## Run the tests
+
+```bash
+pnpm test                          # everything, through Turborepo
+pnpm --filter <package> test       # one package, e.g. pnpm --filter @berthos/sdk test
+pnpm lint                          # type-check every package
+```
+
+The Docker-backed integration tests live in `packages/docker-orchestrator/test/*.mjs` and run against a real container. Run the one that covers what you changed, for example:
+
+```bash
+node packages/docker-orchestrator/test/context-bus-milestone.mjs
+```
+
+A passing `capability-enforcement.mjs` run only proves enforcement on a kernel that has Landlock. Check with `berth doctor`, or `cat /sys/kernel/security/lsm`.
+
+## Build a resident app
+
+This is the quickest route from a clone to a merged PR, and needs no changes under `packages/`.
+
+```bash
+berth init my-app     # scaffolds berth.yml and SDK boilerplate from a template
+cd my-app
+berth dev             # boots it in the sandbox, reloads on save
+berth test            # builds the production image and checks every export
+```
+
+Edit `src/index.ts` and `berth.yml`. [Resident apps](./docs/resident-apps.md) explains the manifest, exports and capabilities, and the [SDK reference](./docs/sdk-reference.md) covers the full API. Run `berth test` before you open the PR.
 
 ### Resident apps we'd love to see
 
-No menu, no PR — an open invitation is where interest usually goes to die. Concrete starting points instead:
+Each of these is self-contained and makes a good first contribution:
 
-- **Slack** — post messages, read channel history, react to events
-- **Postgres / generic SQL** — query and mutate a database scoped to specific tables
-- **Gmail / email** — read, send, and search, scoped by label or folder
-- **Linear or Jira** — read and create issues, scoped like `apps/github-assistant`
-- **Stripe** — read-only reporting first; write scopes (refunds, etc.) are a bigger conversation
-- **Playwright-driven QA** — a step up from `apps/browser-native`, oriented around running a test suite instead of free-form navigation
-- **Calendar** (Google Calendar or similar) — read availability, create events
+- **Slack**: post messages, read channel history, react to events.
+- **Postgres / SQL**: query and change a database, scoped to specific tables.
+- **Email**: read, send and search, scoped by label or folder.
+- **Linear or Jira**: read and create issues, scoped like [`apps/github-assistant`](./apps/github-assistant).
+- **Stripe**: read-only reporting first. Write scopes such as refunds need a design discussion.
+- **Playwright QA**: a step up from [`apps/browser-native`](./apps/browser-native) that runs a test suite instead of free-form browsing.
+- **Calendar**: read availability, create events.
 
-Don't see your idea, or not sure it fits the capability model yet? Open a [resident app proposal](./.github/ISSUE_TEMPLATE/resident_app_proposal.md) — that's exactly the kind of issue we want right now, even (especially) before you've written code.
+Have a different idea, or not sure it fits the capability model? Open a [resident app proposal](./.github/ISSUE_TEMPLATE/resident_app_proposal.md), ideally before you write code.
 
-## Reporting issues
+## Open a good PR
 
-Use the issue templates in `.github/ISSUE_TEMPLATE/`. The most useful reports right now:
-- **Bug report** — what broke, expected vs. actual behavior, `berth.yml` + logs if relevant
-- **Workflow feedback** — what was confusing, how long `init` → `dev` took end to end, where you got stuck
-- **Resident app proposal** — an app you want to build or want to exist, before or instead of a PR
+- Open it against `main`, one change per PR.
+- Say what it changes and how you checked it. For anything touching enforcement, say which kernel you ran it on.
+- Run `pnpm build`, `pnpm lint` and the tests for the packages you touched.
+- For a new or changed app, `berth test` passes.
+- Code style: TypeScript in strict mode (`tsconfig.base.json`). No default exports, except where a package's public API is a single factory, such as a resident app's `export default defineApp(...)`.
+
+## Report an issue
+
+Use the [issue templates](./.github/ISSUE_TEMPLATE):
+
+- **[Bug report](./.github/ISSUE_TEMPLATE/bug_report.md)**: what broke, what you expected, your `berth.yml`, logs, and `berth doctor` output.
+- **[Workflow feedback](./.github/ISSUE_TEMPLATE/workflow_feedback.md)**: what confused you, how long `init` → `dev` took, where you got stuck.
+- **[Resident app proposal](./.github/ISSUE_TEMPLATE/resident_app_proposal.md)**: an app you want to build or want to exist.
+
+Security issues go through [SECURITY.md](./SECURITY.md), not a public issue.
 
 ## The agents packages are frozen
 
-Berth is a **substrate** — capability-scoped, kernel-enforced sandboxes with a
-manifest grammar, an audit trail, and adapter seams — not an agent framework.
-`@berthos/agents` and `berthos-agents` (Python) exist as **reference consumers**:
-they prove the substrate is usable from an agent loop, and they stay exactly
-as capable as they are today. Their API surface is frozen — no new `Crew`
-shapes, no new providers, no framework-parity features will be accepted, and
-proposals for them will be redirected here. Bug fixes and security fixes are
-welcome. If you want a richer agent loop on top of Berth, the supported path
-is the substrate's seams: `berth mcp`, `toAiSdkTools`/`toLangChainTools`, the
-HTTP RPC bridge, or the SDK directly.
+Berth is a sandbox, not an agent framework. The agent framework in [`experimental/`](./experimental) (`@berthos/agents`, and `berthos-agents` for Python) exists to show the sandbox works from an agent loop. It is not published and is used from a clone.
+
+Its API is frozen: we don't accept new `Crew` shapes, new providers or framework-parity features. Bug fixes and security fixes are welcome. To build a richer agent loop on Berth, use the sandbox's own interfaces: `berth mcp`, `toAiSdkTools` / `toLangChainTools`, the HTTP RPC bridge, or the SDK directly.
 
 ## Working on Berth's internals
 
-If you're touching `packages/` rather than building a resident app, a few invariants matter:
+If you're changing `packages/` rather than building an app, keep these rules:
 
-- `packages/manifest-schema` has no dependency on anything else in the repo — start there if you're touching the `berth.yml` shape.
-- `packages/sdk` runs *inside* the sandboxed container — it must never import Docker, the CLI, or Node-host-only APIs.
-- `packages/cli` never imports E2B/Daytona SDKs directly — deploy adapters live behind `packages/adapters/adapter-core`'s `DeployAdapter` interface.
-- `packages/context-bus-daemon`'s `proto/context_bus.proto` is the canonical wire schema; `packages/sdk/proto/context_bus.proto` must be kept in sync by hand (see the comment at the top of either file).
-- Run `pnpm --filter <package> test` to scope a test run to one package, or `pnpm test` to run everything through Turborepo.
-- `node packages/docker-orchestrator/test/context-bus-milestone.mjs` is a real (Docker-backed, not mocked) integration test proving apps react to each other via the context bus — run it after touching `context-bus-daemon`, the SDK's context-bus client, or `apps/filesystem`/`apps/code-editor`.
-- `packages/agent-init` (Rust, Landlock) needs Landlock active in the kernel's LSM stack to actually enforce anything — check `cat /sys/kernel/security/lsm` (after `mount -t securityfs securityfs /sys/kernel/security` if testing in a privileged container). Docker Desktop for Mac's linuxkit VM does NOT have it active; see `docs/capability-tokens-reference.md` before assuming a passing `capability-enforcement.mjs` run means enforcement actually works.
-- `packages/context-bus-daemon` is Rust — you don't need a local Rust toolchain to use `berth`/build resident apps day-to-day, since `berth dev`/`test`/`deploy` compile it inside the Docker image (see `base.Dockerfile`'s `context-bus-builder` stage). You only need `cargo` + a `protoc` on PATH (`brew install protobuf` / `apk add protobuf`) if you're editing the daemon itself and want a fast local `cargo build`/`cargo check` loop.
-
-## Code style
-
-TypeScript, strict mode (`tsconfig.base.json`). No default exports except where a package's public API is a single factory (e.g. a resident app's `export default defineApp(...)`).
+- `packages/manifest-schema` depends on nothing else in the repo. Start there if you're changing the `berth.yml` format.
+- `packages/sdk` runs inside the sandbox. It must never import Docker, the CLI or host-only Node APIs.
+- `packages/cli` never imports the E2B or Daytona SDKs directly. Deploy adapters sit behind the `DeployAdapter` interface in `packages/adapters/adapter-core`.
+- `packages/context-bus-daemon/proto/context_bus.proto` is the wire schema. Keep `packages/sdk/proto/context_bus.proto` in sync with it by hand.
+- After changing `context-bus-daemon`, the SDK's context-bus client, `apps/filesystem` or `apps/code-editor`, run `node packages/docker-orchestrator/test/context-bus-milestone.mjs`.
+- `packages/context-bus-daemon` and `packages/agent-init` are Rust. You don't need a Rust toolchain to build apps, because `berth dev`, `test` and `deploy` compile them inside the Docker image. To iterate on the daemon locally you need `cargo` and `protoc` (`brew install protobuf` or `apk add protobuf`).
+- `packages/agent-init` applies the Landlock policy, so it only enforces on a kernel with Landlock in its LSM stack. In a privileged container, mount securityfs first (`mount -t securityfs securityfs /sys/kernel/security`) and then check `/sys/kernel/security/lsm`.

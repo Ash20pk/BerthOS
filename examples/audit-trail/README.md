@@ -1,20 +1,28 @@
 # `audit-trail`
 
-The third leg of IAM after declare and enforce: *prove*. Berth's audit trail is
-hash-chained JSONL — each record commits to the one before it — so a third party
-can recompute the whole chain without trusting the process that wrote it. This
-demo needs no Docker and no kernel; it's about the record itself.
+Berth's audit trail is hash-chained JSONL: each record commits to the one before it, so anyone can recompute the chain without trusting the process that wrote it. This demo shows what that catches and what it doesn't. It needs no Docker, no kernel features and no API key.
 
-```
---- clean chain ---      verification: VALID
---- tampering ---        attacker edits record 1: "denied" -> "allowed"
-                         verification: BROKEN at record 1
---- the honest part ---  after replaying the edited events through a fresh sink: VALID again
+## Run it
+
+```bash
+pnpm install && pnpm build      # once, from the repo root
+cd examples/audit-trail
+pnpm start                      # or: node index.mjs
 ```
 
-It catches a single-record edit at the exact record — and then does the part
-most audit-log pitches skip: it rewrites the chain *properly* and shows it
-verifies again, because anyone who can write the file can recompute it.
-Tamper-**evident**, not tamper-**proof**. For tamper-proof you pin the latest
-hash somewhere the attacker can't reach (a WORM log, a notary); the chain is
-what makes that cheap. Run with `node index.mjs` (or `pnpm start`).
+## Expected output (abridged)
+
+```
+--- clean chain ---
+verification: VALID
+
+--- tampering ---
+attacker edits record 1: decision "denied" -> "allowed", drops the reason
+verification: BROKEN at record 1
+
+after replaying the edited events through a fresh sink: VALID again
+```
+
+A single edited record breaks the chain at exactly that record. But anyone who can write the file can also rewrite the whole chain, and a full rewrite verifies again. So the trail is tamper-evident, not tamper-proof. To make it tamper-proof, store the latest hash somewhere an attacker can't rewrite, such as a WORM log or a notary. You only need to pin the latest hash, not every record.
+
+The audit format and API are in the [audit reference](../../docs/audit-reference.md).

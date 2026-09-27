@@ -1,12 +1,25 @@
 # code-editor
 
-A resident app that reads files from `/workspace` — directly on request, or reactively whenever another app announces a file was created.
+Gives an agent read-only access to files in `/workspace`. It also opens files on its own when another app announces them, with no one telling it to: the working example of apps cooperating over the context bus.
 
-## Exports
+## Run it
 
-| Export | Input | Output | Does |
-|---|---|---|---|
-| `open_file` | `{ path: string }` | `{ content: string }` | Reads a file under `/workspace` |
+```bash
+cd apps/code-editor
+berth dev
+berth test
+```
+
+`berth` is the CLI: `npm install -g @berthos/cli`, or `node ../../packages/cli/bin/berth.js` from a clone.
+
+To see the reactive path, run it with [`filesystem`](../filesystem) in the same sandbox and write a file:
+
+```bash
+berth dev --apps=apps/filesystem
+berth rpc filesystem --container berth-dev-code-editor --export write_file --input '{"path":"hello.txt","content":"hi"}'
+```
+
+`code-editor`'s log then shows it opening `hello.txt`. `--apps` paths are relative to the repo root; see [multi-app sandboxes](../../docs/multi-app-reference.md).
 
 ## Capabilities
 
@@ -15,29 +28,24 @@ capabilities:
   - filesystem:read:/workspace
 ```
 
-Read-only — this app never writes.
+Read-only. The app can't write anywhere.
 
-## The reactive path
+## Exports
 
-Beyond its one export, `code-editor` subscribes to `fs.file_created` on the context bus at `onAgentReady` time. [`apps/filesystem`](../filesystem/README.md) publishes that event on every `write_file` call; `code-editor` never receives an explicit command to open the file — it just reacts:
+| Export | Input | Output | What it does |
+|---|---|---|---|
+| `open_file` | `{ path }` | `{ content }` | Reads a file under `/workspace` |
+
+## Reacting to other apps
+
+When it starts, the app subscribes to `fs.file_created`. `filesystem` publishes that event on every `write_file`, and `code-editor` opens the new file in response:
 
 ```
-apps/filesystem  --publish("fs.file_created", {path, createdBy})-->  context bus  --> apps/code-editor (subscribed)
+filesystem --publish("fs.file_created", { path, createdBy })--> context bus --> code-editor
 ```
 
-This is the pair the root README points to as a working example of cross-app collaboration with no explicit orchestration — see [docs/context-bus-reference.md](../../docs/context-bus-reference.md).
+See the [context bus reference](../../docs/context-bus-reference.md).
 
-## Running it
+## Limits
 
-```bash
-cd apps/code-editor
-pnpm exec berth dev
-```
-
-To see the reactive path fire, run this alongside `apps/filesystem` in the same sandbox (`--apps` flag — see [docs/multi-app-reference.md](../../docs/multi-app-reference.md)) and call `write_file` on the filesystem app; `code-editor`'s logs will show it reactively opening the new file.
-
-## Testing
-
-```bash
-pnpm exec berth test
-```
+- A subscriber only sees events published after it subscribed. There is no replay.

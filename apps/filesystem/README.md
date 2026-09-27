@@ -1,20 +1,16 @@
 # filesystem
 
-A resident app that reads and writes `/workspace`, and bridges files into the shared context bus and semantic FS so other apps can react to them.
+Gives an agent a folder to read and write: `/workspace`. It also writes to the shared `/context` folder, where other apps can find files by what they're for, and announces every new file on the context bus.
 
-## Exports
+## Run it
 
-| Export | Input | Output | Does |
-|---|---|---|---|
-| `write_file` | `{ path: string, content: string }` | — | Writes a file under `/workspace`, then publishes `fs.file_created` on the context bus |
-| `read_file` | `{ path: string }` | `{ content: string }` | Reads a file under `/workspace` |
-| `list_files` | — | `{ files: string[] }` | Lists `/workspace`'s contents |
-| `write_context_file` | `{ path: string, content: string }` | — | Writes a file under the semantic-fs mount (`/context`) |
-| `tag_context_file` | `{ path: string, task: string, relatedApps: string[] }` | — | Tags a context file, which is also what makes it findable by `query_context` |
-| `query_context` | `{ text: string }` | `{ results: any[] }` | Searches the semantic FS over tag text (not file content); returns metadata only |
-| `probe_network_connect` | `{ host: string, port: number }` | `{ connected: boolean }` | Diagnostic: tries a raw TCP connect, used to verify deny-by-default network enforcement in CI |
-| `probe_network_udp` | `{ host: string, port: number }` | `{ sent: boolean }` | Diagnostic: tries a UDP `send()`, which Landlock cannot restrict — verifies agent-init's seccomp filter |
-| `probe_raw_socket` | `{ host: string }` | `{ opened: boolean }` | Diagnostic: shells out to `ping`, verifying that raw/ICMP sockets are refused (`CAP_NET_RAW` dropped) |
+```bash
+cd apps/filesystem
+berth dev      # boots it in a sandbox, reloads on save
+berth test     # builds the production image, checks the exports, runs the app's own tests
+```
+
+`berth` is the CLI: `npm install -g @berthos/cli`, or `node ../../packages/cli/bin/berth.js` from a clone. Call an export with `berth rpc filesystem --export list_files`, or connect an MCP client with `berth mcp --app filesystem` (add `--only=read_file,write_file,list_files` to bridge just those exports). See the [MCP quickstart](../../docs/mcp-quickstart.md).
 
 ## Capabilities
 
@@ -26,27 +22,24 @@ capabilities:
   - filesystem:write:/context
 ```
 
-No `network:connect:*` is declared, so under deny-by-default enforcement this app can never reach out over the network — `probe_network_connect` exists specifically so `capability-enforcement.mjs` can assert that from the outside.
+No `network:*` capability is declared, so the app can't open any outbound connection. The kernel refuses TCP (Landlock), UDP and raw sockets (seccomp, plus a dropped `CAP_NET_RAW`).
 
-That takes two mechanisms, not one. Landlock stops the TCP connect; it has no access right for UDP, ICMP, or raw sockets, so `agent-init` additionally drops `CAP_NET_RAW` and installs a seccomp filter refusing `socket(AF_INET|AF_INET6, SOCK_DGRAM|SOCK_RAW)` and `AF_PACKET` for apps in exactly this position. `probe_network_udp` and `probe_raw_socket` assert that half. Unlike the Landlock probes, they are expected to be denied even on Docker Desktop's kernel, where Landlock is inactive.
+## Exports
 
-## The context-bus / semantic-fs pattern
+| Export | Input | Output | What it does |
+|---|---|---|---|
+| `write_file` | `{ path, content }` | | Writes a file under `/workspace`, then publishes `fs.file_created` |
+| `read_file` | `{ path }` | `{ content }` | Reads a file under `/workspace` |
+| `list_files` | | `{ files: string[] }` | Lists `/workspace` |
+| `write_context_file` | `{ path, content }` | | Writes a file under `/context` |
+| `read_context_file` | `{ path }` | `{ content }` | Reads a file under `/context` |
+| `tag_context_file` | `{ path, task, relatedApps: string[] }` | | Tags a `/context` file so `query_context` can find it |
+| `query_context` | `{ text }` | `{ results: [] }` | Searches `/context` by tag text and returns metadata for each match |
+| `publish_context_event` | `{ topic, payload }` | | Publishes any event on the context bus |
 
-`write_file` publishes `fs.file_created` with `{ path, createdBy: "filesystem" }` after every write. [`apps/code-editor`](../code-editor/README.md) subscribes to that topic and reacts — no orchestration wires the two apps together; one just publishes and the other listens. This is the working example referenced from ["Talking to other apps"](../../docs/resident-apps.md#talking-to-other-apps).
+Five more exports are diagnostics that the enforcement tests use to check the sandbox from outside, and each is expected to be refused: `probe_network_connect` (`{ host, port }` → `{ connected }`), `probe_network_udp` (`{ host, port }` → `{ sent }`), `probe_raw_socket` (`{ host }` → `{ opened }`), `probe_user_namespace` (→ `{ created, regainedCaps }`) and `truncate_file` (`{ path, size }`).
 
-`write_context_file` / `tag_context_file` / `query_context` are the semantic-fs half: write something to `/context`, tag it with a task and related apps, and any app in the sandbox can later find it by describing what it needs rather than knowing the exact path. The tag is load-bearing, not optional decoration — the search ranks over that tag text (plus the path and `created_by`), never over file content, so an untagged file is only findable by words that happen to appear in its path. `query_context` also returns metadata only; getting content still needs a `read_context_file` per hit. See [docs/semantic-fs-reference.md](../../docs/semantic-fs-reference.md#query-semantics--hybrid-keyword--embedding-similarity).
+## Working with other apps
 
-## Running it
-
-```bash
-cd apps/filesystem
-pnpm exec berth dev
-```
-
-## Testing
-
-```bash
-pnpm exec berth test
-```
-
-Runs `node --test dist/*.test.js` in addition to the standard export-schema validation.
+- **Context bus.** After every `write_file`, the app publishes `fs.file_created` with `{ path, createdBy: "filesystem" }`. [`code-editor`](../code-editor) and [`activity-feed`](../activity-feed) subscribe to it. See [Talking to other apps](../../docs/resident-apps.md#talking-to-other-apps).
+- **Semantic FS.** Write a file to `/context`, tag it with a task and related apps, and any app in the sandbox can find it later by describing what it needs. Search ranks over the tag text, the path and `created_by`, never the file contents, so tag what you want found. `query_context` returns metadata only; call `read_context_file` for each hit you need. See [semantic FS](../../docs/semantic-fs-reference.md#query-semantics--hybrid-keyword--embedding-similarity).
