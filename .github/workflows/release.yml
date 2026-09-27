@@ -19,9 +19,16 @@ name: Release
 # after that, use "Re-run failed jobs" on the same run: both publish steps skip
 # versions that are already on their registry.
 #
+# Publishing waits for a human. The npm and pypi jobs each run in a GitHub
+# environment of the same name, both restricted to main with a required
+# reviewer. They start together, so one "Review deployments" approval on the
+# run page releases both.
+#
 # One-time setup this workflow depends on but can't do itself:
+#   - GitHub environments "npm" and "pypi": deployment branch main, and a
+#     required reviewer.
 #   - npm: an automation token with publish rights to the @berthos scope,
-#     stored as the NPM_TOKEN repository secret.
+#     stored as the NPM_TOKEN secret.
 #   - PyPI: a trusted publisher (https://docs.pypi.org/trusted-publishers/) on
 #     "berthos-sdk", pointing at this repository, workflow file release.yml,
 #     and environment "pypi". PyPI accepts a "pending" publisher for a project
@@ -177,6 +184,9 @@ jobs:
     needs: prepare
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Real releases wait for approval on the "npm" environment, like PyPI's.
+    # A dry run uploads nothing, so it takes no environment and is not gated.
+    environment: ${{ !inputs.dry_run && 'npm' || '' }}
     permissions:
       contents: read
       id-token: write # npm provenance
