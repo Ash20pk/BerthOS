@@ -49,7 +49,7 @@ colima start \
 - **`--cpu 4 --memory 8 --disk 60`**: Colima's default of 2 CPUs and 2 GB makes the first image build slow enough to look hung. The disk holds the layer cache for several app images.
 - **`--vm-type vz`**: Apple's Virtualization framework instead of QEMU, so the VM runs at native speed on Apple silicon.
 - **`--mount-type virtiofs`**: required by `vz`, and faster than sshfs for the bind mount `berth dev` uses.
-- **`--mount "$HOME:w"`**: Colima mounts your home directory read-only by default. Without `:w`, writes fail with `EROFS`, which is easy to mistake for an enforcement denial.
+- **`--mount "$HOME:w"`**: Colima mounts your home directory read-only by default. Without `:w`, writes fail with `EROFS`, which is easy to mistake for an enforcement denial. Only your home directory is shared with the VM, so keep projects under it: `berth dev` and `berth mcp` bind-mount the project, and one elsewhere (in `/tmp`, say) shows up empty in the sandbox, failing with `no berth.yml found`. `berth test` copies files into the image instead, so it works from anywhere.
 
 ### 3. Point Berth at Colima
 
