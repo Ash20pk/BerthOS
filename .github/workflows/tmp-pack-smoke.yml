@@ -1,0 +1,84 @@
+name: TEMP pack smoke
+
+# Temporary: iterates on the release's pack-install-build checks without a
+# release. Deleted before this branch is merged.
+on:
+  push:
+    branches: [ci/release-image-check-deps]
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 10.21.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # A version nobody has published, so nothing can come from the registry.
+      - run: node scripts/set-version.mjs 9.9.9
+      - run: pnpm build
+      - name: Pack the npm packages
+        run: |
+          mkdir -p dist/npm
+          # pnpm pack rewrites workspace: dependencies to the version just set,
+          # which is why the tarballs are packed here rather than by npm.
+          pnpm -r ls --depth -1 --json | node -e '
+            let d = ""; process.stdin.on("data", (c) => (d += c)).on("end", () => {
+              for (const p of JSON.parse(d)) {
+                const m = require(p.path + "/package.json");
+                if (!m.private && p.path !== process.cwd()) console.log(p.path);
+              }
+            })' | while read -r dir; do
+            (cd "$dir" && pnpm pack --pack-destination "$GITHUB_WORKSPACE/dist/npm")
+          done
+          ls dist/npm
+          count=$(ls dist/npm/*.tgz | wc -l)
+          if [ "$count" -ne 12 ]; then
+            echo "::error::Expected 12 npm tarballs, packed ${count}. If a package was added or made private on purpose, update this count."
+            exit 1
+          fi
+
+      # Install exactly what was packed into an empty project, the way a user
+      # would, before anything can be published. Tests run against the
+      # workspace; only this catches a package that is broken as shipped
+      # (0.2.1's @berthos/sdk ran a postinstall script it didn't include, so
+      # every install of it, and of the CLI, failed).
+      - name: Install the packed npm packages from scratch
+        run: |
+          smoke="$RUNNER_TEMP/install-check"
+          mkdir -p "$smoke" && cd "$smoke"
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund "$GITHUB_WORKSPACE"/dist/npm/*.tgz
+          npx --no-install berth --version
+
+      # Then use it: scaffold an app with the packed CLI and build a real
+      # production image with `berth test`. That is the first thing a user
+      # does after installing, and it needs everything the image build takes
+      # from the package (0.2.2 couldn't: the daemon sources it compiles were
+      # never shipped). The app's @berthos/* dependencies point at the packed
+      # tarballs, since this version isn't on the registry yet.
+      - name: Build an app image with the packed packages
+        run: |
+          smoke="$RUNNER_TEMP/install-check"
+          berth="$smoke/node_modules/.bin/berth"
+          cd "$smoke"
+          "$berth" init smoke-app --template hello-world || true
+          cd smoke-app
+          # The SDK's own @berthos/* dependencies aren't on the registry at
+          # this version either, so the app is pointed at their tarballs too.
+          for dep in sdk manifest-schema; do
+            npm pkg set "dependencies.@berthos/${dep}=file:$(ls "$GITHUB_WORKSPACE"/dist/npm/berthos-${dep}-[0-9]*.tgz)"
+          done
+          npm install --no-audit --no-fund
+          npm run build
+          "$berth" test
+
