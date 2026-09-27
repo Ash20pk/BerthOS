@@ -1,79 +1,62 @@
-# Context Bus Reference
+# Context bus
 
-The Context Bus is Phase 2's first real agent runtime primitive: shared semantic working memory that every resident app in one agent sandbox can publish to and subscribe from. It's what lets apps react to each other — a filesystem app writes a file, a code-editor app notices and opens it — without either app calling the other directly or any orchestration layer wiring them together.
-
-## Architecture
-
-One `context-bus-daemon` process (Rust, `packages/context-bus-daemon`) runs per agent sandbox (per container), started by `entrypoint.sh` before any resident app's runtime. Every resident app process in that sandbox connects to the same Unix socket (`$BERTH_CONTEXT_BUS_SOCKET`, default `/tmp/berth-context-bus.sock`) and exchanges length-prefixed protobuf `Envelope` frames — the schema lives at `packages/context-bus-daemon/proto/context_bus.proto` (canonical) with identical copies shipped in `@berthos/sdk` (for the TypeScript client) and `packages/sdk-python` (for the Python client) to load at runtime.
-
-```
-resident app A ──┐                      ┌── resident app B
-  (filesystem)    │                      │    (code-editor)
-                  ▼                      ▼
-         @berthos/sdk ContextBusClient (unix-socket.ts)
-                  │                      │
-                  └────► context-bus-daemon ◄────┘
-                       (one per sandbox, Unix socket)
-```
-
-The daemon's protocol is deliberately simple: `register` (identify yourself), `subscribe`/`unsubscribe` (topic), `publish` (topic + opaque JSON payload bytes), and `event` (server → client push for a subscribed topic). Publishing to a topic broadcasts to every *other* connection subscribed to it — a publisher never gets its own event echoed back.
+The context bus is pub/sub between the resident apps in one sandbox. One app publishes an event on a topic, and every other app subscribed to that topic receives it. Use it when apps should react to each other (a filesystem app writes a file, an editor app opens it) without calling each other directly.
 
 ## Using it from a resident app
 
-`ctx.contextBus` (available in `onAgentReady`) is the same `ContextBusClient` interface Phase 1 shipped as a local no-op — no resident app code needs to change to go from Phase 1 to Phase 2:
+Register and subscribe in `onAgentReady`:
 
 ```ts
 app.onAgentReady(async (ctx) => {
   await ctx.contextBus.register({ app: "my-app" });
 
-  ctx.contextBus.subscribe("fs.file_created", (payload) => {
-    const event = payload; // whatever shape the publisher sent
-    // react — no one told you to do this, you just noticed
+  const unsubscribe = ctx.contextBus.subscribe("fs.file_created", (payload) => {
+    // payload is whatever the publisher sent
   });
 });
 ```
 
-Export handlers only receive `input`, not `ctx` — if a handler needs to publish, capture the context bus reference in a closure during `onAgentReady`:
+Export handlers receive only `input`, not `ctx`. To publish from a handler, keep the client from `onAgentReady`:
 
 ```ts
-let contextBus;
-app.export({ name: "write_file", /* ... */, handler: async (input) => {
-  // ...
-  await contextBus?.publish("fs.file_created", { path: input.path, createdBy: "filesystem" });
-}});
-app.onAgentReady(async (ctx) => { contextBus = ctx.contextBus; });
-```
+import type { ContextBusClient } from "@berthos/sdk";
 
-`@berthos/sdk`'s `runtime.ts` tries the real Unix-socket client first and falls back to the Phase 1 local no-op if the daemon isn't reachable (e.g. running a bare `node dist/index.js` outside a sandbox, or in a unit test) — so app code is never forced to depend on a daemon being present.
-
-## Publishing from outside the sandbox
-
-`ctx.contextBus` is only ever handed to code running *inside* the sandbox — a host process (`@berthos/agents`'s `Agent`, which runs outside it) has no direct socket to reach the daemon at all. `apps/filesystem` closes that gap with one export, `publish_context_event({topic, payload})`, a thin pass-through to the same `contextBus` reference it already captures for `fs.file_created`:
-
-```ts
 let contextBus: ContextBusClient | undefined;
-app.export({
-  name: "publish_context_event",
-  input: z.object({ topic: z.string(), payload: z.any() }),
-  handler: async ({ topic, payload }) => { await contextBus?.publish(topic, payload); },
-});
+
 app.onAgentReady(async (ctx) => { contextBus = ctx.contextBus; });
+
+app.export({
+  name: "write_file",
+  // ...
+  handler: async (input) => {
+    // ...
+    await contextBus?.publish("fs.file_created", { path: input.path, createdBy: "filesystem" });
+  },
+});
 ```
 
-`experimental/agents/src/tracing.ts`'s `createContextBusStepTracer()` calls this the same way any other host-to-sandbox call happens — as a tool invocation, resolved off `Computer.tools` by export name — to publish `agent.step` events for live tailing. See [`docs/agents-reference.md`](./agents-reference.md#tracing-a-run-agentstep-events-not-a-langsmith-style-tracer).
+| Method | What it does |
+|---|---|
+| `register({ app })` | Identify this connection. |
+| `subscribe(topic, handler)` | Call `handler(payload)` for each event on `topic`. Returns an unsubscribe function. |
+| `publish(topic, payload)` | Send a JSON-serialisable payload to every *other* subscriber of `topic`. The publisher doesn't receive its own event. |
 
-## Verifying it
+If the daemon isn't reachable (a bare `node dist/index.js`, a unit test), `ctx.contextBus` logs a warning and falls back to an in-process bus that never leaves the app, so app code runs without a daemon. The Python SDK has the same client; see [the Python context bus reference](./sdk-python-context-bus-reference.md).
 
-`packages/docker-orchestrator/test/context-bus-milestone.mjs` is a real (not mocked) integration test: it boots a container for `apps/filesystem`, starts `apps/code-editor`'s runtime as a second process in the *same* sandbox via `docker exec`, invokes `filesystem`'s `write_file` export over its live RPC interface, and asserts that `code-editor` reactively opens the new file — proving apps can react to each other end-to-end rather than just compiling. Run it with:
+## Publishing from the host
 
-```bash
-cd packages/docker-orchestrator
-node test/context-bus-milestone.mjs
-```
+A host process, such as an `Agent` from the experimental agent framework, can't reach the bus directly. `apps/filesystem` exports `publish_context_event({ topic, payload })` for this: call it like any other tool and it publishes inside the sandbox. The agent framework's step tracer uses it to publish `agent.step` events; see [tracing](./agents-reference.md#tracing-a-run-agentstep-events-not-a-langsmith-style-tracer).
 
-## Known limitations (Phase 2 scope)
+## How it works
 
-- One daemon per sandbox, but this is no longer a hard one-app-per-container limitation: `--apps=<dir1>,<dir2>` (see [Multi-App Sandbox Reference](./multi-app-reference.md)) and `berth os up --apps=...` / `--config=<path>` (see [`berth os` reference](./berth-os-reference.md)) both run multiple resident apps together in one sandbox, each with its own enforced process. The bind-mount-plus-`docker exec` approach in `context-bus-milestone.mjs` predates both of those and is kept as a from-scratch protocol check for the daemon itself, not as the recommended way to actually run multiple apps today.
-- No wildcard subscribe — topics are matched by exact string, so fanning in several topics (as `apps/activity-feed` does) means naming every one explicitly.
-- No message persistence or replay — a subscriber only sees events published after it subscribes.
-- The `.proto` schema is duplicated (by hand) across three places — `packages/context-bus-daemon`, `packages/sdk`, and `packages/sdk-python` — rather than living in one shared package. This is overdue debt, not a future hypothetical: the third copy has already landed.
+One `context-bus-daemon` (Rust) runs per sandbox, started before any app. Apps connect to its Unix socket at `$BERTH_CONTEXT_BUS_SOCKET` (default `/tmp/berth-context-bus.sock`) and exchange length-prefixed protobuf frames. The schema is `packages/context-bus-daemon/proto/context_bus.proto`.
+
+The daemon identifies each connection by the kernel's report of its uid, not by the name passed to `register()`. An app can't register, publish or be logged as another app.
+
+## Limits
+
+- **Exact topics only.** No wildcard subscribe; to follow several topics, subscribe to each by name.
+- **No persistence or replay.** A subscriber only sees events published after it subscribed, and a restored [snapshot](./computer-snapshots-reference.md) starts with no subscribers.
+- **At-most-once delivery.** Each subscriber has a queue of 256 events; if it falls that far behind, further events to it are dropped (and logged) rather than slowing everyone else.
+- **Any app can use any topic.** There's no per-topic permission; every app in the sandbox can publish and subscribe to every topic.
+- **Frames are capped at 8 MiB.** The bus is for small events, not bulk data; put large content in `/context` and publish its path.

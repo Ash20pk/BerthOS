@@ -1,48 +1,68 @@
-# Computer Snapshots Reference
+# Snapshots
 
-See [What is a Berth OS?](./berth-os-reference.md) and [Resident apps](./resident-apps.md) first if you're not yet familiar with those terms — a "snapshot" here is a snapshot of a Berth OS.
+`berth snapshot` saves a running sandbox and brings it back later as a fresh container: its filesystem and installed packages, plus everything in [`/context`](./semantic-fs-reference.md) and its tag index. Use it to checkpoint an agent's work before a risky step, or to start several runs from the same state. On E2B and Daytona the same commands use the provider's own pause, snapshot and fork.
 
-`berth snapshot create/restore/list` is a real, if deliberately narrow, MVP of the "Computer Snapshots" primitive ("Checkpoint the entire OS state... Rollback or fork at any point. Git for agent computers.") — not the full vision, which spans browser tabs, active tokens, and fork-and-run-in-parallel. This primitive has no build phase in the original scope at all; it's vision/primitive-level language only, so this is a standalone addition.
+## Using it
 
-## How it works
+Run these from the app's directory (they read its `berth.yml` for the app name), with `berth dev` running:
 
-- **`berth snapshot create`** (`packages/cli/src/commands/snapshot/create.ts`): finds the running dev container (`berth-dev-<appName>` by default), then calls `@berthos/docker-orchestrator`'s `createSnapshot()`:
-  - `container.commit()` — a **real Docker image commit**, capturing the container's actual filesystem and installed packages as a new image layer, not a re-run of `on_install`.
-  - `container.getArchive({path: BERTH_CONTEXT_DATA})` — a **real tar archive** of semantic-fs's backing directory (the files it tracks), saved alongside the image.
-  - `container.getArchive({path: BERTH_CONTEXT_INDEX_DB})` — a **second, separate real tar archive** of semantic-fs's SQLite metadata index. `BERTH_CONTEXT_INDEX_DB` is a sibling path to `BERTH_CONTEXT_DATA`, not nested inside it, so it can't ride along with the context-data archive and needs its own capture/restore step.
-  - The container's real `Config.Env` (its actual inherited environment, not just this CLI process's own) plus its manifest are saved too, so a restore can reproduce the same running configuration.
-  - Everything lands under `~/.berth/snapshots/<appName>/<timestamp>/`.
-- **`berth snapshot restore <id>`**: loads the saved image tar back into the local Docker daemon (`docker load` equivalent), extracts both archives into **fresh host paths first** — not injected into an already-running container via `putArchive`, which would race `semantic-fs-daemon`'s own SQLite open at boot, a real ordering hazard — then starts a new container from the restored image with the context-data directory and the index db file each bind-mounted at their original `BERTH_CONTEXT_DATA`/`BERTH_CONTEXT_INDEX_DB` paths via a new, additive `extraBinds` option on `startContainer()`.
-- **`berth snapshot list`**: reads the metadata files back.
+```bash
+berth snapshot create                 # snapshot berth-dev-<appName>
+berth snapshot list
+berth snapshot restore <id>           # start a new container from it
+```
+
+`create` prints the snapshot's id (its creation time, such as `2026-08-02T12-00-00-000Z`) and the restore command to use.
+
+| Command | Flag | What it does |
+|---|---|---|
+| `create` | `--container=<name>` | Snapshot a different container. Default `berth-dev-<appName>`. |
+| `restore <id>` | `--name=<name>` | Name for the new container. Default `berth-restored-<appName>-<id>`. |
+
+Restoring doesn't touch the original; it starts a new container alongside it.
+
+## What a snapshot holds
+
+Each snapshot is a directory under `~/.berth/snapshots/<appName>/<id>/` (mode `0700`):
+
+| File | Contents |
+|---|---|
+| `image.tar` | A `docker commit` of the container: its filesystem and installed packages |
+| `context-data.tar` | The files behind `/context` |
+| `context-index-db.tar` | The `/context` tag index |
+| `env.json` | The container's environment, minus credentials (mode `0600`) |
+| `manifest.json` | The app's manifest |
+| `metadata.json` | Id, app name, creation time, image tag, `/context` paths, and `redactedEnvNames` |
+
+`restore` loads the image into Docker, unpacks `/context` and its index on the host, and starts a new container with them mounted in place before anything reads them.
+
+**Credentials are left out.** Any environment variable whose name marks it as a credential (such as `*_TOKEN` or `*_KEY`) is withheld from `env.json` and listed in `redactedEnvNames`, and credentials never reach the committed image, because Berth delivers them by mounted file. `restore` warns you which ones the new sandbox is missing; set them again in whatever drives it. That's what makes a snapshot safe to copy to another machine. See [secrets](./secrets-reference.md#snapshots).
+
+A snapshot also works on a container that crashed or was killed: it captures whatever was written before it died.
 
 ## Remote fleets (E2B/Daytona) via `--fleet`
 
-Everything above is the local-Docker path. `berth snapshot create/restore --fleet=<name>` and the new `berth snapshot fork` reach a remote instance on E2B or Daytona instead, through each provider's own **native** primitive rather than this package's `commit()`/`getArchive()` mechanics — the two shapes aren't unified into one fake abstraction, because the providers' real primitives aren't the same shape:
-
-- **E2B**: `pause()`/`resume()` — a full memory+filesystem capture of the *exact same instance*, keyed by its existing id. `berth snapshot create --fleet=<e2b-alias> <appName>` pauses it; `berth snapshot restore <id> --fleet=<e2b-alias>` resumes it. No `fork` — E2B's SDK doesn't expose one.
-- **Daytona**: `fork()`/`createSnapshot()` — two different operations, neither of which touches the original instance. `fork()` (`berth snapshot fork <appName> --fleet=<daytona-alias>`) clones it into a new, independent, already-running instance right now. `createSnapshot()` (`berth snapshot create --fleet=<daytona-alias> <appName> --name=<name>`) instead captures its filesystem into a named, reusable template a later `start()` can reference — closer in spirit to what `upload()` already does with a fresh build, just from a live instance's current state instead. No `pause`/`resume` — Daytona's SDK doesn't expose one.
-- **Kubernetes**: neither. A Pod has no native pause/snapshot/fork primitive without cluster-level CRIU tooling this project doesn't set up — `adapter-k8s` simply omits these methods, the same "optional means actually absent, not silently faked" convention `previewUrl`/`rpcUrl`/`list`/`connect` already established for capabilities a given provider doesn't have.
-
-`packages/adapters/adapter-core/src/index.ts`'s `DeployAdapter` interface documents all four (`pause`/`resume`/`fork`/`snapshot`) as optional methods for exactly this reason. Implemented against each SDK's real, installed types (`e2b@1.13.2`'s `pause`/`resume` needed calling its own internal `ConnectionConfig`/`ApiClient` REST pattern directly, since this SDK version's friendly `Sandbox` class doesn't wrap those two endpoints yet, even though the underlying REST API and its typed client both already support them; Daytona's `fork`/`createSnapshot` are real, stable, non-deprecated `Sandbox` methods). **Unlike the local Docker path above, none of this has been verified against a live E2B/Daytona account** — only against mocked-module unit tests, the same verification posture `docs/k8s-adapter-reference.md` already documents for adapter-e2b/adapter-daytona's *other* methods (`start`/`previewUrl`/etc.) needing a live paid account to verify further.
-
-## Why the milestone test uses a production image, not a dev one
-
-A `berth dev` container bind-mounts the whole workspace root at `/workspace` from the host — so a file written there during dev already lives on the host filesystem, and would trivially "survive" being committed/restored regardless of whether snapshotting actually works. `packages/docker-orchestrator/test/snapshot-milestone.mjs` instead builds and boots a **production** (self-contained, no bind mount) `apps/filesystem` image, so a file written via RPC genuinely lands in the container's own writable layer — making the test a real proof that `docker commit()` captured it, not an artifact of the bind mount.
-
-## Verified against a real crash, not just a clean shutdown
-
-`snapshot-milestone.mjs` only ever snapshots a container that's still healthy and then stops it cleanly afterward — it never proves anything about a container that died first. `packages/docker-orchestrator/test/snapshot-crash-milestone.mjs` closes that gap: it kills the original container with a real `SIGKILL` (no graceful shutdown, no RPC close) *before* ever calling `createSnapshot()`, so `commit()`/`getArchive()` run against exactly what a crashed container looks like, not an idealized clean-shutdown one. It also acknowledges one write before the kill and fires a second, unawaited write racing the kill itself, then asserts that `createSnapshot()` still succeeds against the now-exited container, that the restored container boots and becomes ready, and that the acknowledged pre-crash write survived intact — the racing write's outcome is only logged, not asserted, since there's no durability guarantee for a write that was never acknowledged. This is the strongest reliability proof this feature has: snapshot/restore holds up even when the source container never got to shut down cleanly.
+With `--fleet=<alias>`, the commands act on a deployed instance using the provider's native feature. The providers differ, so the commands do too:
 
 ```bash
-cd packages/docker-orchestrator
-node test/snapshot-crash-milestone.mjs
+berth snapshot create --fleet=<alias> [--instance=<id>] [--name=<name>]
+berth snapshot restore <instance-id> --fleet=<alias>
+berth snapshot fork <appName> --fleet=<alias> [--instance=<id>] [--name=<name>]
 ```
 
-## What's explicitly deferred (named here, not silently promised)
+| Provider | `create` | `restore` | `fork` |
+|---|---|---|---|
+| **E2B** | Pauses the instance, memory and filesystem, under the same id | Resumes it | Not supported |
+| **Daytona** | Saves the instance's filesystem as a named snapshot (`--name`, default `<appName>-<timestamp>`); the instance keeps running | Not supported | Clones it into a new, independent, running instance; the original keeps running |
+| **Kubernetes** | Not supported | Not supported | Not supported |
 
-- **Browser tabs/sessions.** A Chromium profile directory is just files under the committed filesystem layer, so cookies/local storage are *incidentally* captured by `docker commit` — but this MVP never verifies or exercises that path. Don't rely on it without separately confirming it for whatever browser-native workflow you have in mind.
-- **Credentials, on purpose.** A snapshot's `env.json` holds the non-secret half of the container's environment only, at 0600 in a 0700 directory, with the names it withheld recorded in `metadata.json`'s `redactedEnvNames` — so `berth snapshot restore` can tell you which credentials the restored sandbox is booting without, and you supply them again. Nothing else in the snapshot carries them either: credentials reach a running container through a bind-mounted file rather than Docker's `Env`, and `docker commit` excludes mount points, so the committed image layer has nothing to leak. This is what makes a snapshot safe to copy to another machine, and it is verified against a real snapshot's `image.tar` in `secrets-milestone.mjs`. See [secrets reference](./secrets-reference.md#snapshots).
-- **"Active tokens."** Moot: capability tokens are gone, and `entrypoint.sh` no longer generates a `BERTH_TOKEN_SECRET` for a snapshot to capture or skip. The reasoning that used to sit here — that restoring a *stale* secret would be a security regression rather than a missing feature — still applies to any per-boot secret this container grows in future.
-- **Context-bus in-flight state.** The Rust daemon's live subscriber list is process memory, not disk — a restored container boots a fresh daemon with zero subscribers, and each app re-subscribes via its own `on_agent_ready` hook, exactly as it would on any first boot. Nothing to restore here by design.
-- **"Fork and run in parallel," locally.** Two `berth snapshot restore` calls from the same snapshot are just two independent containers — no orchestration, family-tracking, or diffing between the resulting forks is attempted. (Daytona's real `fork()`, above, is a genuine remote exception — but still just one clone per call, no tree/orchestration on top of it either.)
-- **Storage efficiency.** Each snapshot is a full image export (`docker save`-equivalent tarball) plus a full context-data tarball — not layer-deduplicated or incremental. Snapshotting a large, long-lived sandbox repeatedly will use disk proportional to its full size each time.
+`--instance` picks an instance by id; otherwise Berth looks up the app's instance in the fleet's local state. `create` and `fork` still read the app name from `berth.yml` in the current directory.
+
+## Limits
+
+- **Full copies.** Each snapshot is a complete image export plus a complete `/context` archive, with no deduplication. Repeated snapshots of a large sandbox use that much disk each time.
+- **Mounts aren't captured.** `docker commit` skips bind mounts and volumes, so anything that lives on one (in `berth dev`, your project folder) isn't in the snapshot. `/context` is the exception; it's archived separately.
+- **Context bus subscriptions aren't saved.** A restored sandbox starts a fresh bus, and apps subscribe again in `onAgentReady` as on any boot.
+- **Restores are independent.** Two restores of one snapshot are two unrelated containers; nothing tracks or compares them.
+- **Browser state is untested.** A browser profile is ordinary files, so cookies and local storage are probably in the image, but nothing checks this.
+- **Remote snapshots are unit-tested only**, not yet run against live E2B or Daytona accounts.

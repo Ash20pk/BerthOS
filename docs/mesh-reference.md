@@ -1,58 +1,71 @@
-# Mesh Networking Reference
+# Mesh networking
 
-> `mesh-daemon` is embedded in every image but starts only for a container whose app declares `network:peer:`, so the mesh is absent unless you ask for it. `mesh-coordinator` is the host-side service it registers with.
+`network:peer:<name>` puts a resident app on a WireGuard mesh with apps in other sandboxes, so they can reach each other by a stable mesh IP without sharing a Docker network. Two apps are connected only when **both** name each other. Use it when apps in separate containers need to talk directly.
 
-`Crew.networked()` (see `docs/agents-reference.md`) joins agent containers over a plain Docker user-defined bridge network — real inter-container reachability, but local-`berth dev`-only, with no capability boundary of its own (any two containers on that bridge can already reach each other) and nothing that would survive being deployed to E2B/Daytona/K8s. `network:peer:<name>` closes the first half of that gap: a real, kernel-level WireGuard mesh between resident apps, authorized by mutual consent rather than by whichever Docker network happens to exist.
+## Using it
 
-This is a foundational pass — local `berth dev` only, one deploy target (K8s Service/NetworkPolicy wiring, an HTTPS-relay fallback for E2B/Daytona, and rewiring `Crew.networked()` onto this mesh are all explicitly deferred, see below).
+Each side names the other. The name to match is the peer's **container name**, which under `berth dev` is `berth-dev-<appName>`:
 
-## Two capabilities, not one: granting vs. exposing
+```yaml
+# planner/berth.yml
+name: planner
+capabilities:
+  - network:peer:berth-dev-browser
+```
 
-Declaring `network:peer:<name>` grants the app the ability to join the mesh — enforced independently, at two different layers depending on what Landlock can and can't reach (see below). Whether that app actually gets **introduced** to another specific peer is a separate decision, made by `mesh-coordinator` at registration time, not by the capability string alone. A capability like `network:peer:database-service` isn't just parsed and ignored past that point the way an unimplemented capability elsewhere in this repo might be — the coordinator will only ever hand this app a peer roster containing entries that mutually match, so the declared scope is load-bearing.
+```yaml
+# browser/berth.yml
+name: browser
+capabilities:
+  - network:peer:berth-dev-planner
+  - network:bind:9000      # to listen on a port
+```
 
-## Why mutual-match, not a flat mesh
+Start a coordinator, then run each app against it:
 
-The pinned `landlock` crate (0.4) has no UDP access right at all — Landlock can restrict `agent-init`'s Landlock ruleset around TCP connects by port, but it cannot see or restrict wg0's actual UDP traffic once mesh-daemon has configured the interface. That means the kernel-enforcement story that works for filesystem/TCP capabilities elsewhere in this repo (see the [capability tokens reference](./capability-tokens-reference.md)) doesn't reach WireGuard packets directly, and something else has to be the authorization boundary.
+```bash
+BERTH_MESH_COORDINATOR_HOST=0.0.0.0 npx -p @berthos/mesh-coordinator berth-mesh-coordinator   # listens on 4875
 
-That something is `mesh-coordinator`: on every registration and every reconcile poll, a peer only learns about another peer if **both** declared a `network:peer:<pattern>` matching the other's name (or `*`) — decided at the one place that's already the trust anchor for key exchange (`packages/mesh-coordinator/src/db.ts`'s `mutualPeersFor()`). `mesh-daemon` only ever wires into `wg0.conf` exactly the roster the coordinator hands it — it never receives, and so never configures, a peer it wasn't mutually authorized to reach. An app that declares `network:peer:database-service` but whom `database-service` never names back is never introduced to it, full stop.
+berth dev --mesh-coordinator=http://host.docker.internal:4875
+```
 
-This was not the original design. An earlier pass would have had every `network:peer:*` app join one flat mesh with every other peer the coordinator had ever seen, regardless of what specific name each side declared — an adversarial security review caught this before any code shipped and required the mutual-match model instead; see the two write-ups below for what else that review found.
+Each container gets a mesh IP from `100.64.0.0/10`, kept for its name across restarts. Peers show up within about five seconds of both being registered.
 
-## The capability-bounding-set drop (a second, more fundamental fix)
+Patterns may use `*` (`network:peer:berth-dev-*`, or `network:peer:*` for any name), but a peer still connects only if its own pattern matches this container back.
 
-Letting `mesh-daemon` create a real `wg0` interface needs `CapAdd: ["NET_ADMIN"]` plus a `/dev/net/tun` device on the container (`packages/docker-orchestrator/src/container.ts`'s `declaresMeshCapability` gate). Docker's `CapAdd` is a whole-container grant, not a per-process one — and since every process in these containers runs as root with no `USER` directive, that would silently hand the **resident app's own process** (and any co-resident app sharing the container in multi-app mode) the same `NET_ADMIN`, letting it manipulate the network namespace far beyond anything it declared.
+Listening needs `network:bind:<port>`, and connecting to a peer's port needs `network:connect:<port>`, as for any other network access. See [enforcement](./kernel-enforcement.md).
 
-The fix is in `packages/agent-init/src/main.rs`: right after Landlock's `restrict_self()` and right before the final `exec()` into the resident app, `agent-init` drops the process's entire Linux capability bounding/inheritable/ambient sets (the `caps` crate). A dropped bounding set is a ceiling — the exec'd process, and anything it forks, can never regain those capabilities regardless of what was granted at the container level for pre-exec daemons (`context-bus-daemon`, `semantic-fs-daemon`, `mesh-daemon`). (It is a ceiling only within the process's own user namespace, which is why `agent-init` also installs a seccomp filter refusing namespace creation — see `packages/agent-init/src/seccomp.rs`.) This is a generic hardening step, not mesh-specific: it also closes a pre-existing, identical leak where `semantic-fs-daemon`'s own `SYS_ADMIN`+`/dev/fuse` grant was reaching the resident app process today. After this change, `CapAdd`/device grants at the container level only ever reach the daemons they were meant for.
+## How it works
 
-`packages/docker-orchestrator/test/mesh-milestone.mjs` verifies this directly — not via `docker exec` (which gets a fresh capability set from the container spec regardless of what the resident app's own process has dropped), but from inside the fixture app's own code, which attempts `ip link add ... type dummy` at boot and logs whether it succeeded.
+- **`mesh-coordinator`** (the host-side service) hands out mesh IPs, stores each peer's WireGuard public key, and decides who meets whom. A peer's roster only ever contains peers whose `network:peer:` patterns and its own match both ways.
+- **`mesh-daemon`** runs in any container where an app declares `network:peer:`, and nowhere else. It generates a key pair, registers with the coordinator, brings up `wg0`, and every five seconds fetches its roster and applies it. It configures only the peers the coordinator returns.
+- The kernel can't see WireGuard's UDP traffic per app, so **the coordinator's mutual match is the authorization boundary**. Declaring `network:peer:` also opens the coordinator's port to the app, and to no app that didn't declare it.
+- The container gets `NET_ADMIN` and `/dev/net/tun` for the daemon. `agent-init` drops all capabilities before starting the app, so the app itself never has them.
+- The daemon uses kernel WireGuard if the host has it, and otherwise falls back to the userspace `boringtun-cli` built into the image. Its boot log says which.
+- If the coordinator is unreachable at boot, the mesh is off for that boot, with a warning; the app still starts. If it goes away later, the daemon keeps its last roster and existing tunnels keep working until it's back.
+- The first registration of a name returns an owner token, which the daemon stores. Re-registering the name without it is refused, so nothing else can take over a peer's identity.
 
-## How it's wired
+## Configuration
 
-- **Capability grammar**: `network:peer:<name>` needs no `manifest-schema` change — the grammar is already fully generic (`namespace:action:scope`). `packages/sdk/src/generate-capability-policy.ts` collects declared peer-name globs into a `meshPeers` field, and — the one thing Landlock's existing port-allowlist mechanism *can* enforce here — adds mesh-coordinator's own TCP port to the app's `networkPorts` allow-list whenever any `network:peer:*` is declared, so an app that never opted into the mesh can't reach the coordinator's registration API at all.
-- **`packages/mesh-daemon`** (Rust, tokio, unrestricted like `context-bus-daemon`/`semantic-fs-daemon` — started by `entrypoint.sh` before `agent-init`, gated on a `grep -q "network:peer:"` check on the manifest): generates/persists a WireGuard keypair, probes for kernel WireGuard support (`ip link add ... type wireguard`), registers with `mesh-coordinator` over plain HTTP, and drives the interface entirely through the real `wg`/`wg-quick`/`ip` system binaries — never a custom netlink binding, never a hand-rolled userspace device.
-  - **Kernel vs. userspace, chosen at boot, not at build time**: if the kernel probe fails (no `wireguard` module loaded — same class of environment gap as this repo's Docker-Desktop-Mac Landlock caveat), mesh-daemon sets `WG_QUICK_USERSPACE_IMPLEMENTATION=boringtun-cli` for every subsequent `wg-quick` call — that env var is `wg-quick`'s own documented fallback mechanism, not a Berth invention, dispatching to Cloudflare's real, published userspace WireGuard implementation (`boringtun-cli`, baked into the image via its own Dockerfile build stage). Confirmed empirically: this repo's own Docker Desktop for Mac dev environment actually has the kernel module active (unlike Landlock's LSM), so the milestone test has been observed passing in kernel mode locally — CI may differ, and the test passes either way, logging which mode ran rather than asserting on it.
-  - **Reconcile loop** (every 5s, or immediately on a `connect` nudge over the local control socket): polls `mesh-coordinator` for this peer's current mutually-matched roster, rewrites `/etc/wireguard/wg0.conf`, and calls `wg syncconf` — the live-diff-and-apply primitive, so mesh-daemon needs no custom peer-diffing logic of its own for the WireGuard device state. **`wg syncconf` does not touch the kernel routing table** (only `wg-quick`'s own `up`/`down` scripts do, and only for peers present in the config file at that exact bring-up moment) — mesh-daemon adds/removes each peer's `AllowedIPs` route by hand (`ip route add/del ... dev wg0`) whenever the reconcile loop's roster actually changes. This was a real bug caught by the milestone test itself: without it, a peer introduced after initial bring-up (the common case, since coordinator introductions typically land via the reconcile poll rather than the very first registration) had no route, and packets to it silently vanished into the default route.
-- **`packages/mesh-coordinator`** (TS, Fastify + `node:sqlite`, cloned from `registry-server`'s exact template, port `4875`): allocates a stable, per-name mesh IP from `100.64.0.0/10` (CGNAT range, Tailscale-style — guaranteed non-overlapping with both RFC1918 ranges and public internet space), stores WireGuard public keys, and is the mutual-match authority described above. First registration of a peer name mints a bearer token; any later re-registration of that same name must present it, or is rejected — the fix for an otherwise-real peer-hijack: without it, anything that can reach the coordinator's port could re-POST an existing peer's name with a different key/endpoint and silently take over its identity.
-- **`packages/docker-orchestrator/src/container.ts`**: `declaresMeshCapability(manifest)` (same shape as `declaresBrowserCapability`) gates the `CapAdd: ["NET_ADMIN"]` + `/dev/net/tun` device grant. `BERTH_MESH_PEER_NAME` is always set to the container's own name (harmless when no app declares the capability — mesh-daemon just never starts) — this is what gives a container a *stable* mesh identity across a `berth dev` restart. `berth dev --mesh-coordinator=<url>` (or `startContainer`'s `meshCoordinatorUrl` option) points at a specific coordinator instance; omitted, mesh-daemon falls back to `http://host.docker.internal:4875`.
-- **Multi-app containers**: wg0 is one interface per container, the same reasoning `assertAtMostOneBrowserApp`/`assertAtMostOneTerminalApp` already use — `assertAtMostOneMeshApp` (`packages/cli/src/util/multi-app.ts`) enforces at most one `network:peer:*` app per multi-app group, and `entrypoint.sh`'s multi-app branch points mesh-daemon at that one app's own generated `capability-policy.json`.
+| Setting | Default | What it does |
+|---|---|---|
+| `berth dev --mesh-coordinator=<url>` | `http://host.docker.internal:4875` | Coordinator URL, passed to the container as `BERTH_MESH_COORDINATOR_URL` |
+| `BERTH_MESH_COORDINATOR_PORT` | `4875` | Coordinator listen port |
+| `BERTH_MESH_COORDINATOR_HOST` | `127.0.0.1` | Coordinator listen address. Containers usually can't reach loopback, so set `0.0.0.0` or a bridge address |
+| `BERTH_MESH_COORDINATOR_DATA_DIR` | `./.berth-mesh-coordinator-data` | Where the coordinator keeps its SQLite database |
+| `BERTH_MESH_COORDINATOR_TLS_CERT`, `_KEY` | unset | Serve HTTPS. See [TLS](./tls-reference.md) |
+| `BERTH_MESH_LISTEN_PORT` | `51820` | WireGuard port inside the container |
+| `BERTH_MESH_KEY_PATH` | `/run/berth/mesh/privatekey` | Where the daemon keeps its private key |
+| `BERTH_MESH_TOKEN_PATH` | `/run/berth/mesh/owner-token` | Where the daemon keeps its owner token |
 
-## Verification
-
-`packages/docker-orchestrator/test/mesh-milestone.mjs`, wired into CI via `.github/workflows/mesh-milestone.yml`, using three small fixture apps (`test/fixtures/mesh-echo-{planner,browser,intruder}`) that each run nothing but a plain HTTP echo listener plus a capability self-check:
-
-- **Positive case**: `mesh-echo-planner` (declares `network:peer:mesh-echo-browser`) and `mesh-echo-browser` (declares `network:peer:mesh-echo-planner`) — two containers started with **no shared Docker network** — reach each other's real HTTP listener by mesh-coordinator-assigned mesh IP (`100.64.x.x`), proving actual traffic crossed a real WireGuard tunnel, not a Docker bridge (none was ever created).
-- **Negative case**: `mesh-echo-intruder` (declares `network:peer:*` — wants everyone) is named back by neither of the other two, and is confirmed absent from both their peer lists (`0 peer(s)` in its own boot log, and no `peer "mesh-echo-intruder"` line in either of theirs).
-- **Capability-drop verification**: each fixture app attempts `ip link add ... type dummy` from inside its own resident-app process at boot and logs the (expected) failure — confirming the container-level `NET_ADMIN` grant never reached the process Landlock is supposed to be the only thing restricting.
-
-`packages/docker-orchestrator/test/mesh-coordinator-resilience-milestone.mjs` is a separate test verifying `mesh-daemon`'s degrade path when `mesh-coordinator` itself disappears — something the milestone test above never exercises. It brings up the same real, mutually-matched WireGuard tunnel between two peers, then sends `mesh-coordinator` a real `SIGKILL` mid-reconcile and checks three things: `mesh-daemon` logs `"reconcile poll failed ... keeping last known peer set"` rather than panicking or hanging; the already-established tunnel keeps carrying real HTTP traffic between the two peers for the entire outage (proving a failed reconcile poll doesn't tear down wg0's existing config); and once the coordinator is restarted against the same data directory, `mesh-daemon` self-heals — resuming successful reconcile polls and picking the roster back up — with no container restart of its own. This test is CI-wired: `.github/workflows/mesh-milestone.yml` runs it as a second step alongside `mesh-milestone.mjs`, rather than getting its own dedicated workflow file.
+Only one app per container may declare `network:peer:` (one `wg0` per container). See [several apps in one sandbox](./multi-app-reference.md).
 
 ## What's deferred
 
-- **Per-app authorization inside mesh-daemon itself.** The coordinator's mutual-match introduction is real and load-bearing (see above), but `agent-init`'s own `CapabilityPolicy` only captures `meshPeers` for the audit log today — it doesn't independently gate anything at the UDP/wg0 level, since Landlock has no UDP access right in the pinned crate version to do that with.
-- **No `network:bind:<port>` capability action.** Found while chasing the mesh milestone test's own CI failure: an app running a TCP listener (this test's fixture apps do, for the echo servers) hits `EACCES` on `listen()` once Landlock's network restriction is on (i.e., any capability other than `network:connect:*` is declared) — the pinned `landlock` crate's ABI v4 network access class covers both bind and connect, but `generate-capability-policy.ts` only ever grants `connect` rules. A real, narrow gap in the capability model itself, unrelated to the mesh feature specifically; this repo's other apps never hit it because none of them bind a TCP port from inside the Landlock-restricted resident-app process. The mesh milestone's own fixtures work around it with `network:connect:*` rather than fixing the underlying gap.
-- **Coordinator API auth beyond the owner-token scheme.** TLS is available and off by default — set `BERTH_MESH_COORDINATOR_TLS_CERT`/`_KEY` to turn it on, same as `registry-server` (see [TLS reference](./tls-reference.md)). Without it the transport is plaintext HTTP and the owner token crosses it in the clear, so an unconfigured coordinator still assumes a trusted, Docker-reachable host. mTLS is supported by the server but no client in this repo presents a certificate yet.
-- **Persistent WireGuard key identity across a container recreation.** A peer's *mesh IP* is stable (keyed by name, in the coordinator's own DB), but its *keypair* regenerates on a fresh container unless `BERTH_MESH_KEY_PATH` happens to be volume-mounted — not wired up this session.
-- **K8s adapter networking.** `adapter-k8s`'s `podSpecFor` creates a bare Pod only — no Service, no headless Service, no NetworkPolicy. Kubernetes is the one deploy target with no UDP/routing uncertainty (unlike E2B/Daytona, see below), so a real mesh there is mostly adapter work, not a transport problem — not built this session.
-- **An HTTPS-relay fallback for E2B/Daytona.** Neither provider's documented egress model guarantees arbitrary outbound UDP or sandbox-to-sandbox routing (HTTP(S)-oriented egress and public port-forwarding only) — a raw WireGuard mesh can't be assumed to work there. A Tailscale/Headscale-style relay (WireGuard-over-TLS when direct UDP isn't available) is the shape this would take; not built this session.
-- **`Crew.networked()` still uses the plain Docker bridge**, not this mesh. Rewiring it is a follow-up, not part of this foundational pass.
-- **Remote-fleet `Crew.networked()` peers (`bootNetworkedAgent({fleet})`) deliberately don't use this mesh either — considered and ruled out, not deferred by oversight.** A manager agent driving `Crew.networked()` is a plain host-side Node process, not a container/pod running its own `mesh-daemon`, and `GET /peers?name=` (`packages/mesh-coordinator/src/routes.ts`) requires the caller to already be a registered, mutually-matched peer — so the host has no way to even look up a peer's mesh IP without first joining the mesh itself, which would mean building an entirely new host-side mesh-daemon-equivalent client (own keypair, own registration, own `wg0` interface). Out of scope. See [docs/agents-reference.md](./agents-reference.md)'s "Networked Crew over a remote fleet" section for the actual mechanism used instead (a new per-provider HTTP RPC bridge).
+- **Local `berth dev` only.** There's no mesh on Kubernetes, E2B or Daytona yet; E2B and Daytona don't guarantee the UDP it needs.
+- **Plaintext by default.** Without the TLS settings, registration and the owner token travel over plain HTTP, so run the coordinator only where the network between it and your containers is trusted.
+- **Identity is lost with the container.** The key and owner token live inside it. A container recreated under the same name can't re-register while the coordinator still holds the old token, and its mesh stays off for that boot.
+- **The daemon runs as root with `NET_ADMIN`.** It confines its own file writes, but it isn't unprivileged. See the [roadmap](../ROADMAP.md#later).
+- **`Crew.networked()` doesn't use this mesh.** It joins containers on a Docker network, and over a remote fleet it uses an HTTP bridge. See [networked crews](./agents-reference.md#networked-crew-agents-as-peers-on-a-real-lan).
+
+The end-to-end tests are `packages/docker-orchestrator/test/mesh-milestone.mjs` and `mesh-coordinator-resilience-milestone.mjs`.
