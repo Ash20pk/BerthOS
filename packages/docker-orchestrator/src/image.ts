@@ -80,6 +80,19 @@ function findWorkspaceRoot(startDir: string): string | undefined {
 }
 
 /**
+ * The pnpm workspace `appDir` is a member of, if any. A pnpm-workspace.yaml in
+ * the app's own directory doesn't count: that makes the app its own root, not a
+ * member, and `berth init` writes exactly that file into every project it
+ * scaffolds (to pre-approve protobufjs's install script). Treating it as a
+ * workspace sent every scaffolded app down `pnpm --filter <app> deploy`, which
+ * fails for a standalone project, so `berth test` failed on a fresh project.
+ */
+export function workspaceRootAbove(appDir: string): string | undefined {
+  const parent = dirname(appDir);
+  return parent === appDir ? undefined : findWorkspaceRoot(parent);
+}
+
+/**
  * What never belongs in a build context, whichever of the three copies below
  * is doing the copying.
  *
@@ -116,7 +129,7 @@ function excludedFromBuildContext(appDir: string, src: string): boolean {
  * directory. Standalone (non-workspace) apps just get a normal prod install.
  */
 async function stageProductionSource(appDir: string, stagingDir: string): Promise<void> {
-  const workspaceRoot = findWorkspaceRoot(appDir);
+  const workspaceRoot = workspaceRootAbove(appDir);
 
   if (workspaceRoot) {
     const pkgJson = JSON.parse(await readFile(join(appDir, "package.json"), "utf-8")) as { name: string };
