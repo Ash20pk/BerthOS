@@ -1,5 +1,5 @@
 // The co-tenant. It exists only to hold the second flag as a per-app secret
-// (BUILD_PLAN M1.3), so the box tests one workload reaching another's
+//, so the box tests one workload reaching another's
 // credentials — not just one workload reaching the filesystem.
 //
 // It exposes nothing an attacker can call. Its RPC socket is reachable only

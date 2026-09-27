@@ -1,6 +1,6 @@
 name: Containment Benchmark
 
-# BUILD_PLAN M2.2 — see bench/README.md. One probe (bench/probe/probe.mjs),
+# See bench/README.md. One probe (bench/probe/probe.mjs),
 # several sandboxes, a generated scorecard. This workflow runs the three
 # locally runnable columns: plain Docker, Berth as shipped, and Berth with its
 # kernel tier deliberately switched off.

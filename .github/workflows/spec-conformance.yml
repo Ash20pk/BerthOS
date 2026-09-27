@@ -1,6 +1,6 @@
 name: Spec Conformance
 
-# BUILD_PLAN M3.1 / M3.2 — the two standalone specifications under spec/ and
+# The two standalone specifications under spec/ and
 # their conformance suites: the Capability Manifest (what an app declares) and
 # the Attestation Record (what a run enforced).
 #

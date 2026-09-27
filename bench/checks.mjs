@@ -10,7 +10,7 @@
 //   "observation"  the host measures the sandbox from outside (metadata,
 //                  published ports) — no agent-side action exists to run
 //
-// `berthNote` is where Berth's own residuals get named. BUILD_PLAN M2.2: a
+// `berthNote` is where Berth's own residuals get named. A
 // cell Berth fails stays red and names its open gap; a cell Berth
 // passes only because of an unfinished mechanism says so too.
 

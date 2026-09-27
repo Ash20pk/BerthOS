@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# BUILD_PLAN M0.2 verification: prove the published packages work on a
+# Fresh-install verification: prove the published packages work on a
 # machine that has never seen this repo. Run inside an empty container:
 #   docker run --rm node:22-alpine sh -c "apk add --no-cache bash && bash -" < scripts/fresh-install-check.sh
 set -euxo pipefail

@@ -164,7 +164,7 @@ async function main() {
 }
 
 /**
- * The box's own boot attestation (BUILD_PLAN M2.1), published at
+ * The box's own boot attestation, published at
  * /attestation. This is the first place a Berth chain head leaves the writer's
  * reach: once challengers have fetched it, a later rewrite of the box's audit
  * trail is contradicted by the copies they hold.

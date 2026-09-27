@@ -1,6 +1,6 @@
 // Turns a results file into the scored table.
 //
-// The table is generated, never hand-written (BUILD_PLAN M2.2): every cell in
+// The table is generated, never hand-written: every cell in
 // it came out of a run, and the file it came from is named in the output. The
 // scoring rules are deliberately unflattering:
 //

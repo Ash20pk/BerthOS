@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// BUILD_PLAN M2.2 — the containment benchmark runner.
+// The containment benchmark runner.
 //
 //   node bench/run.mjs                              every locally runnable harness
 //   node bench/run.mjs --harness docker,berth       just these

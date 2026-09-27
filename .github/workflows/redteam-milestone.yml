@@ -1,7 +1,6 @@
 name: Red-team
 
-# BUILD_PLAN M2.4 / LAUNCH_PLAN WS4 — keeps the enforcement story honest over
-# time:
+# Keeps the enforcement story honest over time:
 #
 #   redteam.mjs — every kernel-tier denial it asserts must FLIP to allowed when
 #     the enforcing mechanism is removed. A denial that does not flip is

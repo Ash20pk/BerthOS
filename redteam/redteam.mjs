@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// BUILD_PLAN M2.4 — the red-team mutation suite.
+// The red-team mutation suite.
 //
 // The milestone suite proves Berth refuses an attack. This proves those
 // refusals are not vacuous: for each attack class it runs the attack twice —

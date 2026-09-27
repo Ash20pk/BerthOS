@@ -46,8 +46,8 @@ jobs:
       - run: pnpm lint
       - run: pnpm test
 
-      # SBOM of exactly what this workflow is about to publish (BUILD_PLAN
-      # M0.1): Syft walks the workspace and pnpm-lock.yaml and emits SPDX
+      # SBOM of exactly what this workflow is about to publish:
+      # Syft walks the workspace and pnpm-lock.yaml and emits SPDX
       # JSON, uploaded as a run artifact so every publish — dry or real —
       # leaves a machine-readable record of its dependency tree.
       - name: Generate SBOM

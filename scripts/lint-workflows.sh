@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Supply-chain lint (BUILD_PLAN M0.1 / REMEDIATION 6.6): every `uses:` in
+# Supply-chain lint: every `uses:` in
 # .github/workflows/ must be pinned to a full 40-hex commit SHA, and every
 # FROM in base.Dockerfile that pulls from a registry must carry a digest.
 # A tag or branch ref is a mutable pointer the upstream owner (or an

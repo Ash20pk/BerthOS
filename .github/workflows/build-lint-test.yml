@@ -28,7 +28,7 @@ jobs:
           node-version: 22
           cache: pnpm
 
-      # Supply-chain gate (BUILD_PLAN M0.1): fails on any workflow action not
+      # Supply-chain gate: fails on any workflow action not
       # pinned to a commit SHA or any registry base image without a digest.
       - run: ./scripts/lint-workflows.sh
 
@@ -48,8 +48,7 @@ jobs:
       # context-bus-daemon needs protoc for its build.rs (base.Dockerfile's
       # builder stage installs it there). It used to be skipped here for that
       # reason; it is in now because its peer-identity rules — which decide
-      # whether an app can publish under another app's name (REMEDIATION.md
-      # 1.14) — have unit tests, and a security rule whose tests never run
+      # whether an app can publish under another app's name — have unit tests, and a security rule whose tests never run
       # anywhere is not tested.
       - name: Install protoc
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler

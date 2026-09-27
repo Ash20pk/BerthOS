@@ -1,6 +1,6 @@
 // Harness adapter: E2B, a hosted agent sandbox.
 //
-// Status, stated plainly because BUILD_PLAN M2.2 says mock nothing: this
+// Status, stated plainly because the benchmark mocks nothing: this
 // adapter has **never been executed against the real service**. Running it
 // needs an E2B account and an API key, which is a human gate — no agent can
 // sign up. Until someone runs it with a key, the E2B column of every

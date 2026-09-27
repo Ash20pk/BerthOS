@@ -1,6 +1,6 @@
 name: Break-out Box Milestone
 
-# BUILD_PLAN M2.3 — see breakout/test/breakout-milestone.mjs. The public
+# See breakout/test/breakout-milestone.mjs. The public
 # break-out box holds two flags no capability grants; the only thing keeping a
 # stranger's submitted code away from them is the enforcement Berth ships to
 # every app. This test boots the box exactly as the public endpoint runs it

@@ -1,6 +1,6 @@
 name: Attestation Milestone
 
-# BUILD_PLAN M2.1 — see
+# See
 # packages/docker-orchestrator/test/attestation-milestone.mjs. `berth attest
 # <runId>` emits a per-run record binding the audit-chain head, enforcement
 # as measured for the boot (agent-init's ruleset report + the doctor probe),

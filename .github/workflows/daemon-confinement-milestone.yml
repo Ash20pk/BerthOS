@@ -1,6 +1,6 @@
 name: Daemon Confinement Milestone
 
-# BUILD_PLAN M1.2 — see
+# See
 # packages/docker-orchestrator/test/daemon-confinement-milestone.mjs. The
 # pre-agent-init daemons are confined (threat model B4): context-bus-daemon
 # runs as its own uid under an agent-init Landlock domain; mesh-daemon applies

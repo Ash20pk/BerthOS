@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// BUILD_PLAN M2.3: the public break-out box holds two flags that no capability
+// The public break-out box holds two flags that no capability
 // grants, and the only thing keeping a stranger's code away from them is the
 // enforcement Berth ships to everyone.
 //
