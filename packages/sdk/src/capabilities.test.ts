@@ -88,7 +88,7 @@ test("requestCapability falls back to berth.yml when no policy file exists (e.g.
   delete process.env.BERTH_CAPABILITY_POLICY;
 });
 
-test("a grant carries no token — REMEDIATION.md 1.10 removed them", async () => {
+test("a grant carries no token — capability tokens were removed", async () => {
   const dir = await mkdtemp(join(tmpdir(), "berth-capabilities-test-"));
   const manifestPath = join(dir, "berth.yml");
   await writeFile(manifestPath, ["name: test-app", "version: 1.0.0", "capabilities:", "  - filesystem:write:/workspace"].join("\n"));

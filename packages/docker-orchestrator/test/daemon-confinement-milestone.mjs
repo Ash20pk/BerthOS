@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// BUILD_PLAN M1.2: the pre-agent-init daemons are confined (threat model B4).
+// The pre-agent-init daemons are confined (threat model B4).
 //
 //   Confined boot (the new default):
 //     1. context-bus-daemon runs as uid 9001 (berth-context-bus), not root,

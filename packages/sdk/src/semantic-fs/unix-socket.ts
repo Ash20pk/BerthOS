@@ -53,7 +53,7 @@ export async function createUnixSocketSemanticFs(socketPath: string): Promise<Se
   // and — worse — `socket.write()` on a destroyed socket emits an "error"
   // event that nothing was listening for, which in Node is an uncaught
   // exception that takes the whole app down. Both are the same failure this
-  // client is meant to report clearly (REMEDIATION.md 1.14).
+  // client is meant to report clearly.
   let closedReason: string | undefined;
 
   function fail(reason: string): void {

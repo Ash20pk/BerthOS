@@ -58,7 +58,7 @@ export async function readOsState(name: string, osDir = DEFAULT_OS_DIR): Promise
 /**
  * 0600 in a 0700 directory, not the umask's default 0644 — `httpRpc.token` is
  * a bearer token that grants full RPC access to the named OS's exports
- * (REMEDIATION.md 5.5), and this file is the only place it is persisted.
+ *, and this file is the only place it is persisted.
  * `chmod` after `writeFile` rather than trusting the `mode` option, which is
  * masked by the umask on creation and ignored entirely for a file that
  * already exists — and this file already exists on every `berth os up` after

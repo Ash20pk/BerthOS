@@ -88,7 +88,7 @@ fn boot_id() -> String {
 /// eprintln!s elsewhere in this file. The prefix made otherwise-valid JSON
 /// unparseable, so every log collector needed a bespoke strip-then-parse step
 /// before it could read a record that was already structured
-/// (REMEDIATION.md 5.1). `"source":"agent-init"` inside the object carries the
+/// `"source":"agent-init"` inside the object carries the
 /// same information and survives `JSON.parse`.
 fn log_audit_event(policy: &CapabilityPolicy, ruleset_status: &str) {
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
@@ -152,7 +152,7 @@ fn log_seccomp_event(event: &str, app_name: &str, applied: bool, detail: &str) {
 /// grants it by default — and which is what lets a process open AF_PACKET
 /// sockets and speak TCP/IP in userspace, never calling the connect(2) that
 /// Landlock's AccessNet::ConnectTcp rule is watching for. Dropping it is half
-/// of REMEDIATION.md 1.2; the seccomp filter in seccomp.rs is the other half
+/// of closing that bypass; the seccomp filter in seccomp.rs is the other half
 /// (it also covers UDP, which no capability gates at all).
 ///
 /// The bounding set is the one that matters across the exec() below: for a
@@ -174,7 +174,7 @@ fn log_seccomp_event(event: &str, app_name: &str, applied: bool, detail: &str) {
 /// version of this comment called it a hard ceiling full stop, and that was
 /// wrong: `unshare(CLONE_NEWUSER)` needs no privilege and hands its creator a
 /// fresh CAP_FULL_SET bounding set inside the new namespace, which was enough
-/// to mount(2) again (REMEDIATION.md 1.3). The drop below is only a ceiling
+/// to mount(2) again. The drop below is only a ceiling
 /// because seccomp::install_no_new_namespaces_filter() runs right after it and
 /// refuses namespace creation outright. The two are a pair; neither is worth
 /// much alone.
@@ -272,7 +272,7 @@ fn parse_app_identity(uid: Option<&str>, gid: Option<&str>, supplementary: &str)
 /// from 0 with SECBIT_KEEP_CAPS unset (it is unset — nothing here sets it).
 /// That is relied on, but not trusted: the verification below re-reads the
 /// uid and tries `setuid(0)`, because "the kernel does this" is exactly the
-/// kind of assumption REMEDIATION.md 1.3 was made of.
+/// kind of assumption the namespace-creation hole was made of.
 fn switch_to_app_identity(identity: &AppIdentity) -> Result<(), String> {
     let mut groups: Vec<libc::gid_t> = vec![identity.gid as libc::gid_t];
     for gid in &identity.supplementary_gids {
@@ -411,7 +411,7 @@ fn main() {
     // inside the new namespace, which is enough to mount(2) again. Docker's
     // own default seccomp profile blocks this, but stops doing so when the
     // container holds CAP_SYS_ADMIN, which every Berth container does for
-    // semantic-fs's FUSE mount. See seccomp.rs's header and REMEDIATION.md 1.3.
+    // semantic-fs's FUSE mount. See seccomp.rs's header.
     match seccomp::install_no_new_namespaces_filter() {
         Ok(()) => {
             eprintln!("[agent-init] namespace creation (unshare/clone/setns) refused by seccomp for \"{app_name}\"");
@@ -519,7 +519,7 @@ fn write_access_rights() -> BitFlags<AccessFs> {
 
 /// The same rights, narrowed to those Landlock considers meaningful on a
 /// non-directory. This exists because getting it wrong is silent and
-/// expensive, and it already cost one failed attempt at REMEDIATION.md 1.15.
+/// expensive, and it already cost one failed attempt at the pty grant.
 ///
 /// `PathBeneath`'s compatibility pass (landlock 0.4's `fs.rs`) fstat()s the
 /// rule's target and, if it isn't a directory, masks the requested access down
@@ -593,8 +593,7 @@ const ALLOWED_WRITE_DEVICE_PATHS: [&str; 3] = ["/dev/null", "/dev/pts", "/dev/pt
 /// the device paths above it is checked against *this* app's name rather than
 /// as a shared prefix: `/run/berth` as a prefix would let a policy claiming to
 /// be one app grant write access to every other app's socket directory, which
-/// is precisely the boundary this directory exists to draw (REMEDIATION.md
-/// 1.4). `/run` itself, and `/run/berth`, stay rejected.
+/// is precisely the boundary this directory exists to draw. `/run` itself, and `/run/berth`, stay rejected.
 fn app_run_dir(app_name: &str) -> String {
     format!("/run/berth/{app_name}")
 }
@@ -951,7 +950,7 @@ mod tests {
     // landlock's PathBeneath compat pass would mask it off on any device-node
     // rule and report a partial downgrade — turning the ruleset
     // PartiallyEnforced and making every production image refuse to boot,
-    // which is precisely how REMEDIATION.md 1.15's first attempt failed.
+    // which is precisely how the first attempt at the pty grant failed.
     #[test]
     fn file_write_access_set_contains_no_directory_only_rights() {
         let rights = file_write_access_rights();
@@ -1030,7 +1029,7 @@ mod tests {
         }
     }
 
-    // The socket directory REMEDIATION.md 1.4 moves the app RPC socket into.
+    // The socket directory the app RPC socket lives in.
     // Scoped to this app's own name rather than allowed as a /run/berth prefix:
     // a prefix would let a policy file grant write access to every sibling's
     // socket directory, which is the exact boundary the move exists to draw.

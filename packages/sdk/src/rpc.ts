@@ -220,7 +220,7 @@ async function handleFramedLine(app: BerthApp, line: string, write: (encodedResp
   // One audit line per cross-app call, and only for those: an app's own stdio
   // and the host relay are not siblings and would only add noise. This is the
   // record that says *which* app invoked an export, which until per-peer
-  // sockets existed could not be known at all (REMEDIATION.md 1.4, 1.14).
+  // sockets existed could not be known at all.
   if (peer) {
     console.error(`[berth:runtime] "${peer}" invoked export "${request.export}"`);
   }
@@ -247,7 +247,7 @@ export async function invokeExport(app: BerthApp, request: RpcRequest, caller = 
     return { id: request.id, error: `no such export "${request.export}"` };
   }
 
-  // REMEDIATION.md 1.13: every transport into this container converges here,
+  // Every transport into this container converges here,
   // so this is where a governor can see them all. Returns null when no
   // governor is loaded, which is the common case and costs one env lookup.
   const decision = await evaluateAction({ caller, export: request.export, input: request.input });

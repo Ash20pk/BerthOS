@@ -128,7 +128,7 @@ async fn main() -> std::io::Result<()> {
         // the kernel stamped on this connection cannot change for its
         // lifetime, and a client cannot influence it. This is what makes the
         // `app` field of a Register frame advisory rather than authoritative
-        // (REMEDIATION.md 1.14). A failure to read it is treated as the most
+        // A failure to read it is treated as the most
         // restrictive answer available, not as root.
         let peer = match stream.peer_cred() {
             Ok(cred) => identify_from_system(cred.uid()),
@@ -290,7 +290,7 @@ async fn read_frame(reader: &mut (impl AsyncRead + Unpin)) -> std::io::Result<Op
     // Checked before the allocation, which is the whole point: a 4-byte header
     // of 0xFFFFFFFF used to allocate 4 GiB in this daemon, which runs as root
     // outside any Landlock domain and is reachable by every app in the sandbox
-    // (REMEDIATION.md 1.14). The error is returned rather than skipped so the
+    // The error is returned rather than skipped so the
     // connection is dropped — a client that framed one message this badly has
     // no credible next frame on the same stream.
     if len > MAX_FRAME_BYTES {

@@ -4,7 +4,7 @@ import type { DoctorProbeResult, PolicyDigest, RulesetReport } from "@berthos/au
 import { enforcementStatusForBoot } from "./doctor.js";
 
 /**
- * BUILD_PLAN M2.1 — the host-side evidence gathering behind `berth attest`.
+ * The host-side evidence gathering behind `berth attest`.
  *
  * Everything an attestation binds about a *boot* lives in places only the
  * Docker API can reach from the host: the boot ID and agent-init's ruleset

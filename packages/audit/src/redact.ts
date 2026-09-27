@@ -6,7 +6,7 @@
  * A deny-list is the wrong default in general — it fails open on the name
  * nobody thought of. It is the right one *here* because the alternative
  * (an allow-list) would strip the arguments an auditor actually opened the
- * file to read, and payload capture is already opt-in per REMEDIATION.md 5.4:
+ * file to read, and payload capture is already opt-in:
  * this is the second line of defence, not the only one.
  */
 const SECRET_KEY_PATTERNS = [

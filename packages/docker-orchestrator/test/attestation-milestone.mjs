@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// BUILD_PLAN M2.1: `berth attest <runId>` emits a per-run record binding the
+// `berth attest <runId>` emits a per-run record binding the
 // audit-chain head, enforcement AS MEASURED for the boot, the enforced
 // capability-policy hash, boot id, and image digest — and the standalone
 // verifier (scripts/verify-attestation.mjs, no Berth dependency) accepts the
@@ -24,7 +24,7 @@
 //        support → verifier rejects (derivation mismatch). This is what
 //        makes the verdict field not worth editing.
 //
-//   Control boot — the negative control IS the feature (BUILD_PLAN 2.1):
+//   Control boot — the negative control IS the feature:
 //     7. the same app booted under a seccomp profile that ENOSYSes the
 //        landlock syscalls (the same shape Docker Desktop's linuxkit kernel
 //        presents — see capability-enforcement.mjs's header) attests

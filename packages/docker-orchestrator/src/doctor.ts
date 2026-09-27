@@ -20,7 +20,7 @@ import { applyDockerContext, describeDockerHost } from "./docker-host.js";
 export type CheckStatus = "ok" | "warn" | "fail" | "unknown";
 
 export interface DoctorCheck {
-  /** Stable machine-readable id. Part of the `--json` contract; do not rename. Additions (like `runtime`, BUILD_PLAN M1.4) are non-breaking — consumers must tolerate ids they don't know. */
+  /** Stable machine-readable id. Part of the `--json` contract; do not rename. Additions (like `runtime`) are non-breaking — consumers must tolerate ids they don't know. */
   id: "docker" | "landlock" | "seccomp" | "fuse" | "runtime";
   /** Human-readable one-liner. */
   title: string;
@@ -316,7 +316,7 @@ export async function runDoctor(options: RunDoctorOptions = {}): Promise<DoctorR
   // --- Docker ------------------------------------------------------------
   // First, and gating: every kernel fact below comes from a container, so an
   // unreachable daemon makes the rest unknowable rather than merely unchecked.
-  // This is also REMEDIATION 6.5's complaint — nothing in the repo called
+  // It used to be worse — nothing in the repo called
   // ping(), so a stopped daemon surfaced as a raw dockerode socket error.
   let dockerReachable = false;
   try {
@@ -364,7 +364,7 @@ export async function runDoctor(options: RunDoctorOptions = {}): Promise<DoctorR
   // --- seccomp -----------------------------------------------------------
   // From the daemon rather than a container: this is the daemon's default
   // profile, which is what a Berth container gets. agent-init installs two
-  // filters of its own regardless (1.2, 1.3), and those are what the capability
+  // filters of its own regardless, and those are what the capability
   // drop actually depends on — hence `warn`, not `fail`, when the default is off.
   if (daemon) {
     const seccomp = daemon.securityOptions.find((o) => o.startsWith("name=seccomp"));
@@ -385,7 +385,7 @@ export async function runDoctor(options: RunDoctorOptions = {}): Promise<DoctorR
   }
 
   // --- runtime -------------------------------------------------------------
-  // The hardened-runtime check (BUILD_PLAN M1.4). Informational when nothing
+  // The hardened-runtime check. Informational when nothing
   // was requested; a hard failure when BERTH_RUNTIME names a runtime the
   // daemon doesn't have, because every boot would then fail at createContainer.
   if (daemonRuntimes) {
@@ -543,7 +543,7 @@ function collectReasons(checks: DoctorCheck[]): string[] {
 
 // --- the boot-time banner ------------------------------------------------
 //
-// REMEDIATION 6.5 / LAUNCH_PLAN WS1.2. The gap this closes is specific and was
+// The gap this closes is specific and was
 // worse than a missing warning: on a kernel without Landlock, and when
 // enforcement is not *required* (which is every `berth dev`, the primary
 // workflow), agent-init printed

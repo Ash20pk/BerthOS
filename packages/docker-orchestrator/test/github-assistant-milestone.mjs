@@ -54,12 +54,12 @@ async function main() {
   await runBrokerScenario();
 }
 
-// REMEDIATION.md 1.9 — what a github: capability actually covers. Run against
+// What a github: capability actually covers. Run against
 // the shipped broker script directly (no Docker), because every decision here
 // is made before the request leaves the broker, and the two scenarios below
 // need an image build apiece to reach one code path.
 async function runRouteTableScenario() {
-  console.log("\n=== Route table, path normalization, and CA permissions (REMEDIATION.md 1.9) ===");
+  console.log("\n=== Route table, path normalization, and CA permissions ===");
   const dataDir = await mkdtemp(join(tmpdir(), "berth-github-broker-routes-"));
   const certDir = join(dataDir, "certs"); // deliberately absent — the broker creates it, and its mode is under test
   const upstreamCertDir = join(dataDir, "upstream");

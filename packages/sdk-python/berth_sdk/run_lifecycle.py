@@ -7,7 +7,7 @@ the Node lifecycle script.
 
 It used to also execute the manifest's on_install commands, once, tracked by
 a marker file. That ran as uid 0 with no Landlock domain applied, before one
-could exist (REMEDIATION.md 1.5); on_install is now a Docker build layer for
+could exist; on_install is now a Docker build layer for
 both build targets, and nothing runs it at container boot. See the fuller
 note in run-lifecycle.ts. The marker file went with it — there is no longer a
 boot-time action to run at most once.

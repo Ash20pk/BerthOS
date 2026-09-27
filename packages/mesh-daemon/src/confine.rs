@@ -1,4 +1,4 @@
-// In-process Landlock confinement for mesh-daemon (BUILD_PLAN M1.2; threat
+// In-process Landlock confinement for mesh-daemon (threat
 // model B4).
 //
 // This daemon cannot be run under agent-init the way context-bus-daemon now

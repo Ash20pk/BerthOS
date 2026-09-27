@@ -4,7 +4,7 @@
 // Every request frame this daemon accepts used to carry the caller's own claim
 // about which app it is (`Register { app }`), and nothing checked it: any app
 // in the sandbox could register, publish, and be logged as any other
-// (REMEDIATION.md 1.14). SO_PEERCRED is the fix — the kernel stamps the
+// SO_PEERCRED is the fix — the kernel stamps the
 // connecting process's uid onto the socket at connect(2) time, and a process
 // cannot lie about it without already being able to become that uid.
 //

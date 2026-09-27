@@ -57,13 +57,13 @@ function declaredCapabilities(): Promise<string[]> {
  * that at process start, and this reports what that decision was.
  *
  * It used to also return an HMAC-signed, expiring capability token. That was
- * removed in REMEDIATION.md 1.10: nothing in Berth ever verified one, and it
+ * removed: nothing in Berth ever verified one, and it
  * could not have meant anything if it had. The signing secret was exported
  * into the app's own environment, so the constrained process held the key and
  * could mint any token for any capability; in multi-app containers each app
  * got a *different* secret, so cross-app verification was impossible by
  * construction. Cross-app identity is now established by the kernel at
- * connect(2) instead — see REMEDIATION.md 1.4 — which an app cannot forge,
+ * connect(2) instead, which an app cannot forge,
  * and which is what a token would have been trying to approximate.
  */
 export async function requestCapability(appName: string, capability: string): Promise<CapabilityGrant> {

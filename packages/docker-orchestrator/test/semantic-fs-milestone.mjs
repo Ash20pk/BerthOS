@@ -161,7 +161,7 @@ async function main() {
 
     console.log("\nPASS — query-by-intent over a seeded, real FUSE-backed semantic FS returned the correct fixture.");
 
-    // --- REMEDIATION.md 1.14: a dead daemon must be an error, not silence. ---
+    // --- A dead daemon must be an error, not silence. ---
     //
     // Deliberately last: it kills the daemon, so nothing after it can query.
     //
@@ -178,7 +178,7 @@ async function main() {
     // both healthy, is exactly what made this assertion impossible to write
     // before (see stdio-rpc.ts).
     console.log("\n--- Killing semantic-fs-daemon and re-running the query that just worked ---");
-    // The daemon lives in the per-sandbox sidecar since BUILD_PLAN M1.1;
+    // The daemon lives in the per-sandbox sidecar;
     // kill it where it actually runs. The in-sandbox pkill stays for the
     // legacy (BERTH_DISABLE_FS_SIDECAR=1) path, where it is the daemon's home.
     await docker.getContainer("berth-semantic-fs-milestone-filesystem-fs").kill().catch(() => {});
@@ -194,14 +194,14 @@ async function main() {
     console.log("query after the daemon died:", JSON.stringify(afterKill));
     assert(
       afterKill.error,
-      `querying a dead semantic-fs daemon returned success instead of an error — this is REMEDIATION.md 1.14's silent data loss: ${JSON.stringify(afterKill)}`,
+      `querying a dead semantic-fs daemon returned success instead of an error — this is the silent-data-loss regression: ${JSON.stringify(afterKill)}`,
     );
     assert(
       /semantic-fs|control socket/i.test(afterKill.error),
       `the error names neither the daemon nor the socket, so whoever reads it cannot tell what broke: ${afterKill.error}`,
     );
 
-    console.log("\nPASS — a dead semantic-fs daemon surfaces as an error, not as an empty result set (REMEDIATION.md 1.14).");
+    console.log("\nPASS — a dead semantic-fs daemon surfaces as an error, not as an empty result set.");
   } finally {
     await containerLog.stop();
     await stopContainer(running.container);

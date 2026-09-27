@@ -87,14 +87,14 @@ export interface CreateSnapshotOptions {
  * Deliberately NOT captured (see docs/computer-snapshots-reference.md): any
  * context-bus daemon in-flight subscriber state (process memory, not disk;
  * apps re-subscribe via on_agent_ready on any boot, restored or not), and —
- * as of REMEDIATION.md 5.5, which is what made this paragraph true rather
+ * which is what made this paragraph true rather
  * than merely intended — every secret-named environment variable. env.json
  * used to be the whole container environment written at whatever mode the
  * umask gave it, including the RPC bearer token and any provider API key; it
  * is now the non-secret entries only, at 0600, with the withheld names listed
  * in metadata.redactedEnvNames so a restore can say what it is missing.
  * BERTH_TOKEN_SECRET used to be named here too; it no longer exists
- * (REMEDIATION.md 1.10 removed capability tokens).
+ * (capability tokens were removed).
  */
 export async function createSnapshot(options: CreateSnapshotOptions): Promise<{ id: string; dir: string }> {
   const docker = options.docker ?? new Docker();

@@ -68,7 +68,7 @@ test("maxResources takes the max across companion apps sharing one container, pe
 });
 
 /**
- * REMEDIATION.md 5.5. `Env` on createContainer is permanent, inspectable
+ * `Env` on createContainer is permanent, inspectable
  * container configuration — a bearer token or a provider API key put there is
  * readable by anything that can talk to the Docker socket for the life of the
  * container, and is copied verbatim into every commit and snapshot of it.
@@ -180,7 +180,7 @@ test("startContainer mounts nothing extra for a container whose env holds no cre
 });
 
 /**
- * BUILD_PLAN M1.4: the hardened-runtime opt-in is a passthrough to Docker's
+ * The hardened-runtime opt-in is a passthrough to Docker's
  * HostConfig.Runtime — observable only in what createContainer is sent. The
  * empty-string case matters for the same reason BERTH_PUBLISH_HOST's does: a
  * stray `BERTH_RUNTIME=` in a .env must not select a runtime named "".
@@ -209,7 +209,7 @@ test("BERTH_RUNTIME selects the runtime when the caller passes none, and empty m
 });
 
 /**
- * BUILD_PLAN M2.1: extraSecurityOpt is appended to the computed SecurityOpt
+ * ExtraSecurityOpt is appended to the computed SecurityOpt
  * entries — how attestation-milestone.mjs's control boot pins a seccomp
  * profile that ENOSYSes the landlock syscalls.
  */

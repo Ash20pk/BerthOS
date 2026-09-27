@@ -168,7 +168,7 @@ ENTRYPOINT ["/sbin/tini", "--", "/entrypoint.sh"]
 FROM base AS dev
 ENV NODE_ENV=development
 # on_install runs here, at build time, and nowhere else — see
-# docker/run-on-install.sh and REMEDIATION.md 1.5. A dev image holds no app
+# docker/run-on-install.sh. A dev image holds no app
 # source (it arrives via `berth dev`'s bind mount at container start), so this
 # copies a throwaway staging copy of it, runs each app's generated script
 # against that copy, and deletes it in the same layer. What survives is
@@ -201,6 +201,6 @@ COPY . /app
 # Same build-time on_install as the dev stage above, but run in place: a
 # production image already holds the app's real source and node_modules at
 # /app, so there's nothing to stage twice and the working directory is the
-# one the app will actually run from. REMEDIATION.md 1.5.
+# one the app will actually run from.
 RUN /usr/local/bin/berth-run-on-install /app
 CMD ["node", "node_modules/@berthos/sdk/dist/runtime.js"]

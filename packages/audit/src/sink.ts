@@ -31,7 +31,7 @@ export interface FileAuditSinkOptions {
   path: string;
   /**
    * Record `input`/`output` on events that carry them. Off by default: the
-   * file is plaintext on disk (REMEDIATION.md 5.4 is still open), so tool
+   * file is plaintext on disk (nothing is encrypted at rest yet), so tool
    * arguments and outputs are not written unless someone asks for them. When
    * on, both go through redact() first.
    */
@@ -172,8 +172,8 @@ export function createConsoleAuditSink(): AuditSink {
   let seq = 0;
   return {
     async record(event) {
-      // No `[berth-audit]` prefix, deliberately: REMEDIATION.md 5.1 names the
-      // `[agent-init] {...}` prefix as the reason those lines aren't
+      // No `[berth-audit]` prefix, deliberately: the
+      // `[agent-init] {...}` prefix was the reason those lines aren't
       // parseable JSON. A log collector should be able to read this stream
       // with JSON.parse and nothing else.
       console.error(JSON.stringify({ ...event, seq: seq++ }));

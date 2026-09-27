@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// BUILD_PLAN M1.3: a secret an app declares under `secrets:` in berth.yml
+// A secret an app declares under `secrets:` in berth.yml
 // reaches THAT app and no sibling — by env, by /proc/<pid>/environ, and by
 // the per-app file's DAC. Two boots of the same two-app container:
 //

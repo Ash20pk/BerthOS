@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Real, running verification of REMEDIATION 1.7: the ports `berth dev`
+// Real, running verification that the ports `berth dev`
 // publishes to the host are bound to loopback and gated by a credential,
 // rather than being an unauthenticated writable root shell on every
 // interface the host has.
@@ -81,7 +81,7 @@ async function main() {
     // This used to assert the opposite — that `BERTH_TERMINAL_CREDENTIAL=<the
     // password>` appeared in the container's `Env`. It did, permanently, to
     // anything that could reach the Docker socket, and into every commit and
-    // snapshot of the container (REMEDIATION.md 5.5). It now travels through a
+    // snapshot of the container. It now travels through a
     // 0600 host file mounted at /run/berth/secrets.env that entrypoint.sh
     // sources instead. Test 6 below is what proves it still actually arrives:
     // ttyd cannot accept a password it never received.
@@ -107,7 +107,7 @@ async function main() {
     // listening to authenticate against.
     // Only a trigger, so its own outcome is deliberately not asserted. Two
     // reasons: on a Landlock-enforcing kernel this call legitimately returns
-    // an error (1.15), and the stdio attach itself is racy — dockerode's
+    // an error, and the stdio attach itself is racy — dockerode's
     // handshake bytes occasionally land in the app's stdin, which the runtime
     // reports as "ignoring non-JSON RPC line" and this side sees as a
     // timeout. Whether ttyd ends up listening is what the next step checks,
@@ -124,7 +124,7 @@ async function main() {
       console.log(`  (the trigger call itself didn't complete: ${err instanceof Error ? err.message : err})`);
     }
 
-    // REMEDIATION 1.15's own assertion, and deliberately made against the
+    // The pty grant's own assertion, and deliberately made against the
     // container log rather than the RPC result: whether the *call* completed
     // is subject to the stdio-attach raciness described above, whereas whether
     // tmux's server died is not. This is the exact signature that made
@@ -135,7 +135,7 @@ async function main() {
     check(
       "apps/terminal's tmux server started",
       !/server exited unexpectedly/.test(tmuxLog),
-      "tmux died — REMEDIATION 1.15 has regressed; check the compiled policy still grants /dev/pts, /dev/ptmx, /dev/null",
+      "tmux died — the pty grant has regressed; check the compiled policy still grants /dev/pts, /dev/ptmx, /dev/null",
     );
 
     const url = `http://127.0.0.1:${ports.terminal}/`;
@@ -151,7 +151,7 @@ async function main() {
       // This used to skip Tests 4-6 when the log carried tmux's "server exited
       // unexpectedly" signature — apps/terminal could not allocate a pty on a
       // Landlock-enforcing kernel, so ttyd never started and its credential
-      // could not be tested there (REMEDIATION.md 1.15). That is now fixed:
+      // could not be tested there. That is now fixed:
       // the compiled policy grants the pty devices plus /dev/null,
       // which a strace of a real tmux server showed it opens O_RDWR. So the
       // skip is gone and this is a plain failure, which is the point — a

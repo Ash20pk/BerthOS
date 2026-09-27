@@ -11,7 +11,7 @@ const app = await createMeshCoordinatorServer({ dataDir, logger: true, tls });
 await app.listen({ port, host });
 console.log(`[berth-mesh-coordinator] listening on ${schemeFor(tls)}://${host}:${port} (data: ${dataDir})`);
 
-// Drain on SIGTERM/SIGINT (BUILD_PLAN M0.5): app.close() stops accepting,
+// Drain on SIGTERM/SIGINT: app.close() stops accepting,
 // waits for in-flight requests, then runs onClose hooks — which is where the
 // SQLite handle is closed — before the process exits.
 for (const signal of ["SIGTERM", "SIGINT"] as const) {

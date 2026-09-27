@@ -113,7 +113,7 @@ func main() {
 
 	// The mount was the last thing needing CAP_SYS_ADMIN — narrow to the
 	// file-ownership set now, before the first FUSE or control-socket request
-	// is served (BUILD_PLAN M1.2; see internal/privs). One structured line
+	// is served (see internal/privs). One structured line
 	// either way, prefix-free like agent-init's, so a boot's actual privilege
 	// posture is greppable rather than assumed.
 	narrowed := false

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { canonicalize } from "./sink.js";
 
 /**
- * BUILD_PLAN M2.1 — the attestation record. A per-run statement binding
+ * The attestation record. A per-run statement binding
  * together facts that are otherwise scattered across the audit trail, the
  * container's stderr, the policy file, and the doctor cache:
  *
@@ -27,7 +27,7 @@ export const ATTESTATION_SCHEMA_VERSION = 1;
 export const ATTESTATION_KIND = "berth.attestation";
 
 /**
- * The honesty constraint from BUILD_PLAN 2.1, carried in-band: every record
+ * The honesty constraint, carried in-band: every record
  * says what trusting it requires, so a reader who only ever sees the JSON
  * still sees the limits.
  */

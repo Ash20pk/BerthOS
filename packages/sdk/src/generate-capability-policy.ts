@@ -41,7 +41,7 @@ const MESH_COORDINATOR_PORT = Number(process.env.BERTH_MESH_COORDINATOR_PORT ?? 
 
 // Always writable regardless of what's declared, and — apart from /dev/null —
 // per-app rather than shared. This used to be all of `/tmp`, unconditionally,
-// for every app in the container: REMEDIATION.md 1.4's finding, and the reason
+// for every app in the container, which is the reason
 // one app could bind or connect to any other's RPC socket.
 //
 // The old comment justified the blanket /tmp with "connecting to a Unix socket
@@ -80,7 +80,7 @@ function appRunDir(appName: string): string {
 
 // Granted to any app declaring a terminal:* capability. Established by
 // straceing a real `tmux new-session` rather than guessed — the previous
-// attempt at this (see REMEDIATION.md 1.15) granted the pty devices alone and
+// attempt at this granted the pty devices alone and
 // tmux still died, because a tmux server also opens /dev/null O_RDWR to
 // daemonize. That one is in the baseline above rather than here: opening
 // /dev/null read-write is what *any* process does when it redirects a child's
@@ -262,14 +262,14 @@ export function compileCapabilityPolicy(appName: string, rawCapabilities: string
       // terminal:* is otherwise a recorded-only capability (it's what makes
       // container.ts publish ttyd's port). This is the one thing it compiles
       // into the kernel policy, and without it apps/terminal cannot allocate a
-      // pty at all on a kernel that enforces Landlock — REMEDIATION.md 1.15.
+      // pty at all on a kernel that enforces Landlock.
       for (const path of TERMINAL_WRITE_PATHS) writePaths.add(path);
     } else if (parsed.namespace === "github") {
       // Same shape as terminal:* above: github:* is otherwise recorded-only
       // (it's what makes entrypoint.sh start the GitHub API broker), and this
       // is the one thing it compiles into the kernel policy. The broker's CA
       // moved out of /tmp — which baselineReadPaths covers in full — into
-      // /run/berth (REMEDIATION.md 1.9), and Node reads NODE_EXTRA_CA_CERTS at
+      // /run/berth, and Node reads NODE_EXTRA_CA_CERTS at
       // process start, i.e. after agent-init has enforced. Without this an app
       // that declares any filesystem:read: capability (which is what turns
       // read scoping on) can't read the CA it was told to trust, and every

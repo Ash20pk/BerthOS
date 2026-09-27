@@ -1,6 +1,6 @@
 name: on-install-probe
 version: 0.1.0
-description: "on-install-milestone.mjs's fixture for REMEDIATION 1.5 — its on_install writes somewhere no declared capability would permit at runtime, which is how the test tells build time from boot time apart."
+description: "on-install-milestone.mjs's fixture — its on_install writes somewhere no declared capability would permit at runtime, which is how the test tells build time from boot time apart."
 
 # Deliberately empty. /etc is not a writable path for this app under any
 # policy the manifest could express, so the proof file below can only have

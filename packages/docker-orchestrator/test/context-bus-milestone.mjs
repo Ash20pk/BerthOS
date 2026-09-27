@@ -46,7 +46,7 @@ async function main() {
     // go now that apps run as their own uid rather than root. The bind-mounted repository root is owned
     // by the developer or the CI runner, so a uid-10000 app cannot write it —
     // the stated cost of per-app uids. It never should have: writing into the repo
-    // root is the behaviour REMEDIATION.md 1.6 removed from `berth dev`, and
+    // root is the behaviour removed from `berth dev`, and
     // the litter it left behind was a symptom of it.
     env: { BERTH_WORKSPACE_ROOT: "/workspace/.berth/dev-workspace" },
     docker,

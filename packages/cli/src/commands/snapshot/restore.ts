@@ -30,7 +30,7 @@ export default class SnapshotRestore extends Command {
     this.log(`Loading snapshot ${args.id} from ${dir}...`);
     const restored = await restoreSnapshot(dir, docker);
 
-    // A snapshot carries no credentials by construction (REMEDIATION.md 5.5),
+    // A snapshot carries no credentials by construction,
     // which means a restored sandbox boots without whatever the original had.
     // Said here rather than left for the app to fail on: "the agent can't
     // reach the model provider" is a much harder thing to diagnose from

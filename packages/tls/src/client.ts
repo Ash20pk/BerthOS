@@ -58,7 +58,7 @@ export function applyClientTls(flags: ClientTlsFlags): void {
  *
  * Loopback is exempt because the token never touches a network there, and
  * warning about it would train people to ignore the warning that matters.
- * REMEDIATION.md 5.3's concrete case is a registry or mesh coordinator a
+ * The concrete case is a registry or mesh coordinator a
  * deployed fleet talks to — remote by definition, so every token crosses
  * the network in the clear.
  */

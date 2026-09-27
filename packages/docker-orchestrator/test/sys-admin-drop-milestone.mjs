@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// BUILD_PLAN M1.1: a booted sandbox carries no container-wide CAP_SYS_ADMIN.
+// A booted sandbox carries no container-wide CAP_SYS_ADMIN.
 // The /context FUSE mount is performed by a per-sandbox sidecar container
 // and propagates in as a bind, so:
 //

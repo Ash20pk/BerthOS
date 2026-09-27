@@ -1,8 +1,8 @@
 import * as net from "node:net";
 
 /**
- * The governance gate at the SDK's own RPC dispatch — REMEDIATION.md 1.13's
- * second half.
+ * The governance gate at the SDK's own RPC dispatch — the second of two
+ * gates.
  *
  * @berthos/agents already gates what goes through a Computer, and that covers
  * the agent loop, `computer.call()`, MCP tools and agent-as-tool delegation.
@@ -28,7 +28,7 @@ import * as net from "node:net";
  *
  * A governor that is unreachable, slow, or crashed denies the call rather
  * than waving it through, matching the default @berthos/agents adopted in
- * REMEDIATION.md 1.11: a policy check that did not happen must never quietly
+ * A policy check that did not happen must never quietly
  * become a policy check that passed.
  *
  * The blast radius here is genuinely larger than it is at the agent loop,

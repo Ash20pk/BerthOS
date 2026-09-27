@@ -15,12 +15,12 @@ export interface CreateMeshCoordinatorServerOptions {
    * Serve HTTPS instead of plain HTTP. Built by `resolveServerTls()` from
    * cert/key paths — see @berthos/tls and docs/tls-reference.md. Undefined
    * means plain HTTP, which is the default and what every existing
-   * deployment keeps getting (REMEDIATION.md 5.3).
+   * deployment keeps getting.
    */
   tls?: ServerTlsOptions;
   /**
    * Fastify's request logger. Off by default so tests stay quiet; the
-   * `berth-mesh-coordinator` binary turns it on. REMEDIATION.md 5.1 counted "no HTTP
+   * `berth-mesh-coordinator` binary turns it on. The audit work counted "no HTTP
    * access logs on any server" among its findings — a request that reached
    * this server previously left no trace at all.
    */
@@ -38,7 +38,7 @@ export async function createMeshCoordinatorServer(opts: CreateMeshCoordinatorSer
   const app = Fastify({ https: opts.tls ?? null, logger: opts.logger ?? false });
 
   // Liveness for process supervisors and the CLI's status checks
-  // (BUILD_PLAN M0.5). Deliberately unauthenticated and DB-free: it answers
+  // Deliberately unauthenticated and DB-free: it answers
   // "is the process serving" and nothing else.
   app.get("/health", async () => ({ status: "ok" }));
   await registerMeshCoordinatorRoutes(app, { db, now: opts.now });

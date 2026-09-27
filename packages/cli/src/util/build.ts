@@ -13,7 +13,7 @@ export function productionImageTag(manifest: BerthManifest): string {
 
 /**
  * `companions` matters here for exactly one reason, and only since
- * REMEDIATION.md 1.5: a dev image still has no companion *source* in it (that
+ * A dev image still has no companion *source* in it (that
  * arrives via the bind mount), but each companion's `on_install` now runs as
  * a build layer, so its manifest and files have to reach the build context.
  * Omitting them would silently skip a companion's setup step in `berth dev`

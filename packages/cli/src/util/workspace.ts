@@ -46,7 +46,7 @@ export interface DevMountApp {
 }
 
 /**
- * The mount layout for `berth dev`, and the whole of REMEDIATION.md 1.6.
+ * The mount layout for `berth dev`: the workspace root is read-only.
  *
  * It used to be one line: bind the pnpm workspace root at `/workspace`,
  * read-write. Apps declaring `filesystem:write:/workspace` — which is four of

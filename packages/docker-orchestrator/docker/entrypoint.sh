@@ -17,7 +17,7 @@ echo "[berth:entrypoint] boot id: ${BERTH_BOOT_ID}" >&2
 # mounted read-only here, instead of putting it in the container's `Env`,
 # where it would be permanently readable to anyone who can inspect the
 # container and would be copied verbatim into every `docker commit` and every
-# `berth snapshot create` (REMEDIATION.md 5.5). Sourced here, before any
+# `berth snapshot create`. Sourced here, before any
 # daemon or app starts, so every child process inherits these exactly as if
 # they had been passed as `Env` all along.
 #
@@ -111,7 +111,7 @@ provision_app_identity() {
   # three daemon control sockets, all of which are shared by design.
   addgroup "$user" berth 2>/dev/null || true
   # /dev/ptmx and the devpts mount are root:tty, so allocating a pty is a DAC
-  # question as well as a Landlock one (REMEDIATION.md 1.15 covers the latter).
+  # question as well as a Landlock one (the compiled policy covers the latter).
   # Granted only to an app that declared terminal:*, matching exactly what
   # generate-capability-policy.ts compiles the pty write paths for.
   if grep -q "terminal:" "$app_dir/berth.yml" 2>/dev/null; then
@@ -119,7 +119,7 @@ provision_app_identity() {
   fi
 
   # Where this app's RPC socket lives, since per-app uids took it
-  # out of world-writable /tmp/berth-rpc (REMEDIATION.md 1.4).
+  # out of world-writable /tmp/berth-rpc.
   #
   # 0711 — traverse, but not list. Nothing in here is reachable by a sibling by
   # default: rpc.sock itself is 0600 (the app and root, i.e. the host relay).
@@ -177,7 +177,7 @@ provision_app_identity() {
 # cannot influence. That is Step 4's SO_PEERCRED property, obtained the only
 # way available to a Node server — see @berthos/sdk's rpc.ts.
 #
-# This is the authorized half of REMEDIATION.md 1.4. The unauthorized half —
+# This is the authorized half of cross-app socket access. The unauthorized half —
 # any app reaching any other app's socket because they all sat in a 1777
 # directory — is what Step 3 closes; but @berthos/agents' generated agent app
 # genuinely calls its sibling apps' exports (network.ts's callSibling, the
@@ -220,7 +220,7 @@ grant_invoke_access() {
   done
 }
 
-# The governed app's route to the governor — REMEDIATION.md 1.13.
+# The governed app's route to the governor.
 #
 # Deliberately *not* driven by a declared `app:invoke:<governor>` capability,
 # unlike grant_invoke_access above. A gate an app can opt out of by not
@@ -305,7 +305,7 @@ export_app_identity() {
 
 # Points every "somewhere to scratch" convention at the app's own 0700
 # directory, now that /tmp itself is no longer in any app's write policy
-# (REMEDIATION.md 1.4, and see generate-capability-policy.ts's baseline).
+# (and see generate-capability-policy.ts's baseline).
 #
 # Each of these was found by asking what actually writes to a hardcoded /tmp
 # path in this image, rather than by guessing:
@@ -314,7 +314,7 @@ export_app_identity() {
 #                  Chromium's own base::GetTempDir (--disable-dev-shm-usage
 #                  puts shared memory there).
 #   TMUX_TMPDIR  — a tmux server's socket directory, otherwise /tmp/tmux-<uid>
-#                  (apps/terminal; see REMEDIATION.md 1.15 for the strace).
+#                  (apps/terminal; for the strace).
 #   XDG_*        — base.Dockerfile sets these to /tmp/.chromium image-wide,
 #                  which every app in a multi-app container would otherwise
 #                  share; overridden per app here.
@@ -334,7 +334,7 @@ export_app_environment() {
   export XDG_CACHE_HOME="$TMPDIR/.cache"
   export HOME="$TMPDIR"
 
-  # Per-app secrets (BUILD_PLAN M1.3): a name this app declared under
+  # Per-app secrets: a name this app declared under
   # `secrets:` in berth.yml arrives in a per-app file under the read-only
   # staging mount, is copied to /run/berth/secrets.<app>.env at 0600 owned
   # by this app's uid — the copy is what turns a host-owned read-only mount
@@ -357,7 +357,7 @@ export_app_environment() {
 
 # The one host-owned directory a `berth dev` app still has to write, and all
 # that is left of the host-ownership problem per-app uids created. The
-# workspace root itself is read-only since REMEDIATION.md 1.6, so this is not
+# workspace root itself is read-only, so this is not
 # the repository — it is `.berth/dev-workspace`, which Berth creates,
 # gitignores, and mounts specifically to hold app data.
 #
@@ -402,7 +402,7 @@ secure_capability_policy() {
   chmod 0640 "$policy_path" 2>/dev/null || true
 }
 
-# --- Daemon confinement (BUILD_PLAN M1.2; threat model B4). ---
+# --- Daemon confinement (threat model B4). ---
 #
 # The pre-agent-init daemons used to run as root with no Landlock domain —
 # the exact posture B4 names. context-bus-daemon now gets the same treatment
@@ -492,7 +492,7 @@ EOF
 
   local user="berth-context-bus"
   if provision_daemon_identity "$user" "$BERTH_DAEMON_BUS_UID"; then
-    echo "[berth:entrypoint] context-bus-daemon confined: uid ${BERTH_DAEMON_BUS_UID}, Landlock write scope ${socket_dir} (BUILD_PLAN M1.2)" >&2
+    echo "[berth:entrypoint] context-bus-daemon confined: uid ${BERTH_DAEMON_BUS_UID}, Landlock write scope ${socket_dir}" >&2
     env BERTH_CAPABILITY_POLICY="$policy" \
         BERTH_APP_UID="$BERTH_DAEMON_BUS_UID" \
         BERTH_APP_GID="$BERTH_DAEMON_BUS_UID" \
@@ -535,7 +535,7 @@ if [ -z "${BERTH_APPS:-}" ]; then
   #
   # It no longer runs the manifest's on_install commands: those are a Docker
   # build layer now (docker/run-on-install.sh), not a root shell this script
-  # execs before agent-init has applied any Landlock domain. REMEDIATION.md 1.5.
+  # execs before agent-init has applied any Landlock domain.
   # The lifecycle script's last stdout line is "<0|1>,<0|1>" — everything
   # before that is its own on_install command output (already streamed to
   # stderr/stdout by execSync's inherited stdio).
@@ -574,7 +574,7 @@ if [ -z "${BERTH_APPS:-}" ]; then
     echo "[berth:entrypoint] semantic FS is off (BERTH_NO_SEMANTIC_FS=1): no /context mount, and nothing waiting on one" >&2
   else
     if [ "${BERTH_SEMANTIC_FS_EXTERNAL:-0}" = "1" ]; then
-      # BUILD_PLAN M1.1: the FUSE mount is performed by the semantic-fs sidecar
+      # The FUSE mount is performed by the semantic-fs sidecar
       # container and arrives here as a bind — this container holds no
       # CAP_SYS_ADMIN and could not mount anything if it tried. The wait below
       # is against the *propagated* mount becoming visible.
@@ -645,7 +645,7 @@ if [ -z "${BERTH_APPS:-}" ]; then
   # generated CA (BERTH_GITHUB_API_PROXY / NODE_EXTRA_CA_CERTS below).
   if grep -q "github:" "$MANIFEST_PATH" 2>/dev/null; then
     GITHUB_BROKER_PORT="${BERTH_GITHUB_API_BROKER_PORT:-8092}"
-    # /run/berth, not /tmp (REMEDIATION.md 1.9). The broker creates it 0700
+    # /run/berth, not /tmp. The broker creates it 0700
     # and its CA key 0600; what is narrowed below is who may traverse it to
     # read ca.crt — exactly the one app whose process is about to be told to
     # trust that CA, rather than every uid in the container.
@@ -688,7 +688,7 @@ if [ -z "${BERTH_APPS:-}" ]; then
   fi
 
   # No BERTH_TOKEN_SECRET any more. It backed @berthos/sdk's HMAC-signed
-  # capability tokens, which REMEDIATION.md 1.10 removed: nothing ever
+  # capability tokens, which were removed: nothing ever
   # verified one, and exporting the signing key into the environment of the
   # very process the tokens were meant to constrain is what made them
   # unverifiable in principle, not just in practice.
@@ -739,8 +739,8 @@ NEEDS_MESH=0
 MESH_APP_DIR=""
 # The app declaring `governs: true`, if any. @berthos/manifest-schema allows at
 # most one per Computer and already refuses such a manifest unless it exports
-# evaluate_action, so this loop only has to find the name — REMEDIATION.md
-# 1.13. What it enables is the gate at @berthos/sdk's own RPC dispatch, which is
+# evaluate_action, so this loop only has to find the name.
+# What it enables is the gate at @berthos/sdk's own RPC dispatch, which is
 # the only place `berth rpc`, the HTTP bridge, the TCP listener and a
 # sibling's direct socket call can all be seen from.
 GOVERNANCE_APP=""
@@ -779,8 +779,7 @@ fi
 # 0755 root-owned, and deliberately not writable by any app: the per-app
 # directories beneath it are created (0710, owned by that app) by
 # provision_app_identity, and nothing else may add an entry here. This
-# replaces the 1777 /tmp/berth-rpc every app could bind or connect into,
-# which was REMEDIATION.md 1.4's finding.
+# replaces the 1777 /tmp/berth-rpc every app could bind or connect into.
 install -d -m 0755 -o 0 -g 0 /run/berth
 
 echo "[berth:entrypoint] starting context-bus daemon on ${BERTH_CONTEXT_BUS_SOCKET}" >&2
@@ -795,7 +794,7 @@ if [ "${BERTH_NO_SEMANTIC_FS:-0}" = "1" ]; then
   echo "[berth:entrypoint] semantic FS is off (BERTH_NO_SEMANTIC_FS=1): no /context mount, and nothing waiting on one" >&2
 else
   if [ "${BERTH_SEMANTIC_FS_EXTERNAL:-0}" = "1" ]; then
-    # BUILD_PLAN M1.1 — same as the single-app path above: the mount comes from
+    # Same as the single-app path above: the mount comes from
     # the sidecar; this container has no capability to make one.
     echo "[berth:entrypoint] /context is served by the semantic-fs sidecar (no CAP_SYS_ADMIN in this container)" >&2
   else
@@ -823,21 +822,21 @@ run_app() {
   export BERTH_MANIFEST_PATH="$app_dir/berth.yml"
   export BERTH_CAPABILITY_POLICY="$app_dir/.berth/capability-policy.json"
   # /run/berth/<app>/, mode 0710 owned by this app — not the shared 1777
-  # /tmp/berth-rpc it used to be (REMEDIATION.md 1.4). A sibling reaches it
+  # /tmp/berth-rpc it used to be. A sibling reaches it
   # only by declaring app:invoke:<name>, which puts it in this app's group;
   # the host relay reaches it as root (docker exec), which is unchanged.
   export BERTH_RPC_SOCKET="/run/berth/${app_name}/rpc.sock"
   # Who this app is, in its own environment — @berthos/sdk's governance gate
   # announces actions under this name, and it is set by the orchestrator
   # rather than read from the manifest so it cannot disagree with the identity
-  # the peers/ directories were built around (REMEDIATION.md 1.13).
+  # the peers/ directories were built around.
   export BERTH_APP_NAME="$app_name"
   export_app_environment "$app_name"
   export_governance_environment "$app_name" "$app_dir"
 
   # No run-lifecycle.js call here any more. Multi-app mode never used its
   # browser/egress flags (the grep loop above decides those for the whole
-  # container), so once on_install moved to build time — REMEDIATION.md 1.5 —
+  # container), so once on_install moved to build time,
   # the only thing this invocation still did was cost a Node startup per app.
   node "node_modules/@berthos/sdk/dist/generate-capability-policy.js"
   secure_capability_policy "$BERTH_CAPABILITY_POLICY"
@@ -847,7 +846,7 @@ run_app() {
 
 # Compiles every app's policy and creates the directories those policies
 # declare, serially, before any app's agent-init runs. This is the boot
-# ordering REMEDIATION.md 1.12 named as the real fix and deferred.
+# ordering that was named as the real fix and deferred.
 #
 # The race it removes: apps start concurrently (`run_app ... &`), and
 # agent-init deliberately does *not* create declared read paths — creating a

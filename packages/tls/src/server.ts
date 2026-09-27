@@ -64,7 +64,7 @@ export function resolveServerTls(paths: TlsPaths): ServerTlsOptions | undefined 
     // service-to-service traffic and the wrong one to impose on an operator
     // running `berth publish --registry` from a laptop, who has no client cert
     // and no way to get one — there is no CA to issue them from
-    // (REMEDIATION.md 5.2: no identity system exists yet).
+    // (no identity system exists yet).
     ...(requireClientCert ? { requestCert: true, rejectUnauthorized: true } : {}),
   };
 }

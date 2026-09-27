@@ -56,7 +56,7 @@ type PidRegistry struct {
 	mu  sync.RWMutex
 	pid map[int]string
 	// uid -> app name, from BERTH_APP_UID_MAP. The sidecar deployment
-	// (BUILD_PLAN M1.1) runs this daemon in a different pid namespace from
+	// runs this daemon in a different pid namespace from
 	// the apps, where a FUSE request's Pid is untranslatable — but uids are
 	// global, each app has its own (10000+index), and the orchestrator that
 	// assigns them passes the same mapping here. Empty in-sandbox, where the
@@ -173,7 +173,7 @@ func Serve(socketPath string, idx *index.Index, registry *PidRegistry, sharedGid
 		// pid and uid the kernel stamped on it cannot change for its
 		// lifetime, and the client cannot influence them. This is what makes
 		// a register frame's `pid` and `app` advisory rather than
-		// authoritative (REMEDIATION.md 1.14).
+		// authoritative.
 		go handleConn(conn, idx, registry, identifyPeer(conn))
 	}
 }
@@ -258,7 +258,7 @@ func readFrame(reader *bufio.Reader) ([]byte, error) {
 	// Checked before the allocation, which is the whole point: a 4-byte header
 	// of 0xFFFFFFFF used to allocate 4 GiB in this daemon, which runs as root
 	// outside any Landlock domain and is reachable by every app in the sandbox
-	// (REMEDIATION.md 1.14). Returning an error drops the connection — a
+	// Returning an error drops the connection — a
 	// client that framed one message this badly has no credible next frame on
 	// the same stream. Mirrored in context-bus-daemon, which had the identical
 	// bug and uses the same ceiling.

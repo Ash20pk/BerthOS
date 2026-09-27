@@ -5,7 +5,7 @@ import { join } from "node:path";
 /**
  * Where a container reads its secret environment from — a host file bind-
  * mounted read-only at this path and sourced by entrypoint.sh before any
- * daemon or app starts (REMEDIATION.md 5.5).
+ * daemon or app starts.
  *
  * The whole point is that it is *not* `Env` on createContainer. Docker's
  * `Env` is permanent, immutable container configuration: it survives in
@@ -82,7 +82,7 @@ const EXPLICIT_SECRET_NAMES = new Set<string>([]);
  * exempt today, and the list exists so that a future exemption has to be
  * written down next to the reason for it rather than being achieved by
  * quietly weakening a rule. Note that `*_TLS_CERT`/`_KEY` are paths, not
- * PEMs (5.3), so routing them through the secrets file is harmless and they
+ * PEMs, so routing them through the secrets file is harmless and they
  * are not exempted.
  */
 const NEVER_SECRET_NAMES = new Set<string>([]);
@@ -110,7 +110,7 @@ export interface PartitionedEnv {
  *
  * `declaredNames` are names some app listed under `secrets:` in its
  * berth.yml, and they are treated as secret whatever they are called. Found
- * by breakout/test/breakout-milestone.mjs (BUILD_PLAN M2.3): before this,
+ * by breakout/test/breakout-milestone.mjs: before this,
  * scoping was decided *only* by the name-shape heuristic below, so declaring
  * a secret whose name does not look like a credential — `BREAKOUT_FLAG_COTENANT`,
  * say — silently did nothing. The value went into Docker's `Env` in plaintext
@@ -161,7 +161,7 @@ export interface PerAppSecretPartition {
 
 /**
  * Splits a container's secret env by the apps' `secrets:` declarations
- * (REMEDIATION per-app-secrets / BUILD_PLAN M1.3). The rule: a name declared
+ * The rule: a name declared
  * by at least one app leaves the shared file entirely and is delivered only
  * to the apps that declared it — otherwise declaring a secret would narrow
  * nothing, since the shared file reaches every process. A name nobody

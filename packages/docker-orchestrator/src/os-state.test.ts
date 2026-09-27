@@ -15,7 +15,7 @@ const STATE = {
 };
 
 /**
- * REMEDIATION.md 5.5: this file holds the HTTP RPC bearer token — full access
+ * This file holds the HTTP RPC bearer token — full access
  * to the named OS's exports — and was written at the umask's default 0644.
  */
 test("writeOsState writes 0600 in a 0700 directory, and still round-trips", async () => {

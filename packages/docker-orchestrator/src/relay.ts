@@ -5,7 +5,7 @@ import { PassThrough } from "node:stream";
  * Parent of the per-app socket directories, not a directory sockets sit in
  * directly. Each app binds /run/berth/<app>/rpc.sock in a directory mode 0710
  * and owned by that app's own uid, which is what stops a sibling reaching it
- * (REMEDIATION.md 1.4). This used to be /tmp/berth-rpc, mode 1777.
+ * This used to be /tmp/berth-rpc, mode 1777.
  *
  * The relay below is unaffected by that: `docker exec` enters as root, and
  * root traverses a 0710 directory regardless of owner. That asymmetry is

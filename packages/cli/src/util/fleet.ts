@@ -20,7 +20,7 @@ const DEFAULT_BERTHRC_PATH = join(homedir(), ".berthrc");
  * `~/.berthrc`'s `env` is where a fleet alias's provider API keys actually
  * live (`berth deploy --fleet=prod` passes them straight to the adapter), so a
  * group- or world-readable one hands every local account the credentials for
- * every remote sandbox this machine can start (REMEDIATION.md 5.5).
+ * every remote sandbox this machine can start.
  *
  * Warns rather than chmod-ing or refusing. This is the developer's own file,
  * not one Berth created: silently rewriting its mode is a surprise in the

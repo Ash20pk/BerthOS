@@ -78,7 +78,7 @@ test("partitionSecretEnv splits without losing or duplicating an entry", () => {
 });
 
 /**
- * BUILD_PLAN M2.3, found by breakout/test/breakout-milestone.mjs: scoping used
+ * Found by breakout/test/breakout-milestone.mjs: scoping used
  * to be decided only by the name-shape heuristic, so a manifest could declare
  * a secret whose name did not look like a credential and silently get nothing
  * — the value went to Docker's `Env` in plaintext and reached every app.

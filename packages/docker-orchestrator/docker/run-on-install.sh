@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs every staged app's on_install script as a Docker build layer.
 #
-# This is the build-time half of REMEDIATION.md 1.5. on_install used to run
+# This is the build-time half of moving on_install out of boot. It used to run
 # at container boot, from run-lifecycle.ts, as uid 0 with CAP_SYS_ADMIN and
 # no Landlock domain applied — before agent-init could apply one, since the
 # capability policy is generated in the same script. Running it here instead

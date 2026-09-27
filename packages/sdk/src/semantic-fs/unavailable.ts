@@ -12,7 +12,7 @@ import type { SemanticFsClient, SemanticFsQueryResult } from "./client.js";
  * empty result set is not an answer — it is a wrong answer, indistinguishable
  * from "nothing matched". Retrieval, checkpoints, sessions and traces all read
  * through here, so the failure mode was silent data loss reported as success
- * (REMEDIATION.md 1.14).
+ * 
  *
  * `tag()` throws for the same reason: a tag that appears to succeed while
  * nothing was stored is a lost write.

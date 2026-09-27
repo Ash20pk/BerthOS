@@ -46,7 +46,7 @@ const FILESYSTEM_APP_DIR = join(REPO_ROOT, "apps", "filesystem");
 const BOUNDARY_APP_A_DIR = join(__dirname, "fixtures", "boundary-app-a");
 const BOUNDARY_APP_B_DIR = join(__dirname, "fixtures", "boundary-app-b");
 // The authorized counterpart to app A: same source, but its berth.yml declares
-// app:invoke:boundary-app-b (REMEDIATION.md 1.4).
+// app:invoke:boundary-app-b.
 const BOUNDARY_APP_C_DIR = join(__dirname, "fixtures", "boundary-app-c");
 
 // Where the app's own writes land, and why this test needs one at all.
@@ -391,7 +391,7 @@ async function main() {
     // CAP_FULL_SET bounding set *inside* the new namespace. So `unshare -Urm`
     // handed back everything the drop had just removed, and mount(2) — which
     // Landlock does not cover — worked again. Reproduced in the real
-    // berth/filesystem image during the audit; see REMEDIATION.md 1.3.
+    // berth/filesystem image during the audit.
     //
     // Docker's own default seccomp profile blocks this, which is why it is not
     // a problem for containers generally. It stops doing so when the container
@@ -518,8 +518,8 @@ async function main() {
     docker,
   });
   const boundaryLog = await startLogCapture(boundaryRunning.container);
-  // semantic-fs-daemon lives in the per-sandbox sidecar since BUILD_PLAN
-  // M1.1 — its control-socket log lines land there, not in the sandbox.
+  // semantic-fs-daemon lives in the per-sandbox sidecar
+  // — its control-socket log lines land there, not in the sandbox.
   const boundaryFsLog = await startLogCapture(
     docker.getContainer("berth-capability-enforcement-boundary-fs"),
   ).catch(() => ({ text: () => "", stop: async () => {} }));
@@ -580,7 +580,7 @@ async function main() {
       console.log("\nNOT VERIFIED (expected in this environment) — Landlock isn't enforced here.");
     }
 
-    // --- The RPC-socket half of the same boundary: REMEDIATION.md 1.4. ---
+    // --- The RPC-socket half of the same boundary. ---
     //
     // Asserted UNCONDITIONALLY, unlike everything above it in this test, and
     // that is the point. The filesystem assertions above are Landlock, so they
@@ -617,7 +617,7 @@ async function main() {
     console.log("app A -> app B's socket:", siblingSocket);
     assert(
       siblingSocket.result?.connected === false,
-      `boundary-app-a reached boundary-app-b's RPC socket — REMEDIATION.md 1.4 has regressed and one app can invoke another's exports with its capabilities: ${JSON.stringify(siblingSocket)}`,
+      `boundary-app-a reached boundary-app-b's RPC socket — cross-app socket isolation has regressed and one app can invoke another's exports with its capabilities: ${JSON.stringify(siblingSocket)}`,
     );
     assert(
       /^(EACCES|EPERM)$/.test(siblingSocket.result?.code ?? ""),
@@ -668,7 +668,7 @@ async function main() {
       `boundary-app-c reached boundary-app-a, which it never declared app:invoke: on: ${JSON.stringify(ungrantedDirection)}`,
     );
 
-    // --- Identity, not just reachability: REMEDIATION.md 1.4 part 3. ---
+    // --- Identity, not just reachability. ---
     //
     // The per-caller socket is what lets the server say which sibling called
     // it. Two things have to hold for that to be a boundary rather than a
@@ -744,9 +744,9 @@ async function main() {
       "expected a warning for boundary-app-c's app:invoke:no-such-app; without one, the unknown-target path is untested",
     );
 
-    console.log("\nPASS — an app reaches a sibling's RPC socket only where app:invoke: declared it (REMEDIATION.md 1.4).");
+    console.log("\nPASS — an app reaches a sibling's RPC socket only where app:invoke: declared it.");
 
-    // --- The daemons' identity, REMEDIATION.md 1.14. ---
+    // --- The daemons' identity. ---
     //
     // Both the context bus and semantic-fs used to take the caller's own word
     // for which app it is, so any app could publish under another's name or
@@ -812,9 +812,9 @@ async function main() {
       `expected the context bus to serve a fresh registration after the oversized frame, saw ${registrations.length}`,
     );
 
-    console.log("\nPASS — both daemons record the uid the kernel reports, not the name the caller sent, and survive a 4 GiB length header (REMEDIATION.md 1.14).");
+    console.log("\nPASS — both daemons record the uid the kernel reports, not the name the caller sent, and survive a 4 GiB length header.");
 
-    // --- Test 12: signal isolation (REMEDIATION.md 1.11) ---------------------
+    // --- Test 12: signal isolation ---------------------
     //
     // Before per-app uids every app in the container ran as uid 0 in one PID
     // namespace, so `kill -9` on the governance app or a broker was available
@@ -871,7 +871,7 @@ async function main() {
     console.log("app A -> app B's process:", crossSignal);
     assert(
       crossSignal.result?.sent === false && crossSignal.result?.code === "EPERM",
-      `app A was able to signal app B's process — cross-app signal isolation is gone (REMEDIATION.md 1.11): ${JSON.stringify(crossSignal)}`,
+      `app A was able to signal app B's process — cross-app signal isolation is gone: ${JSON.stringify(crossSignal)}`,
     );
 
     // SIGKILL specifically, not just the permission probe: signal 0 shares the
@@ -907,7 +907,7 @@ async function main() {
       `negative control failed: even root could not signal pid ${appBPid}, so Test 12's refusals prove nothing about uids: ${JSON.stringify(rootSignal)}`,
     );
 
-    console.log("\nPASS — an app cannot signal a sibling's process; the kernel refuses it on uid alone (REMEDIATION.md 1.11).");
+    console.log("\nPASS — an app cannot signal a sibling's process; the kernel refuses it on uid alone.");
   } finally {
     await boundaryLog.stop();
     await stopContainer(boundaryRunning.container).catch(() => {});

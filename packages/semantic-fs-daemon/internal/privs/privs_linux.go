@@ -1,5 +1,5 @@
 // Package privs narrows this daemon's privileges once the FUSE mount is up
-// (BUILD_PLAN M1.2; threat model B4).
+// (threat model B4).
 //
 // mount(2) is the only reason this process holds CAP_SYS_ADMIN, and it is
 // needed exactly once, at boot. Everything the daemon does afterwards —
