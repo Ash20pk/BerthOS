@@ -1,6 +1,6 @@
 {
   "name": "@berthos/audit",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Structured audit records with a verifiable actor, a hash-chained file sink, and payload redaction",
   "type": "module",
   "main": "./dist/index.js",

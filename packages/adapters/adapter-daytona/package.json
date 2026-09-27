@@ -1,6 +1,6 @@
 {
   "name": "@berthos/adapter-daytona",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "DeployAdapter implementation targeting Daytona workspaces",
   "type": "module",
   "main": "./dist/index.js",

@@ -1,6 +1,6 @@
 {
   "name": "@berthos/sdk",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Resident app SDK: defineApp(), lifecycle hooks, context bus client — runs inside the sandbox",
   "type": "module",
   "main": "./dist/index.js",
