@@ -76,7 +76,7 @@
     "@opentelemetry/sdk-trace-base": "^2.11.0",
     "@types/dockerode": "^4.0.1",
     "@types/node": "^26.6.2",
-    "ai": "^7.0.112",
+    "ai": "^7.0.113",
     "typescript": "^7.0.2"
   },
   "peerDependencies": {
