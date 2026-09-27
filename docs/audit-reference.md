@@ -1,15 +1,15 @@
 # Audit trail reference
 
-`@berthos/audit` is the record of what happened on a Berth installation and who did it: governance verdicts, capability-grant decisions, failed authentication attempts, and — optionally — every step an agent took.
+`@berthos/audit` is the record of what happened on a Berth installation and who did it: governance verdicts, failed authentication attempts, and — optionally — every step an agent took.
 
-It exists because none of that was written down. `REMEDIATION.md` 5.1: governance denials threw silently, no server logged a request, `AgentStepEvent` recorded tool names and no actor, and `decided_by` on a grant was free text from the request body. A gate that blocks a hundred calls used to leave exactly the same trace as a gate nobody ever consulted.
+It exists because none of that was written down: governance denials threw silently, no server logged a request, `AgentStepEvent` recorded tool names and no actor A gate that blocks a hundred calls used to leave exactly the same trace as a gate nobody ever consulted.
 
 ## What a record looks like
 
 One JSON object per line, hash-chained, written 0600:
 
 ```json
-{"ts":"2026-08-16T09:14:22.104Z","seq":41,"actor":{"kind":"operator","id":"alice","verifiedBy":"token"},"action":"grant.approve","target":"grant:9f2a…","decision":"allowed","meta":{"appName":"browser-native","capability":"network:connect:443"},"prevHash":"…","hash":"…"}
+{"ts":"2026-08-16T09:14:22.104Z","seq":41,"actor":{"kind":"operator","id":"alice","verifiedBy":"token"},"action":"governance.evaluate","target":"filesystem.write_file","decision":"denied","reason":"path outside /workspace/reports","durationMs":12,"meta":{"mode":"fail-closed"},"prevHash":"…","hash":"…"}
 ```
 
 ### The actor, and how much it is worth
@@ -24,7 +24,7 @@ Every record carries `actor.verifiedBy`, and reading it is the difference betwee
 
 Self-asserted actors are recorded rather than rejected: "we don't know who this was" is itself a finding. But never read one as an identity.
 
-This is not identity in `REMEDIATION.md` 5.2's sense. There is no user directory, no tenancy, no RBAC, and revocation means editing a file.
+This is not an identity system. There is no user directory, no tenancy, no RBAC, and revocation means editing a file.
 
 ### Decisions
 
@@ -50,7 +50,7 @@ const { agent } = await createAgent({
 
 `audit` on `createAgent` wires the sink into both the step tracer and the Computer's governance gate — turning on half an audit trail is rarely what anyone means. For a `Computer` you built yourself, pass it directly: `Computer.boot({ governance: { audit, actor } })`.
 
-`berth-grants` writes to the same default path with no configuration, and `BERTH_AUDIT_PATH` overrides it.
+`BERTH_AUDIT_PATH` overrides the default path.
 
 ### Payload capture
 
@@ -59,7 +59,7 @@ Off by default, in two independent places:
 - `createFileAuditSink({ capturePayloads: true })` — whether `input`/`output` reach the file.
 - `createAgent({ tracePayloads: true })` — whether tool arguments and results are put on the step event at all.
 
-Both default off because records land plaintext on disk (`REMEDIATION.md` 5.4 is open) and tool arguments are where customer data turns up. When on, values pass through `redact()`: secret-looking keys (`password`, `token`, `apiKey`, `authorization`, …) become `[redacted]`, oversized strings and buffers become a size marker rather than a prefix — half a credential is still a credential — and cycles, functions, and over-deep structures are described instead of dropped.
+Both default off because records land plaintext on disk (nothing is encrypted at rest yet) and tool arguments are where customer data turns up. When on, values pass through `redact()`: secret-looking keys (`password`, `token`, `apiKey`, `authorization`, …) become `[redacted]`, oversized strings and buffers become a size marker rather than a prefix — half a credential is still a credential — and cycles, functions, and over-deep structures are described instead of dropped.
 
 `redact()` is a deny-list, which fails open on the key nobody thought of. It is a second line of defence behind capture being opt-in, not the only one.
 
@@ -79,11 +79,11 @@ Each record's `hash` covers `prevHash` plus its own canonical JSON, so a record 
 
 **This is tamper-evident, not tamper-proof.** Anyone who can write the file can recompute every hash from the line they edited onwards and produce a chain that verifies cleanly. Getting past that needs the hashes somewhere the editor cannot reach — an append-only store, a remote sink, periodic external anchoring — none of which is built. `berth audit verify` says so in its own output rather than implying a guarantee it does not have.
 
-`berth attest <runId>` (BUILD_PLAN M2.1) builds on this chain: it binds a run's slice of it, plus the chain head and the boot's measured enforcement status, into one self-hashed record a stranger can check without Berth installed — same trust model, stated inside the record. See [attestation-reference.md](./attestation-reference.md).
+`berth attest <runId>` builds on this chain: it binds a run's slice of it, plus the chain head and the boot's measured enforcement status, into one self-hashed record a stranger can check without Berth installed — same trust model, stated inside the record. See [attestation-reference.md](./attestation-reference.md).
 
 ## Operational notes
 
-- **Writes are synchronous.** A record buffered when the process dies is a record that does not exist, and these are the events a crash would otherwise erase. Volume is low: a line per governance verdict and grant decision, not per HTTP request.
+- **Writes are synchronous.** A record buffered when the process dies is a record that does not exist, and these are the events a crash would otherwise erase. Volume is low: a line per governance verdict, not per HTTP request.
 - **A failing sink never fails the audited action.** It reports on stderr and drops the record. Both the sink and every call site catch — a monitoring backend having a bad day must not become a failed tool call.
 - **Rotation** defaults to 16MB and 5 files. There is no retention policy beyond that; pruning older segments is left to whatever already manages the host.
 - **Once rotation has pruned the genesis segment, the chain no longer starts at genesis.** The
@@ -107,4 +107,3 @@ Each record's `hash` covers `prevHash` plus its own canonical JSON, so a record 
 - **No encryption at rest** (5.4). Records are plaintext, which is why payload capture is opt-in.
 - **No retention or legal-hold policy** beyond size-based rotation.
 - **HTTP access logs are Fastify's**, not audit records — they go to stdout and are not chained.
-- **Grant requests are unauthenticated.** `POST /grants` takes an app name from the request body over plain HTTP, so `grant.request` records are `self-asserted` by construction.

@@ -81,8 +81,7 @@ func main() {
 	}()
 
 	// AllowOther and DefaultPermissions are a pair, and shipping either one
-	// alone would be a mistake in opposite directions (Blocker 2 of
-	// docs/per-app-uid-design.md).
+	// alone would be a mistake in opposite directions.
 	//
 	// Without allow_other, a FUSE mount is accessible *only to the mounting
 	// uid* — the kernel refuses every other uid at the VFS layer, before any
@@ -114,7 +113,7 @@ func main() {
 
 	// The mount was the last thing needing CAP_SYS_ADMIN — narrow to the
 	// file-ownership set now, before the first FUSE or control-socket request
-	// is served (BUILD_PLAN M1.2; see internal/privs). One structured line
+	// is served (see internal/privs). One structured line
 	// either way, prefix-free like agent-init's, so a boot's actual privilege
 	// posture is greppable rather than assumed.
 	narrowed := false

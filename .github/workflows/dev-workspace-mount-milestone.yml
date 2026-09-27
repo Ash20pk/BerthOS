@@ -1,7 +1,6 @@
 name: Dev Workspace Mount
 
 # Verifies that `berth dev` cannot write the developer's own repository — see
-# REMEDIATION.md 1.6 and
 # packages/docker-orchestrator/test/dev-workspace-mount-milestone.mjs.
 #
 # Like published-port-security.yml and on-install-milestone.yml, and unlike

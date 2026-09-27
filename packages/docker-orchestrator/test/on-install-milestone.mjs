@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Real, running verification of REMEDIATION 1.5: a manifest's on_install is a
+// Real, running verification that a manifest's on_install is a
 // Docker build layer, and nothing executes it at container boot.
 //
 // It used to run from run-lifecycle.ts as uid 0 with CAP_SYS_ADMIN, /dev/fuse,
@@ -119,8 +119,8 @@ async function main() {
     image: TAG,
     name: CONTAINER_NAME,
     manifest,
-    // Same override Computer.boot({ enforcement: "warn" }) uses (REMEDIATION
-    // 0.1): a production image sets BERTH_REQUIRE_ENFORCEMENT=1, and
+    // Same override Computer.boot({ enforcement: "warn" }) uses:
+    // a production image sets BERTH_REQUIRE_ENFORCEMENT=1, and
     // agent-init then refuses to exec at all on a kernel without Landlock —
     // Docker Desktop's linuxkit, where much of this will be run. Nothing here
     // tests Landlock, so relaxing it costs this file nothing and is what lets
@@ -171,8 +171,8 @@ async function main() {
       "on_agent_ready: []",
     ].join("\n");
     await execCapture(running.container, ["sh", "-c", `cat > /app/berth.yml <<'BERTH_EOF'\n${payloadManifest}\nBERTH_EOF`]);
-    // Deleting the install marker is part of the chain REMEDIATION 1.6
-    // describes, and leaving it out would make this a much weaker test: under
+    // Deleting the install marker is part of the writable-workspace
+    // exploit chain, and leaving it out would make this a much weaker test: under
     // the old code the marker is what made a *second* boot skip on_install,
     // so an attack that didn't remove it would fail for a reason that has
     // nothing to do with the fix. Today there is no marker and this is a

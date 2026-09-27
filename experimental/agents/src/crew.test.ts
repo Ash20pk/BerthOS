@@ -454,7 +454,7 @@ test("Crew.sequential threads runId into every agent's run(), correlating all th
 
 /**
  * This test previously asserted every parallel agent traced under the *same*
- * runId — which was the bug (REMEDIATION 3.3), not the contract: one runId
+ * runId — which was the bug, not the contract: one runId
  * across N concurrent agents meant N writers to one checkpoint key and one
  * trace blob. Correlation is still available, as a prefix rather than an
  * exact match, which is what this now asserts.

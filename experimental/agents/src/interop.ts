@@ -27,8 +27,8 @@
  * so a caller who uses neither framework never installs either, and a caller
  * who uses one never installs the other. Both are devDependencies of this
  * package, so both adapters are tested against the real library rather than
- * against a hand-written idea of its shape — which is what the
- * REMEDIATION 3.7 work established as the bar for an adapter.
+ * against a hand-written idea of its shape — which is the bar
+ * the provider-adapter tests established for an adapter.
  */
 
 import type { Tool } from "./types.js";
@@ -60,7 +60,7 @@ type JsonSchemaObject = { type?: string; properties?: Record<string, unknown>; r
  *
  * `execute` forwards the AI SDK's own `abortSignal`, so a cancelled
  * `generateText` really does abandon an in-flight resident-app call — the
- * same contract REMEDIATION 4.2 gave `Agent`'s loop, reached from someone
+ * same cancellation contract `Agent`'s loop has, reached from someone
  * else's loop.
  */
 export async function toAiSdkTools(tools: Tool[]): Promise<Record<string, unknown>> {

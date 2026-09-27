@@ -19,9 +19,6 @@ export default class Test extends Command {
   static override flags = {
     json: Flags.boolean({ description: "emit a structured JSON summary" }),
     apps: Flags.string({ description: "comma-separated workspace-relative paths of companion resident apps to run alongside this one" }),
-    "grants-server": Flags.string({
-      description: "berth-grants server URL to consult for human-approved capability grants, e.g. http://localhost:4874",
-    }),
   };
 
   async run(): Promise<void> {
@@ -29,7 +26,6 @@ export default class Test extends Command {
     const appDir = process.cwd();
     const manifest = await loadManifestOrExit(appDir);
     const docker = new Docker();
-    const grantsServerEnv = flags["grants-server"] ? [`BERTH_GRANTS_SERVER_URL=${flags["grants-server"]}`] : [];
 
     const apps = await resolveApps(appDir, flags.apps, manifest);
     assertAtMostOneBrowserApp(apps);
@@ -44,9 +40,8 @@ export default class Test extends Command {
       image,
       apps,
       ["node", "node_modules/@berthos/sdk/dist/check-exports.js"],
-      grantsServerEnv,
     );
-    const appTestCheck = await this.maybeRunAppTests(docker, image, appDir, apps, grantsServerEnv);
+    const appTestCheck = await this.maybeRunAppTests(docker, image, appDir, apps);
 
     const summary = {
       manifest: manifest.name,
@@ -70,7 +65,6 @@ export default class Test extends Command {
     image: string,
     appDir: string,
     apps: AppSpec[],
-    grantsServerEnv: string[],
   ): Promise<{ exitCode: number; output: string } | null> {
     const fs = await import("node:fs/promises");
     const path = await import("node:path");
@@ -80,7 +74,7 @@ export default class Test extends Command {
     } catch {
       return null;
     }
-    return this.runInContainer(docker, image, apps, ["npm", "test"], grantsServerEnv);
+    return this.runInContainer(docker, image, apps, ["npm", "test"]);
   }
 
   /**
@@ -97,7 +91,6 @@ export default class Test extends Command {
     image: string,
     apps: AppSpec[],
     cmd: string[],
-    grantsServerEnv: string[] = [],
   ): Promise<{ exitCode: number; output: string; parsed?: ExportCheckResult }> {
     if (apps.length <= 1) {
       let output = "";
@@ -107,7 +100,7 @@ export default class Test extends Command {
       });
 
       const [result] = await docker.run(image, cmd, stdout, {
-        Env: ["BERTH_TEST_MODE=1", ...grantsServerEnv],
+        Env: ["BERTH_TEST_MODE=1"],
         HostConfig: {
           AutoRemove: true,
           // Every sandbox mounts /context via FUSE unconditionally (see
@@ -131,7 +124,7 @@ export default class Test extends Command {
       name: `berth-test-${primary.name}-${Date.now()}`,
       manifest: primary.manifest,
       workingDir: `/app/apps/${primary.name}`,
-      env: { BERTH_TEST_MODE: "1", ...envArrayToObject(grantsServerEnv) },
+      env: { BERTH_TEST_MODE: "1" },
       apps: apps.map((a) => ({ name: a.name, workingDir: `/app/apps/${a.name}`, manifest: a.manifest })),
       docker,
     });
@@ -185,15 +178,6 @@ export default class Test extends Command {
   }
 }
 
-function envArrayToObject(env: string[]): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const entry of env) {
-    const eq = entry.indexOf("=");
-    if (eq === -1) continue;
-    result[entry.slice(0, eq)] = entry.slice(eq + 1);
-  }
-  return result;
-}
 
 function parseLastJsonLine(output: string): ExportCheckResult | undefined {
   const lastLine = output.trim().split("\n").pop();

@@ -2,11 +2,10 @@
   "name": "@berthos/redteam",
   "version": "0.1.0",
   "private": true,
-  "description": "Red-team mutation suite + claims inventory linter (BUILD_PLAN M2.4)",
+  "description": "Red-team mutation suite",
   "type": "module",
   "scripts": {
-    "redteam": "node redteam.mjs",
-    "lint:claims": "node claims-linter.mjs"
+    "redteam": "node redteam.mjs"
   },
   "dependencies": {
     "@berthos/breakout-box": "workspace:*",

@@ -21,7 +21,7 @@ capabilities:
   - filesystem:read:/workspace/node_modules
   - filesystem:write:/workspace/.berth/dev-workspace/boundary-app-c
   # The grant under test. Without it, connect(2) to boundary-app-b's socket is
-  # refused by the kernel — see REMEDIATION.md 1.4.
+  # refused by the kernel.
   - app:invoke:boundary-app-b
   # Names an app that isn't in this container: must warn at boot and be
   # ignored, never fail the boot.

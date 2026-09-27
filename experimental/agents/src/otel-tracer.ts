@@ -34,7 +34,7 @@ export function createOtelStepTracer(options: OtelStepTracerOptions = {}): StepT
       const startTime = new Date(endTime.getTime() - event.durationMs);
       // The two-way ternary this replaces labelled anything that wasn't an
       // llm-turn as `execute_tool unknown`, so the compaction events
-      // REMEDIATION 4.1 added would have arrived in every backend as
+      // context compaction added would have arrived in every backend as
       // phantom tool calls to a tool named "unknown".
       const spanName =
         event.kind === "llm-turn"

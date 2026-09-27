@@ -43,11 +43,10 @@ async function main() {
     bindMount: { hostPath: REPO_ROOT, containerPath: "/workspace" },
     workingDir: "/workspace/apps/filesystem",
     // Where `berth dev` puts app data, and where this test's notes.txt has to
-    // go now that apps run as their own uid rather than root (Step 2 of
-    // docs/per-app-uid-design.md). The bind-mounted repository root is owned
+    // go now that apps run as their own uid rather than root. The bind-mounted repository root is owned
     // by the developer or the CI runner, so a uid-10000 app cannot write it —
-    // Blocker 1's stated cost. It never should have: writing into the repo
-    // root is the behaviour REMEDIATION.md 1.6 removed from `berth dev`, and
+    // the stated cost of per-app uids. It never should have: writing into the repo
+    // root is the behaviour removed from `berth dev`, and
     // the litter it left behind was a symptom of it.
     env: { BERTH_WORKSPACE_ROOT: "/workspace/.berth/dev-workspace" },
     docker,

@@ -86,7 +86,7 @@ fn main() {
     } else {
         match confine::apply(&cfg) {
             Ok(status) => {
-                eprintln!("[mesh-daemon] Landlock domain applied ({status:?}) — writes confined to the WireGuard/key/socket paths (BUILD_PLAN M1.2)");
+                eprintln!("[mesh-daemon] Landlock domain applied ({status:?}) — writes confined to the WireGuard/key/socket paths");
                 log_confinement_event(true, &format!("{status:?}"), "");
             }
             Err(err) => {

@@ -8,7 +8,7 @@ import { defineApp } from "./app.js";
 import { invokeExport } from "./rpc.js";
 
 /**
- * REMEDIATION.md 1.13's second half: the gate at the SDK's own dispatch, which
+ * The gate at the SDK's own dispatch, which
  * is what `berth rpc`, `berth mcp`, the HTTP bridge, the TCP listener and a
  * sibling's direct socket call all pass through.
  *
@@ -109,7 +109,7 @@ test("the governor is told who asked, and the caller is not something the reques
 test("an unreachable governor denies rather than allows — fail-closed", async () => {
   await withGovernor(() => ({ allowed: true }), async () => {
     // Point the gate at a governor that isn't there. "The policy check didn't
-    // happen" must never become "the policy check passed" (REMEDIATION.md 1.11).
+    // happen" must never become "the policy check passed".
     process.env.BERTH_GOVERNANCE_APP = "governor-that-never-started";
     const response = await invokeExport(workerApp(), { id: "4", export: "transfer_funds" }, "host");
     assert.ok("error" in response);

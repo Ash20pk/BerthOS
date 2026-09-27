@@ -139,7 +139,7 @@ function makeHarness({ id, title, description, weakened }) {
         const observations = {
           "secret-in-metadata": secretInEnv
             ? { outcome: "escaped", detail: "the secret is readable in `docker inspect` Config.Env" }
-            : { outcome: "contained", detail: "the secret is absent from container metadata — delivered through a 0600 file bind, not Env (REMEDIATION 5.5)" },
+            : { outcome: "contained", detail: "the secret is absent from container metadata — delivered through a 0600 file bind, not Env" },
           "published-port-exposure": describePorts(info),
           // Berth loses this row by construction, and the table says so
           // rather than omitting the row — see docs/threat-model.md on the

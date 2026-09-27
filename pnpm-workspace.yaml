@@ -1,11 +1,10 @@
 packages:
   - "packages/*"
-  # Frozen subsystems: shipped, tested, and no longer part of the core
-  # artifact (the manifest -> kernel-policy substrate and its evidence).
-  # Still built and still tested; simply not what `npm install @berthos/cli`
-  # is. See EXECUTION_PLAN.md.
+  # The agent framework and what is built on it: a frozen reference consumer
+  # of the sandbox, not part of it. Still built and tested. See
+  # experimental/README.md.
   - "experimental/*"
-  - "experimental/adapters/*"
+  - "packages/adapters/*"
   - "apps/*"
   - "examples/resident-apps/*"
   - "examples/agents/*"

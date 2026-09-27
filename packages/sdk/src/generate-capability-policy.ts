@@ -37,12 +37,11 @@ import { loadManifest, parseCapability, capabilityIssue, CapabilityString, type 
 
 const MANIFEST_PATH = process.env.BERTH_MANIFEST_PATH ?? join(process.cwd(), "berth.yml");
 const POLICY_PATH = process.env.BERTH_CAPABILITY_POLICY ?? join(process.cwd(), ".berth", "capability-policy.json");
-const GRANTS_SERVER_URL = process.env.BERTH_GRANTS_SERVER_URL;
 const MESH_COORDINATOR_PORT = Number(process.env.BERTH_MESH_COORDINATOR_PORT ?? 4875);
 
 // Always writable regardless of what's declared, and — apart from /dev/null —
 // per-app rather than shared. This used to be all of `/tmp`, unconditionally,
-// for every app in the container: REMEDIATION.md 1.4's finding, and the reason
+// for every app in the container, which is the reason
 // one app could bind or connect to any other's RPC socket.
 //
 // The old comment justified the blanket /tmp with "connecting to a Unix socket
@@ -55,8 +54,7 @@ const MESH_COORDINATOR_PORT = Number(process.env.BERTH_MESH_COORDINATOR_PORT ?? 
 // *Binding* one is a different question — that goes through path_mknod, which
 // Landlock does hook as AccessFs::MakeSock — so narrowing this list stops an
 // app squatting a path, and DAC (the 0710 owner-only directory these two paths
-// now live in) is what stops it connecting. Both halves are needed; see
-// docs/per-app-uid-design.md.
+// now live in) is what stops it connecting. Both halves are needed.
 //
 // The three daemon control sockets stay at /tmp/berth-*.sock and stay
 // reachable by every app, which is deliberate (see the socket table in that
@@ -82,7 +80,7 @@ function appRunDir(appName: string): string {
 
 // Granted to any app declaring a terminal:* capability. Established by
 // straceing a real `tmux new-session` rather than guessed — the previous
-// attempt at this (see REMEDIATION.md 1.15) granted the pty devices alone and
+// attempt at this granted the pty devices alone and
 // tmux still died, because a tmux server also opens /dev/null O_RDWR to
 // daemonize. That one is in the baseline above rather than here: opening
 // /dev/null read-write is what *any* process does when it redirects a child's
@@ -112,8 +110,7 @@ function appRunDir(appName: string): string {
 // mount, not on the ptys this app happens to have allocated. Per-app uids
 // narrow it in practice (a pty's slave is owned by whoever allocated it, so
 // DAC refuses what this rule permits) but not in the ruleset itself. It is
-// still the one container-wide grant left in this file. See
-// docs/per-app-uid-design.md § Blocker 6.
+// still the one container-wide grant left in this file.
 const TERMINAL_WRITE_PATHS = ["/dev/pts", "/dev/ptmx"];
 
 // Only added when read scoping is actually enabled (i.e. the app declared at
@@ -177,33 +174,12 @@ function stripTrailingGlob(scope: string): string {
   return scope.endsWith("/*") ? scope.slice(0, -2) : scope;
 }
 
-/** Best-effort: an unreachable/misconfigured grants server degrades to static-only policy, never fails the boot. */
-async function fetchApprovedCapabilities(appName: string): Promise<string[]> {
-  if (!GRANTS_SERVER_URL) return [];
-  try {
-    const url = `${GRANTS_SERVER_URL.replace(/\/$/, "")}/grants?status=approved&app=${encodeURIComponent(appName)}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const grants = (await res.json()) as { capability: string }[];
-    return grants.map((g) => g.capability);
-  } catch (err) {
-    console.error(`[berth:capability-policy] WARNING: couldn't reach grants server at ${GRANTS_SERVER_URL} (${err}) — using statically declared capabilities only`);
-    return [];
-  }
-}
-
 /**
  * The pure namespace:action:scope -> CapabilityPolicy compiler, split out
- * from main() so it can be fuzzed directly (no filesystem/network I/O) and
- * so its two callers — the static manifest's own `capabilities:` list and
- * the grants server's `approved` response — go through the exact same
- * validation. That second caller matters: unlike `manifest.capabilities`,
- * which @berthos/manifest-schema's CapabilityString regex already validated
- * at loadManifest() time, an `approved` grant string arrives straight from
- * an HTTP JSON response with no schema check at all — a malformed or
- * adversarial grants-server response (compromised server, or just a bug)
- * must never crash policy generation entirely, since agent-init's own
- * fallback for "no policy file" is to warn and run *unrestricted* (see
+ * from main() so it can be fuzzed directly (no filesystem I/O). It
+ * re-validates every string rather than trusting its caller: a malformed
+ * capability must never crash policy generation entirely, since agent-init's
+ * own fallback for "no policy file" is to warn and run *unrestricted* (see
  * packages/agent-init/src/main.rs) — the opposite of what an invalid
  * capability string should ever cause.
  */
@@ -219,8 +195,8 @@ export function compileCapabilityPolicy(appName: string, rawCapabilities: string
 
   for (const capability of rawCapabilities) {
     // CapabilityString mirrors the exact regex @berthos/manifest-schema
-    // already enforced on manifest.capabilities — re-validating here is
-    // what makes it safe to feed grants-server strings into the same loop.
+    // already enforced on manifest.capabilities — re-validated here so the
+    // compiler is safe on any input, not only a loadManifest()-checked one.
     const validated = CapabilityString.safeParse(capability);
     if (!validated.success) {
       console.error(`[berth:capability-policy] WARNING: ignoring malformed capability string ${JSON.stringify(capability)} (${validated.error.issues[0]?.message ?? "invalid format"})`);
@@ -236,9 +212,9 @@ export function compileCapabilityPolicy(appName: string, rawCapabilities: string
 
     // The filesystem-scope allowlist, re-checked here for the same reason the
     // CapabilityString regex above is: a manifest's own capabilities were
-    // already rejected by BerthManifestSchema's superRefine, but a
-    // grants-server `approved` string arrives with no schema check at all,
-    // and every path in this policy is one agent-init will mkdir as root
+    // already rejected by BerthManifestSchema's superRefine, but this
+    // compiler takes any string list, and every path in this policy is one
+    // agent-init will mkdir as root
     // before enforcement. Skipped with a warning rather than thrown, matching
     // the malformed-string handling above — agent-init's fallback for "no
     // policy file" is to run *unrestricted*, so failing policy generation is
@@ -286,14 +262,14 @@ export function compileCapabilityPolicy(appName: string, rawCapabilities: string
       // terminal:* is otherwise a recorded-only capability (it's what makes
       // container.ts publish ttyd's port). This is the one thing it compiles
       // into the kernel policy, and without it apps/terminal cannot allocate a
-      // pty at all on a kernel that enforces Landlock — REMEDIATION.md 1.15.
+      // pty at all on a kernel that enforces Landlock.
       for (const path of TERMINAL_WRITE_PATHS) writePaths.add(path);
     } else if (parsed.namespace === "github") {
       // Same shape as terminal:* above: github:* is otherwise recorded-only
       // (it's what makes entrypoint.sh start the GitHub API broker), and this
       // is the one thing it compiles into the kernel policy. The broker's CA
       // moved out of /tmp — which baselineReadPaths covers in full — into
-      // /run/berth (REMEDIATION.md 1.9), and Node reads NODE_EXTRA_CA_CERTS at
+      // /run/berth, and Node reads NODE_EXTRA_CA_CERTS at
       // process start, i.e. after agent-init has enforced. Without this an app
       // that declares any filesystem:read: capability (which is what turns
       // read scoping on) can't read the CA it was told to trust, and every
@@ -381,8 +357,7 @@ export function computeBindPorts(
 
 async function main(): Promise<void> {
   const manifest = await loadManifest(MANIFEST_PATH);
-  const approved = await fetchApprovedCapabilities(manifest.name);
-  const policy = compileCapabilityPolicy(manifest.name, [...manifest.capabilities, ...approved]);
+  const policy = compileCapabilityPolicy(manifest.name, manifest.capabilities);
   // Union, not overwrite: computeBindPorts() contributes the orchestration-level
   // ports (the HTTP RPC bridge, ttyd) while compileCapabilityPolicy() contributes
   // whatever the manifest declared with network:bind:<port>.

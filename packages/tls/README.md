@@ -10,5 +10,5 @@ npm install @berthos/tls
 
 ## Documentation
 
-- [Repo docs](https://github.com/Ash20pk/BerthOS/tree/main/docs)
+- [TLS reference](https://github.com/Ash20pk/BerthOS/blob/main/docs/tls-reference.md)
 - Repo: https://github.com/Ash20pk/BerthOS

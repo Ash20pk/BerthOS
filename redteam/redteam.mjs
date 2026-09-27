@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// BUILD_PLAN M2.4 — the red-team mutation suite.
+// The red-team mutation suite.
 //
 // The milestone suite proves Berth refuses an attack. This proves those
 // refusals are not vacuous: for each attack class it runs the attack twice —
@@ -25,7 +25,7 @@
 // namespace and co-tenant-socket denials come from agent-init's own seccomp
 // filter and the per-app uid split, neither of which the weakened boot
 // disables. Those are asserted denied here and their falsifiability is carried
-// by their own milestone's control (named in docs/internal/claims.md) rather
+// by their own milestone's control rather
 // than pretended here. Honesty over a full green grid.
 
 import { fileURLToPath } from "node:url";

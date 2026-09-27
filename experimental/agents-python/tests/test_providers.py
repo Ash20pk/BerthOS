@@ -1,4 +1,4 @@
-"""Provider-adapter tests — REMEDIATION 3.7's Python half.
+"""Provider-adapter tests, Python side.
 
 `berth_agents/providers/` was 688 lines with no test of any kind. That
 absence is exactly why 3.1, 3.2 and 3.6 were live in the TypeScript adapters
@@ -75,7 +75,7 @@ async def test_maps_messages_including_tool_call_round_trip() -> None:
 
 
 async def test_omits_the_tools_key_entirely_when_there_are_no_tools() -> None:
-    # REMEDIATION 3.1, Python side. The OpenAI API rejects `tools: []`
+    # The OpenAI API rejects `tools: []`
     # outright — the key has to be absent, not empty — and both LLM-judge
     # features (create_llm_guardrail, llm_judge) call chat() with no tools at
     # all. Fixed in openai.ts long ago; the Python adapter still sent the
@@ -187,7 +187,7 @@ async def test_anthropic_maps_messages_and_tools() -> None:
 
 
 async def test_anthropic_drops_messages_with_no_content_at_all() -> None:
-    # REMEDIATION 3.6: the Messages API rejects any message whose content is
+    # The Messages API rejects any message whose content is
     # an empty string or empty array, and Agent.run() can produce both.
     with MockLLMServer([anthropic_message()]) as server:
         provider = create_anthropic_provider(api_key="test", base_url=server.base_url)
@@ -262,7 +262,7 @@ async def test_anthropic_normalizes_a_missing_tool_output_to_json_null() -> None
 async def test_surfaces_transport_failures_rather_than_returning_an_empty_turn(status: int) -> None:
     # A provider that swallowed these would hand Agent an empty turn, which
     # the loop would treat as a final answer — the same class of silent
-    # success REMEDIATION 3.2 found in the TypeScript adapters.
+    # success found earlier in the TypeScript adapters.
     with MockLLMServer([{"__status": status, "error": {"message": "nope"}}]) as server:
         provider = create_openai_provider(api_key="test", base_url=server.base_url, max_retries=0)
         with pytest.raises(Exception):

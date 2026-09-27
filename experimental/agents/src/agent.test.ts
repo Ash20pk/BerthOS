@@ -642,7 +642,7 @@ test("run() without a session behaves exactly as before — no session, no prior
   assert.equal(callCount(), 1);
 });
 
-// --- Actor and payload capture on step events (REMEDIATION.md 5.1) -------
+// --- Actor and payload capture on step events -------
 
 test("emits steps with no actor by default, rather than inventing one", async () => {
   const { llm } = scriptedLLM([{ text: "done", toolCalls: [], stop: true }]);

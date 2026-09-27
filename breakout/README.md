@@ -1,7 +1,7 @@
 # The Berth break-out box
 
 A standing Berth sandbox that hands strangers code execution and dares them to
-reach a flag no capability grants. BUILD_PLAN M2.3.
+reach a flag no capability grants.
 
 The point is not the box — it is what the box proves. It runs **exactly what
 `berth dev` gives any app**: capabilities from a `berth.yml`, compiled into a
@@ -15,7 +15,7 @@ hole in Berth.
 | Flag | Where | Guarded by |
 |---|---|---|
 | `FLAG_KERNEL` | `/var/breakout/flag-kernel.txt`, mode **0644** | Landlock alone — DAC permits the read, so only the compiled policy refuses it |
-| `FLAG_COTENANT` | a co-tenant app's per-app secret (0600, its uid) | the per-app uid split (M1.3) |
+| `FLAG_COTENANT` | a co-tenant app's per-app secret (0600, its uid) | the per-app uid split |
 
 ## Run it
 
@@ -39,7 +39,7 @@ public deployment; the default bind is loopback.
   app's own process; `require("node:…")` returns the built-in (await it). The
   response says what you returned or threw, and which flag (if any) your output
   contained.
-- `GET /attestation` — the box's boot attestation (M2.1): the enforcement
+- `GET /attestation` — the box's boot attestation: the enforcement
   *measured* live at boot, not asserted.
 - `GET /log` — every attempt, hash-chained (`@berthos/audit`). Tamper-evident,
   not tamper-proof.

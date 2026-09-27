@@ -1,6 +1,6 @@
 name: Spec Conformance
 
-# BUILD_PLAN M3.1 / M3.2 — the two standalone specifications under spec/ and
+# The two standalone specifications under spec/ and
 # their conformance suites: the Capability Manifest (what an app declares) and
 # the Attestation Record (what a run enforced).
 #
@@ -21,7 +21,7 @@ name: Spec Conformance
 #
 # No Docker, no kernel features: these test document contracts, not enforcement.
 # What actually stands behind a declared capability is asserted by the milestone
-# tests named in docs/internal/claims.md; whether an attestation's measurements
+# tests; whether an attestation's measurements
 # are honestly obtained is asserted by attestation-milestone.yml on a real host,
 # with a negative control.
 on:

@@ -125,7 +125,7 @@ export async function createMcpClientTools(options: McpClientToolsOptions): Prom
     async invoke(input: unknown, ctx): Promise<unknown> {
       // The MCP SDK takes a signal in its per-call options, so a cancelled
       // run really does abandon an in-flight external tool call rather than
-      // only stopping the loop that was waiting on it. See REMEDIATION 4.2.
+      // only stopping the loop that was waiting on it.
       const result = (await client.callTool(
         {
           name: mcpTool.name,

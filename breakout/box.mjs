@@ -19,7 +19,7 @@
 //                   Protected by the uid split, not by Landlock.
 //
 // Nothing here hardens the box beyond what `berth dev` gives any app. That is
-// the BUILD_PLAN M2.3 constraint and it is load-bearing: a box with special
+// the box's founding constraint and it is load-bearing: a box with special
 // protections would prove something about the box instead of about Berth.
 
 import Docker from "dockerode";

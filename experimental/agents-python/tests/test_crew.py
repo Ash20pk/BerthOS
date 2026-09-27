@@ -306,7 +306,7 @@ async def test_pipeline_resumes_past_a_step_that_would_otherwise_explode(tmp_pat
     assert result == {"first": "a", "second": "ab"}
 
 
-# --- REMEDIATION 3.3: fan-out shapes must not share one run_id ---
+# --- Fan-out shapes must not share one run_id ---
 
 
 @pytest.mark.asyncio

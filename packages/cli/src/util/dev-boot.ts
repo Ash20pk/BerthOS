@@ -13,7 +13,6 @@ export interface BootDevContainerOptions {
   docker: Docker;
   /** Defaults to `berth-dev-<app>`, which is also what `berth mcp` looks for. */
   containerName?: string;
-  grantsServerUrl?: string;
   meshCoordinatorUrl?: string;
   /**
    * Where progress lines go. `berth dev` sends them to stdout; `berth mcp`
@@ -78,7 +77,6 @@ export async function bootDevContainer(options: BootDevContainerOptions): Promis
         : undefined,
     env: {
       BERTH_WORKSPACE_ROOT: workspaceRoot,
-      ...(options.grantsServerUrl ? { BERTH_GRANTS_SERVER_URL: options.grantsServerUrl } : {}),
     },
     meshCoordinatorUrl: options.meshCoordinatorUrl,
     docker,

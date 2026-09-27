@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type Docker from "dockerode";
 
 /**
- * The semantic-fs sidecar (BUILD_PLAN M1.1, docs/internal/design/sys-admin-drop.md).
+ * The semantic-fs sidecar.
  *
  * The FUSE mount for /context needs `mount(2)`, which needs CAP_SYS_ADMIN in
  * the mount namespace's owning user namespace — a capability granted at
@@ -140,7 +140,7 @@ export async function startSemanticFsSidecar(options: StartSidecarOptions): Prom
       // crosses the container boundary intact.
       "BERTH_SHARED_GID=9999",
       ...(options.appUidMap ? [`BERTH_APP_UID_MAP=${options.appUidMap}`] : []),
-      // The daemon narrows its own post-mount privileges (BUILD_PLAN M1.2);
+      // The daemon narrows its own post-mount privileges;
       // this passthrough is the milestone test's negative control, same
       // process-env convention as BERTH_DISABLE_FS_SIDECAR above it in
       // container.ts.

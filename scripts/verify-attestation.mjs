@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// BUILD_PLAN M2.1 — the standalone attestation verifier.
+// The standalone attestation verifier.
 //
 // Deliberately depends on nothing but node:crypto and the schema described in
 // docs/attestation-reference.md, so a stranger can check a Berth attestation

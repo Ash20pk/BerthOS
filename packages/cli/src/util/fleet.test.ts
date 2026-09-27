@@ -78,7 +78,7 @@ test("resolveFleet passes through region from the alias, and leaves it undefined
 });
 
 /**
- * REMEDIATION.md 5.5: `~/.berthrc` is where a fleet alias's provider API keys
+ * `~/.berthrc` is where a fleet alias's provider API keys
  * live, and it was read at whatever mode it happened to have — 0644 by
  * default, which on a shared machine is every local account's copy of the
  * credentials for every remote sandbox this one can start.

@@ -130,7 +130,7 @@ export function matchesCapability(granted: string, requested: string): boolean {
  * What a resident app's runtime records as it calls requestCapability() —
  * a log line, not an authorization artifact. Nothing reads it back.
  *
- * Named CapabilityTokenRequest until REMEDIATION.md 1.10 removed capability
+ * Named CapabilityTokenRequest removed capability
  * tokens; it never carried a token, and keeping "Token" in the name of the
  * one surviving type would have implied the mechanism still exists.
  */

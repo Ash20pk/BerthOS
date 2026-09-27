@@ -107,7 +107,7 @@ test("an AI SDK abort reaches the Berth tool's invoke", async () => {
   await tools.read_file!.execute({ path: "/workspace/x" }, { abortSignal: controller.signal });
 
   // Otherwise a cancelled generateText leaves a resident-app RPC running with
-  // nobody waiting on it — the same gap REMEDIATION 4.2 closed for Agent's
+  // nobody waiting on it — the same gap cancellation closed for Agent's
   // own loop, reached from someone else's.
   assert.equal(berthTool.calls[0]?.signal, controller.signal);
 });

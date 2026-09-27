@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { createUnavailableSemanticFs } from "./unavailable.js";
 import { createUnixSocketSemanticFs } from "./unix-socket.js";
 
-// REMEDIATION.md 1.14's third part: killing semantic-fs used to be worse than
+// Killing semantic-fs used to be worse than
 // a crash, because the runtime fell back to a stub that returned empty query
 // results. Retrieval, checkpoints, sessions and traces all read through here,
 // so a dead daemon reported success while losing data.

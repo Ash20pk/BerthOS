@@ -55,7 +55,7 @@ struct OkResponse {
 /// connect(2) on a pathname socket needs write permission on it, and a socket
 /// created under the default umask is 0755 — root and nobody else. An app
 /// that declared network:peer:* is meant to reach this one, and stops being
-/// able to the moment it stops being uid 0. See docs/per-app-uid-design.md.
+/// able to the moment it stops being uid 0.
 ///
 /// Not fatal: a mesh daemon reachable only by root is a degraded mesh, and
 /// refusing to start would be worse than that.

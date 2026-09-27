@@ -5,7 +5,6 @@ import { resolveLLMProvider, type LLMProviderConfig } from "./providers/auto.js"
 import { createSemanticFsCheckpointStore, type CheckpointedRun, type CheckpointStore } from "./checkpoint.js";
 import { combineStepTracers, createAgentTracer, createAuditStepTracer, type StepTracer } from "./tracing.js";
 import { createOtelStepTracer } from "./otel-tracer.js";
-import { applyHumanApprovalGate, HumanApprovalDeniedError, type HumanApprovalGateOptions } from "./approval.js";
 import {
   parseStructuredOutput,
   structuredOutputRepairPrompt,
@@ -47,7 +46,7 @@ export interface AgentOptions {
    * The governance authority to route this agent's own *delegation* through
    * — see asTool(). Set by createAgent() from the Computer it built; there
    * is no reason to pass it by hand. Every other tool an agent holds is
-   * already gated at that Computer's dispatch (REMEDIATION.md 1.13).
+   * already gated at that Computer's dispatch.
    */
   governance?: GovernanceGate;
   /**
@@ -67,8 +66,8 @@ export interface AgentOptions {
   /**
    * Include each tool call's arguments and result in its AgentStepEvent,
    * redacted first. Off by default: traces are written to Semantic FS as
-   * plaintext (REMEDIATION.md 5.4), and tool arguments are where customer
-   * data turns up. REMEDIATION.md 5.1 flagged the absence of arguments and
+   * plaintext, and tool arguments are where customer
+   * data turns up. The audit work flagged the absence of arguments and
    * outputs from the event, so this is the switch that closes it — a
    * decision an operator makes per agent, not one taken for them.
    */
@@ -95,7 +94,7 @@ export interface AgentOptions {
    * Wall-clock ceiling for a whole run(), in milliseconds — checked at every
    * loop boundary and propagated to the in-flight LLM call and tool call as
    * an AbortSignal. Unset means no deadline, which was the only behaviour
-   * before REMEDIATION 4.2: `maxTurns` bounded how many times the loop went
+   * before cancellation existed: `maxTurns` bounded how many times the loop went
    * round, and nothing at all bounded how long that took.
    *
    * Overridable per call via run()'s own `timeoutMs`.
@@ -114,7 +113,7 @@ export interface AgentOptions {
    * doesn't fit — see context.ts. Unset leaves proactive compaction off, but
    * *not* the reactive half: a provider reporting a context overflow still
    * triggers a trim-and-retry, because the alternative is a session that
-   * fails permanently from that point on. See REMEDIATION 4.1.
+   * fails permanently from that point on.
    */
   context?: ContextPolicy;
 }
@@ -147,10 +146,10 @@ export interface StructuredOutputRunOptions<T> {
  * actions an agent may take, and an agent denied one action trying a
  * different one is the intended behaviour. A *human* denying a specific
  * request, or a guardrail tripping, is a stop — not a hint. See
- * REMEDIATION 3.4, and governance.ts for why that gate is advisory by design.
+ * governance.ts for why that gate is advisory by design.
  */
 function isRefusal(err: unknown): boolean {
-  return err instanceof HumanApprovalDeniedError || err instanceof GuardrailTripwireError;
+  return err instanceof GuardrailTripwireError;
 }
 
 /**
@@ -237,7 +236,7 @@ export class Agent {
       runId?: string;
       onText?: (delta: string) => void;
       session?: Session;
-      /** Cancels this run: the in-flight LLM call and tool call are aborted, and run() rejects with an AbortError. See REMEDIATION 4.2. */
+      /** Cancels this run: the in-flight LLM call and tool call are aborted, and run() rejects with an AbortError. */
       signal?: AbortSignal;
       /** Overrides the Agent's own `timeoutMs` for this call. */
       timeoutMs?: number;
@@ -360,7 +359,7 @@ export class Agent {
         // regression. UnknownToolError is used for its *message*, which now
         // names the tools that do exist; "no such tool X" on its own is the
         // least actionable thing to hand a model that just guessed. See
-        // REMEDIATION 4.8 and errors.ts.
+        // errors.ts.
         error = new UnknownToolError(
           call.name,
           this.tools.map((t) => t.name),
@@ -378,7 +377,7 @@ export class Agent {
           // which turns a denial into "ask again" and spams the human
           // deciding it — documented as fail-closed, behaving as advisory.
           // Same for a guardrail that tripped inside a nested
-          // agent-as-tool. See REMEDIATION 3.4.
+          // agent-as-tool.
           if (isRefusal(err)) {
             await checkpoint(turnCount, "error", turnText);
             throw err;
@@ -452,7 +451,7 @@ export class Agent {
     // with an unanswered tool_call — so the outstanding calls are finished
     // first, and only then does the loop resume asking the model. Their
     // already-executed siblings are not re-run, which is the entire point of
-    // checkpointing per call. See REMEDIATION 3.5.
+    // checkpointing per call.
     const pending = pendingToolCalls(messages);
     for (const call of pending) {
       await runToolCall(call, startTurn, undefined);
@@ -469,7 +468,7 @@ export class Agent {
       const turnStart = Date.now();
       let turn;
 
-      // Proactive half of REMEDIATION 4.1: compact before the call when a
+      // Proactive half of context compaction: compact before the call when a
       // budget is set. Mutates `messages` in place rather than shadowing it,
       // so what gets checkpointed and what gets sent are the same history —
       // otherwise a resumed run would restore the full, over-budget list and
@@ -542,7 +541,7 @@ export class Agent {
       // a tool call recovered from one may carry truncated JSON. Only acts
       // on a reason a provider actually reported — an absent stopReason means
       // "unknown", and treating that as suspect would break every
-      // OpenAI-compatible server that omits the field. See REMEDIATION 3.2.
+      // OpenAI-compatible server that omits the field.
       if (turn.stopReason === "length" || turn.stopReason === "content_filter" || turn.stopReason === "refusal") {
         await checkpoint(turnCount, "error", turn.text);
         throw new TruncatedResponseError(this.name, turn.stopReason, turn.text ?? "");
@@ -593,7 +592,7 @@ export class Agent {
         // rather than turnCount + 1, because this turn hasn't finished — a
         // resume re-enters at it and finishes only what's outstanding.
         // Skipped for the last call, whose state the turn-end checkpoint
-        // below records anyway one line later. See REMEDIATION 3.5.
+        // below records anyway one line later.
         if (index < turn.toolCalls.length - 1) await checkpoint(turnCount, "running");
       }
 
@@ -604,7 +603,7 @@ export class Agent {
     // Carries the executed tool calls and the last thing the model said. The
     // bare Error this replaces discarded both, so a caller who wanted to
     // salvage a run that ran long — or just see how far it got — had nothing
-    // to work with but a message string. See REMEDIATION 4.8.
+    // to work with but a message string.
     throw new MaxTurnsExceededError(
       this.name,
       this.maxTurns,
@@ -659,7 +658,7 @@ export class Agent {
         return result.text;
       },
     };
-    // REMEDIATION.md 1.13: delegation used to be completely ungated. A
+    // Delegation used to be completely ungated. A
     // manager agent handed a worker's asTool() could reach every capability
     // that worker holds without the governor being consulted once — the
     // worker's *own* tool calls were gated, but the decision to delegate,
@@ -737,7 +736,7 @@ export interface CreateAgentOptions extends Pick<BootComputerOptions, "network" 
   trace?: "full" | "otel" | StepTracer;
   /**
    * Routes this agent's steps *and* its Computer's governance verdicts into
-   * one hash-chained audit trail — REMEDIATION.md 5.1.
+   * one hash-chained audit trail.
    *
    * Separate from `trace`, and composable with it: a trace answers "replay
    * this run", an audit trail answers "what happened on this machine, in
@@ -754,14 +753,6 @@ export interface CreateAgentOptions extends Pick<BootComputerOptions, "network" 
   actor?: Actor;
   /** Capture redacted tool arguments and results. See AgentOptions.tracePayloads. */
   tracePayloads?: boolean;
-  /**
-   * Wraps `computer.tools` through applyHumanApprovalGate() before
-   * constructing the Agent — every gated tool call blocks on a human
-   * decision via a running grants-server instance instead of executing
-   * immediately. `requesterName` defaults to this Agent's own `name`. See
-   * approval.ts.
-   */
-  humanApproval?: Omit<HumanApprovalGateOptions, "requesterName"> & { requesterName?: string };
   /**
    * "semantic-fs" builds a Retriever over this Computer's own
    * query_context/read_context_file tools (see createSemanticFsRetriever)
@@ -837,15 +828,10 @@ export async function createAgent(
     stepTracer && auditTracer ? combineStepTracers(stepTracer, auditTracer) : (stepTracer ?? auditTracer);
   const retriever = options.retriever === "semantic-fs" ? createSemanticFsRetriever(computer) : options.retriever;
   const mcpServers = options.mcpServers ? await Promise.all(options.mcpServers.map((server) => createMcpClientTools(server))) : [];
-  const gatedTools = options.humanApproval
-    ? applyHumanApprovalGate(computer.tools, {
-        ...options.humanApproval,
-        requesterName: options.humanApproval.requesterName ?? options.name ?? "agent",
-      })
-    : computer.tools;
+  const gatedTools = computer.tools;
   // MCP tools used to be concatenated *after* the governance gate, so a
   // governed Computer gated every resident-app tool and none of the MCP ones
-  // — REMEDIATION.md 1.13. They don't reach the Computer's dispatch (they
+  // They don't reach the Computer's dispatch (they
   // talk to an external MCP server), so they're gated explicitly here, under
   // a synthetic app name: `mcp:<server>`, with the tool's own name as the
   // export. A governance app therefore sees MCP calls in the same

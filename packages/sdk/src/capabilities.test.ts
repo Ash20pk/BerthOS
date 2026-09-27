@@ -33,16 +33,13 @@ test("requestCapability grants declared capabilities and denies undeclared ones"
 });
 
 /**
- * Regression test for the bug: requestCapability() used to read only
- * berth.yml's static `capabilities:` list, so it could never see a
- * capability approved via `berth grants approve` after the fact — even
- * though generate-capability-policy.ts's capability-policy.json (which
- * agent-init/the brokers already enforce against) merges exactly that
- * approval in. Simulates "approve a grant, restart the container" by
- * writing a capability-policy.json whose declaredCapabilities includes a
- * capability berth.yml itself never declared.
+ * The policy file is the authority: its declaredCapabilities is the list
+ * that was compiled into the enforced policy, and agent-init/the brokers
+ * enforce against it, so requestCapability() must answer from it rather than
+ * from berth.yml when both exist. Simulated by writing a capability-policy.json
+ * whose declaredCapabilities differs from berth.yml.
  */
-test("requestCapability sees a capability approved via the grants-server policy file, not just berth.yml", async () => {
+test("requestCapability answers from the compiled policy file, not berth.yml, when one exists", async () => {
   const dir = await mkdtemp(join(tmpdir(), "berth-capabilities-test-"));
   const manifestPath = join(dir, "berth.yml");
   await writeFile(manifestPath, ["name: test-app", "version: 1.0.0", "capabilities:", "  - filesystem:write:/workspace"].join("\n"));
@@ -52,10 +49,8 @@ test("requestCapability sees a capability approved via the grants-server policy 
     policyPath,
     JSON.stringify({
       appName: "test-app",
-      // filesystem:write:/workspace (static) plus github:read:repos, approved
-      // via `berth grants approve` after the fact and merged in by
-      // generate-capability-policy.ts's main() — berth.yml above never
-      // declares this one.
+      // berth.yml above never declares github:read:repos; only the policy
+      // file does.
       declaredCapabilities: ["filesystem:write:/workspace", "github:read:repos"],
       writePaths: ["/workspace"],
       readPaths: [],
@@ -69,8 +64,8 @@ test("requestCapability sees a capability approved via the grants-server policy 
   process.env.BERTH_CAPABILITY_POLICY = policyPath;
   const { requestCapability } = await import(`./capabilities.js?t=${Date.now()}`);
 
-  const approvedViaGrant = await requestCapability("test-app", "github:read:repos");
-  assert.equal(approvedViaGrant.granted, true, "a grants-approved capability must be seen, not just berth.yml's static list");
+  const fromPolicy = await requestCapability("test-app", "github:read:repos");
+  assert.equal(fromPolicy.granted, true, "the compiled policy file must be what requestCapability answers from");
 
   const stillUndeclared = await requestCapability("test-app", "github:write:repos");
   assert.equal(stillUndeclared.granted, false);
@@ -93,7 +88,7 @@ test("requestCapability falls back to berth.yml when no policy file exists (e.g.
   delete process.env.BERTH_CAPABILITY_POLICY;
 });
 
-test("a grant carries no token — REMEDIATION.md 1.10 removed them", async () => {
+test("a grant carries no token — capability tokens were removed", async () => {
   const dir = await mkdtemp(join(tmpdir(), "berth-capabilities-test-"));
   const manifestPath = join(dir, "berth.yml");
   await writeFile(manifestPath, ["name: test-app", "version: 1.0.0", "capabilities:", "  - filesystem:write:/workspace"].join("\n"));

@@ -1,9 +1,9 @@
 /**
- * The agent loop's error taxonomy — REMEDIATION 4.8.
+ * The agent loop's error taxonomy.
  *
  * Typed errors existed only at the edges before this (StructuredOutputError,
- * GuardrailTripwireError, GovernanceDeniedError, HumanApprovalDeniedError,
- * TruncatedResponseError, CheckpointReadError). Everything the *core loop*
+ * GuardrailTripwireError, GovernanceDeniedError, TruncatedResponseError,
+ * CheckpointReadError). Everything the *core loop*
  * itself raised was a bare `Error` distinguishable only by matching on its
  * message: exceeding maxTurns, resuming without a checkpoint store, resuming
  * a runId that has no checkpoint, calling a tool that doesn't exist.
@@ -13,7 +13,7 @@
  * fell through to the next provider on *any* thrown error, because it had no
  * way to tell one kind from another. So a malformed request (every provider
  * in the chain will reject it identically) burned the whole chain, and — once
- * REMEDIATION 4.2 lands — a caller's own `abort()` would have been treated as
+ * cancellation landed — a caller's own `abort()` would have been treated as
  * a provider outage and retried against the next one, which is the opposite of
  * what cancelling means.
  *
@@ -56,8 +56,7 @@ export type BerthAgentErrorCode =
  *
  * Note what is deliberately *not* re-parented onto this: the pre-existing
  * edge errors (StructuredOutputError, GuardrailTripwireError,
- * HumanApprovalDeniedError, GovernanceDeniedError, TruncatedResponseError,
- * CheckpointReadError) keep extending `Error` directly. Re-parenting them
+ * GovernanceDeniedError, TruncatedResponseError, CheckpointReadError) keep extending `Error` directly. Re-parenting them
  * would be a breaking change for anyone whose `catch` narrows on them today,
  * for no benefit — they are already typed, already exported, and already
  * distinguishable. This class exists for the errors that had *no* type at all.
@@ -120,7 +119,7 @@ export class UnknownToolError extends BerthAgentError {
   }
 }
 
-/** `resume(runId)` found no checkpoint under that id. Distinct from CheckpointReadError, which is a *failed read* — see REMEDIATION 3.5, where conflating the two silently restarted runs from scratch. */
+/** `resume(runId)` found no checkpoint under that id. Distinct from CheckpointReadError, which is a *failed read* — where conflating the two silently restarted runs from scratch. */
 export class CheckpointNotFoundError extends BerthAgentError {
   constructor(readonly runId: string) {
     super(`no checkpoint found for run "${runId}"`, "checkpoint_not_found");
@@ -138,7 +137,7 @@ export class CheckpointStoreMissingError extends BerthAgentError {
 }
 
 /**
- * The caller's own `signal` fired — REMEDIATION 4.2.
+ * The caller's own `signal` fired.
  *
  * `name` is forced to `"AbortError"` rather than the class name every other
  * error here uses, so that `isAbortError()` recognizes it and every layer
@@ -233,8 +232,8 @@ export class RateLimitError extends ProviderError {
  * identical oversized payload — to this provider or the next one in a
  * fallback chain — fails the same way, so treating it as retriable burns the
  * whole chain to arrive at the same error several seconds later. The useful
- * response is to make the payload smaller, which is exactly what REMEDIATION
- * 4.1's trim-and-retry does: it catches *this class specifically*, which is
+ * response is to make the payload smaller, which is exactly what context
+ * compaction's trim-and-retry does: it catches *this class specifically*, which is
  * why the two items landed adjacent to each other.
  */
 export class ContextLengthExceededError extends ProviderError {
@@ -386,7 +385,7 @@ export function classifyProviderError(err: unknown, provider: string): ProviderE
  * the whole file. A cancellation is the caller getting what they asked for,
  * not a provider failing; classifying it as a retriable provider error would
  * make `createFallbackProvider()` respond to `abort()` by dutifully trying
- * the next provider. See REMEDIATION 4.2.
+ * the next provider.
  */
 export async function withProviderErrors<T>(provider: string, call: () => Promise<T>): Promise<T> {
   try {

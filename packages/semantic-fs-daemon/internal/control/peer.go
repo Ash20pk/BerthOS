@@ -18,13 +18,12 @@ import (
 // wished to be known by, and neither was checked: any app in the sandbox could
 // register another app's pid under its own name, or its own pid under another
 // app's, and poison every "created_by" attribution the FUSE layer derives from
-// this registry (REMEDIATION.md 1.14). SO_PEERCRED answers both questions from
+// this registry. SO_PEERCRED answers both questions from
 // the kernel — it stamps the connecting process's pid, uid and gid onto the
 // socket at connect(2) time, and a process cannot lie about either without
 // already being able to become that uid.
 //
-// It carried no information until every app got a uid of its own
-// (docs/per-app-uid-design.md Step 2); this is Step 4 for that reason.
+// It carried no information until every app got a uid of its own.
 //
 // Deliberately duplicated, not shared: context-bus-daemon implements the same
 // three rules in Rust (src/peer.rs). A shared library would mean vendoring Go
@@ -42,7 +41,6 @@ type peerIdentity struct {
 	name string
 	// privileged is uid 0: the host relay (docker exec), the daemons
 	// themselves, anything that already has full authority in this container.
-	// See docs/per-app-uid-design.md § Blocker 7.
 	privileged bool
 }
 
@@ -110,7 +108,7 @@ func lookupUsername(uid uint32) string {
 	if err == nil {
 		return u.Username
 	}
-	// Sidecar deployment (BUILD_PLAN M1.1): the daemon's own /etc/passwd has
+	// Sidecar deployment: the daemon's own /etc/passwd has
 	// no berth-<app> users — those exist in the sandbox container. The
 	// orchestrator's BERTH_APP_UID_MAP declares the same uid assignment, so
 	// the kernel-reported uid still resolves to an app name.

@@ -172,7 +172,7 @@ test("createSnapshot() still succeeds even if removing the committed image fails
 });
 
 /**
- * REMEDIATION.md 5.5's snapshot half. env.json used to be the running
+ * The snapshot half of secrets delivery. env.json used to be the running
  * container's entire environment, written at whatever mode the umask gave it —
  * so a snapshot directory copied to another machine (which is the whole point
  * of a snapshot) carried the RPC bearer token and every provider API key with

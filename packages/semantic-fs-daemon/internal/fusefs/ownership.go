@@ -11,11 +11,10 @@ import (
 // entrypoint.sh). Backing files are created owned by it so that /context
 // survives an app process that is no longer uid 0.
 //
-// This is the whole of Blocker 3 in docs/per-app-uid-design.md, and it comes
-// with the cost that document states plainly: group ownership is shared by
+// It comes with a cost worth stating plainly: group ownership is shared by
 // *every* app, so /context is a deliberate exception to "each app is isolated
 // from the others" rather than a place where the uid split buys isolation.
-// Per-writer enforcement is REMEDIATION.md 1.14's SO_PEERCRED work; what the
+// Per-writer enforcement is the SO_PEERCRED work; what the
 // index records today (`created_by`, from the pid registry) is attribution
 // only, and an app can already write another app's files here.
 //

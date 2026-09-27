@@ -8,7 +8,7 @@ import { startMockLLMServer, openAICompletion, anthropicMessage } from "./provid
 import { TruncatedResponseError, type LLMProvider, type LLMStopReason, type LLMTurn } from "./types.js";
 
 /**
- * REMEDIATION 3.2. Two halves, tested separately because they fail
+ * Two halves, tested separately because they fail
  * separately: providers have to *report* why a turn ended, and the loop has
  * to *act* on it. Before this, no provider read finish_reason/stop_reason at
  * all, so a response cut off at the token cap arrived with `toolCalls: []`

@@ -190,7 +190,7 @@ export default defineApp((app) => {
   });
 
   // Diagnostic export for capability-enforcement.mjs's namespace check
-  // (REMEDIATION.md 1.3). agent-init drops CAP_SYS_ADMIN from the bounding set
+  // agent-init drops CAP_SYS_ADMIN from the bounding set
   // before exec-ing this process, which is supposed to make mount(2)
   // permanently unavailable — but creating a user namespace needs no privilege
   // at all, and the kernel hands its creator a fresh CAP_FULL_SET bounding set

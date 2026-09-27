@@ -217,31 +217,11 @@ Verified for real against local mock servers standing in for each vendor's actua
 
 An app declaring `governs: true` in its `berth.yml` becomes the Computer's governance authority: `Computer` wraps every *other* app's `Tool.invoke` to call that app's `evaluate_action` export first, and only proceeds if it returns `{ allowed: true }`. This is `Computer`-level, not kernel-level — Landlock has no per-syscall hook to build a true kernel gate on, so this is the closest real choke point that sees every tool call an agent makes across every app. Full contract, opt-out (`governance: { exempt: true }`), and fail-open behavior in the [governance gate reference](./governance-reference.md).
 
-Governance is fully automated — `evaluate_action` is a policy check some app's code answers, not a human. For an actual human decision in the loop, see the next section.
+Governance is fully automated — `evaluate_action` is a policy check some app's code answers. It can just as well block on a person; see the next section.
 
-## Human-in-the-loop: gating a live tool call on a human decision
+## Human-in-the-loop
 
-Neither `Agent.run()` nor the governance gate above has an interrupt point — nothing like LangGraph's `interrupt()`/`Command(resume=...)`. `applyHumanApprovalGate(tools, options)` (`experimental/agents/src/approval.ts`) closes that by generalizing [`@berthos/grants-server`](./capability-tokens-reference.md#human-admin-approval-berthgrants-server)'s existing approve/deny pattern from "container gets this filesystem capability" (decided *async*, taking effect only on the app's next boot) to "this agent gets to take its next action" (decided *live*, blocking the call that's asking):
-
-```ts
-const { agent } = await createAgent({
-  apps: "apps/filesystem",
-  humanApproval: {
-    grantsServerUrl: "http://127.0.0.1:4874", // a running `berth-grants` instance
-    only: ["write_file"], // omit to gate every tool; requesterName defaults to this Agent's name
-  },
-});
-
-await agent.run("clean up old files"); // blocks on write_file until `berth grants approve/deny` decides it
-```
-
-A gated tool call does `POST /grants {appName: requesterName, capability: "agent-action:<toolName>", reason: JSON.stringify(input)}`, then polls `GET /grants/:id` (`pollIntervalMs`, default 2s) until a human decides via `berth grants approve|deny` (or the REST API directly) or `timeoutMs` (default 10 minutes) elapses. Denied, or timed out, both throw `HumanApprovalDeniedError` — caught generically by `Agent.run()`'s tool loop and fed back to the model as `{error}`, exactly like any other tool failure (see gap #2 above); no `Agent` changes were needed for this to work.
-
-Two things this deliberately does **not** do, both by design rather than oversight:
-- **Doesn't touch `generate-capability-policy.ts`/Landlock at all.** That machinery is boot-time-only — Landlock rulesets are fixed at `agent-init`'s `restrict_self()` and can never be widened on an already-running process, so the *existing* async consumer (`requestCapability()`) can only take effect on the app's *next container restart*. There's no container to restart mid-`Agent.run()`, so this gate polls and blocks live instead, reusing only the request/approve/deny/webhook machinery, not the boot-time merge.
-- **Fail-closed, as the governance gate now also is (REMEDIATION.md 1.11 inverted that default).** A human-approval gate that silently let calls through when `grants-server` was unreachable, slow, or simply never got a human's attention wouldn't be a human-in-the-loop gate at all — a timeout is a denial here, not a pass-through.
-
-`only` (an array of tool names) is what makes this usable in practice — gating literally every tool call would mean a human has to click through even harmless reads. Omit it to gate everything; scope it down to just the tool calls that actually warrant a human looking first (a delete, a payment, an external message send).
+Neither `Agent.run()` nor the governance gate above has an interrupt point — nothing like LangGraph's `interrupt()`/`Command(resume=...)`. The way to put a human in front of a tool call is the same as for any other policy: a governance app whose `evaluate_action` blocks until a person decides (see [Governance](#governance-and-scoping)), or a wrapper around the tool's `invoke` in your own loop. A human's "no" should end the run rather than come back as a tool result the model can retry — `Agent.run()` treats a `GuardrailTripwireError` that way, and a wrapper should throw one.
 
 ## Guardrails: gating an `Agent`'s own input and final answer
 
@@ -410,7 +390,7 @@ await computer.stop();
 await Promise.all(mcpServers.map((s) => s.close())); // runAgent() does this automatically
 ```
 
-Call `createMcpClientTools({ transport })` directly for a standalone connection outside `createAgent()` (e.g. to hand its `.tools` to a manually-constructed `Agent`, or a `Crew` step). No schema translation happens in this direction: MCP's `tools/list` already returns JSON Schema, exactly what `Tool.inputSchema` expects — unlike `berth mcp`'s own server-side code, which has to translate `berth.yml`'s flat IOSpec into a Zod shape first. A tool result's `structuredContent` is preferred when a server provides one; otherwise an all-text `content` array collapses into a plain string (the common case), otherwise the raw content blocks pass through unchanged so a non-text result (an image, say) isn't silently dropped. A server-reported `isError` result is thrown as a real error from `invoke()`, not returned — it flows through `Agent.run()`'s existing tool-error handling (gap #2) exactly like any other failing tool.
+Call `createMcpClientTools({ transport })` directly for a standalone connection outside `createAgent()` (e.g. to hand its `.tools` to a manually-constructed `Agent`, or a `Crew` step). No schema translation happens in this direction: MCP's `tools/list` already returns JSON Schema, exactly what `Tool.inputSchema` expects — unlike `berth mcp`'s own server-side code, which has to translate `berth.yml`'s flat IOSpec into a Zod shape first. A tool result's `structuredContent` is preferred when a server provides one; otherwise an all-text `content` array collapses into a plain string (the common case), otherwise the raw content blocks pass through unchanged so a non-text result (an image, say) isn't silently dropped. A server-reported `isError` result is thrown as a real error from `invoke()`, not returned — it flows through `Agent.run()`'s existing tool-error handling exactly like any other failing tool.
 
 **Transports:** stdio (spawns a local server as a child process — `{command, args?, env?}`) and Streamable HTTP (`{url, headers?}`, for remote servers) are both real; a pre-built `Transport` object (the SDK's own `InMemoryTransport`, or a custom implementation) is also accepted directly, which is what this file's own test suite uses to verify the real MCP protocol without spawning a subprocess. Each connection stays open for as long as the handle is held — `close()` it when done (`runAgent()` does this in its own `finally`, alongside `computer.stop()`).
 
@@ -431,7 +411,7 @@ The actual differentiator is what it *doesn't* need: `apps/code-interpreter`'s `
 
 ## Structured output: a repair loop for an `Agent`'s final answer
 
-A Zod parse failure on a tool call's input (server-side, inside a resident app, or thrown directly by an in-process Tool) already gets fed back to the model as a tool error and another turn — that's gap #2's tool-error handling, not a separate mechanism. `formatToolInputError()` (`experimental/agents/src/structured-output.ts`) improves what that feedback actually looks like: a `ZodError`'s default `.message` is `JSON.stringify(issues)`, a raw array the model has to parse itself; this detects that exact shape (by inspecting the message *string*, not `instanceof ZodError` — a resident-app export's validation error crosses the RPC wire already unwrapped to a plain `Error(message)`, so `instanceof` would never match the common case) and reformats it into the same compact `path: message; path: message` form `parseStructuredOutput()` below already produces. Any other error message passes through unchanged — this is reformatting, not new validation, and works for any tool in any app, not one specific export.
+A Zod parse failure on a tool call's input (server-side, inside a resident app, or thrown directly by an in-process Tool) already gets fed back to the model as a tool error and another turn — that's the existing tool-error handling, not a separate mechanism. `formatToolInputError()` (`experimental/agents/src/structured-output.ts`) improves what that feedback actually looks like: a `ZodError`'s default `.message` is `JSON.stringify(issues)`, a raw array the model has to parse itself; this detects that exact shape (by inspecting the message *string*, not `instanceof ZodError` — a resident-app export's validation error crosses the RPC wire already unwrapped to a plain `Error(message)`, so `instanceof` would never match the common case) and reformats it into the same compact `path: message; path: message` form `parseStructuredOutput()` below already produces. Any other error message passes through unchanged — this is reformatting, not new validation, and works for any tool in any app, not one specific export.
 
 What's still genuinely missing is a LangChain `.with_structured_output()` equivalent for the agent's own *final* answer: once the model stops calling tools, nothing validated that its last message was actually the JSON shape the caller needed. `Agent.run()`/`Agent.resume()` gained a `responseSchema` option that closes that gap without a new subsystem — it's a small addition to the existing tool-use loop, not a parallel one:
 
@@ -459,7 +439,7 @@ const result = await crew.run("summarize this document"); // summarizeAgent's ou
 
 `sequential` re-runs its *last* agent (the one that actually produced the composed text) with a corrective prompt on failure; `route` re-runs whichever branch the router actually chose. Both are unambiguous about which Agent should attempt the fix. `parallel`/`withManager`/`networked`/`loopUntil`/`pipeline` deliberately don't get this: `parallel` has no single agent responsible for the merged output, `withManager`/`networked`'s manager can already be given its own `responseSchema` directly since delegation is just tool calls inside its own loop, `loopUntil` already has its own `until` predicate to gate on, and `pipeline` returns a typed object, not a string that `responseSchema` (which validates JSON text) applies to. With `checkpoint` also configured, `sequential`'s final checkpoint isn't saved as `"done"` until repair (if any) actually succeeds — a crash mid-repair resumes by re-attempting repair, not by treating the unrepaired text as finished.
 
-**What this does and doesn't fix:** tool-call *input* validation is still gap #2's generic `{error}` feedback, now reformatted (see above) but not pre-validated — there's still no client-side JSON-Schema pre-validation of tool arguments before they reach a tool's `invoke()`; that would need a JSON-Schema validator (this package has none as a dependency) and remains separate, deferred work. No streaming-aware repair: `onText` still fires for a rejected attempt's text before the repair prompt goes out, same as any other turn.
+**What this does and doesn't fix:** tool-call *input* validation is still the generic `{error}` tool-error feedback, now reformatted (see above) but not pre-validated — there's still no client-side JSON-Schema pre-validation of tool arguments before they reach a tool's `invoke()`; that would need a JSON-Schema validator (this package has none as a dependency) and remains separate, deferred work. No streaming-aware repair: `onText` still fires for a rejected attempt's text before the repair prompt goes out, same as any other turn.
 
 ## Evals: assertion-based regression tests, with an optional LLM-as-judge
 
@@ -668,7 +648,7 @@ await computer.stop();
 
 ## Declarative agent/crew config: YAML instead of code
 
-`berth.yml` describes resident apps, not agents or crews — CrewAI's own `agents.yaml`/`tasks.yaml` and ADK's declarative config were the real thing missing (gap #23). `createAgentFromYaml()`/`createCrewFromYaml()` (`experimental/agents/src/declarative.ts`) map a YAML file directly onto `createAgent()`'s existing options — no new runtime concept, just a data format for the common case that doesn't need code:
+`berth.yml` describes resident apps, not agents or crews — CrewAI's own `agents.yaml`/`tasks.yaml` and ADK's declarative config were the real thing missing. `createAgentFromYaml()`/`createCrewFromYaml()` (`experimental/agents/src/declarative.ts`) map a YAML file directly onto `createAgent()`'s existing options — no new runtime concept, just a data format for the common case that doesn't need code:
 
 ```yaml
 # research-assistant.yml

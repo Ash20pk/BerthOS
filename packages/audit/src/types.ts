@@ -1,6 +1,6 @@
 /**
  * How an actor's identity was established. This is the field that makes the
- * rest of the record worth anything: REMEDIATION.md 5.1's complaint about
+ * rest of the record worth anything: the original complaint about
  * `decided_by` was not that the name was missing, it was that a name the
  * caller typed into a request body was being recorded as if it were a fact.
  *
@@ -33,7 +33,7 @@ export interface AuditEvent {
   /** Monotonic within one sink instance, so records that share a timestamp still order. */
   seq: number;
   actor: Actor;
-  /** Dotted verb: "governance.evaluate", "grant.approve", "agent.tool-call", "http.request". */
+  /** Dotted verb: "governance.evaluate", "agent.tool-call", "http.request". */
   action: string;
   /** What the action was performed on — an app/export pair, a grant id, a route. */
   target?: string;

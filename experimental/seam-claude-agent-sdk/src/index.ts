@@ -1,8 +1,8 @@
 /**
  * Berth as the Claude Agent SDK's sandbox backend.
  *
- * BUILD_PLAN M3.3, seam 2 — and a different shape from every seam Berth has
- * shipped so far. `berth mcp`, `toAiSdkTools`, `toLangChainTools`, and M3.3's
+ * The second vendor seam — and a different shape from every seam Berth has
+ * shipped so far. `berth mcp`, `toAiSdkTools`, `toLangChainTools`, and the
  * OpenAI Agents adapter all *add* Berth tools to someone else's loop, next to
  * whatever that loop already had. This one *replaces* the loop's own execution
  * surface: after `berthSandboxBackend()`, the Claude Agent SDK harness still
@@ -38,8 +38,8 @@
  * `filesystem:write:/workspace` in `apps/terminal`'s manifest is a Landlock
  * write domain applied before the app execs, so a `Bash` call that writes
  * outside `/workspace` gets `EACCES` from the kernel, not a refusal from a
- * model or a regex in a permission callback. `docs/internal/claims.md` K1–K4
- * name the tests behind that.
+ * model or a regex in a permission callback. `capability-enforcement.mjs`
+ * in docker-orchestrator is the test behind that.
  *
  * It does not sandbox the *harness*. `query()` still runs in your process with
  * your privileges; a WebFetch, an MCP server you added yourself, or a
@@ -49,7 +49,7 @@
  *
  * `@anthropic-ai/claude-agent-sdk` is an **optional peer dependency**, imported
  * dynamically, and a devDependency here so the adapter is tested against the
- * real library rather than a hand-written idea of its shape (REMEDIATION 3.7's
+ * real library rather than a hand-written idea of its shape (the
  * bar for an adapter).
  */
 

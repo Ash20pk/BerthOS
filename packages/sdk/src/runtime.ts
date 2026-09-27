@@ -48,7 +48,7 @@ async function createContextBus(): Promise<ContextBusClient> {
  * Inside one, the daemon is meant to be serving a real index, so an empty
  * result set is not an answer but a wrong one, and every checkpoint, session
  * and trace read goes through here. That path used to fall back to the same
- * stub and report success while losing data (REMEDIATION.md 1.14); it now gets
+ * stub and report success while losing data; it now gets
  * a client that throws. See ./semantic-fs/unavailable.ts.
  *
  * BERTH_BOOT_ID is the discriminator because entrypoint.sh exports it before

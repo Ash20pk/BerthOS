@@ -1,7 +1,7 @@
 /**
  * Berth tools, usable from the OpenAI Agents SDK.
  *
- * BUILD_PLAN M3.3, seam 1. The premise is the same one `@berthos/agents`'s
+ * The first vendor seam. The premise is the same one `@berthos/agents`'s
  * `toAiSdkTools`/`toLangChainTools` were built on and which CONTRIBUTING.md
  * names as the supported path: `@berthos/agents` should not be the price of
  * admission for the thing Berth is differentiated on. A team already running
@@ -25,7 +25,7 @@
  * `@openai/agents` is an **optional peer dependency**, imported dynamically.
  * It is a devDependency of this package so the adapter is tested against the
  * real library rather than against a hand-written idea of its shape — the bar
- * REMEDIATION 3.7 set for an adapter, and the reason this file can state the
+ * set for an adapter, and the reason this file can state the
  * facts below about `parameters` and `strict` rather than guessing them.
  */
 
@@ -63,10 +63,9 @@ export interface ToOpenAIAgentToolsOptions {
    * *interruption* the caller must approve or reject before Berth is invoked
    * at all.
    *
-   * This is deliberately plumbed rather than left out. Berth already has a
-   * human-in-the-loop story (the grants-server, `docs/capability-tokens-reference.md`),
-   * and a caller running someone else's loop should be able to reach it
-   * without leaving that loop. Note what it is and is not: an approval gate in
+   * This is deliberately plumbed rather than left out: a caller running
+   * someone else's loop should be able to put a human in front of a tool
+   * call without leaving that loop. Note what it is and is not: an approval gate in
    * *this* process, in front of the RPC call — broker tier at best, and
    * bypassable by anything that can talk to the app socket directly. It is not
    * a substitute for the manifest, which is what the kernel enforces whether or
@@ -98,8 +97,8 @@ export interface ToOpenAIAgentToolsOptions {
  * a mis-parse.
  *
  * **`execute` forwards the run's `AbortSignal`.** A cancelled `run()` really
- * does abandon an in-flight resident-app call, the same contract
- * REMEDIATION 4.2 gave `Agent`'s loop — reached from someone else's loop.
+ * does abandon an in-flight resident-app call, the same cancellation
+ * contract `Agent`'s loop has — reached from someone else's loop.
  */
 export async function toOpenAIAgentTools(
   tools: BerthTool[],

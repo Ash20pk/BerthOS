@@ -1,6 +1,6 @@
 # @berthos/cli
 
-The berth CLI — init, dev, test, publish, deploy.
+The berth CLI — init, dev, test, doctor, mcp, attest, os, snapshot, publish, deploy.
 
 Part of [Berth](https://github.com/Ash20pk/BerthOS) — IAM for agents — declared capabilities, kernel-enforced, audit-trailed. The `berth.yml` capability line is the boundary; Landlock + seccomp hold it.
 
@@ -19,5 +19,5 @@ berth dev             # boot the sandbox and run your app inside it
 
 ## Documentation
 
-- [Getting started](https://github.com/Ash20pk/BerthOS/blob/main/docs/getting-started.md), [doctor reference](https://github.com/Ash20pk/BerthOS/blob/main/docs/doctor-reference.md)
+- [Quickstart](https://github.com/Ash20pk/BerthOS/blob/main/docs/quickstart.md), [doctor reference](https://github.com/Ash20pk/BerthOS/blob/main/docs/doctor-reference.md)
 - Repo: https://github.com/Ash20pk/BerthOS

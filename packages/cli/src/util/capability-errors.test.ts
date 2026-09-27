@@ -50,7 +50,7 @@ test("an ambiguous syscall offers both actions and says why, instead of guessing
 test("a denial on an already-declared path does not suggest another manifest line", () => {
   const out = explainAppError("EACCES: permission denied, mkdir '/workspace/data'", ctx());
   assert.match(out, /fix: not a missing declaration/);
-  assert.match(out, /per-app-uid-design/);
+  assert.match(out, /apps run as their own uid/);
   assert.doesNotMatch(out, /- filesystem:write:/);
 });
 

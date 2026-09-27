@@ -101,7 +101,7 @@ export interface StartContainerOptions {
    * `readOnly` mounts it `:ro`, which `berth dev` uses to stop an app with
    * `filesystem:write:/workspace` writing the developer's own repository —
    * `.git/hooks/pre-commit`, any `package.json`'s scripts, or its own
-   * `berth.yml` (REMEDIATION.md 1.6). Writable paths are then mounted back
+   * `berth.yml`. Writable paths are then mounted back
    * over it; see the CLI's resolveDevBindMount(). It defaults to off, so the
    * milestone tests that mount the repo root read-write on purpose keep
    * working unchanged.
@@ -112,7 +112,7 @@ export interface StartContainerOptions {
   /**
    * Named volume mounted over the app's `.berth/` directory. It used to hold
    * the on_install marker that made warm restarts skip reinstalling; since
-   * that moved to a build layer (REMEDIATION.md 1.5) there is no marker, and
+   * that moved to a build layer there is no marker, and
    * what the volume does now is keep the generated capability policy out of
    * the developer's own working tree, which `berth dev` bind-mounts.
    */
@@ -180,7 +180,7 @@ export interface StartContainerOptions {
   publishHost?: string;
   /**
    * Container runtime for the sandbox — Docker's `HostConfig.Runtime`, e.g.
-   * `runsc` for gVisor (BUILD_PLAN M1.4). Defaults to the daemon's default
+   * `runsc` for gVisor. Defaults to the daemon's default
    * runtime, or to `BERTH_RUNTIME` when that's set (empty means unset, same
    * rule as `BERTH_PUBLISH_HOST`). This is defense-in-depth for the one tier
    * the threat model otherwise answers with "Docker is trusted" — a
@@ -358,8 +358,7 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
     await ensureNetwork(docker, options.network);
   }
 
-  // /context's FUSE mount comes from a per-sandbox sidecar container
-  // (BUILD_PLAN M1.1, docs/internal/design/sys-admin-drop.md), so the
+  // /context's FUSE mount comes from a per-sandbox sidecar container, so the
   // sandbox itself gets no SYS_ADMIN, no /dev/fuse, and no AppArmor
   // exception — `mount(2)` inside it fails EPERM for every process, root
   // daemons included. If the sidecar's mount cannot propagate on this host,
@@ -544,13 +543,13 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
       // every container automatically; native Linux Docker (e.g. GitHub
       // Actions' ubuntu-latest runners) does not, unless told to via this
       // special host-gateway value (Docker 20.10+) — several milestone
-      // tests reach a host-side mock/grants server through that name
-      // (grants-server-milestone.mjs, github-assistant-milestone.mjs), which
+      // tests reach a host-side mock server through that name
+      // (github-assistant-milestone.mjs, the bench harnesses), which
       // otherwise silently fails to resolve in CI while working locally on
       // a Mac, masking the difference until the request itself times out.
       // A no-op wherever host.docker.internal already resolves.
       ExtraHosts: ["host.docker.internal:host-gateway"],
-      // Empty on the sidecar path (BUILD_PLAN M1.1): /context's FUSE mount
+      // Empty on the sidecar path: /context's FUSE mount
       // is performed by the per-sandbox sidecar, so this container needs no
       // device node and no capability for it. Non-empty only on the legacy
       // fallback (host without rshared propagation, or
@@ -561,7 +560,7 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
       ...(resources.memoryMb !== undefined ? { Memory: resources.memoryMb * 1024 * 1024 } : {}),
       ...(deviceRequests ? { DeviceRequests: deviceRequests } : {}),
       ...(securityOpt.length > 0 ? { SecurityOpt: securityOpt } : {}),
-      // The hardened-runtime opt-in (BUILD_PLAN M1.4). Only the sandbox gets
+      // The hardened-runtime opt-in. Only the sandbox gets
       // it — the sidecar's FUSE mount needs real host mount propagation, so
       // startSemanticFsSidecar stays on the daemon's default runtime.
       ...(runtime ? { Runtime: runtime } : {}),

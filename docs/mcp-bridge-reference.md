@@ -16,7 +16,7 @@
 
 ## Why this needed a new RPC client, not `berth rpc`'s existing one
 
-`berth rpc`/`invokeAppExport()` (`packages/docker-orchestrator/src/relay.ts`) reaches an app via `docker exec` + a per-app Unix socket at `/run/berth/<app>/rpc.sock` — but that socket is **only created in multi-app mode** (`entrypoint.sh`'s `BERTH_APPS`-driven branch). A plain single-app `berth dev` container (the common case, and this bridge's actual target) execs straight into the app's own runtime as PID 1, with no such socket — the app is only reachable over the container's own stdio, exactly how `capability-enforcement.mjs`'s and `grants-server-milestone.mjs`'s test-only RPC clients already work. `createStdioRpcClient()` is that same pattern, productionized as a reusable export instead of copy-pasted per test file.
+`berth rpc`/`invokeAppExport()` (`packages/docker-orchestrator/src/relay.ts`) reaches an app via `docker exec` + a per-app Unix socket at `/run/berth/<app>/rpc.sock` — but that socket is **only created in multi-app mode** (`entrypoint.sh`'s `BERTH_APPS`-driven branch). A plain single-app `berth dev` container (the common case, and this bridge's actual target) execs straight into the app's own runtime as PID 1, with no such socket — the app is only reachable over the container's own stdio, exactly how `capability-enforcement.mjs`'s test-only RPC client already works. `createStdioRpcClient()` is that same pattern, productionized as a reusable export instead of copy-pasted per test file.
 
 ## Denials as the API
 
@@ -35,7 +35,7 @@ Verified end to end in `packages/docker-orchestrator/test/mcp-milestone.mjs` (Te
 
 **Real:** a running local `berth dev` container's exports are genuinely reachable as MCP tools from any real MCP client — verified end-to-end in `packages/docker-orchestrator/test/mcp-milestone.mjs` using the actual `@modelcontextprotocol/sdk` `Client`/`StdioClientTransport` on the test side too (not a mock of the MCP protocol on either end).
 
-**Real, as of gap #26's closure (2026-08-06):** `--only=<export1>,<export2>` (comma-separated) scopes which exports get bridged at all, instead of blanket "everything this app declares." `packages/cli/src/util/mcp-tools.ts`'s `parseOnlyExports()` validates every named export actually exists in the manifest, erroring loudly on a typo rather than silently bridging fewer tools than intended — the same least-privilege shape `applyHumanApprovalGate()`'s own `only` option already has for Agent tool calls (see `docs/agents-reference.md`).
+**Real:** `--only=<export1>,<export2>` (comma-separated) scopes which exports get bridged at all, instead of blanket "everything this app declares." `packages/cli/src/util/mcp-tools.ts`'s `parseOnlyExports()` validates every named export actually exists in the manifest, erroring loudly on a typo rather than silently bridging fewer tools than intended.
 
 **Real, as of launch-plan 1.5 (2026-08-19):** self-booting (`--no-boot` opts out), `--warm`, and the explained denials above.
 

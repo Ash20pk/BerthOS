@@ -69,18 +69,18 @@ test("requiring a client cert without a CA is an error, not a silently unverifie
 
 test("reads paths from prefixed environment variables", () => {
   const { certPath, keyPath, caPath } = fixture();
-  const tls = resolveServerTlsFromEnv("BERTH_GRANTS", {
-    BERTH_GRANTS_TLS_CERT: certPath,
-    BERTH_GRANTS_TLS_KEY: keyPath,
-    BERTH_GRANTS_TLS_CA: caPath,
-    BERTH_GRANTS_TLS_REQUIRE_CLIENT_CERT: "true",
+  const tls = resolveServerTlsFromEnv("BERTH_REGISTRY", {
+    BERTH_REGISTRY_TLS_CERT: certPath,
+    BERTH_REGISTRY_TLS_KEY: keyPath,
+    BERTH_REGISTRY_TLS_CA: caPath,
+    BERTH_REGISTRY_TLS_REQUIRE_CLIENT_CERT: "true",
   })!;
   assert.equal(tls.cert, "CERT");
   assert.equal(tls.requestCert, true);
 });
 
 test("an env with no TLS variables yields no TLS", () => {
-  assert.equal(resolveServerTlsFromEnv("BERTH_GRANTS", {}), undefined);
+  assert.equal(resolveServerTlsFromEnv("BERTH_REGISTRY", {}), undefined);
 });
 
 test("schemeFor names the scheme a server should print", () => {

@@ -21,9 +21,9 @@ test("isSecretEnvName catches the credentials Berth itself sets", () => {
     "BERTH_HTTP_RPC_TOKEN",
     "BERTH_TERMINAL_CREDENTIAL",
     "BERTH_VNC_PASSWORD",
-    "BERTH_GRANTS_TOKEN",
+    "BERTH_MESH_TOKEN",
     "BERTH_REGISTRY_TOKEN",
-    "BERTH_GRANTS_OPERATOR_TOKEN",
+    "BERTH_REGISTRY_OPERATOR_TOKEN",
   ]) {
     assert.equal(isSecretEnvName(name), true, `${name} must not reach docker inspect`);
   }
@@ -57,7 +57,7 @@ test("isSecretEnvName leaves Berth's own non-credential env alone", () => {
     "BERTH_HTTP_RPC_PORT",
     "BERTH_HTTP_RPC_APP",
     "BERTH_REQUIRE_ENFORCEMENT",
-    "BERTH_GRANTS_SERVER_URL",
+    "BERTH_MESH_COORDINATOR_URL",
     "BERTH_BOOT_ID",
     "PATH",
     "HOME",
@@ -78,7 +78,7 @@ test("partitionSecretEnv splits without losing or duplicating an entry", () => {
 });
 
 /**
- * BUILD_PLAN M2.3, found by breakout/test/breakout-milestone.mjs: scoping used
+ * Found by breakout/test/breakout-milestone.mjs: scoping used
  * to be decided only by the name-shape heuristic, so a manifest could declare
  * a secret whose name did not look like a credential and silently get nothing
  * — the value went to Docker's `Env` in plaintext and reached every app.

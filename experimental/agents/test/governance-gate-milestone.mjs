@@ -26,8 +26,8 @@ function assert(condition, message) {
 
 async function main() {
   console.log("Booting a Computer with apps/filesystem + the governance-gate-tester and governance-peer-caller fixtures...");
-  // httpRpc so the bridge — one of the transports REMEDIATION.md 1.13 lists
-  // as ungated — actually exists in this container to be tested.
+  // httpRpc so the bridge — one of the transports that used to be
+  // ungated — actually exists in this container to be tested.
   const computer = await Computer.boot({
     apps: [FILESYSTEM_APP_DIR, GOVERNANCE_APP_DIR, PEER_CALLER_APP_DIR],
     httpRpc: true,
@@ -74,7 +74,7 @@ async function main() {
 }
 
 /**
- * REMEDIATION.md 1.13's second half: the same denial, through the transports
+ * The same denial, through the transports
  * that never touch a Computer. Before the SDK-dispatch gate, each of these
  * reached the app's export with no governor anywhere on the path — so an
  * agent denied `write_file` above could simply ask again over one of these
@@ -137,7 +137,7 @@ async function assertTransportsAreGated(computer) {
 }
 
 /**
- * The sibling peer socket — claims.md's second UNPROVEN row.
+ * The sibling peer socket — previously unproven at milestone tier.
  *
  * capability-enforcement K14 already proves the *identity* half: a request
  * arriving on `/run/berth/filesystem/peers/<caller>/rpc.sock` is attributed to
@@ -177,8 +177,8 @@ async function assertPeerSocketIsGated(container) {
 }
 
 /**
- * The cross-container TCP listener — claims.md's first UNPROVEN row, which
- * this run closes in the opposite direction to the one the row expected.
+ * The cross-container TCP listener — previously unproven at milestone tier,
+ * which this run closes in the opposite direction to the one expected.
  *
  * The row asked whether the governance gate covers the TCP transport. On a
  * kernel that enforces, the question does not arise: **the listener cannot

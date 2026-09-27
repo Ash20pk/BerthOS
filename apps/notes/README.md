@@ -30,7 +30,7 @@ cd apps/notes
 pnpm exec berth dev
 ```
 
-This is also the walkthrough's second step after `hello-world` — see [docs/getting-started.md](../../docs/getting-started.md#3-run-the-notes-app-a-resident-app-with-a-real-capability).
+This is also the walkthrough's second step after `hello-world` — see [docs/quickstart.md](../../docs/quickstart.md#run-a-resident-app-directly).
 
 ## Testing
 

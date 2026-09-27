@@ -7,7 +7,7 @@ import { AddressInfo } from "node:net";
  * createOpenAICompatibleProvider() already has.
  *
  * Why a real HTTP server rather than stubbing each vendor SDK's client: the
- * bugs these adapters actually shipped (REMEDIATION 3.1, 3.2, 3.6) are all
+ * bugs these adapters actually shipped are all
  * about the *request body* an adapter builds or the *response field* it fails
  * to read. A stub of `client.chat.completions.create` asserts the arguments
  * this repo passes to the SDK, which is the half that was never wrong. Only a

@@ -48,9 +48,7 @@ export function mcpToolsFor(manifest: BerthManifest): Array<{ name: string; desc
  * doesn't add cryptographic auth (there's still no token verifying *who*
  * is calling), but it does let an operator narrow *what* a spawned bridge
  * can reach to a declared subset instead of blanket "everything this app
- * can do" — least privilege, opt-in, the same shape of improvement
- * `applyHumanApprovalGate`'s own `only` option already has for Agent tool
- * calls. `unknown` names (a typo, or an export the app doesn't declare) are
+ * can do" — least privilege, opt-in. `unknown` names (a typo, or an export the app doesn't declare) are
  * returned rather than silently dropped, so the caller can fail loudly
  * instead of bridging fewer tools than the operator actually intended.
  */

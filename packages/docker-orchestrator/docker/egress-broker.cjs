@@ -68,8 +68,8 @@ function globToRegExp(glob) {
 // What a browser actually needs, and the ceiling for a capability that names
 // no port. `CONNECT internal-db.corp:5432` through this broker used to
 // succeed for an app declaring `browser:navigate:*` — the port was parsed,
-// passed to net.connect, and never checked against anything (REMEDIATION.md
-// 1.8). Widen it deliberately by declaring the port in the scope:
+// passed to net.connect, and never checked against anything.
+// Widen it deliberately by declaring the port in the scope:
 // `network:host:internal-db.corp:5432`, or `:*` for any.
 const DEFAULT_ALLOWED_PORTS = [80, 443];
 
@@ -116,7 +116,7 @@ function loadAllowedHostPatterns() {
 }
 
 // Hosts another broker in this container enforces at a finer grain than a
-// host name — REMEDIATION.md 1.9. github-api-broker.cjs terminates TLS for
+// host name. github-api-broker.cjs terminates TLS for
 // api.github.com so it can tell `GET /repos/o/r` from `GET /user/emails`;
 // an app declaring `github:read:repos` AND `network:host:*` used to get a raw
 // CONNECT api.github.com:443 through this broker as well, with no path or
@@ -164,8 +164,8 @@ function isHostAllowed(host, port) {
 }
 
 /**
- * Addresses no declared capability can reach, `*` included — REMEDIATION.md
- * 1.8. `browser:navigate:*` reads as "any site on the internet", and a
+ * Addresses no declared capability can reach, `*` included.
+ * `browser:navigate:*` reads as "any site on the internet", and a
  * reasonable person declaring it does not mean "and the cloud metadata
  * service, and anything on the Docker bridge, and the host itself".
  *
@@ -244,7 +244,7 @@ const HOP_BY_HOP_HEADERS = new Set([
 
 /**
  * Strips hop-by-hop headers and normalizes Host to the target this broker
- * actually validated — REMEDIATION.md 1.8.
+ * actually validated.
  *
  * Host matters because the request line and the Host header can disagree: a
  * request for an allowed URL carrying `Host: internal-service` is checked

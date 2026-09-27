@@ -1,7 +1,7 @@
 {
   "name": "@berthos/cli",
   "version": "0.1.0",
-  "description": "The berth CLI — init, dev, test, publish, deploy",
+  "description": "The berth CLI — init, dev, test, doctor, mcp, attest, os, snapshot, publish, deploy",
   "type": "module",
   "bin": {
     "berth": "./bin/berth.js"

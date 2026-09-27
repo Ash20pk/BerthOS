@@ -61,7 +61,7 @@ async function main() {
   const containerLog = await startLogCapture(running.container);
   try {
     await waitFor(() => /"hello-world-py" ready/.test(containerLog.text()), 20000, "hello-world-py runtime ready");
-    // Inverted by REMEDIATION 1.5. This used to assert that the Python
+    // Inverted. This used to assert that the Python
     // lifecycle script *ran* the manifest's on_install at boot; that was the
     // vulnerability — an unsandboxed root shell from a berth.yml, executed
     // before any Landlock domain existed. on_install is a Docker build layer

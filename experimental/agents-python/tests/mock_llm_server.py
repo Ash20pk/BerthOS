@@ -2,7 +2,7 @@
 `experimental/agents/src/providers/mock-server.ts`.
 
 **A real server rather than a stubbed vendor client, deliberately**, and for
-the reason REMEDIATION 3.7 records for the TypeScript side: every bug this
+the reason recorded for the TypeScript side: every bug this
 kind of test exists to catch is about the request body an adapter *builds* or
 the response field it fails to *read*. Stubbing `client.chat.completions.create`
 would assert the arguments this package passes to the SDK — the half that was
@@ -11,7 +11,7 @@ never wrong — and would happily accept a body the vendor's API rejects.
 Every Python provider already takes a `base_url` for production reasons
 (Ollama, vLLM, gateways), so pointing one at `http://127.0.0.1:<port>` needs
 no seam that didn't already exist. The one exception is `google.py`, which
-has no `base_url` at all — the same absence REMEDIATION 3.7 had to fix in
+has no `base_url` at all — the same absence that had to be fixed in
 `google.ts` before that adapter could be tested.
 """
 

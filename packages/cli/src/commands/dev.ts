@@ -25,9 +25,6 @@ export default class Dev extends Command {
   static override description = "Boot the resident app in a local Agent OS instance, with hot reload";
   static override flags = {
     apps: Flags.string({ description: "comma-separated workspace-relative paths of companion resident apps to run alongside this one" }),
-    "grants-server": Flags.string({
-      description: "berth-grants server URL to consult for human-approved capability grants, e.g. http://localhost:4874",
-    }),
     "mesh-coordinator": Flags.string({
       description: "berth-mesh-coordinator URL for network:peer:* apps, e.g. http://localhost:4875 (see docs/mesh-reference.md)",
     }),
@@ -51,7 +48,6 @@ export default class Dev extends Command {
       manifest,
       apps,
       docker,
-      grantsServerUrl: flags["grants-server"],
       meshCoordinatorUrl: flags["mesh-coordinator"],
       log: (message) => this.log(message),
     });

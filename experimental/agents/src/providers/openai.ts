@@ -21,8 +21,8 @@ export interface OpenAIProviderOptions {
   /**
    * Cap on tokens generated per turn. Unset means no cap is sent and the
    * model's own default applies — unlike Anthropic's API, which requires one
-   * (see anthropic.ts's DEFAULT_MAX_TOKENS). Exposed because REMEDIATION 3.2
-   * made a length cutoff visible as a TruncatedResponseError, and raising the
+   * (see anthropic.ts's DEFAULT_MAX_TOKENS). Exposed because a length cutoff
+   * is visible as a TruncatedResponseError, and raising the
    * cap is the fix a caller hitting one needs to be able to reach for.
    */
   maxTokens?: number;
@@ -76,7 +76,7 @@ export function createOpenAIProvider(options: OpenAIProviderOptions = {}): LLMPr
  * implementation below). Anthropic tolerates the empty array and google.ts
  * already guarded it, which is why this went unnoticed. Spread into the
  * request so the key simply doesn't exist rather than being set to
- * undefined. See REMEDIATION 3.1.
+ * undefined.
  */
 function toolsParam(tools: Tool[]) {
   if (tools.length === 0) return {};
@@ -90,7 +90,7 @@ function toolsParam(tools: Tool[]) {
 
 /**
  * `finish_reason` is the field that says a response was cut off at the token
- * cap rather than actually finished — unread until REMEDIATION 3.2, which is
+ * cap rather than actually finished — unread, which is
  * why a truncated fragment came back as a final answer. `refusal` is a
  * separate field on the message, not a finish_reason, so it's checked by the
  * caller and passed in here.
@@ -135,7 +135,7 @@ export function createOpenAICompatibleProvider(client: OpenAI, model: string, na
   // OpenAI-compatible servers validate the key's presence, not its value.
   const maxTokensParam = maxTokens === undefined ? {} : { max_tokens: maxTokens };
   // Wrapped so both call paths classify vendor errors into the taxonomy in
-  // errors.ts — REMEDIATION 4.8. This one wrapping covers four providers:
+  // errors.ts. This one wrapping covers four providers:
   // Azure, Bedrock and Ollama all build on this same implementation.
   return wrapProviderErrors({
     name,

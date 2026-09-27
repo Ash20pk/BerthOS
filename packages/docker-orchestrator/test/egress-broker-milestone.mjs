@@ -266,11 +266,11 @@ async function startFakeUpstreamProxy() {
   };
 }
 
-// Part A3: REMEDIATION.md 1.8 — the three holes that a host-only check left
+// Part A3: The three holes that a host-only check left
 // open. Run directly against the broker script, no Docker, because every one
 // of them is a decision the broker makes before a byte leaves it.
 async function runPartA3() {
-  console.log("\n=== Part A3: port scoping, internal addresses, and pinned DNS (REMEDIATION.md 1.8) ===");
+  console.log("\n=== Part A3: port scoping, internal addresses, and pinned DNS ===");
   const dataDir = await mkdtemp(join(tmpdir(), "berth-egress-broker-milestone-ssrf-"));
 
   async function withBroker(capabilities, port, fn) {
@@ -385,14 +385,14 @@ async function runPartA3() {
   }
 }
 
-// Part A4: REMEDIATION.md 1.9 — the two brokers didn't compose. An app
+// Part A4: The two brokers didn't compose. An app
 // declaring a github:* capability gets github-api-broker.cjs, which decrypts
 // and checks method+path; declaring network:host:* (or browser:navigate:*)
 // as well used to also get it a raw CONNECT api.github.com:443 through this
 // broker, with no path or verb inspection at all. apps/github-assistant is
 // the real case: it declares github:read:repos and browser:navigate:*.github.com.
 async function runPartA4() {
-  console.log("\n=== Part A4: a host owned by a dedicated broker is refused here (REMEDIATION.md 1.9) ===");
+  console.log("\n=== Part A4: a host owned by a dedicated broker is refused here ===");
   const dataDir = await mkdtemp(join(tmpdir(), "berth-egress-broker-milestone-brokered-"));
 
   async function withPolicy(capabilities, port, fn) {

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-command deploy for the Berth break-out box (BUILD_PLAN M2.3).
+# One-command deploy for the Berth break-out box.
 #
 # The box protects its flags with exactly the enforcement Berth ships, so it is
 # only honest to run it where that enforcement is real: a Linux host whose

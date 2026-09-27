@@ -1,9 +1,9 @@
 // Two seccomp-bpf filters, installed by main() immediately before exec().
 //
-//   1. no_new_namespaces — REMEDIATION.md 1.3. Installed for every app,
+//   1. no_new_namespaces. Installed for every app,
 //      unconditionally. Without it, the capability bounding-set drop in
 //      main.rs's drop_all_capabilities() is reversible by the app itself.
-//   2. no_udp_no_raw — REMEDIATION.md 1.2. Installed only for apps that
+//   2. no_udp_no_raw. Installed only for apps that
 //      declared no network capability at all.
 //
 // Both are allow-by-default: they remove specific syscalls that neither
@@ -38,7 +38,7 @@ use seccompiler::{
 const DENIED_ERRNO: u32 = libc::EPERM as u32;
 
 // ---------------------------------------------------------------------------
-// 1. Namespace creation — REMEDIATION.md 1.3
+// 1. Namespace creation
 // ---------------------------------------------------------------------------
 //
 // main.rs drops CAP_SYS_ADMIN, CAP_NET_ADMIN, and CAP_NET_RAW from the
@@ -218,7 +218,7 @@ pub fn install_no_new_namespaces_filter() -> Result<(), Box<dyn std::error::Erro
 }
 
 // ---------------------------------------------------------------------------
-// 2. UDP and raw sockets — REMEDIATION.md 1.2
+// 2. UDP and raw sockets
 // ---------------------------------------------------------------------------
 //
 // The second half of "deny-by-default network access."
@@ -245,12 +245,12 @@ pub fn install_no_new_namespaces_filter() -> Result<(), Box<dyn std::error::Erro
 //      all. An app declaring `network:connect:443` keeps working UDP, because
 //      it needs DNS to make that TCP connection useful and Landlock's per-port
 //      model has no way to express "UDP 53 only." Closing that gap means
-//      routing those apps' DNS through the egress broker (see REMEDIATION.md
-//      1.8) and is out of scope here.
+//      routing those apps' DNS through the egress broker and is out of
+//      scope here.
 //   2. AF_UNIX is untouched. Local RPC (packages/sdk's socket transport, the
 //      context-bus and semantic-fs daemons) is all AF_UNIX, and it is not an
 //      egress path. Restricting *which* Unix sockets an app may reach is
-//      Landlock's job, and is tracked as REMEDIATION.md 1.4.
+//      not this filter's job — per-app uids and socket modes do it.
 //   3. AF_NETLINK is untouched — it is how a process reads its own interface
 //      list, and it is not routable off-box.
 
@@ -355,7 +355,7 @@ mod tests {
         }
     }
 
-    /// The behavioural test for REMEDIATION.md 1.3, and the one that proves
+    /// The behavioural test, and the one that proves
     /// something: install the filter on a scratch thread (seccomp filters are
     /// per-thread until TSYNC is asked for, so this doesn't constrain the rest
     /// of the test binary) and make the actual unshare(2) call the reported
@@ -406,7 +406,7 @@ mod tests {
         );
     }
 
-    /// The behavioural test for REMEDIATION.md 1.2: install the filter on a
+    /// The behavioural test: install the filter on a
     /// scratch thread and make the actual socket(2) calls an app would make.
     ///
     /// This runs anywhere seccomp-bpf exists, which unlike Landlock includes

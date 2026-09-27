@@ -80,7 +80,7 @@ function toFunctionDeclarations(tools: Tool[]): FunctionDeclaration[] {
  * "content_filter" rather than each becoming "other". MALFORMED_FUNCTION_CALL
  * is the model failing to emit a usable call, which is closer to a truncation
  * than to a refusal, but it is neither — "other" is the honest answer, and
- * Agent leaves it alone. See REMEDIATION 3.2.
+ * Agent leaves it alone.
  */
 function toStopReason(finishReason: string | null | undefined): LLMStopReason | undefined {
   switch (finishReason) {
@@ -128,7 +128,7 @@ export function createGoogleProvider(options: GoogleProviderOptions = {}): LLMPr
   }
 
   // Wrapped so both call paths classify vendor errors into the taxonomy in
-  // errors.ts — REMEDIATION 4.8. Applied here rather than around each await
+  // errors.ts. Applied here rather than around each await
   // so a future third call path can't miss it.
   return wrapProviderErrors({
     name: "google",

@@ -32,7 +32,7 @@ export default class SnapshotCreate extends Command {
     try {
       const inspect = await container.inspect();
       // Captures the container's real inherited env — including whatever
-      // berth dev/deploy actually started it with (e.g. BERTH_GRANTS_SERVER_URL)
+      // berth dev/deploy actually started it with (e.g. BERTH_MESH_COORDINATOR_URL)
       // — not just what's in this process's own environment.
       for (const entry of inspect.Config.Env ?? []) {
         const eq = entry.indexOf("=");

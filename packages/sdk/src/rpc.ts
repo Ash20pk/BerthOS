@@ -141,8 +141,7 @@ function startSocketServer(app: BerthApp, socketPath: string): void {
  *
  * The obvious implementation is `SO_PEERCRED`, which is what the two daemons
  * in this repo use (context-bus-daemon's `src/peer.rs`, semantic-fs-daemon's
- * `internal/control/peer.go`) and what docs/per-app-uid-design.md's Step 4
- * specified. Node exposes no `getsockopt` and no way to read ancillary
+ * `internal/control/peer.go`). Node exposes no `getsockopt` and no way to read ancillary
  * credentials on a Unix socket, so it is not available here without a native
  * addon — which this SDK is vendored into images as a tarball and has no
  * build step for. A directory per caller gets the same property from the same
@@ -221,7 +220,7 @@ async function handleFramedLine(app: BerthApp, line: string, write: (encodedResp
   // One audit line per cross-app call, and only for those: an app's own stdio
   // and the host relay are not siblings and would only add noise. This is the
   // record that says *which* app invoked an export, which until per-peer
-  // sockets existed could not be known at all (REMEDIATION.md 1.4, 1.14).
+  // sockets existed could not be known at all.
   if (peer) {
     console.error(`[berth:runtime] "${peer}" invoked export "${request.export}"`);
   }
@@ -248,7 +247,7 @@ export async function invokeExport(app: BerthApp, request: RpcRequest, caller = 
     return { id: request.id, error: `no such export "${request.export}"` };
   }
 
-  // REMEDIATION.md 1.13: every transport into this container converges here,
+  // Every transport into this container converges here,
   // so this is where a governor can see them all. Returns null when no
   // governor is loaded, which is the common case and costs one env lookup.
   const decision = await evaluateAction({ caller, export: request.export, input: request.input });

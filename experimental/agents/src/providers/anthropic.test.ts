@@ -20,7 +20,7 @@ async function sentBody(messages: AgentMessage[]) {
 }
 
 /**
- * REMEDIATION 3.6. The Messages API rejects a message whose content is an
+ * The Messages API rejects a message whose content is an
  * empty array or an empty string — "all messages must have non-empty
  * content". Both shapes were reachable from Agent.run():
  *

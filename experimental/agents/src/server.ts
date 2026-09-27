@@ -142,8 +142,7 @@ async function handleTask(
 
   // A client that hangs up mid-run used to leave the run going: nothing here
   // listened for a disconnect, so a closed tab kept driving LLM turns and
-  // billing for them with no one left to receive the answer. See
-  // REMEDIATION 4.2.
+  // billing for them with no one left to receive the answer.
   const disconnect = abortOnClientDisconnect(req);
   try {
     const session = typeof body.sessionId === "string" ? sessionFor(body.sessionId) : undefined;

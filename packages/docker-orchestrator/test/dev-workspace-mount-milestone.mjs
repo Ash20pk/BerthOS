@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Real, running verification of REMEDIATION 1.6: `berth dev` no longer gives a
+// Real, running verification that `berth dev` no longer gives a
 // resident app write access to the developer's own repository.
 //
 // It used to bind-mount the whole pnpm workspace root read-write at

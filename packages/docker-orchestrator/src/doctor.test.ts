@@ -307,7 +307,7 @@ test("an active kernel is both active and determined", async () => {
   assert.equal(report.enforcementDetermined, true);
 });
 
-// --- the runtime check (BUILD_PLAN M1.4) -----------------------------------
+// --- the runtime check -----------------------------------
 
 const infoWithRuntimes = {
   KernelVersion: "6.8.0-generic",

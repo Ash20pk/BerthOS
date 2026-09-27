@@ -1,7 +1,7 @@
 name: Published Port Security
 
 # Verifies that the ports `berth dev` publishes to the host are bound to
-# loopback and gated by a per-boot credential — see REMEDIATION.md 1.7 and
+# loopback and gated by a per-boot credential — see
 # packages/docker-orchestrator/test/published-port-security-milestone.mjs.
 #
 # Unlike capability-enforcement.yml, none of this depends on the runner's

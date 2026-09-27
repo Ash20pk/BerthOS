@@ -71,7 +71,7 @@ function renderManifestYaml(name: string, siblingApps: ComputerAppSpec[]): strin
   // One app:invoke: line per sibling whose exports were embedded as tools
   // above. This is what entrypoint.sh turns into membership of each target
   // app's group, and without it callSibling() below gets EACCES on the
-  // target's 0710 socket directory: since REMEDIATION.md 1.4, reaching
+  // target's 0710 socket directory: reaching
   // another app's RPC socket is something an app declares rather than
   // something every app in a container simply has.
   //
@@ -167,7 +167,7 @@ function callSibling(appName, exportName, input) {
     // Not <appName>/rpc.sock, which is 0600 and reachable only by that app and
     // root: an authorized caller gets its own socket, in a directory only it
     // can traverse, so the server knows which sibling called it without having
-    // to trust anything on the wire. See REMEDIATION.md 1.4 and @berthos/sdk's
+    // to trust anything on the wire. See @berthos/sdk's
     // startPeerSocketServers(). SELF is this generated app's own name, which
     // is also what its berth.yml declares app:invoke: from.
     const socket = net.createConnection(\`/run/berth/\${appName}/peers/\${SELF}/rpc.sock\`);

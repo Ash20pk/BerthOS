@@ -23,7 +23,7 @@ berth attest my-run-id --out my-run.attestation.json
 | `enforcement.rulesetReports` | agent-init's `capability_policy_applied` events, read back from the container's own log stream and filtered to the current boot ID. `ruleset` is what the kernel returned from `landlock_restrict_self` — `FullyEnforced`, `PartiallyEnforced`, or `NotEnforced`. |
 | `enforcement.doctorProbe` | The same behavioural probe `berth doctor` and the boot banner use, run fresh (never read from the operator-writable enforcement cache — see [what this does not prove](#what-this-does-not-prove)), for the same runtime this boot ran under (under gVisor the kernel being measured is the sentry — see [kernel-enforcement.md](./kernel-enforcement.md#optional-hardened-runtime)). |
 | `enforcement.status` | **Derived, never asserted**: `ACTIVE` only when the probe says `enforcing` *and* every app's ruleset report says `FullyEnforced`. Any measured non-enforcement → `NOT_ENFORCED` with the reasons named. Missing measurements → `UNDETERMINED`, never quietly `ACTIVE`. |
-| `policies[]` | sha256 of each app's `.berth/capability-policy.json`, computed **inside the container** over the exact bytes agent-init enforced from (which include grants-server-approved additions, not just what `berth.yml` declares). |
+| `policies[]` | sha256 of each app's `.berth/capability-policy.json`, computed **inside the container** over the exact bytes agent-init enforced from. |
 | `boot.bootId` | The entrypoint's per-boot UUID, from the container log. |
 | `boot.imageDigest` | The image's content identity from the daemon (RepoDigest when it has one, image config ID otherwise). |
 | `recordSha256` | sha256 over the canonical JSON of every other field, stamped at emission. |
@@ -96,6 +96,12 @@ internally consistent.
   probed. It is still a probe of the host *now* rather than of the attested
   boot; what it rules out is a cached claim standing in for a measurement.
   Fixed 2026-08-29; before that, attestation read the cache.
+- **It does not say whether the chain was pruned.** Once rotation has
+  deleted the genesis segment, `berth attest` walks from the oldest record
+  still on disk and warns on stderr that earlier segments are gone (see
+  [audit-reference.md](./audit-reference.md#operational-notes)'s rotation
+  notes). The record itself has no field for that yet, so a record emitted
+  over a truncated chain looks the same as one over a complete chain.
 - **It is not a signature.** Nothing here involves keys. `recordSha256`
   detects edits; it does not identify an author. Signing (and a
   counter-signed public chain head) is future work, deliberately not claimed.
@@ -114,6 +120,6 @@ berth attest <runId> [--os <name>] [--container <name>] [--image <tag>]
 - `--out` writes the record 0600; otherwise it prints to stdout. A verdict
   other than `ACTIVE` is also warned to stderr so it can't scroll past.
 
-Verification artifact for BUILD_PLAN M2.1:
+Verification artifact:
 `packages/docker-orchestrator/test/attestation-milestone.mjs`, run by
 `.github/workflows/attestation-milestone.yml`.

@@ -1,0 +1,60 @@
+{
+  "name": "@berthos/mesh-coordinator",
+  "version": "0.1.0",
+  "description": "Coordination service for Berth's WireGuard mesh: allocates stable mesh IPs, exchanges public keys, and mutually-matches peers before introducing them (see docs/mesh-reference.md)",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "berth-mesh-coordinator": "./dist/server.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.test.*",
+    "!dist/**/mock-server.*"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Ash20pk/BerthOS.git",
+    "directory": "packages/mesh-coordinator"
+  },
+  "homepage": "https://github.com/Ash20pk/BerthOS#readme",
+  "bugs": {
+    "url": "https://github.com/Ash20pk/BerthOS/issues"
+  },
+  "author": "Berth Contributors",
+  "keywords": [
+    "wireguard",
+    "mesh-network",
+    "ai-agents"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "test": "node --test dist/**/*.test.js",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "prepublishOnly": "pnpm run build"
+  },
+  "dependencies": {
+    "@berthos/tls": "workspace:*",
+    "fastify": "^5.12.5"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "@types/node": "^26.6.2"
+  }
+}

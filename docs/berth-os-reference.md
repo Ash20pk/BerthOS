@@ -1,8 +1,20 @@
-# `berth os` reference: fixing agent-dev cold start
+# Berth OS and `berth os`
 
-This doc covers the `berth os up`, `down`, and `status` commands, plus `Computer.connect()`: the mechanics of keeping one Berth OS running and reconnecting to it. If you haven't yet, read [What is a Berth OS?](./berth-os.md) first for what a Berth OS actually is (resident apps, capability enforcement, context bus, semantic FS).
+A Berth OS is the sandboxed computer a Berth agent's tools come from: a Docker container loaded with one or more resident apps, each under its own kernel-enforced capability policy, all able to collaborate through a shared context bus and semantic filesystem. In code it is the `Computer` class. If you've called `Computer.boot()` or `createAgent({apps: [...]})`, you've already created one — an ephemeral, single-use one. This doc covers what's inside one, and the `berth os up`/`down`/`status` commands plus `Computer.connect()` that keep one running and reconnect to it.
 
-Here's the problem this solves. `Computer.boot()` (from `@berthos/agents`) builds a fresh production image and starts a brand-new container on every single call. That's correct for a one-shot script, but you'll feel it as real seconds of latency (image build, container start, `on_install`, the context-bus and semantic-fs daemons, `agent-init`'s Landlock setup) paid again on every run while you're iterating on agent code. `berth os up` moves that cost out of the loop. Build and boot once, then reconnect instantly for as many runs as you need.
+## What's inside one
+
+- **Resident apps.** Persistent, stateful processes loaded from a `berth.yml` manifest plus code, each exposing exports that become tools for whatever drives the OS. See [Resident apps](./resident-apps.md).
+- **Capability enforcement (Landlock).** Every app's declared `namespace:action:scope` capabilities become a kernel-enforced ruleset, applied by `agent-init` before the app's own code runs. An undeclared write isn't caught by a try/catch; the syscall is refused. See the [capability enforcement reference](./capability-tokens-reference.md).
+- **Context bus.** Pub/sub between apps sharing one OS, so one app's write can trigger another's reaction with no direct wiring between them. See the [context bus reference](./context-bus-reference.md).
+- **Semantic FS.** A filesystem mounted at `/context` that carries metadata about why each file exists (`created_by`, `task`, `related_apps`), searchable by that metadata. The search ranks over *tag text*, not file content, and only sees files something explicitly tagged. See the [semantic FS reference](./semantic-fs-reference.md#query-semantics--hybrid-keyword--embedding-similarity).
+- **Multi-app composition.** One Berth OS can host several resident apps at once, each still independently Landlock-enforced. See the [multi-app reference](./multi-app-reference.md).
+
+None of this is machinery invented just for agents. It's the same runtime every `berth dev`, `berth test`, and `berth deploy` already uses for a single resident app, addressed as a whole.
+
+## Why keep one running
+
+`Computer.boot()` (from `@berthos/agents`) builds a fresh production image and starts a brand-new container on every single call, and so does every `createAgent()`/`runAgent()` call that doesn't pass `connect`. That's correct for a one-shot script, but you'll feel it as real seconds of latency (image build, container start, the context-bus and semantic-fs daemons, `agent-init`'s Landlock setup) paid again on every run while you're iterating on agent code. `berth os up` moves that cost out of the loop. Build and boot once, then reconnect in milliseconds for as many runs as you need — optionally scoped to a subset of the loaded apps, so several agents can share one instance without each seeing every app's tools.
 
 ## The commands
 
@@ -110,6 +122,6 @@ This is the natural pairing for a long-lived server process. [`examples/agents/a
 
 ## Scope
 
-- **Local Docker only**, same as the rest of `@berthos/agents` and `berth dev`/`test`. There's no equivalent for E2B, Daytona, or K8s fleets yet.
+- **Local Docker only**, same as the rest of `@berthos/agents` and `berth dev`/`test`. `berth deploy --fleet=e2b|daytona|k8s` ships the same sandbox definition to a remote provider, but there's no "leave it running and reconnect" equivalent for a deployed fleet yet.
 - **One container per name.** `berth os up <name>` won't rebuild over an already-running instance of the same name. Run `berth os down <name>` first.
 - **No automatic idle shutdown.** A `berth os up` instance keeps running, and consuming resources, until you explicitly `berth os down` it or stop Docker.

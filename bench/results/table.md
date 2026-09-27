@@ -134,7 +134,7 @@ Reaching the socket is reaching the sibling's whole export surface, whatever the
 - **Berth (deliberately weakened — positive control)** — 🟢 contained: connect to /run/berth/bench-probe-b/rpc.sock refused with EACCES
 - **E2B (hosted sandbox)** — ⚪ NOT RUN: not run
 
-> **Berth's own caveat on this row.** Berth's denial here rests on per-app uids and a 0710 socket directory — DAC, not the kernel LSM tier. REMEDIATION 1.4's SO_PEERCRED peer verification is still open (🟡), so this cell is a pass on a mechanism that is not finished.
+> **Berth's own caveat on this row.** Berth's denial here rests on per-app uids and a 0710 socket directory — DAC, not the kernel LSM tier. SO_PEERCRED peer verification is still open (🟡), so this cell is a pass on a mechanism that is not finished.
 
 ### Reading another workload's secret
 
@@ -167,8 +167,8 @@ Every container-based harness loses this row, and saying so is the point: a benc
 Anyone with read access to the daemon — a CI log, a monitoring agent, another developer on a shared box — can read environment variables out of container metadata without ever entering the sandbox.
 
 - **Plain Docker (defaults)** — 🔴 escaped: the secret is readable in `docker inspect` Config.Env — anyone with daemon access reads it without entering the sandbox
-- **Berth (as shipped)** — 🟢 contained: the secret is absent from container metadata — delivered through a 0600 file bind, not Env (REMEDIATION 5.5)
-- **Berth (deliberately weakened — positive control)** — 🟢 contained: the secret is absent from container metadata — delivered through a 0600 file bind, not Env (REMEDIATION 5.5)
+- **Berth (as shipped)** — 🟢 contained: the secret is absent from container metadata — delivered through a 0600 file bind, not Env
+- **Berth (deliberately weakened — positive control)** — 🟢 contained: the secret is absent from container metadata — delivered through a 0600 file bind, not Env
 - **E2B (hosted sandbox)** — ⚪ NOT RUN: not run
 
 ### Ports published beyond loopback (incl. CDP 9222)
@@ -182,7 +182,7 @@ A debug port bound to 0.0.0.0 is remote code execution for anyone on the network
 - **Berth (deliberately weakened — positive control)** — 🟢 contained: no ports published to the host
 - **E2B (hosted sandbox)** — ⚪ NOT RUN: not run
 
-> **Berth's own caveat on this row.** Berth passes this as measured — 9222 is never mapped and terminal ports bind 127.0.0.1 with a credential — but REMEDIATION 1.7 names the residual this row cannot see: CDP stays reachable from inside the container and from any host-local process.
+> **Berth's own caveat on this row.** Berth passes this as measured — 9222 is never mapped and terminal ports bind 127.0.0.1 with a credential — but there is a residual this row cannot see: CDP stays reachable from inside the container and from any host-local process.
 
 ## How each column was produced
 

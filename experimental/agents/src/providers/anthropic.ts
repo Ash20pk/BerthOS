@@ -34,7 +34,7 @@ const DEFAULT_MAX_TOKENS = 4096;
  *
  * The test keys on "no content at all", not "no text": an assistant turn with
  * tool calls and no narration is both legitimate and common, and dropping it
- * would break every tool-use loop. See REMEDIATION 3.6.
+ * would break every tool-use loop.
  */
 function toAnthropicMessages(messages: AgentMessage[]): Anthropic.MessageParam[] {
   return messages.flatMap((message): Anthropic.MessageParam[] => {
@@ -68,7 +68,7 @@ function toAnthropicMessages(messages: AgentMessage[]): Anthropic.MessageParam[]
 
 /**
  * `max_tokens` is required by this API and defaults to 4096 above, so hitting
- * the cap is routine rather than exotic — and until REMEDIATION 3.2 nothing
+ * the cap is routine rather than exotic — and nothing
  * read the field that says it happened. "pause_turn" is a long-running
  * server-tool turn the caller is meant to continue, not an ending, so it maps
  * to "other" rather than "end": Agent treats it as a normal turn, which is
@@ -109,7 +109,7 @@ export function createAnthropicProvider(options: AnthropicProviderOptions = {}):
   const maxTokens = options.maxTokens ?? DEFAULT_MAX_TOKENS;
 
   // Wrapped so both call paths classify vendor errors into the taxonomy in
-  // errors.ts — REMEDIATION 4.8. Applied here rather than around each await
+  // errors.ts. Applied here rather than around each await
   // so a future third call path can't miss it.
   return wrapProviderErrors({
     name: "anthropic",

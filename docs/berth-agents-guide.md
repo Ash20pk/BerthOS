@@ -75,7 +75,7 @@ Want an app to review every other app's tool calls before they happen, allow or 
 
 Every `runAgent()` or `createAgent()` call above needs somewhere for its tools to actually live and run. That's a Berth OS: a real, sandboxed computer (a Docker container today) loaded with one or more resident apps, each independently enforced by the kernel, all able to collaborate through a shared context bus and semantic filesystem. In code, that's the `Computer` class.
 
-Want the full picture? [docs/berth-os.md](./berth-os.md) walks through what's actually inside one and how it relates to a resident app.
+Want the full picture? [docs/berth-os-reference.md](./berth-os-reference.md) walks through what's actually inside one and how it relates to a resident app.
 
 Here's the part that matters for your day to day: by default, every `createAgent()` or `runAgent()` call boots a fresh, throwaway Berth OS. That's fine for a one-off script, but you'll feel it as real seconds of latency on every single dev loop iteration. `berth os up` pays that cost once, keeps the sandbox running, and lets your agent code reconnect in milliseconds instead of rebuilding and rebooting.
 
@@ -87,7 +87,7 @@ berth os up my-agent --apps=apps/filesystem,apps/notes   # or --config=<path to 
 const result = await runAgent({ connect: "my-agent", task: "..." }); // reconnects instantly, no build, no boot
 ```
 
-`berth os down my-agent` tears it down when you're done. [docs/berth-os-reference.md](./berth-os-reference.md) has the full command and API reference, including how to scope one agent to a subset of a shared OS's loaded apps.
+`berth os down my-agent` tears it down when you're done. The same doc has the full command and API reference, including how to scope one agent to a subset of a shared OS's loaded apps.
 
 ## Multi-agent architecture
 

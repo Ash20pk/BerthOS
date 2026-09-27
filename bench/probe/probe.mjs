@@ -230,7 +230,7 @@ const CHECKS = {
   /**
    * Connect to a co-tenant's control socket — reaching its whole API surface
    * without going through any grant. Berth answers this with per-app uids and
-   * a 0710 socket directory (REMEDIATION 1.4, whose SO_PEERCRED step is still
+   * a 0710 socket directory (whose SO_PEERCRED step is still
    * open); harnesses with one workload per sandbox have no such surface.
    */
   "sibling-socket-connect": async () => {

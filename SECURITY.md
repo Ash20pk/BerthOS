@@ -9,7 +9,7 @@ Berth's core pitch is enforcing agent permission boundaries at the kernel level 
 Use [GitHub's private vulnerability reporting](https://github.com/Ash20pk/BerthOS/security/advisories/new) for this repo. If that's not available to you, open a private message to [@Ash20pk](https://github.com/Ash20pk) instead of a public issue.
 
 Include what you can:
-- The capability or component involved (e.g. `agent-init`/Landlock, the egress broker, the grants server)
+- The capability or component involved (e.g. `agent-init`/Landlock, the egress broker, the GitHub API broker)
 - Whether it's a bypass of an *enforced* boundary versus a gap in something the docs already mark as unenforced (see the [threat model](./docs/threat-model.md#not-protected-against-today) and [the capability table](./docs/kernel-enforcement.md#available-capabilities) — several capabilities are explicitly recorded-only today, not kernel- or broker-enforced, and that's expected, not a vulnerability)
 - Reproduction steps, ideally against a real Linux host or CI (`ubuntu-latest`) rather than Docker Desktop for Mac, where Landlock isn't active — see [docs/capability-tokens-reference.md](./docs/capability-tokens-reference.md)
 

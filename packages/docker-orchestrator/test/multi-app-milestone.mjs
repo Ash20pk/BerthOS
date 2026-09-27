@@ -46,7 +46,7 @@ async function main() {
   // mount preserves that — so the write is a plain EACCES. Docker Desktop
   // virtualizes bind-mount ownership, which is why this only ever failed on
   // Linux CI. The fix is the layout `berth dev` already uses: the root stays
-  // read-only (REMEDIATION.md 1.6) and app data goes to the shared
+  // read-only and app data goes to the shared
   // dev-workspace directory, which entrypoint.sh chgrp's to the `berth` group
   // precisely so a non-root app can write it.
   const { bindMount, extraBinds, workingDir, workspaceRoot } = resolveDevBindMount(FILESYSTEM_APP_DIR, [
@@ -82,7 +82,7 @@ async function main() {
     await waitFor(() => /"code-editor" ready/.test(containerLog.text()), 20000, "code-editor runtime ready");
 
     // Match the app-NAMED "restricted \"<app>\"" lines, not the nameless
-    // "restrict_self() status" line: since BUILD_PLAN M1.2, context-bus-daemon
+    // "restrict_self() status" line: context-bus-daemon
     // also runs under agent-init and emits its own restrict_self() line, so a
     // bare count of those would be 3 (two apps + the daemon). The named lines
     // are unambiguous — one per app — which is the property this asserts.

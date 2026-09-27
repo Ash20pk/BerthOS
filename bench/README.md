@@ -48,7 +48,7 @@ worse**. A benchmark where sabotage changes nothing is measuring nothing.
 **Berth's own red cells stay red.** Where Berth passes a row on a mechanism
 that is not finished, [`checks.mjs`](./checks.mjs) carries the caveat and the
 generated table prints it under the row — for example the co-tenant socket row,
-which rests on directory permissions because REMEDIATION 1.4's `SO_PEERCRED`
+which rests on directory permissions because `SO_PEERCRED`
 verification is still open.
 
 ## Reading a result

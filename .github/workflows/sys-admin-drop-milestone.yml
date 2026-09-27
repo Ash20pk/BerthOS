@@ -1,6 +1,6 @@
 name: SYS_ADMIN Drop Milestone
 
-# BUILD_PLAN M1.1 — see
+# See
 # packages/docker-orchestrator/test/sys-admin-drop-milestone.mjs. A booted
 # sandbox's docker inspect shows no SYS_ADMIN, no /dev/fuse, no
 # apparmor:unconfined; /context arrives as a propagated FUSE mount from the

@@ -49,7 +49,7 @@ export interface GovernanceGateOptions {
    * policy check didn't happen" never quietly becomes "the policy check
    * passed."
    *
-   * This default was inverted for REMEDIATION.md 1.11, and the reason is the
+   * This default was inverted, and the reason is the
    * other half of that item: any app in the container can `kill -9` the
    * governance app. Under the old fail-open default that was a complete
    * bypass of the gate — one signal and every subsequent call executed with
@@ -70,8 +70,8 @@ export interface GovernanceGateOptions {
    */
   mode?: "fail-open" | "fail-closed";
   /**
-   * Where every verdict is written down. REMEDIATION.md 5.1 opens on this
-   * file: denials threw and were logged nowhere, so a gate that blocked a
+   * Where every verdict is written down. Before the audit trail, in this
+   * file denials threw and were logged nowhere, so a gate that blocked a
    * hundred calls left the same trace as a gate that was never consulted.
    *
    * All three outcomes are recorded, not just refusals. A trail with only
@@ -136,8 +136,8 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
  * what goes through Computer/Agent, not `berth rpc`, `berth mcp`, the HTTP
  * RPC bridge, or direct multi-app `invokeAppExport()` calls — separate
  * transports into the same container, with no governance app on their path
- * (REMEDIATION.md 1.13 closes the in-process bypasses; those transports are
- * recorded there as still open). Landlock has no per-syscall callback
+ * (the in-process bypasses are closed; those transports are gated
+ * separately in @berthos/sdk). Landlock has no per-syscall callback
  * to build a kernel-level version of this on — see
  * docs/capability-tokens-reference.md's "what's deliberately deferred".
  */
@@ -218,7 +218,7 @@ async function enforce<T>(
 
 /**
  * A Computer's governance authority, resolved once, in a form every caller
- * can route through — REMEDIATION.md 1.13.
+ * can route through.
  *
  * The gate used to be applied by mapping over one particular `Tool[]`, which
  * meant it protected exactly the tools that happened to be in that array at

@@ -1,5 +1,5 @@
 // Fixture app for packages/docker-orchestrator/test/on-install-milestone.mjs
-// (REMEDIATION 1.5). One export, reading an absolute path and reporting
+// One export, reading an absolute path and reporting
 // whether it exists rather than throwing — the test asks it about files an
 // on_install may or may not have created, and "absent" is the expected
 // answer for half of them.

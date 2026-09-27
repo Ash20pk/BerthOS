@@ -57,8 +57,8 @@ export function launchChromium(): Promise<Browser> {
           // and everything worked. That is why egress-broker-milestone.mjs
           // passed locally and had never once passed in CI.
           //
-          // Removing it is also the rest of the job REMEDIATION.md 1.7
-          // started. That entry took away the 0.0.0.0 bind because an
+          // Removing it is also the rest of the job the published-port
+          // hardening started. That work took away the 0.0.0.0 bind because an
           // unauthenticated CDP endpoint is arbitrary local-file read
           // (Page.navigate("file:///etc/passwd")) and a total bypass of the
           // egress broker (Browser.setDownloadBehavior) — every capability
@@ -66,16 +66,15 @@ export function launchChromium(): Promise<Browser> {
           // container loopback, still reachable by any other app in the same
           // container. Now there is no CDP listener at all.
           // Chromium refuses its own sandbox as uid 0, and every process in a
-          // Berth container is uid 0 today. A distinct per-app uid (REMEDIATION
-          // 1.4/1.11) is necessary to lift this but is not sufficient, and an
+          // Berth container is uid 0 today. A distinct per-app uid is
+          // necessary to lift this but is not sufficient, and an
           // earlier version of this comment was wrong to imply it would be
           // enough on its own: Chromium's namespace sandbox calls
           // clone(CLONE_NEWUSER|CLONE_NEWPID), which agent-init's seccomp
           // filter refuses for every app unconditionally and deliberately
-          // (REMEDIATION 1.3). Enabling one means punching a hole in the
+          // Enabling one means punching a hole in the
           // other, for the app with the largest remote attack surface — the
-          // wrong app to make the exception for. See
-          // docs/per-app-uid-design.md § Blocker 5. So this stays, and the
+          // wrong app to make the exception for. So this stays, and the
           // loopback bind above is what limits the blast radius: a renderer
           // exploit here lands as root in the container.
           "--no-sandbox",

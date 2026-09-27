@@ -65,7 +65,7 @@ export default defineApp((app) => {
       }),
   });
 
-  // REMEDIATION.md 1.11, as an export: send a signal to another process and
+  // Signal isolation, as an export: send a signal to another process and
   // report what the kernel said. Reports rather than throws, so the test can
   // tell "refused" apart from "no such process" — an absence test that passed
   // because the target had already exited would prove nothing.
@@ -120,7 +120,7 @@ export default defineApp((app) => {
   });
 
   // Registers with a daemon under a name of the caller's choosing — the
-  // identity half of REMEDIATION.md 1.14. Both daemons must ignore what is
+  // identity half of the daemon-identity fix. Both daemons must ignore what is
   // sent here in favour of the uid the kernel reports (SO_PEERCRED).
   app.export({
     name: "register_on_bus",
@@ -171,7 +171,7 @@ export default defineApp((app) => {
 
   // A 4-byte length header claiming a frame far larger than either daemon
   // will ever see. Both used to allocate exactly what it asked for
-  // (REMEDIATION.md 1.14) — 4 GiB, in a root process outside any Landlock
+  // — 4 GiB, in a root process outside any Landlock
   // domain that every app in the sandbox can reach.
   app.export({
     name: "send_oversized_frame",

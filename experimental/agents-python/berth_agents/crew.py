@@ -46,7 +46,7 @@ def fan_out_run_id_for(run_id: str, agent_name: str, index: int) -> str:
     """Every agent in a fan-out shape gets its own derived run_id rather than
     the crew's bare one. Handing N concurrently-running agents a single run_id
     meant all N wrote the same checkpoint key: the surviving checkpoint was an
-    interleaved mixture of unrelated runs. See REMEDIATION 3.3.
+    interleaved mixture of unrelated runs.
 
     The index comes first and is what guarantees uniqueness — Agent's default
     name is "agent", so a crew of agents nobody named would otherwise collide

@@ -9,13 +9,12 @@ from __future__ import annotations
 
 import json
 import os
-import urllib.request
 from pathlib import Path
 
 from .manifest import load_manifest, parse_capability
 
 # Per-app, not container-wide: this used to be all of /tmp for every app, which
-# is REMEDIATION.md 1.4's finding. See the TypeScript original for why a
+# let one app reach another's RPC socket. See the TypeScript original for why a
 # narrower Landlock policy is only half the fix (DAC is the other half) and for
 # the socket layout these two directories belong to.
 #
@@ -23,7 +22,7 @@ from .manifest import load_manifest, parse_capability
 # TERMINAL_WRITE_PATHS because opening it read-write is what any process does
 # when it redirects a child's stdio to it — see the TypeScript original for the
 # strace this came from, and for why /dev/tty is deliberately absent
-# (REMEDIATION.md 1.15).
+# 
 def _baseline_write_paths(app_name: str) -> list[str]:
     return ["/dev/null", f"/tmp/{app_name}", f"/run/berth/{app_name}"]
 
@@ -35,7 +34,7 @@ TERMINAL_WRITE_PATHS = ["/dev/pts", "/dev/ptmx"]
 # Where github-api-broker.cjs writes the CA an app declaring github:* is told
 # to trust. Read-granted only for such an app, and only because that CA moved
 # out of /tmp (which the read baseline covers in full) into /run/berth —
-# REMEDIATION.md 1.9. Kept in step with that script's own default.
+# Kept in step with that script's own default.
 GITHUB_BROKER_CERT_DIR = "/run/berth/github-api-broker"
 
 
@@ -50,29 +49,13 @@ def _strip_trailing_glob(scope: str) -> str:
     return scope[:-2] if scope.endswith("/*") else scope
 
 
-def _fetch_approved_capabilities(app_name: str) -> list[str]:
-    grants_server_url = os.environ.get("BERTH_GRANTS_SERVER_URL")
-    if not grants_server_url:
-        return []
-    try:
-        url = f"{grants_server_url.rstrip('/')}/grants?status=approved&app={app_name}"
-        with urllib.request.urlopen(url, timeout=3) as resp:
-            grants = json.loads(resp.read())
-        return [g["capability"] for g in grants]
-    except Exception as err:  # best-effort — degrades to static-only, never fails the boot
-        print(
-            f"[berth:capability-policy] WARNING: couldn't reach grants server at {grants_server_url} ({err}) — using statically declared capabilities only",
-        )
-        return []
-
 
 def main() -> None:
     manifest_path = os.environ.get("BERTH_MANIFEST_PATH", str(Path.cwd() / "berth.yml"))
     policy_path = Path(os.environ.get("BERTH_CAPABILITY_POLICY", str(Path.cwd() / ".berth" / "capability-policy.json")))
 
     manifest = load_manifest(manifest_path)
-    approved = _fetch_approved_capabilities(manifest.name)
-    effective_capabilities = [*manifest.capabilities, *approved]
+    effective_capabilities = list(manifest.capabilities)
 
     write_paths = set(_baseline_write_paths(manifest.name))
     declared_read_paths: set[str] = set()

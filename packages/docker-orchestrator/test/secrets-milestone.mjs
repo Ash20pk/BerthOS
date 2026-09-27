@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Real, running verification of REMEDIATION 5.5: a booted sandbox's
+// Real, running verification that a booted sandbox's
 // credentials are not in `docker inspect`, are not in a `docker commit` of it,
 // are not in a snapshot directory that could be copied to another machine —
 // and still actually reach the process inside the container.

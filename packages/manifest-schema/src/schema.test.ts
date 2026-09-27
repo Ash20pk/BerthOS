@@ -27,8 +27,8 @@ test("rejects a malformed capability string", () => {
   assert.equal(result.success, false);
 });
 
-// on_install entries become lines in a generated build script (REMEDIATION
-// 1.5). The script file is what removes the Dockerfile-injection surface, so
+// on_install entries become lines in a generated build script.
+// The script file is what removes the Dockerfile-injection surface, so
 // these two checks are only about an entry being a command at all — a
 // multi-line command is legal and stays legal, which the third case pins so a
 // future "harden this" change doesn't quietly break a working manifest.
@@ -156,7 +156,7 @@ test("parseCapability splits namespace/action/scope", () => {
 // agent-init creates as uid 0 (with CAP_SYS_ADMIN, and in `berth dev` on the
 // developer's host through the bind mount) before Landlock is applied — so
 // they're validated here, at manifest-load time, where the error can name a
-// line in berth.yml. See REMEDIATION.md item 1.12.
+// line in berth.yml.
 function capabilityResult(capability: string) {
   return BerthManifestSchema.safeParse({ name: "app", version: "1.0.0", capabilities: [capability] });
 }
@@ -197,8 +197,8 @@ test("leaves non-filesystem scopes alone — they're hosts, ports and peer names
 });
 
 test("filesystemScopeIssue is exported for callers that validate capabilities outside a manifest", () => {
-  // @berthos/sdk's generate-capability-policy.ts uses this on grants-server
-  // strings, which never pass through BerthManifestSchema at all.
+  // @berthos/sdk's generate-capability-policy.ts uses this on any string
+  // list, not only one that passed through BerthManifestSchema.
   assert.equal(filesystemScopeIssue("/workspace/notes"), undefined);
   assert.ok(filesystemScopeIssue("/etc"));
   assert.ok(capabilityIssue("filesystem:write:/etc"));

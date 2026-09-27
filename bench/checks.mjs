@@ -10,8 +10,8 @@
 //   "observation"  the host measures the sandbox from outside (metadata,
 //                  published ports) — no agent-side action exists to run
 //
-// `berthNote` is where Berth's own residuals get named. BUILD_PLAN M2.2: a
-// cell Berth fails stays red and links its REMEDIATION item; a cell Berth
+// `berthNote` is where Berth's own residuals get named. A
+// cell Berth fails stays red and names its open gap; a cell Berth
 // passes only because of an unfinished mechanism says so too.
 
 export const CHECKS = [
@@ -85,7 +85,7 @@ export const CHECKS = [
     question: "Can one workload reach another's RPC socket without a grant?",
     matters: "Reaching the socket is reaching the sibling's whole export surface, whatever the application-level policy says.",
     berthNote:
-      "Berth's denial here rests on per-app uids and a 0710 socket directory — DAC, not the kernel LSM tier. REMEDIATION 1.4's SO_PEERCRED peer verification is still open (🟡), so this cell is a pass on a mechanism that is not finished.",
+      "Berth's denial here rests on per-app uids and a 0710 socket directory — DAC, not the kernel LSM tier. SO_PEERCRED peer verification is still open (🟡), so this cell is a pass on a mechanism that is not finished.",
   },
   {
     id: "foreign-secret-read",
@@ -120,7 +120,7 @@ export const CHECKS = [
     matters:
       "A debug port bound to 0.0.0.0 is remote code execution for anyone on the network. CDP in particular grants full browser control with no authentication.",
     berthNote:
-      "Berth passes this as measured — 9222 is never mapped and terminal ports bind 127.0.0.1 with a credential — but REMEDIATION 1.7 names the residual this row cannot see: CDP stays reachable from inside the container and from any host-local process.",
+      "Berth passes this as measured — 9222 is never mapped and terminal ports bind 127.0.0.1 with a credential — but there is a residual this row cannot see: CDP stays reachable from inside the container and from any host-local process.",
   },
 ];
 

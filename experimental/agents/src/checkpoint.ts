@@ -34,7 +34,7 @@ const CONTEXT_DIR = "agent-runs";
  * Thrown when a checkpoint exists but could not be read or parsed —
  * deliberately distinct from load() returning null, which means "there is no
  * checkpoint for this runId". Conflating the two is what let a transient read
- * failure masquerade as a fresh run. See REMEDIATION 3.5.
+ * failure masquerade as a fresh run.
  */
 export class CheckpointReadError extends Error {
   constructor(
@@ -95,7 +95,7 @@ export function findExportTool(tools: Tool[], exportName: string, calledBy = "cr
  * refuses to silently treat unparseable content as "no checkpoint". A tag
  * failure is separately harmless for resume — load() reads by exact path, so
  * an untagged checkpoint still loads; the tag only affects discoverability.
- * See REMEDIATION 3.5.
+ *
  */
 export function createSemanticFsCheckpointStore<T extends { runId: string } = CheckpointedRun>(
   computer: ComputerHandle,

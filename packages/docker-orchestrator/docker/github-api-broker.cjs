@@ -38,7 +38,7 @@ const POLICY_PATH = process.env.BERTH_CAPABILITY_POLICY || `${process.cwd()}/.be
 // Not /tmp: this directory holds the private key of a CA the app process is
 // told to trust for every TLS connection it makes (NODE_EXTRA_CA_CERTS is
 // process-wide), and /tmp is world-writable and shared with every other app
-// in a multi-app container — REMEDIATION.md 1.9. /run/berth is where this
+// in a multi-app container. /run/berth is where this
 // image already keeps per-app runtime state that only root creates.
 const CERT_DIR = process.env.BERTH_GITHUB_API_BROKER_CERT_DIR || "/run/berth/github-api-broker";
 const CA_CERT_PATH = path.join(CERT_DIR, "ca.crt");
@@ -96,7 +96,7 @@ console.error(`[github-api-broker] declared github:* capabilities: ${GITHUB_CAPA
 
 /**
  * Resolves a request path to exactly what the policy check and the outbound
- * request will both use — REMEDIATION.md 1.9.
+ * request will both use.
  *
  * The path used to be checked and forwarded verbatim (`path: req.url`), so a
  * `..` segment was resolved at GitHub's edge rather than here: the check saw
@@ -139,7 +139,7 @@ function normalizeRequestPath(rawUrl) {
   return { path: `/${resolved.join("/")}`, suffix };
 }
 
-// An explicit route table, default-deny — REMEDIATION.md 1.9. What was here
+// An explicit route table, default-deny. What was here
 // before took the fourth path segment (`segments.length > 3 ? segments[3] :
 // "repos"`), which classified every short path as `github:read:repos`: an app
 // declaring that capability to read a repo summary also got `/user`,
@@ -197,7 +197,7 @@ function generateCerts() {
   // 0700, and re-applied with chmod because mkdir's mode is masked by umask
   // and a pre-existing directory keeps whatever mode it already had. The app
   // is given read access to ca.crt alone, and only after the fact —
-  // entrypoint.sh narrows this to 0750 root:<app-gid> (REMEDIATION.md 1.9).
+  // entrypoint.sh narrows this to 0750 root:<app-gid>.
   // The CA *key* never leaves root: anyone holding it can mint a certificate
   // for any host, and the app trusts this CA process-wide.
   fs.mkdirSync(CERT_DIR, { recursive: true, mode: 0o700 });

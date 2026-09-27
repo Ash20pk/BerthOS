@@ -23,7 +23,7 @@ export interface BootComputerOptions {
   network?: string;
   /** Extra container environment variables — e.g. an LLM API key for a synthesized agent-server companion app. */
   env?: Record<string, string>;
-  /** Passed through to applyGovernanceGate() when this Computer has a `governs: true` app loaded — see GovernanceGateOptions. Defaults to "fail-closed" since REMEDIATION.md 1.11: an unreachable governor refuses the call rather than letting it run. */
+  /** Passed through to applyGovernanceGate() when this Computer has a `governs: true` app loaded — see GovernanceGateOptions. Defaults to "fail-closed": an unreachable governor refuses the call rather than letting it run. */
   governance?: GovernanceGateOptions;
   /**
    * Also starts @berthos/sdk's HTTP RPC bridge inside the container (see
@@ -222,7 +222,7 @@ export class Computer implements ComputerHandle {
      * declares `governs: true`. Exposed so tools that never reach this
      * Computer's dispatch — MCP servers, a delegated agent — can be routed
      * through the same gate rather than silently escaping it
-     * (REMEDIATION.md 1.13). Resident-app calls are already gated at the
+     * Resident-app calls are already gated at the
      * dispatch and must not be wrapped a second time.
      */
     readonly governance?: GovernanceGate,
@@ -339,7 +339,7 @@ export class Computer implements ComputerHandle {
     const call = (appName: string, exportName: string, input: unknown) =>
       withReadyRetry(() => dispatch(appName, exportName, input), READY_RETRY_CEILING_MS, diagnose, () => exitReason);
 
-    // Gated at the dispatch, not over the tool array — REMEDIATION.md 1.13.
+    // Gated at the dispatch, not over the tool array.
     // Tools are then built from the gated dispatch, so a tool cannot exist on
     // this Computer that skipped the gate by not matching a name lookup.
     const governance = resolveGovernanceGate(apps, call, options.governance);

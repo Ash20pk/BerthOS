@@ -1,7 +1,7 @@
 name: on_install Build-Time Execution
 
 # Verifies that a manifest's on_install is a Docker build layer and that
-# nothing executes it at container boot — see REMEDIATION.md 1.5 and
+# nothing executes it at container boot — see
 # packages/docker-orchestrator/test/on-install-milestone.mjs.
 #
 # Like published-port-security.yml and unlike capability-enforcement.yml, none

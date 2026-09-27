@@ -1,5 +1,5 @@
 /**
- * Context-window management — REMEDIATION 4.1.
+ * Context-window management.
  *
  * `Agent.loop()` copied the message list and only ever appended to it.
  * Nothing trimmed, nothing summarized, no token budget existed, and a
@@ -121,7 +121,7 @@ export const SUMMARY_PREFIX = "[earlier conversation, summarized]";
  * worse than the problem it was solving, and the reason this function exists
  * rather than a plain `slice()`.
  *
- * REMEDIATION 3.5 had to solve the same adjacency problem from the other
+ * Checkpointing had to solve the same adjacency problem from the other
  * direction (a crash mid-turn leaving unanswered calls); this is the same
  * invariant enforced at a different seam.
  */

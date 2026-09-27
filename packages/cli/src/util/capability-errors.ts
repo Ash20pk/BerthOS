@@ -142,7 +142,7 @@ export function explainAppError(raw: string, ctx: ExplainContext): string {
     return [
       ...header,
       enforcementLine(ctx.enforcement, ctx.appName),
-      `fix: not a missing declaration — "${ctx.appName}" already declares ${wanted.join(" and ")}. Likely file ownership (apps run as their own uid, see docs/per-app-uid-design.md) or a path that exists outside the granted directory via a symlink. Check the container's agent-init line for which paths the ruleset actually got.`,
+      `fix: not a missing declaration — "${ctx.appName}" already declares ${wanted.join(" and ")}. Likely file ownership (apps run as their own uid, see docs/threat-model.md) or a path that exists outside the granted directory via a symlink. Check the container's agent-init line for which paths the ruleset actually got.`,
       `declared: ${ctx.manifest.capabilities.join(", ") || "(none)"}`,
       `docs: docs/capability-tokens-reference.md`,
     ].join("\n");
@@ -155,7 +155,6 @@ export function explainAppError(raw: string, ctx: ExplainContext): string {
     ...missing.map((capability) => `  - ${capability}`),
     ...(action ? [] : [`note: ${syscall}(2) is used for both reading and writing, so declare whichever this export actually needs — not both.`]),
     `declared: ${ctx.manifest.capabilities.join(", ") || "(none)"}`,
-    `alternative: \`berth grants\` requests the same capability with a human in the loop instead of editing the manifest (docs/capability-tokens-reference.md).`,
   ].join("\n");
 }
 

@@ -35,7 +35,7 @@ async function exchange(messages: AgentMessage[], tools: Tool[], response: unkno
 }
 
 /**
- * REMEDIATION 3.7. Gemini's Content/Part/FunctionCall shapes are genuinely
+ * Gemini's Content/Part/FunctionCall shapes are genuinely
  * different from the other two vendors' rather than a relabeling, so this is
  * where a mapping bug would be most likely and least visible. Every
  * assertion here is on what actually went over the wire.
@@ -73,7 +73,7 @@ test("sends the system prompt as systemInstruction, not as a message", async () 
 
 /**
  * google.ts already guarded the empty-tools case that broke the OpenAI family
- * (3.1) — asserted rather than assumed, since "this one was already correct"
+ * — asserted rather than assumed, since "this one was already correct"
  * is exactly the kind of claim that rots.
  *
  * Note the path: the SDK flattens the `config` object this adapter builds

@@ -19,7 +19,7 @@ import { invokeExport, type RpcRequest } from "./rpc.js";
  * a shared Docker network), this listens on a real public URL — so a bearer
  * token generated per-boot and checked here is load-bearing, not optional.
  *
- * **TLS.** Pass `tls` to serve HTTPS directly (REMEDIATION.md 5.3). Whether
+ * **TLS.** Pass `tls` to serve HTTPS directly. Whether
  * you need to depends on how the port is exposed: E2B's `getHost` and
  * Daytona's preview links terminate TLS in front of this, so the bearer
  * token is already protected in transit there and this listener is only
@@ -96,7 +96,7 @@ async function handleRequest(app: BerthApp, body: string, res: http.ServerRespon
   }
 
   // "http" so a governor can distinguish the bridge from the root-only relay
-  // socket — same reason the TCP listener names itself (REMEDIATION.md 1.13).
+  // socket — same reason the TCP listener names itself.
   const response = await invokeExport(app, request, "http");
   res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(response));
 }
