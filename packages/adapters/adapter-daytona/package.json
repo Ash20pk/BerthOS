@@ -1,7 +1,7 @@
 {
-  "name": "@berthos/adapter-e2b",
+  "name": "@berthos/adapter-daytona",
   "version": "0.1.0",
-  "description": "DeployAdapter implementation targeting E2B sandboxes",
+  "description": "DeployAdapter implementation targeting Daytona workspaces",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -19,7 +19,7 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/Ash20pk/BerthOS.git",
-    "directory": "experimental/adapters/adapter-e2b"
+    "directory": "packages/adapters/adapter-daytona"
   },
   "homepage": "https://github.com/Ash20pk/BerthOS#readme",
   "bugs": {
@@ -27,7 +27,7 @@
   },
   "author": "Berth Contributors",
   "keywords": [
-    "e2b",
+    "daytona",
     "deploy-adapter",
     "ai-agents"
   ],
@@ -54,10 +54,10 @@
     "@types/node": "^26.6.2"
   },
   "peerDependencies": {
-    "e2b": "^1.0.0"
+    "@daytonaio/sdk": "^0.202.0"
   },
   "peerDependenciesMeta": {
-    "e2b": {
+    "@daytonaio/sdk": {
       "optional": true
     }
   }

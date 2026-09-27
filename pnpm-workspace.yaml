@@ -5,7 +5,7 @@ packages:
   # Still built and still tested; simply not what `npm install @berthos/cli`
   # is. See EXECUTION_PLAN.md.
   - "experimental/*"
-  - "experimental/adapters/*"
+  - "packages/adapters/*"
   - "apps/*"
   - "examples/resident-apps/*"
   - "examples/agents/*"

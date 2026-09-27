@@ -23,7 +23,7 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/Ash20pk/BerthOS.git",
-    "directory": "experimental/mesh-coordinator"
+    "directory": "packages/mesh-coordinator"
   },
   "homepage": "https://github.com/Ash20pk/BerthOS#readme",
   "bugs": {

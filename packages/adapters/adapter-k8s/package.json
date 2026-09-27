@@ -1,13 +1,10 @@
 {
-  "name": "@berthos/registry-server",
+  "name": "@berthos/adapter-k8s",
   "version": "0.1.0",
-  "description": "Local app registry: publish/discover/install resident apps (Phase 5)",
+  "description": "DeployAdapter implementation targeting a Kubernetes cluster",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "bin": {
-    "berth-registry": "./dist/server.js"
-  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -16,14 +13,13 @@
   },
   "files": [
     "dist",
-    "!dist/**/*.test.*",
-    "!dist/**/mock-server.*"
+    "!dist/**/*.test.*"
   ],
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/Ash20pk/BerthOS.git",
-    "directory": "experimental/registry-server"
+    "directory": "packages/adapters/adapter-k8s"
   },
   "homepage": "https://github.com/Ash20pk/BerthOS#readme",
   "bugs": {
@@ -31,9 +27,9 @@
   },
   "author": "Berth Contributors",
   "keywords": [
-    "app-registry",
-    "ai-agents",
-    "plugin-registry"
+    "kubernetes",
+    "deploy-adapter",
+    "ai-agents"
   ],
   "engines": {
     "node": ">=22"
@@ -45,19 +41,26 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
-    "test": "node --test dist/**/*.test.js",
+    "test": "node --experimental-test-module-mocks --test dist/**/*.test.js",
     "lint": "tsc -p tsconfig.json --noEmit",
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
-    "@berthos/tls": "workspace:*",
-    "@berthos/manifest-schema": "workspace:*",
-    "@fastify/multipart": "^10.1.2",
-    "fastify": "^5.12.5",
-    "yaml": "^2.9.1"
+    "@berthos/adapter-core": "workspace:*",
+    "@berthos/manifest-schema": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^7.0.2",
-    "@types/node": "^26.6.2"
+    "@types/node": "^26.6.2",
+    "@berthos/docker-orchestrator": "workspace:*",
+    "dockerode": "^5.0.1"
+  },
+  "peerDependencies": {
+    "@kubernetes/client-node": "^1.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@kubernetes/client-node": {
+      "optional": true
+    }
   }
 }

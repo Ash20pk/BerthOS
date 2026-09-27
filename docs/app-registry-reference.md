@@ -6,7 +6,7 @@ Phase 5 opens the framework to external developers: a place to publish resident 
 
 ## Architecture
 
-`@berthos/registry-server` (`experimental/registry-server`) is a small Fastify HTTP API backed by `node:sqlite` (Node's built-in SQLite — same "real database, no ORM" instinct as Phase 4's sidecar index, minus an extra dependency) for metadata and a plain directory tree for blob storage.
+`@berthos/registry-server` (`packages/registry-server`) is a small Fastify HTTP API backed by `node:sqlite` (Node's built-in SQLite — same "real database, no ORM" instinct as Phase 4's sidecar index, minus an extra dependency) for metadata and a plain directory tree for blob storage.
 
 ```
 berth publish --registry=<url> ──► POST /apps (multipart: manifest + bundle.tar.gz)

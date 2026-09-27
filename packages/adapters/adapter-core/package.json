@@ -1,7 +1,7 @@
 {
-  "name": "@berthos/adapter-daytona",
+  "name": "@berthos/adapter-core",
   "version": "0.1.0",
-  "description": "DeployAdapter implementation targeting Daytona workspaces",
+  "description": "Shared DeployAdapter interface implemented by adapter-e2b and adapter-daytona",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -19,7 +19,7 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/Ash20pk/BerthOS.git",
-    "directory": "experimental/adapters/adapter-daytona"
+    "directory": "packages/adapters/adapter-core"
   },
   "homepage": "https://github.com/Ash20pk/BerthOS#readme",
   "bugs": {
@@ -27,7 +27,6 @@
   },
   "author": "Berth Contributors",
   "keywords": [
-    "daytona",
     "deploy-adapter",
     "ai-agents"
   ],
@@ -41,24 +40,15 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
-    "test": "node --experimental-test-module-mocks --test dist/**/*.test.js",
+    "test": "node --test dist/**/*.test.js",
     "lint": "tsc -p tsconfig.json --noEmit",
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
-    "@berthos/adapter-core": "workspace:*",
     "@berthos/manifest-schema": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^7.0.2",
     "@types/node": "^26.6.2"
-  },
-  "peerDependencies": {
-    "@daytonaio/sdk": "^0.202.0"
-  },
-  "peerDependenciesMeta": {
-    "@daytonaio/sdk": {
-      "optional": true
-    }
   }
 }

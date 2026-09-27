@@ -3,7 +3,7 @@ name: K8s Adapter Milestone
 # Real, running verification of @berthos/adapter-k8s against a live (if
 # throwaway) Kubernetes cluster — provisioned via `kind`, which needs no
 # cloud account. See
-# experimental/adapters/adapter-k8s/test/k8s-adapter-milestone.mjs.
+# packages/adapters/adapter-k8s/test/k8s-adapter-milestone.mjs.
 on:
   push:
     branches: [main]
@@ -35,5 +35,5 @@ jobs:
       - run: pnpm build
 
       - name: Run k8s-adapter-milestone.mjs
-        working-directory: experimental/adapters/adapter-k8s
+        working-directory: packages/adapters/adapter-k8s
         run: node test/k8s-adapter-milestone.mjs

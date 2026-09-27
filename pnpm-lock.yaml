@@ -320,82 +320,6 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
-  experimental/adapters/adapter-core:
-    dependencies:
-      '@berthos/manifest-schema':
-        specifier: workspace:*
-        version: link:../../../packages/manifest-schema
-    devDependencies:
-      '@types/node':
-        specifier: ^26.6.2
-        version: 26.6.2
-      typescript:
-        specifier: ^7.0.2
-        version: 7.0.2
-
-  experimental/adapters/adapter-daytona:
-    dependencies:
-      '@berthos/adapter-core':
-        specifier: workspace:*
-        version: link:../adapter-core
-      '@berthos/manifest-schema':
-        specifier: workspace:*
-        version: link:../../../packages/manifest-schema
-      '@daytonaio/sdk':
-        specifier: ^0.202.0
-        version: 0.202.0
-    devDependencies:
-      '@types/node':
-        specifier: ^26.6.2
-        version: 26.6.2
-      typescript:
-        specifier: ^7.0.2
-        version: 7.0.2
-
-  experimental/adapters/adapter-e2b:
-    dependencies:
-      '@berthos/adapter-core':
-        specifier: workspace:*
-        version: link:../adapter-core
-      '@berthos/manifest-schema':
-        specifier: workspace:*
-        version: link:../../../packages/manifest-schema
-      e2b:
-        specifier: ^1.0.0
-        version: 1.13.2
-    devDependencies:
-      '@types/node':
-        specifier: ^26.6.2
-        version: 26.6.2
-      typescript:
-        specifier: ^7.0.2
-        version: 7.0.2
-
-  experimental/adapters/adapter-k8s:
-    dependencies:
-      '@berthos/adapter-core':
-        specifier: workspace:*
-        version: link:../adapter-core
-      '@berthos/manifest-schema':
-        specifier: workspace:*
-        version: link:../../../packages/manifest-schema
-      '@kubernetes/client-node':
-        specifier: ^1.0.0
-        version: 1.4.0
-    devDependencies:
-      '@berthos/docker-orchestrator':
-        specifier: workspace:*
-        version: link:../../../packages/docker-orchestrator
-      '@types/node':
-        specifier: ^26.6.2
-        version: 26.6.2
-      dockerode:
-        specifier: ^5.0.1
-        version: 5.0.1
-      typescript:
-        specifier: ^7.0.2
-        version: 7.0.2
-
   experimental/agents:
     dependencies:
       '@a2a-js/sdk':
@@ -406,7 +330,7 @@ importers:
         version: 0.128.0(zod@4.6.5)
       '@berthos/adapter-core':
         specifier: workspace:*
-        version: link:../adapters/adapter-core
+        version: link:../../packages/adapters/adapter-core
       '@berthos/audit':
         specifier: workspace:*
         version: link:../../packages/audit
@@ -536,47 +460,6 @@ importers:
         specifier: ^8.11.0
         version: 8.11.0
 
-  experimental/mesh-coordinator:
-    dependencies:
-      '@berthos/tls':
-        specifier: workspace:*
-        version: link:../../packages/tls
-      fastify:
-        specifier: ^5.12.5
-        version: 5.12.5
-    devDependencies:
-      '@types/node':
-        specifier: ^26.6.2
-        version: 26.6.2
-      typescript:
-        specifier: ^7.0.2
-        version: 7.0.2
-
-  experimental/registry-server:
-    dependencies:
-      '@berthos/manifest-schema':
-        specifier: workspace:*
-        version: link:../../packages/manifest-schema
-      '@berthos/tls':
-        specifier: workspace:*
-        version: link:../../packages/tls
-      '@fastify/multipart':
-        specifier: ^10.1.2
-        version: 10.1.2
-      fastify:
-        specifier: ^5.12.5
-        version: 5.12.5
-      yaml:
-        specifier: ^2.9.1
-        version: 2.9.1
-    devDependencies:
-      '@types/node':
-        specifier: ^26.6.2
-        version: 26.6.2
-      typescript:
-        specifier: ^7.0.2
-        version: 7.0.2
-
   experimental/seam-claude-agent-sdk:
     dependencies:
       zod:
@@ -601,6 +484,82 @@ importers:
       '@types/node':
         specifier: ^26.6.2
         version: 26.6.2
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
+  packages/adapters/adapter-core:
+    dependencies:
+      '@berthos/manifest-schema':
+        specifier: workspace:*
+        version: link:../../manifest-schema
+    devDependencies:
+      '@types/node':
+        specifier: ^26.6.2
+        version: 26.6.2
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
+  packages/adapters/adapter-daytona:
+    dependencies:
+      '@berthos/adapter-core':
+        specifier: workspace:*
+        version: link:../adapter-core
+      '@berthos/manifest-schema':
+        specifier: workspace:*
+        version: link:../../manifest-schema
+      '@daytonaio/sdk':
+        specifier: ^0.202.0
+        version: 0.202.0
+    devDependencies:
+      '@types/node':
+        specifier: ^26.6.2
+        version: 26.6.2
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
+  packages/adapters/adapter-e2b:
+    dependencies:
+      '@berthos/adapter-core':
+        specifier: workspace:*
+        version: link:../adapter-core
+      '@berthos/manifest-schema':
+        specifier: workspace:*
+        version: link:../../manifest-schema
+      e2b:
+        specifier: ^1.0.0
+        version: 1.13.2
+    devDependencies:
+      '@types/node':
+        specifier: ^26.6.2
+        version: 26.6.2
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
+  packages/adapters/adapter-k8s:
+    dependencies:
+      '@berthos/adapter-core':
+        specifier: workspace:*
+        version: link:../adapter-core
+      '@berthos/manifest-schema':
+        specifier: workspace:*
+        version: link:../../manifest-schema
+      '@kubernetes/client-node':
+        specifier: ^1.0.0
+        version: 1.4.0
+    devDependencies:
+      '@berthos/docker-orchestrator':
+        specifier: workspace:*
+        version: link:../../docker-orchestrator
+      '@types/node':
+        specifier: ^26.6.2
+        version: 26.6.2
+      dockerode:
+        specifier: ^5.0.1
+        version: 5.0.1
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
@@ -658,22 +617,22 @@ importers:
     devDependencies:
       '@berthos/adapter-core':
         specifier: workspace:*
-        version: link:../../experimental/adapters/adapter-core
+        version: link:../adapters/adapter-core
       '@berthos/adapter-daytona':
         specifier: workspace:*
-        version: link:../../experimental/adapters/adapter-daytona
+        version: link:../adapters/adapter-daytona
       '@berthos/adapter-e2b':
         specifier: workspace:*
-        version: link:../../experimental/adapters/adapter-e2b
+        version: link:../adapters/adapter-e2b
       '@berthos/adapter-k8s':
         specifier: workspace:*
-        version: link:../../experimental/adapters/adapter-k8s
+        version: link:../adapters/adapter-k8s
       '@berthos/agents':
         specifier: workspace:*
         version: link:../../experimental/agents
       '@berthos/registry-server':
         specifier: workspace:*
-        version: link:../../experimental/registry-server
+        version: link:../registry-server
       '@types/dockerode':
         specifier: ^4.0.1
         version: 4.0.1
@@ -852,6 +811,47 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
+  packages/mesh-coordinator:
+    dependencies:
+      '@berthos/tls':
+        specifier: workspace:*
+        version: link:../tls
+      fastify:
+        specifier: ^5.12.5
+        version: 5.12.5
+    devDependencies:
+      '@types/node':
+        specifier: ^26.6.2
+        version: 26.6.2
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
+  packages/registry-server:
+    dependencies:
+      '@berthos/manifest-schema':
+        specifier: workspace:*
+        version: link:../manifest-schema
+      '@berthos/tls':
+        specifier: workspace:*
+        version: link:../tls
+      '@fastify/multipart':
+        specifier: ^10.1.2
+        version: 10.1.2
+      fastify:
+        specifier: ^5.12.5
+        version: 5.12.5
+      yaml:
+        specifier: ^2.9.1
+        version: 2.9.1
+    devDependencies:
+      '@types/node':
+        specifier: ^26.6.2
+        version: 26.6.2
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
   packages/sdk:
     dependencies:
       '@berthos/manifest-schema':
@@ -970,25 +970,21 @@ packages:
     resolution: {integrity: sha512-B5l5tnO0ymQjGSq+uZBnwLb8IdCj+gr/niKoxiUDqzfh7OPwuGyceq/g7bpzZ6VC/U7+Zsjv+Gce/VzcKVT1pA==}
     cpu: [arm64]
     os: [linux]
-    libc: [musl]
 
   '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.281':
     resolution: {integrity: sha512-PrxuObUGayjtUS6yq5Sz+dMNXn8KaK1BeIXG/PRE+85Wt9DzchoIduycIoFaXWrG0xbbzYz0AKwttNqSAeDdSA==}
     cpu: [arm64]
     os: [linux]
-    libc: [glibc]
 
   '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.281':
     resolution: {integrity: sha512-H+TWmbIhlEvZcOGJ6S9BQBBQuizaXfDhdSjgWbP6JGTrfW+U8dm49/0I9pdjHB2VT+1zgFzIt1YkkfkvSGtOVQ==}
     cpu: [x64]
     os: [linux]
-    libc: [musl]
 
   '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.281':
     resolution: {integrity: sha512-3kxVGQrn9wNeFZV0MJEXI0XOj7U8e/1wL41W2MInYVIVWJnTanuX+pPqQH2DzyVNRcw6CMP5k3eockewGptWig==}
     cpu: [x64]
     os: [linux]
-    libc: [glibc]
 
   '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.281':
     resolution: {integrity: sha512-ySM49+TS94VrMkIzk65RHcNKfvXKhx6YuR2mplw8BbaYpcnKL4RTAr5WVbH1JhMLjPEBaDGSP1uCLZy/YkA9gg==}
@@ -1202,7 +1198,6 @@ packages:
 
   '@daytonaio/sdk@0.202.0':
     resolution: {integrity: sha512-1p2wVUggIWwYh195YCSkPRgzGgIqjAt2LwedUQ8lKTaax7vlrtzJPafH6ALEJdy4vr6Y/pbr4edzXPM+qejo4g==}
-    deprecated: 'Moved to @daytona/sdk, same API, no breaking changes. Please update: npm uninstall @daytonaio/sdk && npm i @daytona/sdk'
 
   '@esbuild/aix-ppc64@0.28.2':
     resolution: {integrity: sha512-XExcO+dvLKvVtNTibSTBej1NCAbaGhWn9Ww1ZPx80qsahhPFe/8jgWP0IchNe0F3HwkU7n8ejhH8bjonqht8mQ==}
@@ -3335,7 +3330,6 @@ packages:
   node-domexception@1.0.0:
     resolution: {integrity: sha512-/jKZoMpw0F8GRwl4/eLROPA3cfcXtLApP0QzLmUT/HuPCZWyB7IY9ZrMeKw2O/nFIqPQB3PVM9aYm0F312AXDQ==}
     engines: {node: '>=10.5.0'}
-    deprecated: Use your platform's native DOMException instead
 
   node-fetch@2.7.0:
     resolution: {integrity: sha512-c4FRfUm/dbcWZ7U+1Wq0AwCyFL+3nt2bEw05wfxSz+DWpWsitgmSgYmy2dQdWyKC1694ELPqMs/YzUSNozLt8A==}
