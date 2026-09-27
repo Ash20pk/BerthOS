@@ -66,7 +66,7 @@ export default class Attest extends Command {
       // indistinguishable from someone deleting the early segments, so it is
       // said out loud on stderr rather than passed over. The record itself
       // cannot yet carry this — see docs/attestation-reference.md and the
-      // spec-field note in EXECUTION_PLAN.md.
+      // spec-field note in docs/internal/execution-plan.md.
       this.warn(
         `the audit chain's oldest held record names predecessor ${chain.startedFrom.slice(0, 16)}…, which is not on disk — earlier segments were pruned by rotation (or removed). The ${chain.totalRecords} records held verify cleanly from that point; the attestation covers only those.`,
       );

@@ -166,10 +166,14 @@ packages/
   mesh-coordinator/    coordination service for the WireGuard mesh: allocates IPs, exchanges keys, mutually matches peers
   mesh-daemon/         Rust daemon that reconciles a sandbox's WireGuard config against mesh-coordinator's state
   adapters/            deploy adapters for E2B, Daytona, and Kubernetes
-  cli/                 the `berth` CLI: init, dev, test, publish, deploy, os
+  audit/               the hash-chained audit trail and the attestation record
+  tls/                 certificate plumbing for the registry and mesh coordinator
+  cli/                 the `berth` CLI: init, dev, test, doctor, mcp, attest, publish, deploy, os, snapshot
   sdk-python/          Python resident app SDK, wire-protocol compatible with @berthos/sdk
+experimental/          the agent framework, frozen: a reference consumer of the sandbox, not part of it (see experimental/README.md)
   agents/              computer, then agent, then tool: boots a Berth OS from resident apps, drives it with any LLM provider, composes multi-agent Crews
-  agents-python/       Python Agent/Crew core (checkpointing, streaming, structured-output repair, all Crew shapes but networked) plus Computer.connect() over berth os up --http-rpc for a real sandbox's tools — no Computer.boot() yet
+  agents-python/       Python Agent/Crew core plus Computer.connect() over berth os up --http-rpc
+  seam-*/              Berth tools exposed to the Claude Agent SDK and OpenAI Agents
 apps/
   browser-native/      first-party resident app: headless Chromium plus VNC, also exposes search (DuckDuckGo, no API key)
   filesystem/          first-party resident app that reads and writes /workspace, publishes fs.file_created

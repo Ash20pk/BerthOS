@@ -1,6 +1,6 @@
 # Mesh Networking Reference
 
-> **Partly frozen.** `mesh-coordinator` lives in [`experimental/`](../experimental/README.md) and is not part of the core artifact. `mesh-daemon` stays in `packages/` because it is embedded in the image — but it starts only for a container whose app declares `network:peer:`, so it is absent unless you ask for the mesh. Everything here still builds and still runs its tests; nothing was deleted. See [`experimental/README.md`](../experimental/README.md).
+> `mesh-daemon` is embedded in every image but starts only for a container whose app declares `network:peer:`, so the mesh is absent unless you ask for it. `mesh-coordinator` is the host-side service it registers with.
 
 `Crew.networked()` (see `docs/agents-reference.md`) joins agent containers over a plain Docker user-defined bridge network — real inter-container reachability, but local-`berth dev`-only, with no capability boundary of its own (any two containers on that bridge can already reach each other) and nothing that would survive being deployed to E2B/Daytona/K8s. `network:peer:<name>` closes the first half of that gap: a real, kernel-level WireGuard mesh between resident apps, authorized by mutual consent rather than by whichever Docker network happens to exist.
 

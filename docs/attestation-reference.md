@@ -23,7 +23,7 @@ berth attest my-run-id --out my-run.attestation.json
 | `enforcement.rulesetReports` | agent-init's `capability_policy_applied` events, read back from the container's own log stream and filtered to the current boot ID. `ruleset` is what the kernel returned from `landlock_restrict_self` — `FullyEnforced`, `PartiallyEnforced`, or `NotEnforced`. |
 | `enforcement.doctorProbe` | The same behavioural probe `berth doctor` and the boot banner use, run fresh (never read from the operator-writable enforcement cache — see [what this does not prove](#what-this-does-not-prove)), for the same runtime this boot ran under (under gVisor the kernel being measured is the sentry — see [kernel-enforcement.md](./kernel-enforcement.md#optional-hardened-runtime)). |
 | `enforcement.status` | **Derived, never asserted**: `ACTIVE` only when the probe says `enforcing` *and* every app's ruleset report says `FullyEnforced`. Any measured non-enforcement → `NOT_ENFORCED` with the reasons named. Missing measurements → `UNDETERMINED`, never quietly `ACTIVE`. |
-| `policies[]` | sha256 of each app's `.berth/capability-policy.json`, computed **inside the container** over the exact bytes agent-init enforced from (which include grants-server-approved additions, not just what `berth.yml` declares). |
+| `policies[]` | sha256 of each app's `.berth/capability-policy.json`, computed **inside the container** over the exact bytes agent-init enforced from. |
 | `boot.bootId` | The entrypoint's per-boot UUID, from the container log. |
 | `boot.imageDigest` | The image's content identity from the daemon (RepoDigest when it has one, image config ID otherwise). |
 | `recordSha256` | sha256 over the canonical JSON of every other field, stamped at emission. |

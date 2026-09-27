@@ -2,7 +2,7 @@
 
 Every Berth server can serve HTTPS. None of them do by default.
 
-That default is deliberate — turning TLS on for existing local deployments would break them for no gain on loopback — but it means enabling it is a decision someone has to make, and this file is what that decision needs. Before this existed there was no option at all: `REMEDIATION.md` 5.3 recorded plain HTTP everywhere, a CLI that hardcoded `http://127.0.0.1:4874` and sent an operator token over it, and `berth deploy --grants-server` requiring a URL reachable *from the fleet* — so capability approvals crossing a real network in the clear.
+That default is deliberate — turning TLS on for existing local deployments would break them for no gain on loopback — but it means enabling it is a decision someone has to make, and this file is what that decision needs. Before this existed there was no option at all: `REMEDIATION.md` 5.3 recorded plain HTTP everywhere, a CLI that hardcoded `http://127.0.0.1:4873` and sent an owner token over it — so credentials crossing a real network in the clear.
 
 ## Turning it on
 
