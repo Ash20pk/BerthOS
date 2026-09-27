@@ -1,0 +1,82 @@
+name: Deprecate npm versions
+
+# Marks a range of already-published @berthos/* versions as deprecated, so
+# anyone installing one sees a warning pointing elsewhere. Nothing is deleted;
+# deprecating again with an empty message removes the warning.
+#
+# Runs from GitHub rather than a laptop for the same reason releases do, and
+# because an account whose 2FA is a passkey can't approve a write from the
+# CLI. It uses the "npm" environment's NPM_TOKEN (allowed to bypass 2FA) and
+# waits for that environment's approval.
+#
+# npm only. PyPI's equivalent, yanking a release (pip then skips it unless
+# it's pinned exactly), has no API: it's done on pypi.org, under berthos-sdk
+# -> Manage -> Releases -> Options -> Yank, which accepts a passkey.
+on:
+  workflow_dispatch:
+    inputs:
+      range:
+        description: "Version range to deprecate, e.g. 0.2.1 - 0.2.3"
+        required: true
+        type: string
+        default: "0.2.1 - 0.2.3"
+      message:
+        description: "Warning shown on install"
+        required: true
+        type: string
+        default: "Broken as published: install, image builds or berth init fail. Use 0.2.4 or later: npm install -g @berthos/cli@latest"
+
+permissions:
+  contents: read
+
+jobs:
+  deprecate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: npm
+    env:
+      RANGE: ${{ inputs.range }}
+      MESSAGE: ${{ inputs.message }}
+      PACKAGES: >-
+        cli sdk manifest-schema docker-orchestrator audit tls registry-server
+        mesh-coordinator adapter-core adapter-e2b adapter-daytona adapter-k8s
+    steps:
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+
+      # A deprecation that covers the version people are meant to install is
+      # the one mistake worth stopping here: check every package first, then
+      # change anything.
+      - name: Refuse a range that includes a current release
+        run: |
+          for p in $PACKAGES; do
+            latest=$(npm view "@berthos/${p}" version)
+            matched=$(npm view "@berthos/${p}@${RANGE}" version --json 2>/dev/null || echo '[]')
+            if echo "$matched" | grep -q "\"${latest}\""; then
+              echo "::error::@berthos/${p}@${RANGE} includes its latest version, ${latest}."
+              exit 1
+            fi
+            echo "@berthos/${p}: latest ${latest}; range matches ${matched}"
+          done
+
+      - name: Deprecate
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          for p in $PACKAGES; do
+            npm deprecate "@berthos/${p}@${RANGE}" "$MESSAGE"
+          done
+
+      - name: Show the result
+        run: |
+          for p in $PACKAGES; do
+            npm view "@berthos/${p}@${RANGE}" version --json | node -e '
+              let d = ""; process.stdin.on("data", (c) => (d += c)).on("end", () => {
+                const v = JSON.parse(d); for (const x of Array.isArray(v) ? v : [v]) console.log(x);
+              })' | while read -r v; do
+              echo "@berthos/${p}@${v}: $(npm view "@berthos/${p}@${v}" deprecated)"
+            done
+            echo "@berthos/${p}@$(npm view "@berthos/${p}" version) (latest): $(npm view "@berthos/${p}@latest" deprecated)"
+          done
