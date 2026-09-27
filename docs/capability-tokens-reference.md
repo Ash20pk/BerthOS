@@ -1,6 +1,6 @@
 # Capability Enforcement Reference (Phase 3)
 
-> **The filename is a fossil.** Capability *tokens* were removed in REMEDIATION.md 1.10 — nothing verified them, and the signing secret lived in the environment of the app they were meant to constrain. The file keeps its name only because 20-odd docs and source comments link to it; the subject was always kernel enforcement, which is real.
+> **The filename is a fossil.** Capability *tokens* were removed — nothing verified them, and the signing secret lived in the environment of the app they were meant to constrain. The file keeps its name only because 20-odd docs and source comments link to it; the subject was always kernel enforcement, which is real.
 
 Phase 3 is the one kernel-level bet here: turning `berth.yml`'s declared `capabilities:` into something the kernel actually enforces, not something an SDK politely checks before making a call on the agent's behalf.
 

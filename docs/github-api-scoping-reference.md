@@ -17,7 +17,7 @@
 
 ## What a `github:read:repos` capability actually covers
 
-The first version of the path check was positional: `segments.length > 3 ? segments[3] : "repos"`. Every GET with three or fewer path segments was therefore classified `github:read:repos`, so an app declaring that one capability to read a repo summary also got `/user`, `/user/emails`, `/user/repos`, `/gists`, `/notifications` and `/orgs/<org>` — each forwarded upstream with the app's real `Authorization` header (REMEDIATION.md 1.9).
+The first version of the path check was positional: `segments.length > 3 ? segments[3] : "repos"`. Every GET with three or fewer path segments was therefore classified `github:read:repos`, so an app declaring that one capability to read a repo summary also got `/user`, `/user/emails`, `/user/repos`, `/gists`, `/notifications` and `/orgs/<org>` — each forwarded upstream with the app's real `Authorization` header.
 
 What replaced it (`ROUTES` in `github-api-broker.cjs`):
 

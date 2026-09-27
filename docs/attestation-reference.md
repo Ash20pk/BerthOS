@@ -120,6 +120,6 @@ berth attest <runId> [--os <name>] [--container <name>] [--image <tag>]
 - `--out` writes the record 0600; otherwise it prints to stdout. A verdict
   other than `ACTIVE` is also warned to stderr so it can't scroll past.
 
-Verification artifact for BUILD_PLAN M2.1:
+Verification artifact:
 `packages/docker-orchestrator/test/attestation-milestone.mjs`, run by
 `.github/workflows/attestation-milestone.yml`.

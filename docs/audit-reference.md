@@ -2,7 +2,7 @@
 
 `@berthos/audit` is the record of what happened on a Berth installation and who did it: governance verdicts, failed authentication attempts, and — optionally — every step an agent took.
 
-It exists because none of that was written down. `REMEDIATION.md` 5.1: governance denials threw silently, no server logged a request, `AgentStepEvent` recorded tool names and no actor A gate that blocks a hundred calls used to leave exactly the same trace as a gate nobody ever consulted.
+It exists because none of that was written down: governance denials threw silently, no server logged a request, `AgentStepEvent` recorded tool names and no actor A gate that blocks a hundred calls used to leave exactly the same trace as a gate nobody ever consulted.
 
 ## What a record looks like
 
@@ -24,7 +24,7 @@ Every record carries `actor.verifiedBy`, and reading it is the difference betwee
 
 Self-asserted actors are recorded rather than rejected: "we don't know who this was" is itself a finding. But never read one as an identity.
 
-This is not identity in `REMEDIATION.md` 5.2's sense. There is no user directory, no tenancy, no RBAC, and revocation means editing a file.
+This is not an identity system. There is no user directory, no tenancy, no RBAC, and revocation means editing a file.
 
 ### Decisions
 
@@ -59,7 +59,7 @@ Off by default, in two independent places:
 - `createFileAuditSink({ capturePayloads: true })` — whether `input`/`output` reach the file.
 - `createAgent({ tracePayloads: true })` — whether tool arguments and results are put on the step event at all.
 
-Both default off because records land plaintext on disk (`REMEDIATION.md` 5.4 is open) and tool arguments are where customer data turns up. When on, values pass through `redact()`: secret-looking keys (`password`, `token`, `apiKey`, `authorization`, …) become `[redacted]`, oversized strings and buffers become a size marker rather than a prefix — half a credential is still a credential — and cycles, functions, and over-deep structures are described instead of dropped.
+Both default off because records land plaintext on disk (nothing is encrypted at rest yet) and tool arguments are where customer data turns up. When on, values pass through `redact()`: secret-looking keys (`password`, `token`, `apiKey`, `authorization`, …) become `[redacted]`, oversized strings and buffers become a size marker rather than a prefix — half a credential is still a credential — and cycles, functions, and over-deep structures are described instead of dropped.
 
 `redact()` is a deny-list, which fails open on the key nobody thought of. It is a second line of defence behind capture being opt-in, not the only one.
 
@@ -79,7 +79,7 @@ Each record's `hash` covers `prevHash` plus its own canonical JSON, so a record 
 
 **This is tamper-evident, not tamper-proof.** Anyone who can write the file can recompute every hash from the line they edited onwards and produce a chain that verifies cleanly. Getting past that needs the hashes somewhere the editor cannot reach — an append-only store, a remote sink, periodic external anchoring — none of which is built. `berth audit verify` says so in its own output rather than implying a guarantee it does not have.
 
-`berth attest <runId>` (BUILD_PLAN M2.1) builds on this chain: it binds a run's slice of it, plus the chain head and the boot's measured enforcement status, into one self-hashed record a stranger can check without Berth installed — same trust model, stated inside the record. See [attestation-reference.md](./attestation-reference.md).
+`berth attest <runId>` builds on this chain: it binds a run's slice of it, plus the chain head and the boot's measured enforcement status, into one self-hashed record a stranger can check without Berth installed — same trust model, stated inside the record. See [attestation-reference.md](./attestation-reference.md).
 
 ## Operational notes
 

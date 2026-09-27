@@ -2,7 +2,7 @@
 
 Every Berth server can serve HTTPS. None of them do by default.
 
-That default is deliberate — turning TLS on for existing local deployments would break them for no gain on loopback — but it means enabling it is a decision someone has to make, and this file is what that decision needs. Before this existed there was no option at all: `REMEDIATION.md` 5.3 recorded plain HTTP everywhere, a CLI that hardcoded `http://127.0.0.1:4873` and sent an owner token over it — so credentials crossing a real network in the clear.
+That default is deliberate — turning TLS on for existing local deployments would break them for no gain on loopback — but it means enabling it is a decision someone has to make, and this file is what that decision needs. Before this existed there was no option at all: plain HTTP everywhere, a CLI that hardcoded `http://127.0.0.1:4873` and sent an owner token over it — so credentials crossing a real network in the clear.
 
 ## Turning it on
 
@@ -80,7 +80,7 @@ TLS is not a substitute for the token, and the bridge still requires it either w
 
 Server-side support exists: set `<PREFIX>_TLS_CA` and `<PREFIX>_TLS_REQUIRE_CLIENT_CERT=1` and the server demands a client certificate signed by that CA.
 
-**No client in this repo presents one.** It is the right control for service-to-service traffic and the wrong thing to impose on an operator running `berth publish` from a laptop — there is no CA to issue them a certificate from, because no identity system exists yet (`REMEDIATION.md` 5.2). Turning this on today locks out every first-party client.
+**No client in this repo presents one.** It is the right control for service-to-service traffic and the wrong thing to impose on an operator running `berth publish` from a laptop — there is no CA to issue them a certificate from, because no identity system exists yet. Turning this on today locks out every first-party client.
 
 ## What is still open
 

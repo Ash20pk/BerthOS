@@ -12,7 +12,7 @@ The layer that actually sees every action an agent takes, regardless of which ap
 
 **Scope boundary, and where it moved.** Gating at `Computer` covers an LLM-driven agent's tool use. It never covered the other ways into the same container — `berth rpc`, `berth mcp`, the HTTP RPC bridge, the cross-container TCP listener, or a sibling app's direct socket call — because none of them touch a `Computer`. An app denied a tool call could make the identical call over its peer socket and be obeyed.
 
-As of REMEDIATION.md 1.13's second half there is a **second gate, in `@berthos/sdk`**, at the one point all of those converge: `invokeExport()`. Neither gate replaces the other, and the split follows what each layer can see:
+There is a **second gate, in `@berthos/sdk`**, at the one point all of those converge: `invokeExport()`. Neither gate replaces the other, and the split follows what each layer can see:
 
 | Gate | Lives in | Sees |
 |---|---|---|
@@ -25,7 +25,7 @@ Still not gated: anything at the kernel/Landlock level (no per-syscall hook exis
 
 **The TCP listener is a special case, and the honest answer is better than "gated".** On a kernel that enforces, it cannot bind: Landlock denies `BindTcp` for any app with network scoping active, and the only two ports exempted are the HTTP RPC bridge's and ttyd's. `listen(2)` returns `EACCES` and there is no transport to gate. Nothing in Berth opens it either — `Crew.networked()` uses the HTTP bridge — so it is a door an app author opens by hand with `BERTH_NETWORK_PORT_<APP>`, on a host where the kernel will let them. If that ever changes, the gate does cover it: granting the bind in a negative control shows the same denial arriving over TCP.
 
-**What is gated, as of REMEDIATION.md 1.13.** The gate used to be applied by mapping over one `Tool[]`, so it covered exactly the tools in that array at that moment — anything assembled afterwards escaped it. It now sits on the Computer's *dispatch*, plus an explicit wrapper for the two paths that never touch that dispatch:
+**What is gated.** The gate used to be applied by mapping over one `Tool[]`, so it covered exactly the tools in that array at that moment — anything assembled afterwards escaped it. It now sits on the Computer's *dispatch*, plus an explicit wrapper for the two paths that never touch that dispatch:
 
 | Path | Announced to the governor as |
 |---|---|
@@ -84,7 +84,7 @@ governance:
 
 ## Failure mode: fails closed by default, fail-open available
 
-If the `evaluate_action` call itself errors or exceeds its timeout (10s at the Computer gate, 5s at the SDK gate — `BERTH_GOVERNANCE_TIMEOUT_MS` overrides the latter), the gated call throws `GovernanceUnavailableError` (carrying `.appName`, `.exportName`, `.cause`) rather than running — "the policy check didn't happen" never quietly becomes "the policy check passed." This is the default as of REMEDIATION.md 1.11.
+If the `evaluate_action` call itself errors or exceeds its timeout (10s at the Computer gate, 5s at the SDK gate — `BERTH_GOVERNANCE_TIMEOUT_MS` overrides the latter), the gated call throws `GovernanceUnavailableError` (carrying `.appName`, `.exportName`, `.cause`) rather than running — "the policy check didn't happen" never quietly becomes "the policy check passed."
 
 That item is why: any app sharing the container could `kill -9` the governance app, and under the previous fail-open default one signal turned the gate off entirely, with nothing but a `console.warn` to show for it. Per-app uids now make that particular kill impossible — the kernel refuses cross-uid signals, asserted by `capability-enforcement.mjs` Test 12 — but a governor can still crash, hang, or simply be slow, and a gate that opens under those conditions is not a gate.
 
