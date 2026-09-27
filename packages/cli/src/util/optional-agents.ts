@@ -22,8 +22,8 @@
  *
  * `@berthos/agents` stays a devDependency: the types below are erased at runtime
  * but are needed to typecheck these three commands. If it is absent at runtime,
- * the failure is one clear sentence naming the install, not a module-resolution
- * stack trace.
+ * the failure is one clear message saying where the framework lives, not a
+ * module-resolution stack trace.
  */
 
 /** Everything the three framework-backed commands use. Keep this list minimal — it is the seam. */
@@ -43,7 +43,8 @@ export function isModuleNotFound(err: unknown): boolean {
 export function describeMissingFramework(commandId: string): string {
   return (
     `\`berth ${commandId}\` needs the agent framework, which is not installed.\n\n` +
-    `  npm install @berthos/agents\n\n` +
+    `The framework (@berthos/agents) is experimental and not published to npm. To use it, ` +
+    `run berth from a clone of https://github.com/Ash20pk/BerthOS, where it is built alongside the CLI.\n\n` +
     `@berthos/cli does not depend on it: the CLI's own commands (dev, mcp, doctor, attest, os, snapshot) ` +
     `are the sandbox and its evidence, and none of them needs an LLM framework. Only \`eval\`, ` +
     `\`agent run\` and \`crew run\` do.`
