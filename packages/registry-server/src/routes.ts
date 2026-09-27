@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { parse as parseYaml } from "yaml";
 import { validateManifest, ManifestValidationError } from "@berthos/manifest-schema";
 import type { RegistryDb, AppRecord } from "./db.js";
-import type { BlobStore } from "./storage.js";
+import { BundleExistsError, type BlobStore } from "./storage.js";
 
 export interface RegistryRouteOptions {
   db: RegistryDb;
@@ -69,7 +69,20 @@ export async function registerRegistryRoutes(app: FastifyInstance, opts: Registr
       return reply.code(401).send({ error: `"${manifest.name}" is already published by someone else — provide its owner token to publish a new version` });
     }
 
-    const bundlePath = await blobs.write(manifest.name, manifest.version, bundleBytes);
+    // Refuse a published version before touching storage: writing first
+    // replaced the stored bundle and only then answered 409, so the bytes
+    // served for that version silently changed.
+    if (db.get(manifest.name, manifest.version)) {
+      return reply.code(409).send({ error: `${manifest.name}@${manifest.version} is already published — versions are immutable` });
+    }
+
+    let bundlePath: string;
+    try {
+      bundlePath = await blobs.write(manifest.name, manifest.version, bundleBytes);
+    } catch (err) {
+      if (err instanceof BundleExistsError) return reply.code(409).send({ error: err.message });
+      throw err;
+    }
 
     try {
       db.insert({
@@ -85,6 +98,9 @@ export async function registerRegistryRoutes(app: FastifyInstance, opts: Registr
         publishedAt: now(),
       });
     } catch (err) {
+      // The bundle we just wrote belongs to a publish that didn't happen; leave
+      // it and every retry of this version would hit BundleExistsError.
+      await blobs.remove(bundlePath).catch(() => {});
       return reply.code(409).send({ error: err instanceof Error ? err.message : String(err) });
     }
 
