@@ -8,6 +8,10 @@ name: Deprecate npm versions
 # because an account whose 2FA is a passkey can't approve a write from the
 # CLI. It uses the "npm" environment's NPM_TOKEN (allowed to bypass 2FA) and
 # waits for that environment's approval.
+#
+# npm only. PyPI's equivalent, yanking a release (pip then skips it unless
+# it's pinned exactly), has no API: it's done on pypi.org, under berthos-sdk
+# -> Manage -> Releases -> Options -> Yank, which accepts a passkey.
 on:
   workflow_dispatch:
     inputs:
