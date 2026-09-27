@@ -1,34 +1,64 @@
-# Python SDK Reference (Slice 2 — context bus)
+# Python SDK: context bus
 
-Follow-up to [Python SDK reference](./sdk-python-reference.md) (Slice 1: manifest + RPC + a demo app). This slice adds `berth_sdk/context_bus.py` — a real client for the same Rust context-bus daemon `@berthos/sdk`'s `unix-socket.ts` talks to — and proves real cross-language pub/sub: a Python app publishing, a TypeScript app reacting, through the actual daemon.
+The Python SDK's context bus client lets a Python resident app publish and subscribe to events from other apps in the same sandbox, including TypeScript apps. It talks to the same daemon as `@berthos/sdk`'s [`ContextBusClient`](./sdk-reference.md#contextbusclient). For the rest of the Python SDK, see the [Python SDK reference](./sdk-python-reference.md).
 
-## Compiled protobuf, not protobufjs's runtime-load trick
+## Use it
 
-`@berthos/sdk`'s TS client (`protobufjs`) loads `context_bus.proto` at runtime — no codegen step. This SDK deliberately does it differently: `packages/sdk-python/scripts/gen_proto.sh` compiles `proto/context_bus.proto` (a hand-kept-in-sync copy of the canonical one at `packages/sdk/proto/context_bus.proto`) into a real `context_bus_pb2.py` ahead of time. Call this out explicitly as a deliberate per-language difference, not an oversight — Python's protobuf ecosystem favors compiled codegen over the JS-style dynamic-schema-load pattern.
+The client arrives as `ctx.context_bus` in your `on_agent_ready` hook. Keep a reference if your exports need it:
 
-**A real version-compatibility trap found in the process, worth documenting for whoever runs this next:** a system `protoc` (e.g. installed via Homebrew) tracks its own release train and can be materially newer than whatever `protobuf` version is published to PyPI for Python — generating code that then refuses to load at runtime:
+```python
+from berth_sdk import define_app
+from pydantic import BaseModel
 
+_bus = None
+
+
+class FileCreated(BaseModel):
+    path: str
+    created_by: str
+
+
+def on_ready(ctx):
+    global _bus
+    _bus = ctx.context_bus
+    _bus.register("hello-world-py")
+    _bus.subscribe("fs.file_created", lambda payload: print(f"new file: {payload['path']}"))
+
+
+def publish_file_created(inp: FileCreated) -> None:
+    _bus.publish("fs.file_created", {"path": inp.path, "createdBy": inp.created_by})
+
+
+def setup(app):
+    app.export("publish_file_created", publish_file_created, input_model=FileCreated)
+    app.on_agent_ready(on_ready)
+
+
+app = define_app(setup)
 ```
-google.protobuf.runtime_version.VersionError: Detected incompatible Protobuf Gencode/Runtime versions:
-gencode 7.35.1 runtime 6.33.6. Runtime version cannot be older than the linked gencode version.
-```
 
-`gen_proto.sh` uses `python3 -m grpc_tools.protoc` instead — `grpcio-tools` bundles a `protoc` release guaranteed compatible with the `protobuf` Python runtime it depends on, sidestepping the mismatch entirely. `grpcio-tools` is a codegen-time tool only, not a runtime dependency of the package (only `protobuf` itself, added to `pyproject.toml`, is).
+A TypeScript app subscribed to `fs.file_created`, such as [`apps/code-editor`](../apps/code-editor), receives this event unchanged.
 
-## The client itself
+## API
 
-`berth_sdk/context_bus.py`'s `ContextBusClient` implements the same three-method shape as `@berthos/sdk`'s `ContextBusClient` interface (`register`, `publish`, `subscribe`) — same wire framing as `unix-socket.ts` too: a 4-byte big-endian length prefix + protobuf `Envelope` bytes over a Unix socket, a background thread reading and dispatching `Event` frames to subscribed handlers.
+| Method | What it does |
+|---|---|
+| `register(app: str) -> None` | Identifies this app to the daemon |
+| `publish(topic: str, payload) -> None` | Sends `payload`, encoded as JSON, to every subscriber of `topic` |
+| `subscribe(topic: str, handler) -> unsubscribe` | Calls `handler(payload)` for each event on `topic`; call the returned function to stop |
 
-**One deliberate departure from a literal port, and why:** the TS client's methods are `async` because Node's I/O model makes everything naturally asynchronous. This SDK's runtime has no event loop — `on_agent_ready` hooks are called as plain synchronous functions — so `register`/`publish` here are **plain synchronous methods**, not `async def`. Making them `async def` would have produced un-awaited coroutine objects that silently never execute when called from a sync hook; this was caught by testing the actual failure mode, not guessed at.
+The methods are synchronous, unlike the TypeScript client's `async` ones, because Python hooks are plain functions. Note that `register` takes the app name as a string, where TypeScript takes `{ app }`.
 
-`berth_sdk/local_context_bus.py` is the no-op fallback (an in-process dict-of-handlers, synchronous for the same reason), used when the real daemon isn't reachable — `runtime.py`'s `_create_context_bus()` tries the real client first and falls back on any connection error, mirroring `runtime.ts`'s own `createContextBus()` try/catch.
+Subscription handlers run on a background thread that reads from the daemon, so guard any state they share with your export handlers.
 
-## The cross-language proof
+## How it connects
 
-`packages/docker-orchestrator/test/python-sdk-context-bus-milestone.mjs` mirrors `context-bus-milestone.mjs`'s original pattern (one container, a companion app's runtime started as a second process via `docker exec`, sharing the same daemon socket and `/workspace` bind mount) — but with the language pairing **reversed** from the original Phase 2 test: the primary is `apps/hello-world-py` (Python), the companion is `apps/code-editor` (TypeScript), proving the interop isn't an artifact of one specific language having to go first.
+At startup the runtime connects to the daemon's Unix socket at `$BERTH_CONTEXT_BUS_SOCKET` (default `/tmp/berth-context-bus.sock`), retrying for up to 2 seconds. Messages are protobuf frames, each prefixed with a 4-byte big-endian length, the same as the TypeScript client.
 
-`apps/hello-world-py` gained a `publish_file_created` export that calls `context_bus.publish("fs.file_created", {"path": ..., "createdBy": ...})` — the **exact** topic and payload shape `apps/code-editor` already subscribes to and reacts to (opening the file, logging a specific line) with **zero changes** to `code-editor`'s own code. The test asserts that reactive log line actually appears after the Python app's publish call — a real message, decoded by a real Rust daemon, delivered to a real TypeScript subscriber.
+If the daemon can't be reached, for example when you run the app outside a sandbox, the runtime logs a warning and uses an in-process stand-in: `publish` delivers only to subscribers in the same process, and `register` does nothing.
 
-## What's still deliberately out of scope
+See the [context bus reference](./context-bus-reference.md) for topics and the daemon itself.
 
-Everything `docs/sdk-python-reference.md`'s own "what's out of scope" section already names remains true here too (multi-app-mode wiring, production images/`berth deploy` for Python apps, a packaged pip distribution) — this slice only closes the context-bus gap, nothing else.
+## Regenerating the protobuf code
+
+`berth_sdk/context_bus_pb2.py` is generated from `packages/sdk-python/proto/context_bus.proto`, a copy of `packages/sdk/proto/context_bus.proto` that must be kept in sync by hand. Regenerate it with `packages/sdk-python/scripts/gen_proto.sh`, which runs `python3 -m grpc_tools.protoc` (from `grpcio-tools`). Don't use a system `protoc`: it can be newer than the `protobuf` runtime on PyPI, and the generated code then fails to import with `VersionError: Detected incompatible Protobuf Gencode/Runtime versions`.
