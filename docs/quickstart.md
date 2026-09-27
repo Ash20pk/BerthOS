@@ -130,9 +130,9 @@ berth deploy --fleet=e2b          # or --fleet=daytona, --fleet=k8s, or an alias
 
 ## Releasing
 
-Releases are cut from GitHub, never from a laptop: **Actions → Release → Run workflow**, enter a version (`x.y.z`), and leave *dry run* ticked to rehearse. `.github/workflows/release.yml` sets that version on all 15 public `@berthos/*` npm packages and on the `berthos-sdk` and `berthos-agents` Python packages in lockstep (`scripts/set-version.mjs`), runs the same build, lint and test gate as every PR, and packs the exact files to publish. A dry run stops there. A real run then pushes a `chore(release): vx.y.z` commit and a `vx.y.z` tag to `main`, publishes the packed files to npm (with provenance) and PyPI (trusted publishing), and creates a GitHub Release with generated notes and an SBOM attached. If a publish step fails after the tag is pushed, **Re-run failed jobs** on the same run: both registries skip versions already published.
+Releases are cut from GitHub, never from a laptop: **Actions → Release → Run workflow**, enter a version (`x.y.z`), and leave *dry run* ticked to rehearse. `.github/workflows/release.yml` sets that version on the 12 public `@berthos/*` npm packages and the `berthos-sdk` Python package in lockstep (`scripts/set-version.mjs`), runs the same build, lint and test gate as every PR, and packs the exact files to publish. A dry run stops there. A real run then pushes a `chore(release): vx.y.z` commit and a `vx.y.z` tag to `main`, publishes the packed files to npm (with provenance) and PyPI (trusted publishing), and creates a GitHub Release with generated notes and an SBOM attached. If a publish step fails after the tag is pushed, **Re-run failed jobs** on the same run: both registries skip versions already published.
 
-Nothing has been published yet. The first real run needs two one-time settings the workflow can't make itself: an `NPM_TOKEN` repository secret with publish rights to the `@berthos` scope, and a PyPI trusted publisher on each Python project pointing at `release.yml` and the `pypi` environment. Both are described at the top of the workflow file.
+Nothing has been published yet. The first real run needs two one-time settings the workflow can't make itself: an `NPM_TOKEN` repository secret with publish rights to the `@berthos` scope, and a PyPI trusted publisher on `berthos-sdk` pointing at `release.yml` and the `pypi` environment. Both are described at the top of the workflow file.
 
 ## CLI reference
 
@@ -161,15 +161,11 @@ Run `berth <command> --help` to see the flags. A few of these deserve their own 
 `berth eval`, `berth agent run` and `berth crew run` are the only commands that need
 the agent framework, and `@berthos/cli` does not depend on it. Installing the CLI
 gets you the sandbox and its evidence — `dev`, `mcp`, `doctor`, `attest`, `os`,
-`snapshot` — not an LLM framework and its provider tree. `@berthos/agents` is an
-optional peer dependency:
-
-```bash
-npm install @berthos/agents     # only for eval / agent run / crew run
-```
-
-Run one of those three without it and the CLI says exactly that, with the
-install line — not a module-resolution trace.
+`snapshot` — not an LLM framework and its provider tree. The framework
+(`@berthos/agents`) is experimental and not published, so those three commands work
+from a clone of this repository, where it is built alongside the CLI. Run one of them
+from an installed CLI and it says exactly that, rather than printing a
+module-resolution trace.
 
 ## Repository layout
 

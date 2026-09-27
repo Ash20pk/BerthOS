@@ -7,8 +7,10 @@
 
 The Python half of [Berth](https://github.com/Ash20pk/BerthOS)'s agent framework: a provider-agnostic `Agent` tool-use loop and six of `@berthos/agents`' seven `Crew` composition shapes (all but `networked`), mirroring the TypeScript package field-for-field where it covers the same ground.
 
+Not published to PyPI: this package is experimental, and releases ship the sandbox only. Install it from a clone of the repository:
+
 ```bash
-pip install berthos-agents
+pip install -e experimental/agents-python
 ```
 
 ```python

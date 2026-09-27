@@ -2,8 +2,10 @@ name: Release
 
 # One-click release: Actions → Release → Run workflow, type a version.
 #
-# Every published package moves in lockstep: the 15 public @berthos/* npm
-# packages and the two Python packages (berthos-sdk, berthos-agents). The
+# What ships is the sandbox: the 12 public @berthos/* npm packages and the
+# Python SDK (berthos-sdk), all in lockstep. The agent framework under
+# experimental/ (@berthos/agents, the seam-* adapters, berthos-agents) is
+# experimental and is not released: its npm packages are private. The
 # `prepare` job sets the version everywhere (scripts/set-version.mjs), runs the
 # same build/lint/test gate as every PR, and packs the exact files to publish.
 # The publish jobs upload those files and nothing else, so what ships is what
@@ -21,9 +23,9 @@ name: Release
 #   - npm: an automation token with publish rights to the @berthos scope,
 #     stored as the NPM_TOKEN repository secret.
 #   - PyPI: a trusted publisher (https://docs.pypi.org/trusted-publishers/) on
-#     each of "berthos-sdk" and "berthos-agents", pointing at this repository,
-#     workflow file release.yml, and environment "pypi". PyPI accepts a
-#     "pending" publisher for a project that does not exist yet.
+#     "berthos-sdk", pointing at this repository, workflow file release.yml,
+#     and environment "pypi". PyPI accepts a "pending" publisher for a project
+#     that does not exist yet.
 on:
   workflow_dispatch:
     inputs:
@@ -106,12 +108,6 @@ jobs:
       - run: pnpm lint
       - run: pnpm test
 
-      - name: Test berthos-agents
-        working-directory: experimental/agents-python
-        run: |
-          pip install ".[dev]"
-          pytest
-
       - name: Pack the npm packages
         run: |
           mkdir -p dist/npm
@@ -128,18 +124,16 @@ jobs:
           done
           ls dist/npm
           count=$(ls dist/npm/*.tgz | wc -l)
-          if [ "$count" -ne 15 ]; then
-            echo "::error::Expected 15 npm tarballs, packed ${count}. If a package was added or made private on purpose, update this count."
+          if [ "$count" -ne 12 ]; then
+            echo "::error::Expected 12 npm tarballs, packed ${count}. If a package was added or made private on purpose, update this count."
             exit 1
           fi
 
-      - name: Build the Python packages
+      - name: Build the Python SDK
         run: |
           pip install build twine
           mkdir -p dist/pypi
-          for dir in packages/sdk-python experimental/agents-python; do
-            python -m build --outdir dist/pypi "$dir"
-          done
+          python -m build --outdir dist/pypi packages/sdk-python
           twine check dist/pypi/*
           ls dist/pypi
 

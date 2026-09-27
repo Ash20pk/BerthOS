@@ -28,10 +28,11 @@ What is here drives an LLM against that sandbox:
   supported way to put a richer agent loop on top of Berth is the sandbox's
   own seams: `berth mcp`, `toAiSdkTools`/`toLangChainTools`, the HTTP RPC
   bridge, or the SDK directly.
-- **Optional to install.** `@berthos/cli` treats `@berthos/agents` as an
-  optional peer, loaded on demand by `berth agent run`, `berth crew run` and
-  `berth eval`; installing the thing that holds the kernel boundary does not
-  pull in an LLM framework.
+- **Not released.** These packages are private on npm and unpublished on
+  PyPI; releases ship the sandbox only. They are used from a clone of this
+  repository: `berth agent run`, `berth crew run` and `berth eval` load
+  `@berthos/agents` on demand there, and an installed `@berthos/cli` says so
+  instead of pulling in an LLM framework.
 
 Everything else that used to sit here — the deploy adapters, the app registry,
 the mesh coordinator — is back in `packages/`, because each one exists to run

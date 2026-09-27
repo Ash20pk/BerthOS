@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Sets one version on everything the release workflow publishes, in lockstep:
-// every non-private workspace package.json, the root package.json, and the two
-// Python packages' pyproject.toml. Run by .github/workflows/release.yml; safe
+// every non-private workspace package.json, the root package.json, and the
+// Python SDK's pyproject.toml. The agent framework under experimental/ is
+// private on npm and unpublished on PyPI, so it keeps its own version. Run by .github/workflows/release.yml; safe
 // to run locally to see what a release would change (it only edits files).
 //
 //   node scripts/set-version.mjs 0.2.0            # write
@@ -14,7 +15,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join, relative } from "node:path";
 
-const PYPROJECTS = ["packages/sdk-python/pyproject.toml", "experimental/agents-python/pyproject.toml"];
+const PYPROJECTS = ["packages/sdk-python/pyproject.toml"];
 // Plain x.y.z only. A pre-release would need two spellings (npm's 0.2.0-rc.1,
 // PEP 440's 0.2.0rc1) and an npm dist-tag other than latest; not worth it yet.
 const SEMVER = /^\d+\.\d+\.\d+$/;
