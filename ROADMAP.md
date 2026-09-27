@@ -9,7 +9,7 @@ Want to take something on? Open an issue saying which item, or comment on the on
 | Area | What you get | Docs |
 |---|---|---|
 | **Kernel-enforced sandbox** | A `berth.yml` capability list compiled into a Landlock and seccomp policy, applied before the tool's first line runs. Files, outbound network, raw sockets and namespaces are denied unless declared, and every app runs as its own uid. | [Enforcement](./docs/kernel-enforcement.md) |
-| **Works with your agent** | An MCP server for Claude Code, Claude Desktop, Cursor or any MCP client, plus tool adapters for the Vercel AI SDK and LangChain. | [MCP quickstart](./docs/mcp-quickstart.md) |
+| **Works with your agent** | An MCP server for Claude Code, Claude Desktop, Cursor or any MCP client, plus tool adapters for the Vercel AI SDK and LangChain (from a clone for now). | [MCP quickstart](./docs/mcp-quickstart.md) |
 | **Resident apps** | Build a tool as a manifest plus a handler, in TypeScript or Python. First-party apps: filesystem, shell, browser, code interpreter, GitHub, notes. | [Resident apps](./docs/resident-apps.md) |
 | **Scoped network access** | An egress proxy that scopes browsing by hostname, and a GitHub proxy that scopes API calls by method and path. | [Egress](./docs/egress-broker-reference.md) · [GitHub](./docs/github-api-scoping-reference.md) |
 | **Evidence** | `berth doctor` checks whether a host can enforce anything, a hash-chained audit trail records what happened, and `berth attest` produces a per-run record of the enforcement that was measured. | [Doctor](./docs/doctor-reference.md) · [Audit](./docs/audit-reference.md) · [Attestation](./docs/attestation-reference.md) |
@@ -21,7 +21,7 @@ Want to take something on? Open an issue saying which item, or comment on the on
 
 What's being worked on first.
 
-- **First npm and PyPI release.** Publish `@berthos/*`, `berthos-sdk` and `berthos-agents`, so `npm install -g @berthos/cli` is the way in, not a clone.
+- **First npm and PyPI release.** Publish the sandbox (`@berthos/*` on npm, `berthos-sdk` on PyPI), so `npm install -g @berthos/cli` is the way in, not a clone.
 - **A standalone sandbox package.** `Computer` and the framework adapters (`toAiSdkTools`, `toLangChainTools`, `toToolSpecs`) move out of the agent framework into their own package, so embedding Berth in an existing TypeScript agent doesn't mean installing a framework.
 - **A smoother first run on macOS.** Get from `berth doctor --fix` to a real kernel denial in one step, with no Docker setup to understand first.
 

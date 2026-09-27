@@ -86,7 +86,7 @@ Setup for Claude Desktop, Cursor and Colima: [MCP quickstart](./docs/mcp-quickst
 
 ### Your own tool-calling loop
 
-Boot a sandbox, hand its tools to the loop you already run:
+Boot a sandbox, hand its tools to the loop you already run. This path works from a clone for now: `Computer` and the adapters live in the experimental agent framework, which isn't published. Moving them into their own package is [on the roadmap](./ROADMAP.md#now).
 
 ```ts
 import { openai } from "@ai-sdk/openai";
@@ -184,7 +184,7 @@ Every subsystem has a reference page in [`docs/`](./docs). The manifest format a
 
 ## Status
 
-Early, and built by one maintainer, so expect APIs to move before 1.0. Packages publish to npm under `@berthos/*` (`npm install -g @berthos/cli`); the first-party apps and the demos live in this repo. The unrelated `@berth/*` packages on npm belong to a different project.
+Early, and built by one maintainer, so expect APIs to move before 1.0. The sandbox publishes to npm as `@berthos/*` (`npm install -g @berthos/cli`) and to PyPI as `berthos-sdk`; the first-party apps, the demos and the experimental agent framework live in this repo. The unrelated `@berth/*` packages on npm belong to a different project.
 
 Something not working? Run `berth doctor` first; it answers most "it built but nothing was enforced" reports in one line. Then [file a bug](./.github/ISSUE_TEMPLATE/bug_report.md), send [workflow feedback](./.github/ISSUE_TEMPLATE/workflow_feedback.md), or [pitch a resident app](./.github/ISSUE_TEMPLATE/resident_app_proposal.md). [CONTRIBUTING.md](./CONTRIBUTING.md) has the wishlist.
 
