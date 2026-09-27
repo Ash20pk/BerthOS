@@ -149,6 +149,24 @@ jobs:
           npm install --no-audit --no-fund "$GITHUB_WORKSPACE"/dist/npm/*.tgz
           npx --no-install berth --version
 
+      # Then use it: scaffold an app with the packed CLI and build a real
+      # production image with `berth test`. That is the first thing a user
+      # does after installing, and it needs everything the image build takes
+      # from the package (0.2.2 couldn't: the daemon sources it compiles were
+      # never shipped). The app's @berthos/sdk points at the packed tarball,
+      # since this version isn't on the registry yet.
+      - name: Build an app image with the packed packages
+        run: |
+          smoke="$RUNNER_TEMP/install-check"
+          berth="$smoke/node_modules/.bin/berth"
+          cd "$smoke"
+          "$berth" init smoke-app --template hello-world || true
+          cd smoke-app
+          npm pkg set "dependencies.@berthos/sdk=file:$(ls "$GITHUB_WORKSPACE"/dist/npm/berthos-sdk-*.tgz)"
+          npm install --no-audit --no-fund
+          npm run build
+          "$berth" test
+
       - name: Build the Python SDK
         run: |
           pip install build twine
