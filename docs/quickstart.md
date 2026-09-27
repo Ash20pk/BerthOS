@@ -1,10 +1,10 @@
 # Quickstart
 
-Clone-to-running, plus the CLI surface and the repository map. If you want the
-resident-app-authoring walkthrough instead, that's
-[docs/getting-started.md](./getting-started.md); if you want to know whether your
-host can enforce anything, that's
-[docs/kernel-enforcement.md](./kernel-enforcement.md).
+Clone-to-running, plus the CLI surface and the repository map. If you only want
+to use Berth from an agent you already run, start with
+[the MCP quickstart](./mcp-quickstart.md) instead — one command in your MCP
+client's config, no code. If you want to know whether your host can enforce
+anything, that's [docs/kernel-enforcement.md](./kernel-enforcement.md).
 
 ## Prerequisites
 
@@ -85,12 +85,29 @@ Container started. Watching .../examples/resident-apps/hello-world/src and berth
 
 Edit `src/index.ts` and save. The container restarts on its own — `on_install` is baked into the image at build time, so a restart never re-runs it and this stays fast.
 
-Want a live browser you can actually watch? `apps/browser-native` declares `browser:navigate:*`, so `berth dev` prints a noVNC URL you can open in a tab and watch the sandboxed Chromium instance live.
+`hello-world` declares zero capabilities. `apps/notes` is the next step up: a stateful resident app (`add_note`/`list_notes`/`complete_note`, persisted to a JSON file) that declares `filesystem:write:/workspace` and publishes to the context bus on every write. Run it the same way, call an export with `berth rpc` or from an MCP client, and a write outside `/workspace` is refused by the kernel, not by convention.
+
+```bash
+cd apps/notes
+pnpm exec berth dev
+```
+
+Want a live browser you can actually watch? `apps/browser-native` declares `browser:navigate:*`, so `berth dev` prints a noVNC URL:
 
 ```bash
 cd apps/browser-native
 pnpm exec berth dev
 ```
+
+```
+[berth:dev] noVNC:    http://127.0.0.1:<port>/vnc.html
+[berth:dev] VNC:      127.0.0.1:<port>
+[berth:dev]           password: <generated per boot>
+```
+
+Open the noVNC URL, enter that password, and you're watching the sandboxed Chromium instance live. Both ports are published on `127.0.0.1` only and the password is fresh on every boot — a live view of your agent's browser, with mouse and keyboard control, is not something to leave open to your LAN ([threat model](./threat-model.md)).
+
+More apps to run the same way: [`apps/activity-feed`](../apps/activity-feed) fans in context-bus events from `filesystem` and `notes` (several containers composed purely over the bus, no direct RPC), and [`apps/terminal`](../apps/terminal) is a shared `tmux` shell the agent drives and a human can watch and type into over the web (`ttyd`), inheriting whatever capabilities `terminal` declares.
 
 ## Scaffold your own resident app
 
@@ -100,7 +117,7 @@ cd my-app
 pnpm exec berth dev
 ```
 
-`berth init` asks for a name and a starting template (`hello-world` or `browser-native`), scaffolds `berth.yml` plus SDK boilerplate, runs `pnpm install`, and validates the manifest before handing control back to you. Pass `--template` to skip the prompt, or `--registry=<url>` to scaffold from a published app instead of a bundled template. Check [Resident apps](./resident-apps.md) for the full anatomy of what just got scaffolded.
+`berth init` asks for a name and a starting template (`hello-world` or `browser-native`), scaffolds `berth.yml` plus SDK boilerplate, runs `pnpm install`, and validates the manifest before handing control back to you. Pass `--template` to skip the prompt, or `--registry=<url>` to scaffold from a published app instead of a bundled template ([app registry](./app-registry-reference.md)). Check [Resident apps](./resident-apps.md) for the full anatomy of what just got scaffolded, [manifest-reference.md](./manifest-reference.md) for the full `berth.yml` schema, and [sdk-reference.md](./sdk-reference.md) for the SDK.
 
 ## Testing and deploying
 
@@ -137,7 +154,7 @@ berth deploy --fleet=e2b          # or --fleet=daytona, --fleet=k8s, or an alias
 | `berth fleet scale <fleet> --count=<n>` | Manually scale this app's instances on a fleet up or down to a target count — not automatic load-based autoscaling |
 | `berth os up\|down\|status` | Boot a long-lived Berth OS once, then reconnect to it instantly instead of rebuilding on every dev iteration |
 
-Run `berth <command> --help` to see the flags. A few of these deserve their own doc: [MCP bridge](./mcp-bridge-reference.md), [app registry](./app-registry-reference.md), [computer snapshots](./computer-snapshots-reference.md), [capability tokens and grants](./capability-tokens-reference.md), [K8s adapter](./k8s-adapter-reference.md), [what is a Berth OS](./berth-os.md), and [the `berth os` command reference for cold start](./berth-os-reference.md).
+Run `berth <command> --help` to see the flags. A few of these deserve their own doc: [MCP bridge](./mcp-bridge-reference.md), [app registry](./app-registry-reference.md), [computer snapshots](./computer-snapshots-reference.md), [capability enforcement](./capability-tokens-reference.md), [K8s adapter](./k8s-adapter-reference.md), and [Berth OS and `berth os`](./berth-os-reference.md).
 
 `berth eval`, `berth agent run` and `berth crew run` are the only commands that need
 the agent framework, and `@berthos/cli` does not depend on it. Installing the CLI
