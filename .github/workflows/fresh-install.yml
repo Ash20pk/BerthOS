@@ -8,9 +8,10 @@ name: Fresh install
 # ubuntu-latest's kernel enforces Landlock, so `berth doctor` must say ACTIVE
 # here and `berth test` runs under a production image with enforcement
 # required.
+#
+# Run it after a release: Actions → Fresh install → Run workflow, with the
+# version just published (or "latest").
 on:
-  push:
-    branches: [ci/fresh-install-check]
   workflow_dispatch:
     inputs:
       version:
@@ -76,6 +77,8 @@ jobs:
   pypi:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      VERSION: ${{ inputs.version || 'latest' }}
     steps:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
@@ -83,5 +86,5 @@ jobs:
 
       - name: Install berthos-sdk from PyPI and import it
         run: |
-          pip install berthos-sdk
+          if [ "$VERSION" = latest ]; then pip install berthos-sdk; else pip install "berthos-sdk==${VERSION}"; fi
           python -c "import berth_sdk, importlib.metadata as m; print('berthos-sdk', m.version('berthos-sdk'))"
