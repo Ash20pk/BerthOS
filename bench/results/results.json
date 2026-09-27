@@ -285,7 +285,7 @@
         },
         "secret-in-metadata": {
           "outcome": "contained",
-          "detail": "the secret is absent from container metadata — delivered through a 0600 file bind, not Env (REMEDIATION 5.5)"
+          "detail": "the secret is absent from container metadata — delivered through a 0600 file bind, not Env"
         },
         "published-port-exposure": {
           "outcome": "contained",
@@ -403,7 +403,7 @@
         },
         "secret-in-metadata": {
           "outcome": "contained",
-          "detail": "the secret is absent from container metadata — delivered through a 0600 file bind, not Env (REMEDIATION 5.5)"
+          "detail": "the secret is absent from container metadata — delivered through a 0600 file bind, not Env"
         },
         "published-port-exposure": {
           "outcome": "contained",

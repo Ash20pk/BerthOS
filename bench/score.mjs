@@ -8,7 +8,7 @@
 //     themselves and excluded from the denominator, and the count of each is
 //     printed next to the score so a column that measured three rows cannot
 //     look like a column that measured eleven.
-//   - a row Berth fails stays red and links its REMEDIATION item.
+//   - a row Berth fails stays red and names its open gap.
 //   - `berthNote` from checks.mjs is printed under the table whether or not
 //     the cell passed — a pass resting on an unfinished mechanism says so.
 
