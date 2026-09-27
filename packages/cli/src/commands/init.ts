@@ -13,6 +13,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { loadManifest } from "@berthos/manifest-schema";
+import { sdkDependency } from "../util/sdk-dependency.js";
 
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -105,32 +106,28 @@ export default class Init extends Command {
 }
 
 /**
- * Vendors @berthos/sdk's self-contained external bundle (built by
- * packages/sdk/scripts/build-external.mjs) into the scaffolded project and
- * points its package.json at the vendored copy via a `file:` dependency,
- * replacing whatever was there ("^0.1.0" in local templates, "workspace:*"
- * in a real first-party app pulled from the registry) — neither resolves
- * once `targetDir` is copied somewhere outside this monorepo's pnpm
- * workspace, which is exactly the case this exists to cover.
+ * Points the scaffolded project's `@berthos/sdk` dependency at something that
+ * installs outside this monorepo: the vendored SDK bundle when the CLI runs
+ * from a checkout, or the published SDK at the CLI's own version when it was
+ * installed from npm (see util/sdk-dependency.ts). The templates' placeholder
+ * range ("^0.1.0", or "workspace:*" in a first-party app pulled from the
+ * registry) is always replaced.
  */
 async function vendorSdk(targetDir: string): Promise<void> {
   const sdkEntryPath = fileURLToPath(import.meta.resolve("@berthos/sdk"));
   const sdkPkgRoot = dirname(dirname(sdkEntryPath)); // dist/index.js -> dist -> package root
-  const tarballPath = join(sdkPkgRoot, "dist-external", "berth-sdk.tgz");
-  if (!existsSync(tarballPath)) {
-    throw new Error(
-      `@berthos/sdk's external bundle not found at ${tarballPath} — run \`pnpm --filter @berthos/sdk build\` first; skipping SDK vendoring`,
-    );
-  }
+  const { spec, tarballPath } = sdkDependency(sdkPkgRoot);
 
-  const vendorDir = join(targetDir, "vendor");
-  await mkdir(vendorDir, { recursive: true });
-  await cp(tarballPath, join(vendorDir, "berth-sdk.tgz"));
+  if (tarballPath) {
+    const vendorDir = join(targetDir, "vendor");
+    await mkdir(vendorDir, { recursive: true });
+    await cp(tarballPath, join(vendorDir, "berth-sdk.tgz"));
+  }
 
   const pkgJsonPath = join(targetDir, "package.json");
   const pkgJson = JSON.parse(await readFile(pkgJsonPath, "utf-8")) as { dependencies?: Record<string, string> };
   if (pkgJson.dependencies?.["@berthos/sdk"]) {
-    pkgJson.dependencies["@berthos/sdk"] = "file:./vendor/berth-sdk.tgz";
+    pkgJson.dependencies["@berthos/sdk"] = spec;
     await writeFile(pkgJsonPath, JSON.stringify(pkgJson, null, 2) + "\n");
   }
 
