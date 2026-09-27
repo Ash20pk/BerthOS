@@ -1,0 +1,258 @@
+name: Release
+
+# One-click release: Actions → Release → Run workflow, type a version.
+#
+# Every published package moves in lockstep: the 15 public @berthos/* npm
+# packages and the two Python packages (berthos-sdk, berthos-agents). The
+# `prepare` job sets the version everywhere (scripts/set-version.mjs), runs the
+# same build/lint/test gate as every PR, and packs the exact files to publish.
+# The publish jobs upload those files and nothing else, so what ships is what
+# was tested.
+#
+# dry_run (the default) does all of that and stops: no commit, no tag, no
+# upload, no GitHub Release. With dry_run off, `prepare` pushes a
+# "chore(release): vX.Y.Z" commit and the vX.Y.Z tag to main, and that push is
+# the point of no return — it happens after the gate passes and before anything
+# is uploaded, so a failed gate leaves nothing behind. If a publish job fails
+# after that, use "Re-run failed jobs" on the same run: both publish steps skip
+# versions that are already on their registry.
+#
+# One-time setup this workflow depends on but can't do itself:
+#   - npm: an automation token with publish rights to the @berthos scope,
+#     stored as the NPM_TOKEN repository secret.
+#   - PyPI: a trusted publisher (https://docs.pypi.org/trusted-publishers/) on
+#     each of "berthos-sdk" and "berthos-agents", pointing at this repository,
+#     workflow file release.yml, and environment "pypi". PyPI accepts a
+#     "pending" publisher for a project that does not exist yet.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, x.y.z (no leading v)"
+        required: true
+        type: string
+      dry_run:
+        description: "Dry run: build, test and pack, but push, tag and publish nothing"
+        type: boolean
+        default: true
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write # push the release commit and tag
+    outputs:
+      tag: v${{ inputs.version }}
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Refuse anything but main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Releases are cut from main; this run is on ${GITHUB_REF}."
+          exit 1
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # tags, for the already-released check
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 10.21.0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Check the version
+        run: |
+          if git rev-parse -q --verify "refs/tags/v${VERSION}" >/dev/null; then
+            echo "::error::v${VERSION} is already tagged."
+            exit 1
+          fi
+          # Must move forward from what main says now. sort -V orders x.y.z
+          # numerically, so 0.10.0 sorts after 0.9.0.
+          current=$(node -p "require('./package.json').version")
+          highest=$(printf '%s\n%s\n' "$current" "$VERSION" | sort -V | tail -1)
+          if [ "$VERSION" = "$current" ] || [ "$highest" != "$VERSION" ]; then
+            echo "::error::${VERSION} is not newer than the current version, ${current}."
+            exit 1
+          fi
+
+      - run: pnpm install --frozen-lockfile
+
+      # Validates the version's shape too, before writing anything.
+      - run: node scripts/set-version.mjs "$VERSION"
+
+      # Internal dependencies are workspace: links, so the bump must leave the
+      # lockfile exactly as it was.
+      - run: pnpm install --frozen-lockfile
+
+      # Same gate build-lint-test.yml runs on every PR.
+      - run: pnpm build
+      - run: pnpm lint
+      - run: pnpm test
+
+      - name: Test berthos-agents
+        working-directory: experimental/agents-python
+        run: |
+          pip install ".[dev]"
+          pytest
+
+      - name: Pack the npm packages
+        run: |
+          mkdir -p dist/npm
+          # pnpm pack rewrites workspace: dependencies to the version just set,
+          # which is why the tarballs are packed here rather than by npm.
+          pnpm -r ls --depth -1 --json | node -e '
+            let d = ""; process.stdin.on("data", (c) => (d += c)).on("end", () => {
+              for (const p of JSON.parse(d)) {
+                const m = require(p.path + "/package.json");
+                if (!m.private && p.path !== process.cwd()) console.log(p.path);
+              }
+            })' | while read -r dir; do
+            (cd "$dir" && pnpm pack --pack-destination "$GITHUB_WORKSPACE/dist/npm")
+          done
+          ls dist/npm
+          count=$(ls dist/npm/*.tgz | wc -l)
+          if [ "$count" -ne 15 ]; then
+            echo "::error::Expected 15 npm tarballs, packed ${count}. If a package was added or made private on purpose, update this count."
+            exit 1
+          fi
+
+      - name: Build the Python packages
+        run: |
+          pip install build twine
+          mkdir -p dist/pypi
+          for dir in packages/sdk-python experimental/agents-python; do
+            python -m build --outdir dist/pypi "$dir"
+          done
+          twine check dist/pypi/*
+          ls dist/pypi
+
+      # SBOM of exactly the tree being released, attached to the GitHub Release.
+      - name: Generate SBOM
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        with:
+          path: .
+          format: spdx-json
+          output-file: dist/berth-sbom.spdx.json
+          upload-artifact: false
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-${{ inputs.version }}
+          path: dist/
+          if-no-files-found: error
+
+      - name: Commit and tag
+        run: |
+          # Attributed to whoever pressed the button.
+          git config user.name "${GITHUB_ACTOR}"
+          git config user.email "${GITHUB_ACTOR_ID}+${GITHUB_ACTOR}@users.noreply.github.com"
+          # The bump is the only change allowed into this commit; a build or
+          # test step that rewrote a tracked file must not ride along.
+          unexpected=$(git diff --name-only | grep -vE '(^|/)(package\.json|pyproject\.toml)$' || true)
+          if [ -n "$unexpected" ]; then
+            echo "::error::Tracked files changed outside the version bump:"
+            echo "$unexpected"
+            exit 1
+          fi
+          git commit -am "chore(release): v${VERSION}"
+          git tag -a "v${VERSION}" -m "v${VERSION}"
+          git show --stat HEAD
+
+      - name: Push the release commit and tag
+        if: ${{ !inputs.dry_run }}
+        run: git push --atomic origin HEAD:main "v${VERSION}"
+
+  npm:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write # npm provenance
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-${{ inputs.version }}
+          path: dist
+
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          for tgz in dist/npm/*.tgz; do
+            name=$(tar -xOzf "$tgz" package/package.json | node -p 'JSON.parse(require("fs").readFileSync(0)).name')
+            if [ "$DRY_RUN" != "true" ] && npm view "${name}@${VERSION}" version >/dev/null 2>&1; then
+              echo "${name}@${VERSION} is already published; skipping."
+              continue
+            fi
+            if [ "$DRY_RUN" = "true" ]; then
+              npm publish "$tgz" --access public --dry-run
+            else
+              npm publish "$tgz" --access public --provenance
+            fi
+          done
+
+  pypi:
+    needs: prepare
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: pypi
+    permissions:
+      id-token: write # trusted publishing
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-${{ inputs.version }}
+          path: dist
+
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: dist/pypi
+          skip-existing: true
+
+  github-release:
+    needs: [prepare, npm, pypi]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-${{ inputs.version }}
+          path: dist
+
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "$TAG" --generate-notes dist/berth-sbom.spdx.json
