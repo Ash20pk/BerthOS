@@ -96,6 +96,12 @@ internally consistent.
   probed. It is still a probe of the host *now* rather than of the attested
   boot; what it rules out is a cached claim standing in for a measurement.
   Fixed 2026-08-29; before that, attestation read the cache.
+- **It does not say whether the chain was pruned.** Once rotation has
+  deleted the genesis segment, `berth attest` walks from the oldest record
+  still on disk and warns on stderr that earlier segments are gone (see
+  [audit-reference.md](./audit-reference.md#operational-notes)'s rotation
+  notes). The record itself has no field for that yet, so a record emitted
+  over a truncated chain looks the same as one over a complete chain.
 - **It is not a signature.** Nothing here involves keys. `recordSha256`
   detects edits; it does not identify an author. Signing (and a
   counter-signed public chain head) is future work, deliberately not claimed.

@@ -65,8 +65,8 @@ export default class Attest extends Command {
       // `berth attest` unusable on a long-lived install. But it is also
       // indistinguishable from someone deleting the early segments, so it is
       // said out loud on stderr rather than passed over. The record itself
-      // cannot yet carry this — see docs/attestation-reference.md and the
-      // spec-field note in docs/internal/execution-plan.md.
+      // cannot yet carry this — see docs/audit-reference.md (rotation) and
+      // docs/attestation-reference.md.
       this.warn(
         `the audit chain's oldest held record names predecessor ${chain.startedFrom.slice(0, 16)}…, which is not on disk — earlier segments were pruned by rotation (or removed). The ${chain.totalRecords} records held verify cleanly from that point; the attestation covers only those.`,
       );
