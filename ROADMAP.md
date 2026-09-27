@@ -1,47 +1,63 @@
 # Roadmap
 
-Berth was built against an original 5-phase plan. All five phases have at least an initial, milestone-tested implementation today, plus several things beyond the original scope. This page is the one place to check "is X real yet" instead of piecing it together from commit history.
+Berth's goal is simple to state: any agent, on any framework, should be able to run its tools behind permissions the kernel enforces, and prove afterwards that it did. This page is what works today, what we're building next, and where you can help.
 
-"Milestone-tested" below means there's a Docker-backed integration test (a `*-milestone.mjs` under `packages/*/test/`, `experimental/agents/test/` or `breakout/test/`) wired into its own CI workflow under `.github/workflows/`, not just a unit test. See [CONTRIBUTING.md](./CONTRIBUTING.md) for how to run them locally.
+Want to take something on? Open an issue saying which item, or comment on the one that exists, before you start. [CONTRIBUTING.md](./CONTRIBUTING.md) covers setup and how PRs land.
 
-## Original 5 phases — all shipped, varying depth
+## Available today
 
-| Phase | What it is | Status |
+| Area | What you get | Docs |
 |---|---|---|
-| 1 | Base runtime: `berth init` → `berth dev`, resident app model, manifest schema | Shipped. This is the pilot workflow — see the [Workflow feedback](./.github/ISSUE_TEMPLATE/workflow_feedback.md) template if you hit friction here |
-| 2 | Context bus: pub/sub between resident apps in one Berth OS | Shipped, milestone-tested. [docs/context-bus-reference.md](./docs/context-bus-reference.md) lists known Phase 2 scope limits |
-| 3 | Capability tokens: kernel-enforced (Landlock) permissions, denied by default | Shipped, milestone-tested — **with a caveat**: Landlock enforcement needs a real Linux LSM stack. Docker Desktop for Mac's linuxkit VM doesn't have it active, so a green local run isn't proof of enforcement. Run `berth doctor`, which answers this per host in one line, and read [docs/capability-tokens-reference.md](./docs/capability-tokens-reference.md)'s verification section before trusting this anywhere you haven't checked. On macOS there is now a supported host where enforcement is real: [docs/mac-enforcement.md](./docs/mac-enforcement.md) — Colima's default kernel, verified `enforcement: ACTIVE` with the full capability-denial suite passing |
-| 4 | Semantic filesystem: search `/context` by what a file is *for*, not just by path | Shipped, milestone-tested — the search ranks over the `task`/`relatedApps`/`path` text you tag a file with, not over file content, and does a full table scan per query. [docs/semantic-fs-reference.md](./docs/semantic-fs-reference.md#query-semantics--hybrid-keyword--embedding-similarity) states both limits |
-| 5 | App registry: publish/discover/install resident apps (`berth publish`) | Shipped. `packages/cli/test/registry-milestone.mjs` is a real integration test, but unlike the phases above, it isn't wired into any `.github/workflows/*.yml` — it doesn't run in CI yet. Not yet paired with a public hosted registry either — `berth publish --registry=<url>` targets a registry you run yourself today |
+| **Kernel-enforced sandbox** | A `berth.yml` capability list compiled into a Landlock and seccomp policy, applied before the tool's first line runs. Files, outbound network, raw sockets and namespaces are denied unless declared, and every app runs as its own uid. | [Enforcement](./docs/kernel-enforcement.md) |
+| **Works with your agent** | An MCP server for Claude Code, Claude Desktop, Cursor or any MCP client, plus tool adapters for the Vercel AI SDK and LangChain. | [MCP quickstart](./docs/mcp-quickstart.md) |
+| **Resident apps** | Build a tool as a manifest plus a handler, in TypeScript or Python. First-party apps: filesystem, shell, browser, code interpreter, GitHub, notes. | [Resident apps](./docs/resident-apps.md) |
+| **Scoped network access** | An egress proxy that scopes browsing by hostname, and a GitHub proxy that scopes API calls by method and path. | [Egress](./docs/egress-broker-reference.md) · [GitHub](./docs/github-api-scoping-reference.md) |
+| **Evidence** | `berth doctor` checks whether a host can enforce anything, a hash-chained audit trail records what happened, and `berth attest` produces a per-run record of the enforcement that was measured. | [Doctor](./docs/doctor-reference.md) · [Audit](./docs/audit-reference.md) · [Attestation](./docs/attestation-reference.md) |
+| **Apps that share state** | Several apps in one sandbox, a pub/sub context bus between them, a filesystem searchable by why each file exists, and snapshot and restore. | [Berth OS](./docs/berth-os-reference.md) |
+| **Run it anywhere** | Local Docker, or deploy the same sandbox to E2B, Daytona or Kubernetes. | [Quickstart](./docs/quickstart.md) · [Kubernetes](./docs/k8s-adapter-reference.md) |
+| **Open specs** | The manifest format and the attestation record as standalone, versioned specs, each with a conformance suite. | [Manifest](./spec/capability-manifest) · [Attestation](./spec/attestation-record) |
 
-## Beyond the original plan
+## Now
 
-Built after the initial 5 phases. Most have their own milestone test and CI workflow; the ones that don't say so.
+What's being worked on first.
 
-- **WireGuard mesh networking** (`network:peer:<name>`) — real mesh, not simulated, coordinated by `mesh-coordinator` and reconciled by `mesh-daemon`. A crash-resilience test (`mesh-coordinator-resilience-milestone.mjs`, proves the tunnel survives a coordinator SIGKILL) is CI-wired too, sharing `.github/workflows/mesh-milestone.yml` with the main mesh test rather than getting its own workflow
-- **Egress broker** — scoped outbound HTTP/browser access by hostname pattern, at the host level
-- **Governance gate** — any app declaring `governs: true` can review other apps' tool calls before they execute
-- **Snapshot / restore** — checkpoint a whole Berth OS (files, semantic-fs tags, context) and restore it, including after a hard crash (`snapshot-crash-milestone.mjs` kills the container with a real `SIGKILL` mid-write)
-- **Deploy adapters** — E2B, Daytona, and Kubernetes, behind one `DeployAdapter` interface
-- **MCP bridge** (`berth mcp`) — expose a resident app's exports as MCP tools, milestone-tested and CI-wired. It's the documented first way in ([docs/mcp-quickstart.md](./docs/mcp-quickstart.md)): one command in an MCP client's config, the sandbox booted by the bridge itself, and a denied tool call answered with the `berth.yml` line that would allow it — attributed to the kernel only where `agent-init` reported an enforced ruleset. No caller authentication yet, and one bridge serves one local app
-- **Python SDK** — wire-compatible with the TypeScript SDK
-- **`@berthos/agents`** — the *reference consumer* of the substrate (`Computer`, `createAgent`, `runAgent`, `Crew`). **Frozen**: bug and security fixes only, no new framework features — Berth is a substrate, not an agent framework; see [CONTRIBUTING.md](./CONTRIBUTING.md#the-agents-packages-are-frozen). `Computer`'s milestone tests run in CI credential-free; `Crew`'s (`crew-manager-`, `crew-networked-`, `provider-swap-milestone.mjs`) need real LLM API keys and are intentionally not run there — see `docs/agents-reference.md`
-- **`bootNetworkedAgent({fleet})`** — a `Crew.networked()` peer deployed to a remote E2B/Daytona/K8s instance instead of a local Docker container, dispatched over a new per-boot-authenticated HTTP RPC bridge (`@berthos/sdk`'s `startHttpRpcServer`) rather than the mesh or the local Docker-network path. Protocol-level and mocked-adapter coverage only, no live-account or `kind`-cluster milestone test yet — see `docs/agents-reference.md`'s "Networked Crew over a remote fleet" section for exactly what's verified versus reasoned-but-untested
-- **Framework interop** (`toAiSdkTools`, `toLangChainTools`, `toToolSpecs`) — a booted Computer's tools handed to the Vercel AI SDK, LangChain/LangGraph, or any other loop, so Berth's sandbox is reachable without adopting `@berthos/agents`. Both libraries are optional peer dependencies imported dynamically; both adapters are unit-tested against the real package, and the AI SDK one drives a full `generateText` tool-calling loop. `berth mcp` covers the out-of-process case
-- **`berth doctor`** — a behavioural probe of whether *this* host's kernel enforces Landlock (it builds a ruleset that grants nothing and tries a write), plus `--fix` to provision a Colima host on macOS. Unit-tested, no milestone workflow of its own. See [docs/doctor-reference.md](./docs/doctor-reference.md)
-- **Audit trail** (`@berthos/audit`, `berth audit list|verify`) — hash-chained, actor-attributed records of governance verdicts and agent steps. Tamper-evident, not tamper-proof. Unit-tested here; the chain is exercised end-to-end by the attestation milestone. See [docs/audit-reference.md](./docs/audit-reference.md)
-- **Attestation** (`berth attest <runId>`) — a per-run record binding the run's audit-chain slice to the enforcement status measured for its boot, verified by a standalone script. Milestone-tested (`attestation-milestone.yml`, including a negative control that must yield `NOT_ENFORCED`), with the record format specified separately in [spec/attestation-record](./spec/attestation-record). See [docs/attestation-reference.md](./docs/attestation-reference.md)
-- **Capability manifest spec** — the `berth.yml` grammar as a standalone, versioned spec with a conformance suite ([spec/capability-manifest](./spec/capability-manifest)), run in CI by `spec-conformance.yml`
-- **Containment benchmark and break-out box** — [`bench/`](./bench/README.md) runs one probe unmodified under plain Docker, Berth and a weakened Berth (`containment-benchmark.yml`); [`breakout/`](./breakout/README.md) is a public challenge sandbox with a weakened-boot negative control (`breakout-milestone.yml`)
-- **`berth os up`/`down`/`status`** — long-lived Berth OS with instant reconnect, instead of a fresh boot every dev-loop iteration. No milestone test or CI workflow exists for this one yet, unlike the rest of this list
+- **First npm and PyPI release.** Publish `@berthos/*`, `berthos-sdk` and `berthos-agents`, so `npm install -g @berthos/cli` is the way in, not a clone.
+- **A standalone sandbox package.** `Computer` and the framework adapters (`toAiSdkTools`, `toLangChainTools`, `toToolSpecs`) move out of the agent framework into their own package, so embedding Berth in an existing TypeScript agent doesn't mean installing a framework.
+- **A smoother first run on macOS.** Get from `berth doctor --fix` to a real kernel denial in one step, with no Docker setup to understand first.
 
-## Known gaps
+## Next
 
-- Nothing under `@berthos/*` is published to npm yet. Today you build from source (see [Quickstart](./docs/quickstart.md)).
-- Landlock verification has a real gap outside a genuine Linux LSM environment — see Phase 3 above. CI runs on `ubuntu-latest`, which has it; Docker Desktop for Mac's linuxkit kernel doesn't have it at all. On macOS, [docs/mac-enforcement.md](./docs/mac-enforcement.md) is the way out: swap the daemon to Colima and `berth doctor` reports `ACTIVE` rather than `NOT ACTIVE`.
-- No hosted/public app registry — `berth publish` targets a self-run instance.
-- Single maintainer, so review latency varies — see [CONTRIBUTING.md](./CONTRIBUTING.md).
+Planned, and open to contributors now.
 
-## Where contributions help most right now
+- **MCP bridge authentication.** Let `berth mcp` verify who is calling, not just which tools they can reach. *Help wanted.*
+- **One MCP bridge for several apps.** Serve a whole multi-app sandbox from a single `berth mcp`, instead of one bridge per app. *Help wanted.*
+- **Per-app network proxies.** Give each app in a shared sandbox its own egress allowlist, rather than one per sandbox.
+- **More API proxies.** The GitHub proxy's method-and-path scoping, generalised to other APIs (Slack, Linear, Stripe), so an app can be scoped to specific API calls, not just a hostname. *Help wanted.*
+- **Signed attestations.** Sign attestation records and publish their hashes somewhere append-only, so a record proves who produced it, not just that it wasn't edited.
+- **Reconnect to remote sandboxes.** `berth os up` keeps a local sandbox alive and reconnects in milliseconds. Bring the same to sandboxes deployed on E2B, Daytona and Kubernetes.
 
-Resident apps. The core (phases 1–5 plus the extensions above) is deliberately more built-out than the app catalog on top of it. See [CONTRIBUTING.md's wishlist](./CONTRIBUTING.md#resident-apps-wed-love-to-see) for concrete starting points.
+## Later
+
+Direction, not yet scheduled. Design discussion welcome in issues.
+
+- **A public app registry.** Publish and install resident apps from a hosted registry, instead of one you run yourself.
+- **Least privilege for the mesh daemon.** Run the WireGuard daemon without root, and identify callers on its control socket from the kernel rather than from the request.
+- **A sandboxed browser inside the sandbox.** Re-enable Chromium's own sandbox inside Berth's, so a renderer exploit is contained twice.
+- **Content search.** Search `/context` by file contents, not only by the tags an app attached.
+- **Encryption at rest and team identity.** Encrypted agent state and snapshots, and users and roles for the registry and mesh coordinator.
+
+## Build a resident app
+
+The quickest way to make Berth more useful. Each of these is self-contained, needs no changes to Berth itself, and makes a good first contribution:
+
+| App | Scope it should declare |
+|---|---|
+| **Slack** | Post messages and read history in specific channels |
+| **Postgres / SQL** | Query and change specific tables |
+| **Email** | Read, send and search within specific labels or folders |
+| **Linear / Jira** | Read and create issues, like [`github-assistant`](./apps/github-assistant) |
+| **Stripe** | Read-only reporting first |
+| **Calendar** | Read availability, create events |
+| **Playwright QA** | Run a test suite against a site, building on [`browser-native`](./apps/browser-native) |
+
+Start from `berth init my-app`, read [Resident apps](./docs/resident-apps.md), and open a [resident app proposal](./.github/ISSUE_TEMPLATE/resident_app_proposal.md) if you'd like feedback on the scope before writing code.

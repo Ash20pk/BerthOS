@@ -178,7 +178,7 @@ Several apps can share one sandbox, and each keeps its own policy and its own ui
 | [Resident apps](./docs/resident-apps.md) | Building your own tools |
 | [Enforcement](./docs/kernel-enforcement.md) | Every capability and what enforces it, per platform |
 | [Threat model](./docs/threat-model.md) | What holds, against whom, and what's out of scope |
-| [Roadmap](./ROADMAP.md) | What's real today |
+| [Roadmap](./ROADMAP.md) | What works today, what's next, and where to help |
 
 Every subsystem has a reference page in [`docs/`](./docs). The manifest format and the attestation record are also standalone, versioned specs: [capability manifest](./spec/capability-manifest), [attestation record](./spec/attestation-record).
 
