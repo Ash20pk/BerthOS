@@ -1,16 +1,26 @@
 # browser-native
 
-A resident app that gives an agent a real, visible Chromium browser — navigate, click, and read page text, watchable live over VNC while it runs.
+Gives an agent a real Chromium browser that you can watch live over VNC while it works. The agent can search, navigate, click and read page text, and every request goes through a proxy that checks the hostname against the app's `browser:navigate:*` capabilities.
 
-## Exports
+## Run it
 
-| Export | Input | Output | Does |
-|---|---|---|---|
-| `navigate` | `{ url: string }` | — | Navigates the current page to `url` |
-| `click` | `{ selector: string }` | — | Clicks the first element matching `selector` |
-| `get_page_text` | — | `{ text: string }` | Returns `innerText` of `<body>` on the current page |
+```bash
+cd apps/browser-native
+berth dev
+berth test
+```
 
-The browser and page are lazily launched on first use and reused across calls (`src/cdp-controller.ts`).
+`berth` is the CLI: `npm install -g @berthos/cli`, or `node ../../packages/cli/bin/berth.js` from a clone. Because the app declares a `browser:*` capability, `berth dev` prints a noVNC URL and a password:
+
+```
+[berth:dev] noVNC:    http://127.0.0.1:<port>/vnc.html
+[berth:dev] VNC:      127.0.0.1:<port>
+[berth:dev]           password: <generated per boot>
+```
+
+Open the noVNC URL to watch the agent drive the browser. The ports listen on `127.0.0.1` only and the password changes on every boot. Under `berth test` (which sets `BERTH_TEST_MODE=1`), Chromium runs headless and needs no display.
+
+To keep the capability but stop `berth dev` publishing the VNC ports (for example in CI), set `expose: { browser: false }` in `berth.yml`; see the [manifest reference](../../docs/manifest-reference.md).
 
 ## Capabilities
 
@@ -21,20 +31,24 @@ capabilities:
   - network:connect:8090
 ```
 
-Network is deny-by-default, so this app doesn't get a wide-open `network:connect:*`. Instead Chromium is launched with `--proxy-server` pointed at the egress broker's loopback port (8090), and the broker — not the Landlock rule — is what actually enforces `browser:navigate:<pattern>` host-matching. The Landlock grant just makes it impossible for this app to reach anything on the internet directly; it does not itself scope by host (Landlock's network enforcement is port-only). See [docs/egress-broker-reference.md](../../docs/egress-broker-reference.md) and [docs/capability-tokens-reference.md](../../docs/capability-tokens-reference.md).
+Chromium's only route out is the egress proxy on port 8090, and the kernel refuses connections on any other port. The proxy, not the kernel, decides which hostnames are reachable, by matching them against `browser:navigate:<pattern>`: the kernel sees ports, not hostnames. Narrow `browser:navigate:*` to the sites your agent needs, such as `browser:navigate:*.example.com`. See the [egress proxy reference](../../docs/egress-broker-reference.md).
 
-## Running it
+## Exports
 
-```bash
-cd apps/browser-native
-pnpm exec berth dev
-```
+| Export | Input | Output | What it does |
+|---|---|---|---|
+| `navigate` | `{ url }` | | Opens `url` in the current page |
+| `click` | `{ selector }` | | Clicks the element matching `selector` (a Playwright selector, such as CSS) |
+| `get_page_text` | | `{ text }` | Returns the visible text of the page's `<body>` |
+| `search` | `{ query, maxResults? }` | `{ results: { title, url, snippet }[] }` | Searches DuckDuckGo and returns the top results (5 by default) |
 
-Because this app declares a `browser:*` capability, `berth dev` prints a noVNC URL and a per-boot VNC password — open it in a tab to watch the sandboxed Chromium instance live as the agent drives it. The port is bound to `127.0.0.1`.
+The browser starts on the first call and is reused after that. `search` loads `duckduckgo.com`, so it only works when your `browser:navigate:*` patterns allow that host.
 
-In `BERTH_TEST_MODE=1` (set automatically by `berth test`), Chromium launches headless instead of against Xvfb, so no display is required.
+## How it works
 
-## Notes
+- Chromium is the system binary from the base image (`CHROME_BIN`), not Playwright's bundled download.
+- Playwright drives it over a pipe (`--remote-debugging-pipe`), so no DevTools port is open anywhere, including to other apps in the sandbox.
 
-- Chromium is the system binary (`CHROME_BIN`), not Playwright's bundled download — the base image already ships `chromium`/`chromium-chromedriver`.
-- **There is no CDP listener.** Chromium is driven over `--remote-debugging-pipe`, which Playwright sets up itself, so no debugging port is bound anywhere — not on the host, not on the container's loopback, not reachable by a sibling app. It used to bind `9222` on container loopback; that also made Chromium fail to start under a real Landlock policy, since this app declares no bind capability. An unauthenticated CDP endpoint is arbitrary local-file read and a complete bypass of the egress broker, so removing it is a straight improvement.
+## Limits
+
+- One sandbox can hold only one app with a `browser:*` capability.

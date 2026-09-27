@@ -1,87 +1,76 @@
-# Enforcement: what holds, where, and what doesn't
+# Enforcement
 
-The claim Berth makes is narrow and testable: a resident app's declared
-filesystem and network scope is compiled into a kernel policy applied before the
-app's own code runs. This page is where that claim is qualified — which hosts can
-enforce it, which capabilities are kernel-enforced versus brokered versus merely
-recorded, and which holes are still open.
+Every capability a resident app declares in `berth.yml` is enforced somewhere: by the Linux kernel, by a proxy in the app's traffic path, or not at all (recorded only). This page lists which is which, and which hosts can enforce anything.
 
-Run [`berth doctor`](./doctor-reference.md) to find out what *your* host does.
-[`examples/kernel-says-no`](../examples/kernel-says-no) is the 30-second
-demonstration.
+Run [`berth doctor`](./doctor-reference.md) to see what your machine supports. [`examples/kernel-says-no`](../examples/kernel-says-no) shows a denial in 30 seconds. How the kernel rules get applied is on [How enforcement works](./capability-tokens-reference.md).
 
 ## Kernel enforcement, by platform
 
-Berth's capability scoping is enforced by [Landlock](https://docs.kernel.org/userspace-api/landlock.html), a Linux kernel feature. Whether your kernel provides it decides what you can run locally:
+Kernel enforcement uses [Landlock](https://docs.kernel.org/userspace-api/landlock.html), a Linux kernel feature. On macOS and Windows your apps run on the kernel of the Linux VM your Docker daemon lives in, so that VM's kernel is what counts.
 
 | Host | Landlock | What works |
-|------|----------|------------|
-| Linux, kernel 5.13+ | Enforced | Everything, with real kernel enforcement |
-| Linux, kernel < 5.13 | Unavailable | `berth dev`; agent paths need the relaxed mode below |
-| macOS / Windows (Docker Desktop) | Unavailable — the linuxkit VM returns `ENOSYS` for `landlock_create_ruleset` | `berth dev`; agent paths need the relaxed mode below |
-| macOS, Docker daemon in Colima | Enforced — Colima's default Ubuntu 24.04 guest has Landlock ABI 4 in its active LSM stack | Everything, with real kernel enforcement — recipe and verification in [docs/mac-enforcement.md](mac-enforcement.md) |
+|---|---|---|
+| Linux 6.7+ | Yes | Everything, enforced by the kernel |
+| Linux 5.13 to 6.6 | Partly | `berth dev` runs with part of the policy applied (network rules need 6.7). Production images refuse to start, because the policy isn't fully applied |
+| Linux older than 5.13 | No | `berth dev`; `Computer.boot()` needs the relaxed mode below |
+| macOS / Windows, Docker Desktop | No (`landlock_create_ruleset` returns `ENOSYS`) | `berth dev`; `Computer.boot()` needs the relaxed mode below |
+| macOS, Colima | Yes | Everything, enforced by the kernel. Setup: [Enforcement on macOS](./mac-enforcement.md), or `berth doctor --fix` |
 
-`berth dev` builds the dev image, which never required enforcement, so resident-app development works on any host. `Computer.boot()` builds the production image, which refuses to run its app unrestricted — on a host without Landlock it exits rather than pretending to be sandboxed. To iterate locally there anyway:
+`berth dev` uses the dev image, which runs apps even when the kernel can't enforce, so you can build resident apps on any host. When it can't enforce, each app's boot log says `NOT RESTRICTED` and an undeclared write succeeds.
+
+Production images, which `Computer.boot()` builds, set `BERTH_REQUIRE_ENFORCEMENT=1`: an app whose policy the kernel didn't fully apply exits instead of running unrestricted. To iterate on a host without Landlock anyway:
 
 ```bash
-BERTH_ALLOW_UNENFORCED=1 pnpm start        # or, in code:
+BERTH_ALLOW_UNENFORCED=1 pnpm start
 ```
+
 ```ts
 await Computer.boot({ apps: ["../../../apps/filesystem"], enforcement: "warn" });
 ```
 
-Either one prints a warning on every boot. It is a local-iteration mode: the app runs with whatever the kernel managed to apply, which on Docker Desktop is nothing. Don't use it where the isolation boundary matters.
-
-On macOS you do not have to settle for that: swapping Docker Desktop for Colima gets you a kernel that really refuses an undeclared write, with no custom kernel build — `./scripts/mac-enforcement.sh` sets it up and `berth doctor` confirms it. See [docs/mac-enforcement.md](mac-enforcement.md), which records the full capability-denial milestone passing on that host.
+Either prints a warning on every boot, and the app runs with whatever the kernel applied, which on Docker Desktop is nothing. An explicit `enforcement` option wins over the env var. Don't use this where isolation matters.
 
 ## Available capabilities
 
-The `namespace:action:scope` grammar is wide open. You can declare a capability in a namespace nobody's used before, and `requestCapability()` will honestly tell you `granted: false`, because nothing actually backs it. The table below is what has real enforcement or brokering behind it today, the full list of permissions a resident app in a Berth OS can actually be given.
+A capability is a `namespace:action:scope` string. You can declare any namespace, but only the ones below have something behind them. For anything else, `requestCapability()` reports `granted` if it matches your manifest and nothing enforces it.
 
-Looking to control what happens *after* a call is allowed, not just whether it's allowed at all? That's a different layer — see [Governance and scoping](./berth-agents-guide.md#governance-and-scoping).
+To control which calls are allowed after a tool is reachable, see [Governance and scoping](./berth-agents-guide.md#governance-and-scoping).
 
-| Capability | Enforced by | Notes |
+| Capability | Enforced by | What it does |
 |---|---|---|
-| `filesystem:write:<path>` (say, `filesystem:write:/workspace`) | Kernel (Landlock), always on | Restricts write, create, delete, rename, and truncate to the paths you declared, plus a `/tmp` baseline. Declare nothing and your app can still only write to `/tmp`. The path you declare must be under `/workspace`, `/context`, `/tmp`, or `/app` — it's created as root before enforcement starts, so it isn't a free-form string; `filesystem:write:/` is refused. |
-| `filesystem:read:<path>` (say, `filesystem:read:/context`) | Kernel (Landlock), opt in | Declare at least one and read scoping turns on: a fixed baseline (`/usr`, `/lib`, `/etc`, `/proc`, `/dev`, `/tmp`, your app's own working directory) plus whatever you added. Declare none and reads stay fully open, same as always. Same four allowed prefixes as writes; a declared read path that doesn't exist at boot is warned about, not created. |
-| `network:connect:<port>` or `network:connect:*` | Kernel (Landlock for TCP, seccomp for UDP/raw), denied by default | Declare no capability at all and you get no outbound network: zero TCP (Landlock), and no UDP, ICMP, or raw sockets either — Landlock has no access right for those, so `agent-init` drops `CAP_NET_RAW` and installs a seccomp filter that refuses to hand those apps a datagram or packet socket at all. Declare even one port and UDP comes back, because you need DNS to use that port by name; that's the current limit, and the fix is to route those apps' DNS through the egress broker. Scoping is by port only, not domain. `*` is an explicit, audited escape hatch for apps that genuinely need to reach arbitrary ports; every first-party app avoids it, scoping instead to a single broker port (`browser-native` and `github-assistant` both do this, see below). It opts out of **outbound** port scoping only — `bind(2)` stays deny-by-default and per-port regardless, see `network:bind:<port>` below. |
-| `network:bind:<port>` | Kernel (Landlock `AccessNet::BindTcp`), denied by default | Permission to `bind(2)`/`listen(2)` on one port. Separate from `network:connect:` on purpose: listening and dialling out are different privileges, and an app that needs to serve on a port should not have to widen its egress to get there. `*` is deliberately **not** accepted — name the port. Until 2026-08-29 this action did not exist, and the only way to be allowed to listen under enforcement was to declare `network:connect:*`, which switched outbound scoping off wholesale; the mesh test fixtures documented that workaround in their own manifests and now declare `network:bind:9000` instead. |
-| `network:peer:<name>` or `network:peer:*` | `mesh-coordinator` (mutual consent) plus a real WireGuard mesh | Joins the mesh with any other app whose own `network:peer:<pattern>` names this app back. A one-sided declaration never gets introduced to its target. See the [mesh reference](./mesh-reference.md). |
-| `browser:navigate:<pattern>` (say, `browser:navigate:*.github.com`) or `network:host:<pattern>` | The egress broker, at the host level rather than the kernel | Same mechanism, two names — `network:host:*` is the generic form any resident app can declare, not just one that also drives a browser (see `examples/resident-apps/http-fetch`, or `examples/resident-apps/generic-connector`/`@berthos/sdk`'s `defineConnectorApp()` for a whole declarative-REST-integration pattern built on it); call `@berthos/sdk`'s `configureEgressProxy()` once to route your own `fetch()` traffic through it. The broker reads the CONNECT target's hostname straight off the (cleartext) proxy handshake and checks it against your pattern. You'll also need `network:connect:<broker's port>` declared (`8090` by default), since Landlock only sees ports. See the [egress broker reference](./egress-broker-reference.md). |
-| `browser:screenshot:*` | Recorded and reported only | Nothing kernel- or broker-enforced here on its own. Declaring any `browser:*` capability is what makes `berth dev` publish the noVNC/VNC ports — loopback-bound, VNC-password-gated. (Chromium's CDP port stays on the container's own loopback and is never published.) Opt out with `expose: { browser: false }`. |
-| `terminal:attach:*` | Pty device access, kernel-enforced | Declaring it grants Landlock write access to `/dev/pts` and `/dev/ptmx` — a shell can't allocate a pty without it. It does *not* scope what the shell may then do; that comes from the app's `filesystem:`/`network:` capabilities, inherited by every process it spawns. It's also what makes `berth dev` publish the ttyd port — loopback-bound, gated by HTTP basic auth with a per-boot credential. Opt out with `expose: { terminal: false }`. |
-| `github:read:<scope>` / `github:write:<scope>` (say, `github:read:repos`, `github:write:issues`) | A real TLS-terminating GitHub API broker, verb-and-path level | GET and HEAD map to `read`, everything else maps to `write`. The path is normalized and matched against an explicit route table that denies anything it doesn't cover — `/repos/<owner>/<repo>` is `repos`, the segment after it is its own scope (`issues`, `pulls`), `/user/emails` is `user:emails`, and so on. You'll also need `network:connect:<broker's port>` declared (`8092` by default). See the [GitHub API scoping reference](./github-api-scoping-reference.md). |
+| `filesystem:write:<path>` (e.g. `filesystem:write:/workspace`) | Kernel (Landlock), always on | Allows write, create, delete, rename and truncate under the declared paths only. Every app can also write its own `/tmp/<app>` scratch directory and `/dev/null`. The path must be `/workspace`, `/context`, `/tmp`, `/app` or beneath one of them; `filesystem:write:/` is refused. A missing directory is created before the rules apply. |
+| `filesystem:read:<path>` (e.g. `filesystem:read:/context`) | Kernel (Landlock), opt in | Declare none and reads stay open. Declare one and reads are limited to what you declared plus a baseline the runtime needs: `/usr`, `/bin`, `/sbin`, `/lib`, `/etc`, `/proc`, `/dev`, `/tmp`, `/run/berth/<app>` and the app's working directory. Same allowed prefixes as writes. A read path that doesn't exist at boot is not created; it's warned about and stays unreadable for that boot. |
+| `network:connect:<port>` or `network:connect:*` | Kernel (Landlock for TCP, seccomp for UDP and raw sockets), denied by default | Declare no network capability and the app gets no outbound TCP, UDP, ICMP or raw sockets. Declare a port and outbound TCP is allowed to that port only, and UDP is allowed so DNS works. Scoping is by port, not hostname. `*` turns outbound port scoping off; it doesn't allow listening. |
+| `network:bind:<port>` | Kernel (Landlock), denied by default | Allows `bind(2)`/`listen(2)` on that port. `*` is not accepted; name the port. Separate from `network:connect:` so serving on a port doesn't widen outbound access. |
+| `network:peer:<name>` or `network:peer:*` | `mesh-coordinator` (mutual consent) and a WireGuard mesh | Joins the mesh with any app whose own `network:peer:` names this app back. A one-sided declaration connects nothing. See the [mesh reference](./mesh-reference.md). |
+| `browser:navigate:<pattern>` (e.g. `browser:navigate:*.github.com`) or `network:host:<pattern>` | Egress proxy | Allows outbound connections to matching hostnames only. `network:host:` is the general form for any app; call `configureEgressProxy()` from `@berthos/sdk` to route your `fetch()` through the proxy. Also declare `network:connect:8090` (the proxy's default port). See the [egress broker reference](./egress-broker-reference.md). |
+| `github:read:<scope>` / `github:write:<scope>` (e.g. `github:read:repos`, `github:write:issues`) | GitHub API proxy, by method and path | `GET` and `HEAD` are `read`; every other method is `write`. Paths are matched against a route table, and anything it doesn't cover is denied. Also declare `network:connect:8092` (the proxy's default port). See the [GitHub API scoping reference](./github-api-scoping-reference.md). |
+| `app:invoke:<name>` | Kernel (file permissions on a per-caller socket) | Lets this app call another app's exports in the same sandbox. The target sees which app is calling. An app that didn't declare it gets `EACCES`. The check is per app, not per export; use a governance app to allow or refuse single exports. |
+| `terminal:attach:*` | Kernel (Landlock), for pty devices | Grants write access to `/dev/pts` and `/dev/ptmx`, so the app can open a shell, and lets it listen on the ttyd port. It doesn't limit what the shell does; that comes from the app's `filesystem:` and `network:` capabilities. Also makes `berth dev` publish the terminal view on `127.0.0.1`, behind a per-boot password. Opt out with `expose: { terminal: false }`. |
+| `browser:screenshot:*` | Recorded only | Nothing enforces it. Any `browser:*` capability makes `berth dev` publish the noVNC/VNC view on `127.0.0.1`, behind a VNC password. Chromium's debugging port is never published. Opt out with `expose: { browser: false }`. |
 
-Granting a capability and exposing its session to a human watcher are two separate decisions either way, see `expose:` above.
+Granting a capability and letting a human watch its session are separate choices; see `expose:` in the [manifest reference](./manifest-reference.md).
 
-## What isn't enforced yet
+## Enforcement levels
 
-Three enforcement tiers run through that table, and the difference matters more than any single row. If you're evaluating Berth as a security boundary rather than a convenience, read [docs/threat-model.md](./threat-model.md) — it names the adversaries, the trust boundaries, and what holds each one.
-
-| Tier | Mechanism | What it means for you |
+| Level | Mechanism | What it means |
 |---|---|---|
-| **Kernel** | Landlock (filesystem writes and reads, outbound TCP by port), seccomp-bpf (UDP/ICMP/raw sockets, and namespace creation), capability dropping | Irrevocable, inherited across `execve()`, applied before your app's first line runs. Nothing in the container can widen it. Needs a kernel that provides Landlock — see [Kernel enforcement, by platform](./kernel-enforcement.md#kernel-enforcement-by-platform). |
-| **Broker** | The egress broker, the GitHub API broker | A real process in the request path that can be bypassed only by reaching the network some other way — which is what the kernel tier is there to prevent. Host- and verb/path-level, so more expressive than the kernel tier, and softer. |
-| **Recorded** | `browser:screenshot:*`, any namespace nobody's implemented | Reported honestly by `requestCapability()` and used for `expose:` decisions. Not a control. Don't build a security argument on one. |
+| **Kernel** | Landlock, seccomp, dropped Linux capabilities, a separate uid per app | Applied before the app's first line runs and inherited by every process it starts. Nothing inside the sandbox can loosen it. |
+| **Proxy** | The egress proxy and the GitHub API proxy | A process in the traffic path. It can only be bypassed by reaching the network some other way, which the kernel level blocks. Finer-grained than the kernel (hostnames, API paths). |
+| **Recorded** | `browser:screenshot:*` and any namespace nothing implements | Reported by `requestCapability()` and used for `expose:` decisions. Not a control. |
 
-And the parts that aren't closed yet. Each is named here with its residual, because they change what you should be willing to run:
-
-- **Cross-app calls are authorized at connect, not per export.** An app reaches a sibling's exports only by declaring `app:invoke:<name>`, which gets it a socket of its own that no other uid can traverse — so the target knows which app is calling, and an app that declared nothing gets `EACCES` from the kernel (1.4, closed). But the kernel's part is a *connect-time* gate: once a caller is authorized, DAC lets it reach the target's whole export surface. Per-export policy is now expressible above it — a loaded governance app sees every one of those calls, with the caller's name, and can refuse individual exports (1.13, closed).
-- **A manifest is still code you run, just at build time now.** `on_install` no longer executes at container boot as unsandboxed root (that was 1.5, now closed) — it's a Docker build layer. That removes it from the running sandbox entirely, but installing a third-party app still means executing its shell on your machine, with your build daemon's authority, when you build the image.
-- **The governance gate is not a sandbox.** It now fails *closed* by default (1.11) and sits on the Computer's dispatch rather than one tool array, so it covers every resident-app call through a Computer, MCP tools, and `Agent.asTool()` delegation (1.13). A second gate in `@berthos/sdk` now covers the transports that never touch a Computer — `berth rpc`, `berth mcp`, the HTTP RPC bridge, the TCP listener and a sibling's direct socket call — so a denial holds whichever way the container is entered. It remains a policy layer, not a kernel mechanism, and root on the host is outside it. See [Governance and scoping](./berth-agents-guide.md#governance-and-scoping).
+Who each level protects against is in the [threat model](./threat-model.md).
 
 ## Optional hardened runtime (gVisor / `BERTH_RUNTIME`)
 
-`startContainer()` takes a `runtime` (or `BERTH_RUNTIME` in the environment, empty meaning unset), passed through as Docker's `HostConfig.Runtime` — `runsc` for [gVisor](https://gvisor.dev). `berth doctor --runtime runsc` verifies the daemon has it and runs the kernel probe under it.
+Set `BERTH_RUNTIME=runsc` (or pass `runtime` to `startContainer()`) to run sandboxes under [gVisor](https://gvisor.dev), which puts its own userspace kernel between the sandbox and your host kernel. That protects against a container-escape exploit.
 
-**The tier it addresses, exactly:** a container-escape 0-day — the one adversary the threat model otherwise answers with "the Docker daemon and host kernel are trusted." gVisor interposes its own userspace kernel (the sentry) between the sandbox and the host, so a kernel exploit from inside the container lands in the sentry, not in your host kernel. It is defense-in-depth for that tier only, and **not a substitute for the in-container enforcement** — and today it is not even a complement, for the reason below.
+gVisor doesn't implement Landlock, so under `runsc` you lose the kernel level entirely: agent-init reports `ruleset=NotEnforced` and a production image refuses to boot. Today you choose between escape protection and capability enforcement. `berth doctor --runtime runsc` checks the daemon has the runtime and runs the kernel probe under it, so run it again if you switch to a runtime whose kernel has Landlock (such as Kata).
 
-**Probed, not assumed (2026-08-23, runsc release-20260817.0, aarch64, Colima/Ubuntu 24.04, guest kernel 6.8):** gVisor's sentry does not implement Landlock — `landlock_create_ruleset` returns `ENOSYS` inside a `--runtime=runsc` container. Since the sentry *is* the kernel a gVisor sandbox runs on, `BERTH_RUNTIME=runsc` trades Berth's entire kernel enforcement tier for gVisor's escape protection: `agent-init` reports `ruleset=NotEnforced`, `BERTH_REQUIRE_ENFORCEMENT=1` refuses to boot, and `capability-enforcement.mjs` does not pass. On the same host and boot, the sandbox also failed *declared* writes to a bind-mounted workspace through gVisor's gofer (plain `EACCES` where runc succeeds) — observed on Colima/virtiofs, not root-caused, and moot while the Landlock gap stands. Both `berth doctor --runtime runsc` and the boot banner name this per-runtime rather than reporting the host kernel's answer, which is the point of the check: the failure mode this guards against is a sandbox that is decorative while every code path reports success.
+## Limits
 
-**What to do with it today:** nothing, unless you have decided the container-escape tier matters more to you than the capability boundary — they are currently mutually exclusive, and that trade should be made knowingly, with the doctor output in hand. If gVisor gains Landlock (or you run a runtime that has it — Kata's guest kernel can), re-run `berth doctor --runtime <name>`: the probe is behavioural, so the answer updates itself.
+- Full enforcement needs Linux 6.7+ (Landlock ABI 4, which adds network rules). On 5.13 to 6.6 the policy is only partly applied, and a production image refuses to start. `berth doctor` checks that Landlock works, not its version, so it can report `ACTIVE` on those kernels.
+- An app that declares any `network:connect:` port can use UDP to any destination, because it needs DNS.
+- `docker exec` or root on the host bypasses all of this.
 
-The short version: **kernel-enforced filesystem and network scoping is real and testable today, and so is in-container privilege isolation.** Berth is a strong boundary around what an agent's *code* can touch, and that now includes code a determined attacker runs inside the container: no process in the sandbox holds `CAP_SYS_ADMIN`, the pre-`agent-init` daemons are each confined, and declared secrets are scoped to the app that declared them. The residuals that bound the claim are named in the threat model — the largest is the mesh daemon, which keeps uid 0 and `CAP_NET_ADMIN` for wg0's lifetime behind a control socket that still trusts self-declared identity.
-
-The full version — assets, adversaries, trust boundaries, and what's out of scope permanently versus not yet — is [docs/threat-model.md](./threat-model.md).
-
-Full manifest schema lives in [docs/manifest-reference.md](./manifest-reference.md). Full SDK surface (`defineApp`, `ContextBusClient`, `SemanticFsClient`, `requestCapability`) lives in [docs/sdk-reference.md](./sdk-reference.md). Building in Python instead of TypeScript? See [docs/sdk-python-reference.md](./sdk-python-reference.md) for resident apps, or [docs/agents-python-reference.md](./agents-python-reference.md) for a Python `Agent`/`Crew` core (six of `Crew`'s seven composition shapes — all but `networked` — checkpointing, streaming, structured-output repair, and `Computer.connect()` for a real sandbox's tools over `berth os up --http-rpc` — see that doc's scope notes).
+Manifest fields are in the [manifest reference](./manifest-reference.md); `requestCapability()` and the rest of the SDK are in the [SDK reference](./sdk-reference.md).

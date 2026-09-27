@@ -1,91 +1,92 @@
 # TLS reference
 
-Every Berth server can serve HTTPS. None of them do by default.
+The app registry and the mesh coordinator serve plain HTTP unless you give them a certificate. Turn TLS on whenever one is reachable from another machine, because clients send tokens to it.
 
-That default is deliberate — turning TLS on for existing local deployments would break them for no gain on loopback — but it means enabling it is a decision someone has to make, and this file is what that decision needs. Before this existed there was no option at all: plain HTTP everywhere, a CLI that hardcoded `http://127.0.0.1:4873` and sent an owner token over it — so credentials crossing a real network in the clear.
+## Turn it on
 
-## Turning it on
+Point the server at a certificate and key:
 
-Every server reads the same four variables under its own prefix:
+```bash
+BERTH_REGISTRY_TLS_CERT=/etc/berth/server.crt \
+BERTH_REGISTRY_TLS_KEY=/etc/berth/server.key \
+berth-registry
+```
+
+The server prints the scheme it bound. `listening on https://...` confirms TLS is on.
+
+Each server reads the same variables under its own prefix:
 
 | Server | Prefix |
 |---|---|
 | `berth-registry` | `BERTH_REGISTRY` |
 | `berth-mesh-coordinator` | `BERTH_MESH_COORDINATOR` |
 
-- `<PREFIX>_TLS_CERT` — path to the certificate (PEM)
-- `<PREFIX>_TLS_KEY` — path to the private key (PEM)
-- `<PREFIX>_TLS_CA` — CA used to verify *client* certificates, for mTLS
-- `<PREFIX>_TLS_REQUIRE_CLIENT_CERT` — `1`/`true` to require one
+| Variable | Meaning |
+|---|---|
+| `<PREFIX>_TLS_CERT` | Path to the certificate (PEM) |
+| `<PREFIX>_TLS_KEY` | Path to the private key (PEM) |
+| `<PREFIX>_TLS_CA` | CA to verify client certificates against (mTLS) |
+| `<PREFIX>_TLS_REQUIRE_CLIENT_CERT` | `1` or `true` to require a client certificate |
 
-```
-BERTH_REGISTRY_TLS_CERT=/etc/berth/server.crt \
-BERTH_REGISTRY_TLS_KEY=/etc/berth/server.key \
-berth-registry
-```
+A partial configuration refuses to start rather than falling back to HTTP: a certificate without a key, a key without a certificate, a path that can't be read, a CA or client-certificate requirement without a certificate and key, or a client-certificate requirement without a CA.
 
-The server prints the scheme it actually bound, so `listening on https://…` is the confirmation.
-
-**A half-configured pair is a hard error, not a fallback.** A cert with no key, or a path that can't be read, refuses to start. Falling back to plain HTTP there would hand someone a deployment that believes it has TLS and doesn't, which is worse than never offering the option.
-
-Embedding: `createGrantsServer({ tls: resolveServerTls({ certPath, keyPath }) })`. `resolveServerTls` returns `undefined` when nothing is set, which is what keeps the "TLS if configured" shape identical across all three servers.
+Embedding a server: pass `tls: resolveServerTls({ certPath, keyPath })` (from `@berthos/tls`) to `createRegistryServer()` or `createMeshCoordinatorServer()`. It returns `undefined`, meaning plain HTTP, when nothing is set. `resolveServerTlsFromEnv(prefix)` reads the variables above.
 
 ## Certificates for development
 
-```
+```bash
 berth tls init
+berth tls init --host registry.internal --host 10.0.0.7
 ```
 
-Mints a local CA and a server certificate under `~/.berth/tls` (keys 0600, directory 0700) and prints the env vars and `--ca` invocation to use them. `--host` is repeatable and defaults to `localhost`, `127.0.0.1`, and `::1`; hosts are tagged `DNS:` or `IP:` in the SAN correctly, which matters because a `DNS:127.0.0.1` entry is accepted by openssl and then never matches anything.
+This creates a local CA and a server certificate, then prints the variables and client flags that use them. It needs `openssl` on your `PATH`.
 
-**These are for development and closed internal networks.** A self-signed CA has to be explicitly trusted by every client, and that friction is exactly what leads to verification being switched off instead. For anything reachable from a network you don't control, get a certificate from a real CA and point `_TLS_CERT`/`_TLS_KEY` at it — none of `berth tls init` is involved in that path.
+| Flag | Default | Meaning |
+|---|---|---|
+| `--dir` | `~/.berth/tls` | Where to write the files. Created `0700`; keys are `0600`. |
+| `--host` | `localhost`, `127.0.0.1`, `::1` | Hostname or IP the certificate is valid for. Repeatable. |
+| `--days` | `365` | Certificate lifetime. |
+| `--force` | off | Regenerate even if certificates already exist. |
+
+Files written: `ca.crt`, `ca.key`, `server.crt`, `server.key`.
+
+Use these for development and closed networks only. For a server reachable from a network you don't control, use a certificate from a real CA.
 
 ## Clients
 
-```
+```bash
 berth publish --registry https://registry.internal:4873 --ca /path/to/ca.crt
 berth init --registry https://registry.internal:4873 --ca /path/to/ca.crt
 ```
 
-`--ca` is only needed for a CA outside the system trust store. A certificate from a real CA needs no flag at all.
+| Flag | Meaning |
+|---|---|
+| `--ca <path>` | Trust this CA certificate, for example the one `berth tls init` made. Not needed for a certificate from a public CA. |
+| `--insecure` | Skip certificate verification. The connection is encrypted but not authenticated, so anyone on the path can intercept it. Prints a warning every time. Use `--ca` instead. |
 
-`NODE_EXTRA_CA_CERTS=/path/to/ca.crt` does the same job without a flag and covers every TLS client in the process rather than just `fetch`. Prefer it where you can set an environment variable.
+`NODE_EXTRA_CA_CERTS=/path/to/ca.crt` does the same job as `--ca` and covers every TLS client in the process.
 
-`--insecure` exists, warns on every use, and is not a way to run anything permanently. A client that skips verification completes the handshake and gets none of the guarantee — encrypted, unauthenticated, and interceptable by anything on the path. It looks secure, which is the problem.
-
-### The plaintext warning
-
-Commands that send a credential — `berth publish --registry` and the mesh coordinator's owner-token calls — warn when the target is plain HTTP on a non-loopback host:
+`berth publish` warns when it is about to send a registry owner token over plain HTTP to a host other than `localhost`, `127.0.0.1` or `::1`:
 
 ```
-[berth] WARNING: sending an operator token to http://registry.internal:4873 over plain HTTP — it crosses the network in the clear.
+[berth] WARNING: sending a registry owner token to http://registry.internal:4873 over plain HTTP — it crosses the network in the clear. Use https:// (see docs/tls-reference.md).
 ```
-
-Loopback is exempt because nothing crosses a network there. Warning about it would be noise, and noise is how people learn to ignore the warning that matters.
 
 ## The RPC bridge
 
-`@berthos/sdk`'s `startHttpRpcServer` (the bridge a deployed fleet instance exposes) takes a `tls` option, set from `BERTH_HTTP_RPC_TLS_CERT` / `BERTH_HTTP_RPC_TLS_KEY` — paths, deliberately, not PEMs in the environment, where they would sit in `docker inspect` beside the bearer token.
+The HTTP RPC bridge a deployed sandbox exposes serves HTTPS when `BERTH_HTTP_RPC_TLS_CERT` and `BERTH_HTTP_RPC_TLS_KEY` (file paths, not PEM contents) are both set in the container. Setting only one refuses to start. The bearer token is required either way.
 
 Whether you need it depends on how the port is exposed:
 
 | Exposure | Already TLS? |
 |---|---|
-| E2B `getHost`, Daytona preview link | Yes — the provider terminates in front, and the bridge is only reachable through their proxy |
-| K8s NodePort, a raw port mapping | No — the port is handed out directly and the bearer token crosses in the clear |
+| E2B host, Daytona preview link | Yes. The provider terminates TLS in front of the bridge. |
+| Kubernetes NodePort, a raw port mapping | No. The bearer token crosses the network in the clear. |
 
-TLS is not a substitute for the token, and the bridge still requires it either way.
+## Limits
 
-## mTLS
-
-Server-side support exists: set `<PREFIX>_TLS_CA` and `<PREFIX>_TLS_REQUIRE_CLIENT_CERT=1` and the server demands a client certificate signed by that CA.
-
-**No client in this repo presents one.** It is the right control for service-to-service traffic and the wrong thing to impose on an operator running `berth publish` from a laptop — there is no CA to issue them a certificate from, because no identity system exists yet. Turning this on today locks out every first-party client.
-
-## What is still open
-
-- **No client certificates anywhere**, per above.
-- **No HTTPS by default**, and no redirect from HTTP — a server configured for TLS serves TLS on its one port and nothing listens on plain HTTP to redirect from.
-- **No certificate reloading.** A renewed certificate needs a server restart.
-- **No cipher, curve, or minimum-version pinning** — Node's defaults apply.
-- **The context bus, semantic-fs control socket, and peer RPC sockets are Unix sockets**, not TCP, so TLS does not apply. They are protected by filesystem permissions and `SO_PEERCRED` — each app runs as its own uid (see [threat model](./threat-model.md)).
+- **mTLS has no clients.** The servers can require client certificates, but no Berth client presents one, so turning it on locks out `berth publish` and `berth init`.
+- **One port, one scheme.** A server with TLS serves only HTTPS on its port. There is no HTTP listener and no redirect.
+- **No certificate reloading.** Restart the server after renewing a certificate.
+- **Node's defaults** apply for ciphers, curves and minimum TLS version.
+- **Local sockets don't use TLS.** The context bus, the semantic-fs control socket and peer RPC use Unix sockets, protected by file permissions and per-app uids (see [threat model](./threat-model.md)).

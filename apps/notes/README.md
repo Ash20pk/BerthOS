@@ -1,14 +1,16 @@
 # notes
 
-A stateful resident app — persists notes to `/workspace` as JSON and publishes their lifecycle to the context bus.
+Gives an agent a notes list that survives restarts. Notes are saved as JSON in `/workspace`, and each add and completion is announced on the context bus.
 
-## Exports
+## Run it
 
-| Export | Input | Output | Does |
-|---|---|---|---|
-| `add_note` | `{ text: string }` | `{ id: string }` | Appends a note to `notes.json`, publishes `notes.added` |
-| `list_notes` | — | `{ notes: Note[] }` | Returns every note (`{ id, text, completed }`) |
-| `complete_note` | `{ id: string }` | `{ completed: boolean }` | Marks a note completed, publishes `notes.completed`. Idempotent — an unknown `id` returns `{ completed: false }` rather than throwing, so an agent retrying a completed/already-gone note doesn't get a hard failure. |
+```bash
+cd apps/notes
+berth dev
+berth test
+```
+
+`berth` is the CLI: `npm install -g @berthos/cli`, or `node ../../packages/cli/bin/berth.js` from a clone. Call it with `berth rpc notes --export add_note --input '{"text":"buy milk"}'`. The [quickstart](../../docs/quickstart.md#run-a-resident-app-directly) walks through it as the step after `hello-world`.
 
 ## Capabilities
 
@@ -17,25 +19,21 @@ capabilities:
   - filesystem:write:/workspace
 ```
 
-One capability beyond `hello-world`'s zero-capability baseline — enough to prove `filesystem:write:/workspace` is actually Landlock-enforced, not just a convention: writing outside `/workspace` is refused at the kernel level. See [docs/capability-tokens-reference.md](../../docs/capability-tokens-reference.md).
+A write outside `/workspace` is refused by the kernel.
+
+## Exports
+
+| Export | Input | Output | What it does |
+|---|---|---|---|
+| `add_note` | `{ text }` | `{ id }` | Adds a note to `notes.json` and publishes `notes.added` |
+| `list_notes` | | `{ notes: Note[] }` | Returns every note as `{ id, text, completed }` |
+| `complete_note` | `{ id }` | `{ completed: boolean }` | Marks a note done and publishes `notes.completed`. An unknown `id` returns `{ completed: false }` instead of an error, so retries are safe. |
 
 ## Context bus events
 
-`add_note` and `complete_note` each publish afterward — `notes.added` (`{ id, text }`) and `notes.completed` (`{ id }`) — so another app in the same sandbox can react without polling `list_notes`. [`apps/activity-feed`](../activity-feed/README.md) subscribes to both, alongside `apps/filesystem`'s `fs.file_created`, as a working example of one app fanning in events from several others. See [docs/context-bus-reference.md](../../docs/context-bus-reference.md).
+| Topic | Payload | Published by |
+|---|---|---|
+| `notes.added` | `{ id, text }` | `add_note` |
+| `notes.completed` | `{ id }` | `complete_note` |
 
-## Running it
-
-```bash
-cd apps/notes
-pnpm exec berth dev
-```
-
-This is also the walkthrough's second step after `hello-world` — see [docs/quickstart.md](../../docs/quickstart.md#run-a-resident-app-directly).
-
-## Testing
-
-```bash
-pnpm exec berth test
-```
-
-`src/index.test.ts` covers `add_note`/`list_notes`/`complete_note` against a temp `BERTH_WORKSPACE_ROOT`, including the idempotent-unknown-id case.
+Other apps in the sandbox can react to these without polling `list_notes`. [`activity-feed`](../activity-feed) subscribes to both. See the [context bus reference](../../docs/context-bus-reference.md).

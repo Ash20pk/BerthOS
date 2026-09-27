@@ -1,38 +1,8 @@
 # Audit trail reference
 
-`@berthos/audit` is the record of what happened on a Berth installation and who did it: governance verdicts, failed authentication attempts, and — optionally — every step an agent took.
+`@berthos/audit` writes a hash-chained log of what happened and who did it: every governance verdict and, if you turn it on, every step an agent takes. Use it when you need to answer "what did this agent do, and was it allowed?" after the fact.
 
-It exists because none of that was written down: governance denials threw silently, no server logged a request, `AgentStepEvent` recorded tool names and no actor A gate that blocks a hundred calls used to leave exactly the same trace as a gate nobody ever consulted.
-
-## What a record looks like
-
-One JSON object per line, hash-chained, written 0600:
-
-```json
-{"ts":"2026-08-16T09:14:22.104Z","seq":41,"actor":{"kind":"operator","id":"alice","verifiedBy":"token"},"action":"governance.evaluate","target":"filesystem.write_file","decision":"denied","reason":"path outside /workspace/reports","durationMs":12,"meta":{"mode":"fail-closed"},"prevHash":"…","hash":"…"}
-```
-
-### The actor, and how much it is worth
-
-Every record carries `actor.verifiedBy`, and reading it is the difference between a fact and a claim:
-
-| `verifiedBy` | What it means |
-|---|---|
-| `peer-socket` | The kernel established it — `SO_PEERCRED` on the daemons' control sockets, or the per-caller `peers/` directory the SDK's RPC server uses where Node can't reach `SO_PEERCRED`. Unforgeable by the caller. |
-| `token` | The actor presented a bearer credential the requester never sees. Proves possession of a secret bound to that name, and nothing more. |
-| `self-asserted` | The actor named itself and nothing checked. |
-
-Self-asserted actors are recorded rather than rejected: "we don't know who this was" is itself a finding. But never read one as an identity.
-
-This is not an identity system. There is no user directory, no tenancy, no RBAC, and revocation means editing a file.
-
-### Decisions
-
-`allowed`, `denied`, and `unavailable`. The third is its own outcome on purpose — a governor that timed out never rendered a verdict, and under `mode: "fail-open"` the call then *ran* with no policy check at all. That is the branch a reviewer most needs to be able to find, and it used to be a `console.warn`.
-
-An agent step that threw is recorded as `allowed` with a `reason`, not as `denied`. Nothing refused it; it ran and broke.
-
-## Turning it on
+## Turn it on
 
 ```ts
 import { createFileAuditSink, defaultAuditPath } from "@berthos/audit";
@@ -48,62 +18,107 @@ const { agent } = await createAgent({
 });
 ```
 
-`audit` on `createAgent` wires the sink into both the step tracer and the Computer's governance gate — turning on half an audit trail is rarely what anyone means. For a `Computer` you built yourself, pass it directly: `Computer.boot({ governance: { audit, actor } })`.
+`audit` on `createAgent` feeds both the step tracer and the Computer's governance gate. For a `Computer` you boot yourself, pass it to the gate: `Computer.boot({ governance: { audit, actor } })`. `@berthos/agents` is the experimental agent framework and isn't published; use it from a clone.
 
-`BERTH_AUDIT_PATH` overrides the default path.
+The default path is `~/.berth/audit/audit.jsonl`. See [`examples/audit-trail`](../examples/audit-trail) for a runnable demo that edits a record and catches it.
 
-### Payload capture
+## Read it back
 
-Off by default, in two independent places:
-
-- `createFileAuditSink({ capturePayloads: true })` — whether `input`/`output` reach the file.
-- `createAgent({ tracePayloads: true })` — whether tool arguments and results are put on the step event at all.
-
-Both default off because records land plaintext on disk (nothing is encrypted at rest yet) and tool arguments are where customer data turns up. When on, values pass through `redact()`: secret-looking keys (`password`, `token`, `apiKey`, `authorization`, …) become `[redacted]`, oversized strings and buffers become a size marker rather than a prefix — half a credential is still a credential — and cycles, functions, and over-deep structures are described instead of dropped.
-
-`redact()` is a deny-list, which fails open on the key nobody thought of. It is a second line of defence behind capture being opt-in, not the only one.
-
-## Reading it back
-
-```
+```bash
 berth audit list                          # everything, oldest first
 berth audit list --decision denied        # just refusals
 berth audit list --actor alice --limit 50
-berth audit list --json                   # raw records
+berth audit list --json                   # raw records, one per line
 berth audit verify                        # check the hash chain
 ```
 
-## The chain, and what it does not prove
+| Flag | Command | Meaning |
+|---|---|---|
+| `--file <path>` | `list`, `verify` | Audit file to read. Default `~/.berth/audit/audit.jsonl`. |
+| `--decision <d>` | `list` | Only `allowed`, `denied` or `unavailable`. |
+| `--actor <id>` | `list` | Only records whose `actor.id` matches. |
+| `--action <prefix>` | `list` | Only records whose `action` starts with this. |
+| `--limit <n>` | `list` | The most recent `n` matching records. |
+| `--json` | `list` | Print raw records instead of the formatted view. |
 
-Each record's `hash` covers `prevHash` plus its own canonical JSON, so a record cannot be edited, deleted, or reordered without breaking every hash after it. The chain survives a restart (the sink resumes from the last record's hash) and rotation (a new segment's first record carries the previous segment's last hash), and `berth audit verify` walks segments oldest-first across both.
+`berth audit verify` checks every rotated segment, oldest first, and exits non-zero at the first `BROKEN` record.
 
-**This is tamper-evident, not tamper-proof.** Anyone who can write the file can recompute every hash from the line they edited onwards and produce a chain that verifies cleanly. Getting past that needs the hashes somewhere the editor cannot reach — an append-only store, a remote sink, periodic external anchoring — none of which is built. `berth audit verify` says so in its own output rather than implying a guarantee it does not have.
+## What a record looks like
 
-`berth attest <runId>` builds on this chain: it binds a run's slice of it, plus the chain head and the boot's measured enforcement status, into one self-hashed record a stranger can check without Berth installed — same trust model, stated inside the record. See [attestation-reference.md](./attestation-reference.md).
+One JSON object per line, in a file with mode 0600:
+
+```json
+{"ts":"2026-08-16T09:14:22.104Z","seq":41,"actor":{"kind":"operator","id":"alice","verifiedBy":"token"},"action":"governance.evaluate","target":"filesystem.write_file","decision":"denied","reason":"path outside /workspace/reports","durationMs":12,"meta":{"mode":"fail-closed"},"prevHash":"…","hash":"…"}
+```
+
+| Field | Meaning |
+|---|---|
+| `ts`, `seq` | ISO-8601 time and a sequence number, so records with the same timestamp still order. |
+| `actor` | `{ kind, id, verifiedBy }`. `kind` is `operator`, `app`, `agent` or `anonymous`. |
+| `action` | What happened: `governance.evaluate`, or `agent.<step kind>` such as `agent.tool-call`. |
+| `target` | What it happened to: `app.export`, `tool:<name>` or `run:<runId>`. |
+| `decision` | `allowed`, `denied` or `unavailable`. |
+| `reason` | Why. Always set for `denied` and `unavailable`. |
+| `input`, `output` | Only with payload capture on (below), always redacted. |
+| `meta` | Extras, redacted. Agent steps carry `meta.runId`, which is what `berth attest` looks up. |
+| `prevHash`, `hash` | The chain. |
+
+### How much to trust `actor`
+
+| `verifiedBy` | Meaning |
+|---|---|
+| `peer-socket` | The kernel established it, from the socket the caller connected on. The caller can't forge it. |
+| `token` | The actor presented a secret bound to that name. Proves possession of the secret, nothing more. |
+| `self-asserted` | The actor named itself and nothing checked. Recorded so you know it's unknown; don't read it as an identity. |
+
+This is not an identity system: there's no user directory, tenancy or roles.
+
+### Decisions
+
+- `denied`: the governor refused the call.
+- `unavailable`: the governor didn't answer (error or timeout). Under `mode: "fail-open"` the call then ran with no policy check, so this is the record to look for. See [governance](./governance-reference.md).
+- An agent step that threw is `allowed` with a `reason`. Nothing refused it; it ran and failed.
+
+## Payload capture
+
+Off by default, controlled in two places:
+
+- `createFileAuditSink({ capturePayloads: true })`: whether `input` and `output` reach the file.
+- `createAgent({ tracePayloads: true })`: whether tool arguments and results are put on step events at all.
+
+When on, values pass through `redact()`. Keys that look secret (`password`, `token`, `apiKey`, `authorization`, `cookie`, …) become `[redacted]`, long strings become a size marker, and cycles and very deep structures are described instead of stored. `redact()` works from a list of key names, so a secret under an unexpected key gets through. Keep capture off unless you need it.
+
+## How the chain works
+
+Each record's `hash` is sha256 over `prevHash` plus the record's canonical JSON. Editing, deleting or reordering a record breaks every hash after it, and `berth audit verify` reports where. The chain continues across restarts and across rotation.
+
+[`berth attest`](./attestation-reference.md) builds on this chain to produce a checkable record of one run.
+
+## Sink options
+
+`createFileAuditSink(options)`:
+
+| Option | Default | Meaning |
+|---|---|---|
+| `path` | required | JSONL file. Parent directories are created. |
+| `capturePayloads` | `false` | Write redacted `input` and `output`. |
+| `redact` | | Options passed to `redact()`. |
+| `maxBytes` | 16MB | Rotate when the file reaches this size. |
+| `maxFiles` | 5 | Rotated files to keep (`audit.jsonl.1` … `.5`). Older ones are deleted. |
+
+Other sinks: `createMemoryAuditSink()`, `createConsoleAuditSink()` (stderr) and `combineAuditSinks(...)`.
 
 ## Operational notes
 
-- **Writes are synchronous.** A record buffered when the process dies is a record that does not exist, and these are the events a crash would otherwise erase. Volume is low: a line per governance verdict, not per HTTP request.
-- **A failing sink never fails the audited action.** It reports on stderr and drops the record. Both the sink and every call site catch — a monitoring backend having a bad day must not become a failed tool call.
-- **Rotation** defaults to 16MB and 5 files. There is no retention policy beyond that; pruning older segments is left to whatever already manages the host.
-- **Once rotation has pruned the genesis segment, the chain no longer starts at genesis.** The
-  oldest segment still on disk begins with a record naming a predecessor that has been
-  deleted. `berth audit verify` and `berth attest` start the walk from that named
-  predecessor and **report that they did so** — verification of every record still held is
-  unaffected, but the boundary itself is not checkable. That is stated in the output rather
-  than passed over silently, because retention pruning and someone deleting the early
-  segments to hide something are indistinguishable from the files alone.
+- **Writes are synchronous,** so a crash doesn't lose buffered records. Volume is low: one line per verdict or step.
+- **A failing sink never fails the audited call.** It prints a warning on stderr and drops the record.
+- **Rotation is size-based only.** There's no other retention policy; prune old segments with whatever manages the host.
+- **After rotation deletes the oldest segment,** the chain no longer starts at the beginning. `berth audit verify` and `berth attest` check everything still on disk and print a note that earlier segments are gone. From the files alone, routine pruning and someone deleting segments look the same.
+- **`agent-init` boot events** go to the container's stderr, not to this sink, as JSON lines with `"source":"agent-init"`.
+- **HTTP access logs** are Fastify's, on stdout, and aren't chained.
 
-  Until 2026-08-29 both commands seeded the walk with the genesis hash instead, so on any
-  install that had rotated past its retention window `audit verify` reported `BROKEN` at
-  record 0 and `attest` refused to emit at all — a routine rotation was indistinguishable
-  from tampering, in the direction that cries wolf. Fixed by `verifyAuditSegments()` in
-  `@berthos/audit`, which both commands now share.
-- **`agent-init`'s boot events** are separate — they go to container stderr, not to this sink, since they run inside the sandbox before any of this exists. They are parseable JSON with a `"source":"agent-init"` field (the old `[agent-init] ` prefix made them unparseable, also 5.1).
+## Limits
 
-## What is still open
-
-- **No remote sink.** Everything is local files. A trail an attacker with host write access can rewrite is worth less than one shipped off the box.
-- **No encryption at rest** (5.4). Records are plaintext, which is why payload capture is opt-in.
-- **No retention or legal-hold policy** beyond size-based rotation.
-- **HTTP access logs are Fastify's**, not audit records — they go to stdout and are not chained.
+- **Tamper-evident, not tamper-proof.** Anyone who can write the file can recompute every hash from the line they edited and produce a chain that verifies. `berth audit verify` says this in its output.
+- **Local files only.** There's no remote sink, so the trail is only as safe as the host.
+- **Plaintext on disk.** Nothing is encrypted at rest, which is why payload capture is off by default.

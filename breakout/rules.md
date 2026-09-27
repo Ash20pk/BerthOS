@@ -1,20 +1,12 @@
 # The Berth break-out box
 
-This is a live Berth sandbox. You can run any code you like inside it. Hidden
-in the box are two flags that **no capability grants** — the challenge is to
-get one out.
+This is a live Berth sandbox. You can run any code you like inside it. Two flags are hidden in the box, and **no capability grants access to either**. Your goal is to get one out.
 
-There is no special hardening here. The box runs exactly what `berth dev` gives
-any app: capabilities declared in a `berth.yml`, compiled into a Landlock
-domain and a seccomp filter, applied to the app's process before your code
-runs. If the flags stay in, it is because that enforcement held. If you get one
-out, you have found a hole in Berth itself.
+The box has no special hardening. It runs exactly what `berth dev` gives any app: capabilities declared in a `berth.yml`, compiled into Landlock and seccomp rules, and applied to the app's process before your code runs. If the flags stay in, that enforcement held. If you get one out, you've found a hole in Berth.
 
 ## How to play
 
-Submit an async JavaScript function body. `require("node:...")` returns the
-built-in module (as a promise — `await` it). Your code runs in the target app's
-own process, with the target app's own privileges.
+Send an async JavaScript function body to `POST /attempt`. Your code runs in the target app's own process, with that app's privileges. `require("node:...")` returns the built-in module as a promise, so `await` it.
 
 ```bash
 curl -s https://<box-host>/attempt \
@@ -22,44 +14,36 @@ curl -s https://<box-host>/attempt \
   -d '{"code": "const fs = await require(\"node:fs/promises\"); return await fs.readFile(\"/var/breakout/flag-kernel.txt\", \"utf-8\");"}'
 ```
 
-The response tells you what your code returned or threw, and — if your output
-contained a live flag — which one you captured.
+The response is `{ ok, output, captured }`: what your code returned or threw, and which flag, if any, appeared in the output.
+
+- The request body can be at most 16 KB.
+- Each attempt has a 30-second time limit.
+- Attempts run one at a time. If another is running, you get `429`; try again.
 
 ## The two flags
 
-- **FLAG_KERNEL** — a file at `/var/breakout/flag-kernel.txt`, mode **0644**.
-  Ordinary Unix permissions *allow* the read. The only thing between you and it
-  is the Landlock policy compiled from the target app's `berth.yml`, which
-  never declared that path. Read it and you have beaten the kernel tier.
+- **FLAG_KERNEL** is a file at `/var/breakout/flag-kernel.txt`, mode **0644**. Ordinary Unix permissions *allow* the read. The only thing stopping you is the Landlock policy compiled from the target app's `berth.yml`, which doesn't declare that path. Read it and you've beaten the kernel layer.
 
-- **FLAG_COTENANT** — delivered to a *second* app sharing this sandbox, as a
-  per-app secret. It lives in a `0600` file owned by that app's uid, and it is
-  in no environment your app can see. Reach it and you have beaten the per-app
-  isolation.
+- **FLAG_COTENANT** is a per-app secret belonging to a *second* app in the same sandbox. It's in a `0600` file owned by that app's uid, and it's in no environment your app can see. Read it and you've beaten per-app isolation.
 
-## Scope and reward
+## Scope
 
-- In scope: anything your submitted code can do from inside the sandbox to
-  reach a flag — filesystem tricks, symlinks, `/proc`, the co-tenant's socket,
-  namespace games, escaping the target process, whatever you can think of.
-- Out of scope: attacking the HTTP server, the host, or the network around the
-  box (it is a thin relay and is expected to be disposable); denial of service;
-  anything that needs credentials to the host. Those are not what this proves.
-- The `docker exec` path is explicitly out of scope: the box's own threat model
-  says root on the host bypasses the sandbox by construction. You are the
-  workload, not the host.
+**In scope:** anything your submitted code can do from inside the sandbox to reach a flag. Filesystem tricks, symlinks, `/proc`, the co-tenant's socket, namespaces, escaping the target process, or anything else you can think of.
 
-Reward: recognition and a fix. If you capture a flag, the submission that did
-it is already in the public attempt log (`GET /log`) — open an issue linking
-its sha256, or use the disclosure path in SECURITY.md for anything you would
-rather report privately. This is a demonstration, not a bounty program; the
-honest result, either way, becomes public.
+**Out of scope:**
 
-## Checking our side of it
+- Attacking the HTTP server, the host, or the network around the box. The server is a thin relay on a disposable host.
+- Denial of service.
+- Anything that needs credentials to the host.
+- `docker exec` or any other access as root on the host. Root on the host bypasses the sandbox by design. You are the workload, not the host.
 
-- `GET /attestation` — the box's boot attestation: which kernel enforcement was
-  *measured* live at boot, not asserted. If it does not say the kernel was
-  enforcing, the box is not holding the kernel flag and you should say so.
-- `GET /log` — every attempt, hash-chained. Tamper-evident, not tamper-proof
-  (see docs/audit-reference.md): we could rewrite it, but not without
-  contradicting the copies you already fetched.
+## If you capture a flag
+
+Your winning submission is already in the public attempt log (`GET /log`). Open an issue on the Berth repository linking its sha256, or report it privately as described in SECURITY.md in the repository.
+
+The reward is recognition and a fix. This is a demonstration, not a bounty program. The result becomes public either way.
+
+## Checking our side
+
+- `GET /attestation` shows the enforcement measured live when the box booted: the `berth doctor` probe and the Landlock status each app reported. If it doesn't say the kernel was enforcing, the kernel flag isn't protected, and you should tell us.
+- `GET /log` lists every attempt, hash-chained. It's tamper-evident, not tamper-proof: we could rewrite it, but not without contradicting the copies you've already fetched.

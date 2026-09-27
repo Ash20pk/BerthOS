@@ -1,13 +1,19 @@
 # hello-world-py
 
-A minimal Python resident app. Its only job is to prove that [`@berthos/sdk-python`](../../packages/sdk-python) is wire-protocol compatible with the TypeScript runtime — same manifest format, same RPC and context-bus semantics, different language.
+A minimal resident app written in Python with [`berthos-sdk`](../../packages/sdk-python). Start here if you want to build an app in Python: it uses the same manifest, RPC and context bus as the TypeScript apps.
 
-## Exports
+## Run it
 
-| Export | Input | Output | Does |
-|---|---|---|---|
-| `greet` | `{ name: string }` | `{ message: string }` | Returns a greeting string |
-| `publish_file_created` | `{ path: string, created_by: string }` | — | Publishes `fs.file_created` on the context bus |
+`berth dev` doesn't pick the Python runtime yet, so start this app the way its test does: build the dev image and boot it with `BERTH_APP_RUNTIME=python`. The quickest way is the milestone test, from the repo root:
+
+```bash
+pnpm build
+node packages/docker-orchestrator/test/python-sdk-milestone.mjs
+```
+
+It builds the image, starts the sandbox, calls `greet`, and checks the reply. To boot it from your own script, call `startContainer()` from `@berthos/docker-orchestrator` with `env: { BERTH_APP_RUNTIME: "python" }`, as that test does.
+
+The SDK needs no install step: the sandbox puts the SDK source from `packages/sdk-python` on `PYTHONPATH`. The manifest's `on_install` runs `echo python-on-install-ran`, which shows that `on_install` runs for Python apps too.
 
 ## Capabilities
 
@@ -15,19 +21,15 @@ A minimal Python resident app. Its only job is to prove that [`@berthos/sdk-pyth
 capabilities: []
 ```
 
-None declared — this app doesn't touch the filesystem or network.
+None. The app touches no files and no network.
 
-## Cross-language proof
+## Exports
 
-[`apps/code-editor`](../code-editor/README.md) (TypeScript) subscribes to `fs.file_created` with a `{ path, createdBy }` shape. `publish_file_created` here publishes that exact event from Python, with no changes needed on the TypeScript side — a real end-to-end proof that the context bus works across languages, not just within one. See [docs/sdk-python-context-bus-reference.md](../../docs/sdk-python-context-bus-reference.md).
+| Export | Input | Output | What it does |
+|---|---|---|---|
+| `greet` | `{ name }` | `{ message }` | Returns a greeting |
+| `publish_file_created` | `{ path, created_by }` | | Publishes `fs.file_created` on the context bus |
 
-## Running it
+## Talking to TypeScript apps
 
-```bash
-cd apps/hello-world-py
-pnpm exec berth dev
-```
-
-`on_install` runs `echo python-on-install-ran` — kept non-empty on purpose, to prove `on_install` genuinely executes for a Python app too (not just skipped as a no-op). `berth_sdk` itself needs no install step: `entrypoint.sh`'s Python branch puts the bind-mounted [`packages/sdk-python`](../../packages/sdk-python) source on `PYTHONPATH` directly, the same role a `node_modules` symlink plays for TypeScript apps.
-
-Full Python SDK surface: [docs/sdk-python-reference.md](../../docs/sdk-python-reference.md).
+[`code-editor`](../code-editor) (TypeScript) subscribes to `fs.file_created`. `publish_file_created` sends that event from Python and `code-editor` reacts to it unchanged. See [Python and the context bus](../../docs/sdk-python-context-bus-reference.md) and the [Python SDK reference](../../docs/sdk-python-reference.md).

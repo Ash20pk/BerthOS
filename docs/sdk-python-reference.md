@@ -1,39 +1,151 @@
-# Python SDK Reference (Slice 1 — core)
+# Python SDK reference
 
-`packages/sdk-python` (`berth_sdk` on PyPI-style import) is a real second-language SDK for Berth resident apps — not a stub, not a design doc. Whether the primary SDK language would be Python or TypeScript was an open question, and a resident-app SDK for both languages was a stated goal — this closes that gap for real, split into two branches given its size: this slice (manifest + RPC + a real demo app, proving wire-protocol compatibility) and a follow-up slice (the context-bus client + `entrypoint.sh`'s runtime-selection wiring — see `docs/sdk-python-context-bus-reference.md` once that lands).
+`berthos-sdk` lets you write a resident app in Python. It uses the same `berth.yml` and the same export protocol as the TypeScript [`@berthos/sdk`](./sdk-reference.md), so a Python app's exports look identical to an agent, and it can publish and subscribe on the context bus alongside TypeScript apps.
 
-## What's reused vs. rewritten
+```bash
+pip install berthos-sdk        # imported as berth_sdk; Python 3.11+
+```
 
-Confirmed before writing any code: the manifest shape (plain YAML) and the RPC protocol (line-delimited JSON) are genuinely language-agnostic wire contracts, not TypeScript-specific runtime behavior — so this SDK targets them directly rather than porting `@berthos/sdk`'s TypeScript:
+## Example
 
-- **`berth_sdk/manifest.py`** — a pydantic model covering the core manifest shape `@berthos/manifest-schema`'s `schema.ts` defines (same field names, same `namespace:action:scope` capability grammar, same glob-on-scope-only matching) for `name`, `version`, `description`, `capabilities`, `exports`, `on_install`, `on_agent_ready`, loaded via `pyyaml`. It doesn't yet cover `expose`, `governs`, or `governance` — a Python `berth.yml` declaring `governs: true` passes validation here with none of `schema.ts`'s enforcement that a matching `evaluate_action` export exists. Not a port — an independent implementation validating a subset of the same data shape.
-- **`berth_sdk/rpc.py`** — the identical newline-delimited JSON protocol from `rpc.ts`: `{id, export, input}` in, `{id, result}`/`{id, error}` out, over stdio and (for multi-app-per-sandbox mode) an additional Unix socket via `socketserver.ThreadingUnixStreamServer`.
-- **`berth_sdk/app.py`/`runtime.py`** — the boot sequence (load manifest → import the app module → assert exports match manifest → run hooks → serve RPC) mirrors `runtime.ts`'s logic, but the *implementation* is idiomatic Python (`importlib.util` instead of dynamic `import()`, a module-level `app = define_app(...)` attribute instead of a default export, since Python has no default-export convention).
-- **`generate_capability_policy.py`/`run_lifecycle.py`** — real Python equivalents of the two Node scripts `entrypoint.sh` already ran per-app. Needed because a pure-Python app has no `node_modules/@berthos/sdk` for the existing Node scripts to live in — `agent-init` (Rust) doesn't care which language wrote `capability-policy.json`, only that the shape matches. One real gap: unlike `generate-capability-policy.ts`, the Python version has no handling for `network:peer:*` — it never populates `meshPeers` or opens the mesh coordinator's port, so a Python app declaring a mesh capability silently gets no mesh support today.
+`berth.yml`:
 
-## How `entrypoint.sh` picks a runtime
+```yaml
+name: hello-world-py
+version: 0.1.0
+capabilities: []
+exports:
+  - name: greet
+    input: { name: string }
+    output: { message: string }
+```
 
-Single-app mode only (see "What's deliberately out of scope" below) gained an additive `BERTH_APP_RUNTIME=python|node` branch — defaults to `node`, byte-for-byte identical to before this change when unset. When `python`:
+`src/app.py`:
 
-1. `PYTHONPATH` is set to the bind-mounted `packages/sdk-python` source — the same role a pre-existing `node_modules/@berthos/sdk` symlink plays for a TypeScript app. No `pip install` needed in dev mode.
-2. `python3 -m berth_sdk.run_lifecycle` replaces the Node lifecycle script.
-3. `python3 -m berth_sdk.generate_capability_policy` replaces the Node policy generator.
-4. `agent-init` execs `python3 -m berth_sdk.runtime` instead of the Dockerfile's baked-in Node `CMD` — for Python mode, that `CMD` value is simply never used.
+```python
+from berth_sdk import define_app
+from pydantic import BaseModel
 
-`base.Dockerfile` bakes `pydantic`/`pyyaml` into every image (not a per-app `on_install` step) — `run_lifecycle.py` itself needs to `import berth_sdk` (and thus these) before any app-specific `on_install` has had a chance to run, the same chicken-and-egg reasoning that makes `@berthos/sdk`'s own `node_modules` already resolvable before a TS app's `on_install` runs.
 
-## The demo app — `apps/hello-world-py`
+class GreetInput(BaseModel):
+    name: str
 
-A minimal real app (one `greet` export) proving the full round trip inside a real container: `packages/docker-orchestrator/test/python-sdk-milestone.mjs` boots it with `BERTH_APP_RUNTIME=python`, sends a real `{id, export, input}` line over the container's actual stdio (the identical `container.attach()` pattern every other milestone test here uses against Node apps), and asserts a correct `{id, result}` comes back — plus a real `{id, error}` for an unknown export, not silence.
 
-## A real, non-Python-specific bug this surfaced
+class GreetOutput(BaseModel):
+    message: str
 
-Getting the milestone test to pass reliably surfaced a genuine bug in `dockerode`/`docker-modem` (not something specific to this SDK): `container.attach({stream, stdin, stdout, stderr, hijack: true})` is a POST request, and `docker-modem`'s `dial()` unconditionally does `data = JSON.stringify(opts._body || opts)` for any POST — so the **attach options themselves** get serialized and sent as a request body with no trailing newline. Those bytes land as the first thing written to the container's real stdin once the connection upgrades, silently concatenating onto whatever the very first real RPC write is (Python's `readline()`-style buffering — and Node's `readline.createInterface`, identically — just keep accumulating until they see a `\n`). The fix: prepend `"\n"` to the first write to force a real line break, rather than the timing-delay-based mitigations used elsewhere in this repo's other milestone tests for what was very likely this exact same root cause, previously undiagnosed.
 
-## What's deliberately out of this slice
+def greet(inp: GreetInput) -> GreetOutput:
+    return GreetOutput(message=f"Hello, {inp.name}!")
 
-- **Semantic-fs's tag/query control API.** Direct file I/O against the FUSE-mounted `/context` already works from any process with zero SDK code — that's this SDK's honest v1 scope for context access. The richer control socket (register/tag/query) stays TypeScript-only.
-- **Context-bus pub/sub** — closed in a follow-up slice, not deferred indefinitely: see [Python SDK context-bus reference](./sdk-python-context-bus-reference.md) for the compiled-protobuf client and a real cross-language pub/sub proof.
-- **Multi-app-mode wiring.** `entrypoint.sh`'s `BERTH_APP_RUNTIME` branch only exists in the single-app path. A Python companion app in a `--apps` multi-app sandbox isn't wired up.
-- **Production images / `berth deploy` for Python apps.** `berth dev`'s CLI doesn't auto-detect a Python app (no `package.json` to key off of) — `python-sdk-milestone.mjs` drives `buildImage()`/`startContainer()` directly rather than through the `berth` CLI. `berth init --template=python` or equivalent CLI-level support is future work.
-- **A packaged, pip-installable `berthos-sdk` distribution.** Dev mode resolves it via `PYTHONPATH` pointed at the bind-mounted source, mirroring the TS SDK's own dev-mode symlink resolution — there's no `sdist`/`wheel` publishing step here, matching Phase 5's own TS SDK story only partially (that one has `build-external.mjs` bundling for real external consumption; this doesn't yet).
+
+def setup(app):
+    app.export("greet", greet, input_model=GreetInput, output_model=GreetOutput)
+
+
+app = define_app(setup)
+```
+
+The runtime loads `src/app.py` and looks for a module-level variable named `app`. A full example is [`apps/hello-world-py`](../apps/hello-world-py).
+
+## Running a Python app
+
+The sandbox runs a Python app when the container has `BERTH_APP_RUNTIME=python`. The `berth` CLI doesn't set this, so `berth dev`, `berth test`, `berth mcp` and `berth deploy` start apps as TypeScript. Boot a Python app with `@berthos/docker-orchestrator` instead:
+
+```ts
+import Docker from "dockerode";
+import { loadManifest } from "@berthos/manifest-schema";
+import { buildImage, startContainer } from "@berthos/docker-orchestrator";
+
+const docker = new Docker();
+const manifest = await loadManifest("apps/hello-world-py/berth.yml");
+
+await buildImage({ appDir: "apps/hello-world-py", tag: "berth/hello-world-py:dev", target: "dev", docker });
+const running = await startContainer({
+  image: "berth/hello-world-py:dev",
+  name: "hello-world-py",
+  manifest,
+  bindMount: { hostPath: process.cwd(), containerPath: "/workspace" },   // the repo root
+  workingDir: "/workspace/apps/hello-world-py",
+  env: { BERTH_APP_RUNTIME: "python" },
+  docker,
+});
+```
+
+Inside the sandbox the SDK is loaded from `packages/sdk-python` in the mounted repo, and the image already has `pydantic`, `pyyaml` and `protobuf`. Your capabilities are compiled into the same kernel policy a TypeScript app gets. Put your own dependencies in `on_install` (`pip install -r requirements.txt`).
+
+## How an app boots
+
+1. Load and validate `berth.yml`.
+2. Import the entry file and find `app`.
+3. Check the app's exports against `berth.yml`'s `exports:`, and stop with an error if they differ.
+4. Run `on_install` hooks.
+5. Connect to the context bus.
+6. Run `on_agent_ready` hooks with an `AppContext`.
+7. Log `[berth:runtime] "<name>" ready` and serve exports.
+
+## API
+
+### `define_app(setup) -> BerthApp`
+
+Calls `setup(app)` and returns the app. Assign the result to a module-level `app`.
+
+### `app.export(name, handler, input_model=None, output_model=None)`
+
+Registers an export. `name` must match an entry in `berth.yml`'s `exports:`, and registering the same name twice raises `ValueError`.
+
+- With `input_model` (a pydantic `BaseModel` subclass), the handler receives a validated model instance. Without it, the handler receives the raw input (usually a `dict`, or `None`).
+- With `output_model`, a return value that isn't already an instance is validated into one. A pydantic model is sent back as its `model_dump()`; anything else is sent as returned.
+- A raised exception is sent back to the caller as an error; it doesn't stop the app.
+
+### `app.on_install(fn)`
+
+Registers `fn()` to run once at startup, before `on_agent_ready`, inside the sandboxed process. For build-time setup, use `berth.yml`'s [`on_install`](./manifest-reference.md#on_install-default-).
+
+### `app.on_agent_ready(fn)`
+
+Registers `fn(ctx)` to run once at startup, before exports are served. `ctx` is an `AppContext`:
+
+| Attribute | Type |
+|---|---|
+| `ctx.manifest` | `BerthManifest` |
+| `ctx.context_bus` | context bus client; see the [context bus reference](./sdk-python-context-bus-reference.md) |
+
+Hooks are plain functions, not `async`. A handler only receives its input, so keep `ctx.context_bus` in a module-level variable if an export needs it.
+
+### Manifest helpers
+
+| Name | What it does |
+|---|---|
+| `load_manifest(path) -> BerthManifest` | Reads and validates a `berth.yml` |
+| `BerthManifest`, `ExportSpec` | Pydantic models for the manifest and one export |
+| `parse_capability(s)` | Splits `namespace:action:scope`; raises `ValueError` if malformed |
+| `matches_capability(granted, requested) -> bool` | Namespace and action match exactly; scope matches with `*` globs |
+
+`BerthManifest` validates `name`, `version`, `description`, `capabilities`, `exports`, `on_install` and `on_agent_ready`. Other fields (`secrets`, `expose`, `governs`, `governance`, `resources`) are accepted but not checked; use `@berthos/manifest-schema` for full validation.
+
+## Protocol
+
+Exports are served as line-delimited JSON on stdio, and also on a Unix socket when `BERTH_RPC_SOCKET` is set:
+
+```json
+{"id": "1", "export": "greet", "input": {"name": "Ada"}}
+{"id": "1", "result": {"message": "Hello, Ada!"}}
+{"id": "2", "error": "no such export \"nope\""}
+```
+
+## Environment variables
+
+| Variable | Default |
+|---|---|
+| `BERTH_APP_RUNTIME` | `node`; set to `python` to run a Python app |
+| `BERTH_MANIFEST_PATH` | `./berth.yml` |
+| `BERTH_APP_ENTRY` | `./src/app.py` |
+| `BERTH_RPC_SOCKET` | unset (stdio only) |
+| `BERTH_CONTEXT_BUS_SOCKET` | `/tmp/berth-context-bus.sock` |
+
+## Limits
+
+- **One app per sandbox.** A Python app can't be a companion in a multi-app sandbox, so it can't use `app:invoke:` or be governed by another app.
+- **No `network:bind:` or `network:peer:`.** The Python policy compiler ignores them, so a Python app can't listen on a port or join the mesh.
+- **No semantic filesystem client, `requestCapability` or `configureEgressProxy`.** Reading and writing files under `/context` works as ordinary file I/O. To use the egress proxy, point your HTTP client at `$BERTH_EGRESS_PROXY_URL`.

@@ -1,97 +1,90 @@
 # Agent runtime reference
 
-> **Frozen subsystem.** This lives in [`experimental/`](../experimental/README.md) and is not part of the core artifact (a `berth.yml` compiled into a kernel-enforced policy, plus the evidence for it). It still builds, still runs its tests, and nothing was deleted — it simply is not what `npm install @berthos/cli` gives you. See [`experimental/README.md`](../experimental/README.md) for why.
+`@berthos/agents` is Berth's agent framework: boot a `Computer` (a sandbox loaded with resident apps), attach an `Agent` to it, and compose agents into crews. Every tool an agent calls is a resident-app export running under that app's kernel-enforced `berth.yml` policy. Bring any LLM provider.
 
-Most agent frameworks wire `agent -> tool`: the agent process calls out to stateless functions. `@berthos/agents` flips that around. A `Computer` (a real Docker sandbox, built from the same `berth.yml` and manifest infrastructure every other part of Berth already uses) comes first. Resident apps loaded into it become the tools, and an `Agent` gets attached on top. It's a framework in the spirit of LangChain or CrewAI: bring your own LLM provider, define agents, compose them into multi-agent crews. The difference is that every agent's tools come from real, sandboxed resident apps, not bare functions.
+> **Experimental, and not published.** The framework lives in [`experimental/`](../experimental/README.md) and is frozen: bug and security fixes only ([why](../CONTRIBUTING.md#the-agents-packages-are-frozen)). It isn't on npm. Use it from a clone of this repo, as a `"@berthos/agents": "workspace:*"` dependency. Releases ship the sandbox only. To put your own agent loop on Berth without this framework, use `berth mcp`, the [framework adapters](#using-berth-tools-from-another-framework), or the [HTTP RPC bridge](#reaching-a-computer-from-outside-nodedocker---http-rpc).
 
-Build the computer, then attach the agent to it.
+```bash
+git clone https://github.com/Ash20pk/BerthOS && cd BerthOS
+corepack enable && pnpm install && pnpm build
+```
 
 ```ts
 import { Computer, createAgent, createAnthropicProvider } from "@berthos/agents";
 
 const computer = await Computer.boot({ apps: ["apps/filesystem", "./my-custom-app"] });
-
 const { agent } = await createAgent({ computer, llm: createAnthropicProvider() });
 
 const result = await agent.run("write a file called hello.txt with the text 'hi', then read it back");
 await computer.stop();
 ```
 
+A Python version of `Agent` and `Crew` connects to a running sandbox: see the [Python agents reference](./agents-python-reference.md).
+
 ## `Computer`, the runtime primitive
 
-`Computer.boot({ apps: string[] })` resolves each directory's `berth.yml` through `resolveComputerApps()` (no pnpm-workspace requirement here, unlike `@berthos/cli`'s `resolveApps`), builds one production image via `buildImage()` (primary plus companions, exactly `@berthos/cli`'s `buildProductionImage` pattern), boots it with `startContainer()`, and turns every export across every loaded app into a `Tool`: `{name, description, inputSchema, invoke}`. Tool names get namespaced `<appName>__<exportName>` once more than one app is loaded, both to avoid collisions and because tool names need to satisfy `^[a-zA-Z0-9_-]+$`, which rules out a `.` separator.
-
-None of this is new infrastructure. Capability enforcement, the context bus, and semantic FS all work exactly the way they do everywhere else: `@berthos/manifest-schema`'s `loadManifest()`, `@berthos/docker-orchestrator`'s `buildImage()`, `startContainer()`, `createStdioRpcClient()` for a single app, and `invokeAppExport()` for multi-app.
-
-There's no fabricated health-check export to poll for readiness. Container boot (`on_install`, the context-bus and semantic-fs daemons, capability-policy generation, `agent-init`'s Landlock setup) takes a few seconds before an app's RPC server is even listening. `Computer.call()` retries a failed attempt with backoff (a short per-attempt timeout, about a 30 second ceiling) instead of requiring every loaded app to expose a synthetic ping export just so something can poll it.
-
-Every `Computer.boot()` builds a fresh, uniquely-tagged image, unlike `berth dev`/`deploy`'s stable, overwritten tags. `Computer.stop()` removes it along with the container, so repeated boots in a long-running process don't leak images on disk.
-
-### Building a Computer your own way
-
-You don't have to hand `createAgent()` a fresh set of `apps` every time. Three ways to get a `Computer`, each suited to a different situation.
-
-Boot fresh from resident app directories. First-party and custom mix freely.
+A `Computer` is one Docker container with one or more resident apps loaded. Every export of every app becomes a `Tool`. It knows nothing about LLMs.
 
 ```ts
-const computer = await Computer.boot({ apps: ["apps/filesystem", "./my-custom-app"] });
+const computer = await Computer.boot({ apps: ["apps/filesystem", "./my-custom-app"] }); // fresh
+const shared = await Computer.connect({ name: "my-agent" });                            // a `berth os up` instance
+const scoped = await Computer.connect({ name: "my-agent", apps: ["filesystem"] });     // only some of its apps
 ```
 
-Connect to a shared, already-running `berth os up` instance.
+Pass any of them to `createAgent({ computer })`. One Computer can back several agents, each with a different subset of `computer.tools`. You own its lifecycle: `createAgent()` never calls `stop()` on it.
 
-```ts
-const computer = await Computer.connect({ name: "my-agent" });
-```
+### `Computer.boot(options)`
 
-Or connect to that same shared instance, scoped to just the apps this particular agent needs.
+| Option | Default | What it does |
+|---|---|---|
+| `apps: string[]` | required | Directories, each with a `berth.yml`. |
+| `network` | none | Docker network to join, so peers resolve each other by name. |
+| `env` | none | Extra container environment variables. |
+| `governance` | `{ mode: "fail-closed" }` | [Governance gate](#governance-and-human-in-the-loop) options. |
+| `httpRpc: boolean \| { app? }` | off | Starts the [HTTP RPC bridge](#reaching-a-computer-from-outside-nodedocker---http-rpc). |
+| `enforcement: "required" \| "warn"` | `"required"` | See [Enforcement](#enforcement). |
+| `docker` | `new Docker()` | A dockerode client. |
 
-```ts
-const computer = await Computer.connect({ name: "my-agent", apps: ["filesystem"] });
-```
+`Computer.connect({ name, apps?, governance?, docker? })` takes the name given to `berth os up`. Naming an app the instance hasn't loaded throws an error listing the ones it has.
 
-That last option is worth calling out. If a `berth os up` instance has several apps loaded (say `filesystem`, `notes`, and `terminal`), each agent that connects to it can ask for only the ones it actually needs. One agent might get `{ apps: ["filesystem"] }`, another `{ apps: ["notes"] }`, both sharing the same running sandbox without either one seeing tools it has no business calling. Ask for an app name the OS doesn't have loaded and `connect()` throws a clear error naming what's actually available, rather than silently handing back an empty tool list.
+The handle has `tools`, `call(toolName, input)`, `stop()`, `httpRpc` (`{ url, authToken, appName? }` when the bridge is on), `containerName`, `apps` and `governance`. `stop()` removes the container and the image `boot()` built for it; on a connected Computer it does nothing.
 
-However you got a `Computer`, hand it straight to `createAgent()` instead of `apps`, and it'll use it as-is with no extra boot or connect step:
+- **Tool names** are the export name (`write_file`) with one app loaded, and `<appName>__<exportName>` (`filesystem__write_file`) with more.
+- **Readiness.** Calls retry with backoff for up to 30 seconds while the apps start. If the container exits during startup, `boot()` fails with its logs.
 
-```ts
-const { agent } = await createAgent({ computer, llm: createAnthropicProvider() });
-```
+### Enforcement
 
-This is what lets one Berth OS back several agents at once, a manager and its workers, say, each built from the same `Computer` with a different (or filtered) set of tools. You still own that Computer's lifecycle either way. `createAgent()` never calls `stop()` on it, whether it built the Computer itself or you handed one in.
+`Computer.boot()` sets `BERTH_REQUIRE_ENFORCEMENT=1`, so if the kernel can't enforce the app's policy, the app doesn't start and `boot()` fails. Enforcement needs Linux 6.7+ with Landlock, which Docker Desktop lacks. `berth doctor` checks; on a Mac, `berth doctor --fix` sets up a VM that has it ([by platform](./kernel-enforcement.md#kernel-enforcement-by-platform)).
+
+For local iteration without Landlock, `Computer.boot({ enforcement: "warn" })` or `BERTH_ALLOW_UNENFORCED=1` on the host runs the app unrestricted with a warning on every boot. The option wins over the env var. Neither gives any isolation.
 
 ## Cold start: `berth os up` and `Computer.connect()`
 
-`Computer.boot()`'s build-then-boot path is correct for a one-shot script, but you'll feel it as real seconds of latency (image build, container start, `on_install`, the context-bus and semantic-fs daemons, `agent-init`'s Landlock setup) paid again on every single run while you're iterating on agent code. `berth os up` moves that cost out of the loop. It builds once and starts a container that stays running after the CLI command returns, instead of the ephemeral, freshly-built container `Computer.boot()` creates on every call.
+`Computer.boot()` builds an image and starts a container every time. `berth os up` does it once and leaves the container running, so agent code connects instead of rebuilding.
 
 ```bash
-berth os up my-agent --apps=apps/filesystem,apps/notes   # or --config=<path to a small YAML: name + apps: [...] + network?>
-berth os status                                          # confirm it's still running
-berth os down my-agent                                   # tear it down when you're done for the day
+berth os up my-agent --apps=apps/filesystem,apps/notes
+berth os status
+berth os down my-agent
 ```
 
-Agent code then connects instead of booting.
+| Flag | What it does |
+|---|---|
+| `--apps=<dir>,<dir>` | App directories to load. |
+| `--config=<path>` | YAML with `name`, `apps: [...]`, optional `network`. |
+| `--network=<name>` | Join a Docker network. |
+| `--http-rpc` | Start the HTTP RPC bridge. |
+| `--http-rpc-app=<name>` | Which app binds the bridge. Defaults to the first. |
 
 ```ts
-import { createAgent, createAnthropicProvider } from "@berthos/agents";
-
 const { agent, computer } = await createAgent({ connect: "my-agent", llm: createAnthropicProvider() });
 ```
 
-Or, if you just want the `Computer` and no `Agent`/LLM at all:
-
-```ts
-const computer = await Computer.connect({ name: "my-agent" });
-```
-
-`Computer.connect()` reads `~/.berth/os/<name>.json` (written by `berth os up`), re-derives a `Docker.Container` handle by name, and dispatches every tool call through `invokeAppExport()`'s docker-exec-plus-Unix-socket relay. That's the same mechanism `berth rpc` and multi-app mode already use to reach a specific, already-running app from a fresh host process. See the [multi-app reference](./multi-app-reference.md). `berth os up` always forces `entrypoint.sh`'s multi-app branch, even for a single app (`buildImage`'s `forceCompanionLayout`, `startContainer`'s `apps` array with exactly one entry), specifically so a per-app RPC socket always exists to reconnect to, no matter how many apps are loaded. The single-app stdio-attach path `Computer.boot()` uses can only ever be held by the process that started the container, which is exactly the limitation this works around.
-
-**`computer.stop()` is a no-op for a connected Computer.** `Computer.boot()`'s `stop()` tears down the container and image it created. A connected Computer didn't create anything and doesn't own the container's lifecycle, so tearing it down from inside one agent run would kill it for every other run still using it. That means `runAgent({connect: "...", task: "..."})` is always safe to call over and over against the same `berth os up` instance. Its `finally { computer.stop() }` never actually stops anything when `connect` was used. Use `berth os down <name>` when you actually want to tear it down.
-
-**Scope:** local, `berth dev`-equivalent Docker only, same as the rest of `@berthos/agents`. There's no `berth os` equivalent for E2B, Daytona, or K8s fleets today.
+`Computer.connect()` reads `~/.berth/os/<name>.json` and reaches each app over `docker exec`. Since `stop()` does nothing on a connected Computer, `runAgent({ connect: "my-agent", task })` is safe to call repeatedly. `berth os up` targets local Docker only.
 
 ### Reaching a Computer from outside Node/Docker: `--http-rpc`
 
-`Computer.connect()`'s docker-exec-plus-Unix-socket relay needs Docker API access — fine for another Node process on the same host, useless for a process that can't drive Docker at all (a Python script, a client on a different machine). `berth os up --http-rpc` starts the same HTTP RPC bridge `bootNetworkedAgent({fleet})` already uses for a remote deploy (`@berthos/sdk`'s `startHttpRpcServer`, bearer-token-gated `POST /rpc` + `GET /healthz`), but for a local container: the port is published to the host, and the URL plus a freshly generated per-boot token are recorded in `~/.berth/os/<name>.json` alongside the rest of `berth os up`'s state.
+For a process without Docker API access, such as a Python script or a client on another machine, `berth os up --http-rpc` starts an HTTP RPC bridge in the container and publishes its port.
 
 ```bash
 berth os up my-agent --apps=apps/filesystem --http-rpc
@@ -99,15 +92,17 @@ berth os up my-agent --apps=apps/filesystem --http-rpc
 # HTTP RPC bridge: http://127.0.0.1:54321 (bearer token recorded in ~/.berth/os/my-agent.json — see docs/agents-python-reference.md for the Python client).
 ```
 
-`Computer.boot({httpRpc: true})` exposes the same bridge for an ephemeral, single-process Computer instead of a named `berth os up` instance — useful for a test or a short-lived script that wants an HTTP-reachable URL without a second `berth os` step; the returned handle's `httpRpc` field (`{url, authToken, appName?}`) carries what a caller needs to hand off to something else.
+The bridge serves `POST /rpc` and `GET /healthz`, gated by a bearer token generated on each boot and recorded with the URL in `~/.berth/os/<name>.json`. `Computer.boot({ httpRpc: true })` does the same for an ephemeral Computer and sets `computer.httpRpc`.
 
-**The one real limitation, not glossed over: the bridge only ever serves one app's exports.** `startHttpRpcServer` runs *inside* one specific app's own `runtime.js` process (gated by `BERTH_HTTP_RPC_APP`, mirroring `bootNetworkedAgent({fleet})`'s `rpcAppName`) — it dispatches to that process's own `invokeExport`, with no way to reach a sibling app's exports in the same container. For more than one loaded app, `--http-rpc-app=<name>` (or `Computer.boot({httpRpc: {app: "..."}})`) picks which one; omitted, it defaults to the first. Every export name sent over `/rpc` is the app's own bare manifest name (`write_file`, not `filesystem__write_file`) — the `app__export` namespacing `computerToolsFor()` builds for TypeScript's in-process `Tool[]` list never crosses this wire, since there's only ever one app's exports reachable through it anyway. This is the mechanism `experimental/agents-python`'s `Computer.connect()` (see [`docs/agents-python-reference.md`](./agents-python-reference.md)) is built on — a real, working second option to the Docker-Engine-API-client alternative, now that this exists.
+- **One app per bridge.** It can only reach one app's exports. Choose which with `--http-rpc-app` or `httpRpc: { app }`.
+- **Bare export names** (`write_file`, not `filesystem__write_file`).
+- **The token is the whole boundary.** Whoever holds it can call every export of that app.
 
-## Shortcuts: `runAgent()` and `createAgent({ apps })`
+The Python `Computer.connect()` uses this bridge.
 
-Building the `Computer` yourself pays off when you need to reuse it across agents, filter which apps an agent sees, or mix in a custom resident app. Most of the time you don't need any of that, so `@berthos/agents` also gives you two shortcuts that build the Computer for you behind the scenes, from whatever you pass as `apps`.
+## `createAgent()` and `runAgent()`
 
-The simplest version needs nothing but an app directory and a task. `llm` defaults to whichever of `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` is set, and `runAgent()` boots, runs one task, and cleans up in one call.
+`createAgent()` gets a Computer (uses `computer`, attaches with `connect`, or boots from `apps`), wraps its tools in an `Agent`, and returns `{ agent, computer, mcpServers }`. `runAgent()` does that, runs one task, then stops the Computer and closes MCP connections.
 
 ```ts
 import { runAgent } from "@berthos/agents";
@@ -118,117 +113,217 @@ const result = await runAgent({
 });
 ```
 
-Same defaults, but here's the fuller form, for when you want to keep the `Agent`/`Computer` handles around to run more than one turn or call tools directly.
+| Option | What it does |
+|---|---|
+| `apps` | A directory or array of them. |
+| `connect` | `"<name>"` or `{ name, apps? }`. |
+| `computer` | A Computer you built (`createAgent()` only). |
+| `llm` | An `LLMProvider` or [config object](#providers). Default: auto-detected. |
+| `name`, `systemPrompt` | Name defaults to `"agent"`. |
+| `maxTurns` | Default 25. |
+| `checkpoint` | `"semantic-fs"` or a [`CheckpointStore`](#checkpointing-and-resuming-a-run). |
+| `trace` | `"full"`, `"otel"` or a [`StepTracer`](#tracing-a-run-agentstep-events-not-a-langsmith-style-tracer). |
+| `tracePayloads` | Put redacted tool arguments and results in trace events. Off by default. |
+| `audit` | An `AuditSink` from `@berthos/audit`: steps and governance verdicts in one hash-chained trail ([audit](./audit-reference.md)). Only for a Computer this call boots. |
+| `actor` | Who trace and audit records are attributed to. Default: the agent. |
+| `retriever` | `"semantic-fs"` or a [`Retriever`](#retrieval-a-search_context-tool-over-semantic-fs-not-a-vector-db-integration). |
+| `mcpServers` | [MCP servers](#consuming-an-external-mcp-server-createmcpclienttools) whose tools to add. |
+| `inputGuardrails`, `outputGuardrails` | [Guardrails](#guardrails). |
+| `network`, `env`, `docker`, `governance` | Passed to `Computer.boot()`. |
+
+`runAgent()` takes the same options except `computer`, plus `task`, `runId`, `onText`, `responseSchema` and `maxRepairAttempts`. To resume a crashed run, use `createAgent()` and `agent.resume(runId)`. `createAgent()` doesn't forward `timeoutMs`, `toolTimeoutMs` or `context`; construct an [`Agent`](#agent) for those.
+
+## Using Berth tools from another framework
+
+Keep your own agent loop and convert a Computer's tools:
 
 ```ts
-import { createAgent, createAnthropicProvider } from "@berthos/agents";
+import { openai } from "@ai-sdk/openai";
+import { generateText, stepCountIs } from "ai";
+import { Computer, toAiSdkTools } from "@berthos/agents";
 
-const { agent, computer } = await createAgent({
-  apps: ["apps/filesystem"],
-  llm: createAnthropicProvider(), // optional, omit to auto-detect from the environment, or pass createOpenAIProvider()/your own LLMProvider
+const computer = await Computer.boot({ apps: ["apps/filesystem"] });
+await generateText({
+  model: openai("gpt-4o"),
+  tools: await toAiSdkTools(computer.tools),
+  stopWhen: stepCountIs(5),
+  prompt: "Write a summary to /workspace/notes.md",
 });
-
-const result = await agent.run("write a file called hello.txt with the text 'hi', then read it back");
 await computer.stop();
 ```
 
-Both `createAgent()` and `runAgent()` also accept `connect: "<name>"` instead of `apps`, the same shortcut `Computer.connect()` gives you explicitly. See "Cold start" above.
+| Function | Returns |
+|---|---|
+| `toAiSdkTools(tools)` | A promise of a name-to-tool record for the Vercel AI SDK. |
+| `toLangChainTools(tools)` | A promise of `DynamicStructuredTool`s for LangChain and LangGraph. Non-string results are JSON-stringified. |
+| `toToolSpecs(tools)` | `{ name, description, parameters, call(input, signal?) }[]`, with no framework dependency. |
 
-## `Tool` and `LLMProvider`, the bring-your-own-LLM seam
+`ai` and `@langchain/core` are optional peer dependencies. Example: [`examples/agents/with-vercel-ai-sdk`](../examples/agents/with-vercel-ai-sdk).
+
+## `Tool` and `LLMProvider`
+
+Resident-app exports, MCP tools, A2A peers and other agents (via `asTool()`) are all `Tool`s, so one tool list can mix them.
 
 ```ts
 interface Tool {
   name: string;
   description: string;
   inputSchema: object; // JSON Schema
-  invoke(input: unknown): Promise<unknown>;
+  invoke(input: unknown, ctx?: { signal?: AbortSignal }): Promise<unknown>;
 }
 
 interface LLMProvider {
   readonly name: string;
-  chat(params: { system?: string; messages: AgentMessage[]; tools: Tool[] }): Promise<LLMTurn>;
-  chatStream?(
-    params: { system?: string; messages: AgentMessage[]; tools: Tool[] },
-    onText: (delta: string) => void,
-  ): Promise<LLMTurn>;
+  chat(params: LLMCallParams): Promise<LLMTurn>;
+  chatStream?(params: LLMCallParams, onText: (delta: string) => void): Promise<LLMTurn>;
+}
+
+interface LLMCallParams { system?: string; messages: AgentMessage[]; tools: Tool[]; signal?: AbortSignal }
+
+interface LLMTurn {
+  text?: string;
+  toolCalls: { id: string; name: string; input: unknown }[];
+  stop: boolean;
+  stopReason?: "end" | "tool_calls" | "length" | "content_filter" | "refusal" | "other";
+  usage?: { inputTokens: number; outputTokens: number };
 }
 ```
 
-`createAnthropicProvider()` and `createOpenAIProvider()` ship as two real, independent implementations, proof the interface isn't secretly hardcoded to one vendor. Implement `LLMProvider` yourself for any other API. Nothing in `Computer`, `Agent`, or `Crew` references a specific provider.
+Implement `LLMProvider` for any API not listed below. A tool's input schema comes from the app's `berth.yml`, whose `exports:` grammar is flat (`string | number | boolean | object | array`), not from the Zod schema in the app's code.
 
-`chatStream` is optional — same request/response contract as `chat()`, but it calls `onText(delta)` with each chunk of assistant text as the model produces it (backed by `client.messages.stream()` for Anthropic, `stream: true` chat completions for OpenAI), rather than only handing back the full text once the turn is done. Pass `onText` to `run()`/`resume()`/`runAgent()` to get it:
+### Streaming
 
-```ts
-const { agent } = await createAgent({ apps: "apps/filesystem" });
-const result = await agent.run("long task", {
-  onText: (delta) => process.stdout.write(delta),
-});
-```
-
-`onText` only takes effect when the resolved provider implements `chatStream` — both built-in providers do. Passing it to a provider that only implements `chat()` (a custom `LLMProvider`) is a silent no-op, not an error: `Agent` falls back to `chat()` and the run completes exactly as it would without `onText`, just without incremental events. Streaming is per-turn, not across the whole tool-use loop — each LLM call in `Agent`'s loop streams its own text independently; tool-call arguments themselves aren't streamed, only the assistant's text.
-
-You don't have to construct a provider object yourself, either. `createAgent()`/`runAgent()`'s `llm` option also accepts a plain config object, resolved through `resolveLLMProvider()`:
+Pass `onText` to `run()`, `resume()` or `runAgent()` to receive assistant text as it's generated:
 
 ```ts
-const { agent } = await createAgent({
-  apps: "apps/filesystem",
-  llm: { provider: "openai", apiKey: "...", baseURL: "https://my-endpoint/v1", model: "..." },
-});
+const result = await agent.run("long task", { onText: (delta) => process.stdout.write(delta) });
 ```
 
-`baseURL` is what makes this useful beyond a shorthand. Both `createAnthropicProvider()` and `createOpenAIProvider()` accept it directly too, and it's what lets you point at a self-hosted or OpenAI-compatible endpoint (Ollama, vLLM, OpenRouter, a Bedrock or Vertex proxy) instead of the vendor's own API. Omit `llm` entirely and `detectLLMProvider()` picks whichever of `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` is actually set.
+It needs a provider with `chatStream` (all built-in ones have it); otherwise it's ignored. Tool-call arguments aren't streamed.
+
+### Providers
+
+| Factory | Options | Defaults |
+|---|---|---|
+| `createAnthropicProvider()` | `apiKey`, `baseURL`, `model`, `maxTokens`, `maxRetries` | `ANTHROPIC_API_KEY`, `claude-sonnet-5`, 4096 max tokens |
+| `createOpenAIProvider()` | `apiKey`, `baseURL`, `model`, `maxTokens`, `maxRetries` | `OPENAI_API_KEY`, `gpt-4o` |
+| `createGoogleProvider()` | `apiKey`, `vertexai`, `project`, `location`, `model`, `baseUrl` | `GOOGLE_API_KEY` or `GEMINI_API_KEY`, `gemini-2.5-flash` |
+| `createAzureOpenAIProvider()` | `apiKey`, `endpoint`, `deployment`, `apiVersion` | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT` (required), `AZURE_OPENAI_API_VERSION` or `2024-10-21` |
+| `createBedrockProvider()` | `apiKey`, `awsRegion`, `baseURL`, `model` | `AWS_BEARER_TOKEN_BEDROCK`, `AWS_REGION`/`AWS_DEFAULT_REGION`, `AWS_BEDROCK_BASE_URL`, `anthropic.claude-sonnet-5` |
+| `createOllamaProvider()` | `baseURL`, `model` | `http://127.0.0.1:11434/v1`, `llama3.1` |
+
+Google uses the native Gemini API; `vertexai: true` with `project` and `location` (or `GOOGLE_CLOUD_PROJECT` / `GOOGLE_CLOUD_LOCATION`) uses Vertex AI with Application Default Credentials. Bedrock uses its OpenAI-compatible endpoint with bearer-token auth. `baseURL` points the Anthropic or OpenAI provider at any compatible endpoint (vLLM, OpenRouter, a proxy).
+
+With `llm` omitted, `detectLLMProvider()` uses the first key set: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, then `GOOGLE_API_KEY` / `GEMINI_API_KEY`. `llm` also takes plain data, resolved by `resolveLLMProvider()`:
+
+```ts
+llm: { provider: "openai", apiKey: "...", baseURL: "https://my-endpoint/v1", model: "..." }
+```
+
+`provider` is `"anthropic"`, `"openai"`, `"google"` or `"ollama"`. Azure and Bedrock need their factories.
 
 ### Retries and a fallback model chain
 
-A single flaky call (a 429, a 5xx, a timeout) is already retried a couple of times before it ever reaches `Agent` — `createAnthropicProvider()`/`createOpenAIProvider()` are thin adapters over `@anthropic-ai/sdk`/`openai`, and both SDK clients retry retriable errors with their own exponential backoff by default (`maxRetries: 2`). That default was previously invisible and unconfigurable from this package; both providers now accept `maxRetries` directly:
-
-```ts
-const llm = createAnthropicProvider({ maxRetries: 5 });
-```
-
-What was actually missing is the layer above that: a whole provider being down (an outage, an exhausted quota), not one bad request. `createFallbackProvider(providers, {onFallback?})` wraps an ordered list of `LLMProvider`s into one — `chat()`/`chatStream()` try `providers[0]`, and on any thrown error (i.e. once that provider's own retries are exhausted) fall through to `providers[1]`, and so on, until one succeeds or the last one's error propagates unchanged:
+The Anthropic and OpenAI clients retry 429s, 5xxs and timeouts twice by default; set `maxRetries` to change it. For a provider that's down, `createFallbackProvider(providers, options?)` tries each in order. The last one's error propagates unchanged.
 
 ```ts
 const llm = createFallbackProvider(
   [createAnthropicProvider(), createOpenAIProvider()],
-  { onFallback: (err, failed) => console.error(`${failed.name} failed, falling back:`, err) },
+  { onFallback: (err, failed, next) => console.error(`${failed.name} failed, trying ${next.name}:`, err) },
 );
 const { agent } = await createAgent({ apps: "apps/filesystem", llm });
 ```
 
-Works with any `LLMProvider`, built-in or custom — nothing in `createFallbackProvider()` references Anthropic or OpenAI specifically, and nothing in `Agent`/`createAgent` needs to know a fallback chain is even in use; `llm` accepts the wrapped provider exactly like any other. `chatStream` is present on the wrapped provider only when every provider in the chain implements it — same "absent means no incremental events" contract `Agent.run()` already treats `chatStream` under. **One real, documented gap**: falling back mid-stream isn't clean — `onText` may have already fired with the failed provider's partial text before the switch, and the next provider's stream starts over from nothing, so a caller could see `"Hel"` then `"Hello there"` rather than one continuous stream.
+- It falls through on retriable and unrecognised errors, and stops on non-retriable ones (invalid request, context too long). Override with `shouldFallThrough(err, failedProvider)`. Cancellation always propagates.
+- It has `chatStream` only if every provider in the chain does. A mid-stream fallback restarts the text, so `onText` may have seen partial output.
 
-Because `Tool` is the one interface both resident-app exports and other agents implement (through `Agent.asTool()`), a manager agent's tool list can freely mix "call a resident app export" and "delegate to another agent" through the same dispatch path.
+## `Agent`
 
-### More providers: Gemini, Azure OpenAI, Bedrock, Ollama
-
-Four more built-in `LLMProvider` implementations, all in `experimental/agents/src/providers/`:
-
-- **`createGoogleProvider({ apiKey?, vertexai?, project?, location?, model? })`** — real native Gemini support via `@google/genai`, not a relabeled OpenAI request. Gemini's `Content`/`Part`/`FunctionCall`/`FunctionResponse` types are genuinely different from Anthropic's or OpenAI's, which makes this the actual proof that `LLMProvider` is vendor-neutral rather than accidentally shaped around whichever two providers came first. Pass `vertexai: true` (plus `project`/`location`, or their `GOOGLE_CLOUD_PROJECT`/`GOOGLE_CLOUD_LOCATION` env var equivalents) to use Vertex AI with Application Default Credentials instead of an API key. `parametersJsonSchema` accepts a `Tool`'s JSON Schema `inputSchema` directly, same passthrough Anthropic/OpenAI already do — no translation layer.
-- **`createAzureOpenAIProvider({ apiKey?, endpoint?, deployment?, apiVersion? })`** — Azure OpenAI isn't just OpenAI with a different `baseURL`: it authenticates with an `api-key` header instead of `Authorization: Bearer`, routes by a **deployment name** in the URL path rather than `model` in the request body, and needs an `api-version` query param on every request. Built on the `openai` package's own `AzureOpenAI` client, which already handles all three — `deployment` (or `AZURE_OPENAI_DEPLOYMENT`) is required, since Azure has no notion of picking a model by name at request time the way OpenAI/Anthropic do.
-- **`createBedrockProvider({ apiKey?, awsRegion?, baseURL?, model? })`** — Amazon Bedrock's newer OpenAI-compatible endpoint (bearer-token auth, not full AWS SigV4), via the `openai` package's own `BedrockOpenAI` client. Real, current Bedrock support for a team already standardized on it for procurement or data-residency reasons.
-- **`createOllamaProvider({ baseURL?, model? })`** — `createOpenAIProvider({ baseURL: "http://127.0.0.1:11434/v1" })` already works since Ollama speaks the OpenAI Chat Completions API; this is pure ergonomics (a real local-model default, a name that says what it is), the same reason a dedicated `ollama` provider exists in every other framework's provider list too.
-
-All four share the exact same `chat()`/`chatStream()` tool-calling implementation Anthropic/OpenAI already proved out — `createOpenAICompatibleProvider(client, model, name)` (an internal helper in `openai.ts`, not re-exported from `index.ts`) is the one place that logic lives, so Azure/Bedrock/Ollama differ from `createOpenAIProvider()` only in how the underlying client is constructed, never in message-mapping. `resolveLLMProvider()`/`LLMProviderConfig` and `detectLLMProvider()` both understand `"google"`/`"ollama"` as plain-config `provider` values too (Azure/Bedrock need more than `{apiKey, baseURL, model}` — a deployment name, an AWS region — so those stay explicit factory calls, not auto-detected or config-object-representable).
-
-Verified for real against local mock servers standing in for each vendor's actual HTTP API (request shape, auth headers, response parsing) — not live-account-tested, the same posture Anthropic/OpenAI's adapters already had (no committed unit tests for any of these thin SDK-wrapping files, matching that existing convention).
-
-## Governance gate: gating every other app's tools
-
-An app declaring `governs: true` in its `berth.yml` becomes the Computer's governance authority: `Computer` wraps every *other* app's `Tool.invoke` to call that app's `evaluate_action` export first, and only proceeds if it returns `{ allowed: true }`. This is `Computer`-level, not kernel-level — Landlock has no per-syscall hook to build a true kernel gate on, so this is the closest real choke point that sees every tool call an agent makes across every app. Full contract, opt-out (`governance: { exempt: true }`), and fail-open behavior in the [governance gate reference](./governance-reference.md).
-
-Governance is fully automated — `evaluate_action` is a policy check some app's code answers. It can just as well block on a person; see the next section.
-
-## Human-in-the-loop
-
-Neither `Agent.run()` nor the governance gate above has an interrupt point — nothing like LangGraph's `interrupt()`/`Command(resume=...)`. The way to put a human in front of a tool call is the same as for any other policy: a governance app whose `evaluate_action` blocks until a person decides (see [Governance](#governance-and-scoping)), or a wrapper around the tool's `invoke` in your own loop. A human's "no" should end the run rather than come back as a tool result the model can retry — `Agent.run()` treats a `GuardrailTripwireError` that way, and a wrapper should throw one.
-
-## Guardrails: gating an `Agent`'s own input and final answer
-
-The governance gate above and human-in-the-loop both gate *tool calls*. Neither one looks at the model's own input or its final answer text — the seam OpenAI's Agents SDK guardrails, ADK's callbacks/plugins, and Semantic Kernel's filters all cover. `inputGuardrails`/`outputGuardrails` (`experimental/agents/src/guardrails.ts`) close that:
+`Agent` runs the tool-use loop until the model answers without calling a tool, or `maxTurns` is reached. Construct one directly for options `createAgent()` doesn't forward:
 
 ```ts
-import { createAgent, createKeywordGuardrail, createLlmGuardrail } from "@berthos/agents";
+import { Agent, createAnthropicProvider } from "@berthos/agents";
+
+const agent = new Agent({
+  llm: createAnthropicProvider(),
+  tools: computer.tools,
+  timeoutMs: 120_000,
+  toolTimeoutMs: 30_000,
+  context: { maxInputTokens: 150_000 },
+});
+```
+
+`AgentOptions`: `llm` and `tools` (required), `name`, `systemPrompt`, `maxTurns` (default 25), `checkpoint`, `trace`, `actor`, `tracePayloads`, `inputGuardrails`, `outputGuardrails`, `timeoutMs`, `toolTimeoutMs`, `context`, and `governance` (set by `createAgent()`).
+
+| Method | What it does |
+|---|---|
+| `run(input, opts?)` | Runs a task. Returns `{ text, toolCalls: { name, input, result }[], data? }`. |
+| `resume(runId, opts?)` | Continues a checkpointed run. See [Checkpointing](#checkpointing-and-resuming-a-run). |
+| `withTools(tools)` | Returns a new `Agent` with extra tools. The original is unchanged. |
+| `asTool(description)` | Wraps the agent as a `Tool`: `{ task: string }` in, `run(task).text` out. |
+
+`run()` options: `runId`, `onText`, `session`, `signal`, `timeoutMs` (overrides the agent's), `responseSchema`, `maxRepairAttempts`. `resume()` takes the same except `runId` and `session`.
+
+### Tool errors
+
+A tool call that throws (bad arguments, a handler error, a governance denial, an unknown tool, a tool timeout) doesn't end the run. The model gets `{ error: <message> }` as the result and can react. Zod errors are reformatted as `path: message; path: message`. Only a `GuardrailTripwireError` thrown from a tool, or cancellation, ends the run.
+
+### Timeouts and cancellation
+
+| Control | Effect |
+|---|---|
+| `signal` (per run) | Aborts the in-flight LLM call and tool call. `run()` rejects with `RunAbortedError`. |
+| `timeoutMs` | Wall-clock limit on the whole run. `run()` rejects with `RunTimeoutError`. |
+| `toolTimeoutMs` | Limit on one tool call. The model gets a `ToolTimeoutError` as that call's result; the run continues. |
+
+Agents called through `asTool()` inherit the caller's signal. A tool that ignores its signal may keep running after the loop moves on.
+
+### Context window
+
+`context` is a `ContextPolicy` bounding what's sent on each call:
+
+| Field | Default | What it does |
+|---|---|---|
+| `maxInputTokens` | unset | Budget for system prompt, tool schemas and history together. Unset turns off proactive compaction. |
+| `reserveTokens` | 1024 | Headroom held back from the budget. |
+| `keepRecentMessages` | 6 | Messages at the end that are never dropped. |
+| `summarize` | unset | `(dropped) => Promise<string>`. Replaces dropped messages with one message prefixed `[earlier conversation, summarized]`. One extra LLM call per compaction. |
+
+Tokens are estimated as characters ÷ 4 (`estimateTokens()` and `compactMessages()` are exported). Compaction never splits a tool call from its result. With no policy, a context-length error from the provider still triggers one trim-and-retry. Each compaction emits a `context-compaction` trace event.
+
+### Errors
+
+Framework errors extend `BerthAgentError` and carry a stable `code`.
+
+| Error | `code` | When |
+|---|---|---|
+| `MaxTurnsExceededError` | `max_turns_exceeded` | The loop hit `maxTurns`. |
+| `UnknownToolError` | `unknown_tool` | No such tool (returned to the model). |
+| `CheckpointNotFoundError` | `checkpoint_not_found` | `resume()` found no checkpoint. |
+| `CheckpointStoreMissingError` | `checkpoint_store_missing` | `resume()` with no `checkpoint` store. |
+| `RunAbortedError` | `run_aborted` | The caller's signal fired. |
+| `RunTimeoutError` | `run_timed_out` | `timeoutMs` elapsed. |
+| `ToolTimeoutError` | `tool_timed_out` | `toolTimeoutMs` elapsed (returned to the model). |
+| `ProviderError` | `provider_error` | Base for provider failures, with a `retriable` flag (is another provider worth trying). |
+| `RateLimitError`, `ProviderAuthError`, `ProviderUnavailableError` | `provider_rate_limited`, `provider_auth_failed`, `provider_unavailable` | Retriable. |
+| `ContextLengthExceededError`, `ProviderRequestInvalidError` | `provider_context_length_exceeded`, `provider_request_invalid` | Not retriable. |
+
+Also thrown, extending `Error` directly: `GuardrailTripwireError`, `StructuredOutputError`, `GovernanceDeniedError`, `GovernanceUnavailableError`, `CheckpointReadError`, and `TruncatedResponseError` (the provider stopped for `length`, `content_filter` or `refusal`).
+
+## Governance and human-in-the-loop
+
+An app with `governs: true` in its `berth.yml` gates every other app's tool calls: each goes to its `evaluate_action` export first and runs only on `{ allowed: true }`. MCP tools from `createAgent()` are gated as app `mcp:<server>`, and `asTool()` delegation as app `agent:<name>`, export `invoke`. The check runs in `Computer`, not the kernel.
+
+A denial throws `GovernanceDeniedError`, which the model sees as a tool error. The gate fails closed: an unreachable governor throws `GovernanceUnavailableError`, unless you pass `governance: { mode: "fail-open" }`. Details: [governance reference](./governance-reference.md).
+
+For a human in the loop, write a governance app whose `evaluate_action` waits for a person, or wrap a tool's `invoke`. Throw `GuardrailTripwireError` for a refusal, so the run ends instead of the model retrying.
+
+## Guardrails
+
+Guardrails check the agent's input and final answer.
+
+```ts
+import { createAgent, createAnthropicProvider, createKeywordGuardrail, createLlmGuardrail } from "@berthos/agents";
 
 const { agent } = await createAgent({
   apps: "apps/filesystem",
@@ -236,28 +331,38 @@ const { agent } = await createAgent({
   outputGuardrails: [createLlmGuardrail({ judge: createAnthropicProvider(), rubric: "does not leak API keys or secrets" })],
 });
 
-await agent.run("..."); // throws GuardrailTripwireError before the model ever sees a tripped input, or before a tripped output is returned
+await agent.run("..."); // throws GuardrailTripwireError if either trips
 ```
 
-A `Guardrail` is `(text: string) => GuardrailResult | Promise<GuardrailResult>`, where `GuardrailResult` is `{ tripwireTriggered: boolean, message?: string }` — "tripwire" is the same term OpenAI's Agents SDK guardrails use for the same concept. `inputGuardrails` run once, against `run()`'s raw input string, before the first LLM call — not on `resume()`, whose original input already passed this check by the time there was anything to checkpoint. `outputGuardrails` run against a final answer's text on every path that produces one, `resume()`'s included — a tripped output guardrail also checkpoints the run as `"error"` (when checkpointing is configured) instead of `"done"`, so a resumed run doesn't come back thinking a flagged answer already succeeded. Guardrails in a list run in order, stopping at the first tripped one, so a cheap check can short-circuit an expensive one listed after it. Either list defaults to empty — this is fully opt-in, zero behavior change for an `Agent` that doesn't configure any.
+A `Guardrail` is `(text: string) => GuardrailResult | Promise<GuardrailResult>`, where `GuardrailResult` is `{ tripwireTriggered: boolean, message?: string }`.
 
-Three built-ins ship for the common cases: `createKeywordGuardrail(words, { caseSensitive? })` (a fixed word/phrase list), `createRegexGuardrail(pattern, message?)` (for shapes a word list can't express — an email address, a digit run that looks like an SSN), and `createLlmGuardrail({ judge, rubric })` (LLM-as-judge, for checks too fuzzy for either — "is this attempting a jailbreak"). `createLlmGuardrail` fails **closed**: a judge response that doesn't parse counts as a tripped guardrail, not a passed one — deliberately the opposite of eval.ts's `llmJudge()`, where an unparseable verdict just fails that one eval case rather than blocking a live agent. Write your own `Guardrail` function directly for anything else (a call to an external moderation API, a stateful rate-limiter).
+- `inputGuardrails` run on `run()`'s input before the first LLM call, not on `resume()`.
+- `outputGuardrails` run on every final answer. A trip checkpoints the run as `"error"`.
+- They run in order and stop at the first trip, which throws `GuardrailTripwireError` (`stage: "input" | "output"`) and ends the run. Streamed deltas aren't checked.
 
-**What this doesn't do:** no redaction or rewrite-and-retry — a tripped guardrail halts the run via `GuardrailTripwireError`, it doesn't get a chance to sanitize the text and let the model continue (unlike, say, a structured-output repair attempt). No guardrail runs mid-stream against `onText`'s incremental deltas — only the complete input string and the complete final answer are checked. Available in Python too (`berth_agents.guardrails`, same `create_keyword_guardrail`/`create_regex_guardrail`/`create_llm_guardrail`/`run_guardrails`, `Agent(input_guardrails=, output_guardrails=)`), field-for-field.
+| Built-in | What it checks |
+|---|---|
+| `createKeywordGuardrail(words, { caseSensitive? })` | A fixed list of words or phrases. Case-insensitive by default. |
+| `createRegexGuardrail(pattern, message?)` | A regular expression. |
+| `createLlmGuardrail({ judge, rubric })` | An LLM judges the text against a rubric. An unparseable verdict counts as tripped. |
 
-## `Agent` and `Crew`: single- and multi-agent composition
+`runGuardrails(guardrails, text, stage)` runs a list yourself.
 
-`Agent.run(input)` is the provider-agnostic tool-use loop, identical no matter which `LLMProvider` or `Tool` implementations are plugged in. `Agent.asTool(description)` wraps an agent as a `Tool` (`{task: string}` in, `run(task).text` out), the seam `Crew.withManager({manager, workers})` uses to let a manager's own LLM decide when to delegate. `Crew.sequential(agents)` just pipes each agent's output text into the next.
+## `Crew`: composing agents
 
-A tool call that throws (bad args, a handler exception, a governance denial) doesn't end the run. `Agent.run()`'s tool loop catches it and feeds `{ error: <message> }` back to the model as that call's tool result, exactly like the existing "no such tool" case — the model sees the failure and can retry with different input, try a different tool, or give up and explain why, the same way it reacts to any other tool result. Nothing to opt into; this is the only behavior.
+`Crew` functions compose agents with plain wiring over `Agent.run()`. There's no graph DSL.
 
-### Composable `Crew` functions: cycles, fan-out, and branching without a graph DSL
+| Shape | What it does | `runId` | `checkpoint` | `responseSchema` |
+|---|---|---|---|---|
+| `Crew.sequential(agents, opts?)` | Pipes each agent's output into the next. | yes | yes | yes |
+| `Crew.withManager({ manager, workers, runId? })` | Gives the manager one tool per worker (`worker.asTool()`); its LLM decides when to delegate. | manager only | no | no |
+| `Crew.networked({ manager, peers, runId? })` | Like `withManager`, with each worker in its own Computer. See [below](#networked-crew-agents-as-peers-on-a-real-lan). | manager only | no | no |
+| `Crew.parallel(agents, { merge?, runId? })` | Runs all agents on the same input at once. Default merge puts each output under `## <name>`. | per agent | no | no |
+| `Crew.loopUntil({ agent, until, maxIterations? })` | Feeds the agent its own output until `until(result, iteration)` is true. Runs at least once; `maxIterations` defaults to 10. | yes | yes | no |
+| `Crew.route({ router, routes, fallback? })` | The router picks one of `routes`' keys (case-insensitive); that agent runs on the original input. No match uses `fallback`, or throws. | yes | no | yes |
+| `Crew.pipeline<S>(steps, opts?)` | Threads a typed state object through step functions. | step argument | yes | no |
 
-`sequential`/`withManager`/`networked` are three fixed shapes — a straight pipe, or a manager delegating to fixed workers/peers. Anything beyond that (a fan-out-then-merge, a retry loop, an if/else) used to mean dropping out of `Crew` and hand-coding it. Three more `Crew` functions cover those without introducing a LangGraph-style node/edge graph — each is still just plain wiring over `Agent.run()`, not a new execution primitive:
-
-- **`Crew.parallel(agents, { merge? })`** — runs every agent against the same input concurrently, then combines their outputs. Default `merge` concatenates each agent's output under a `## <name>` heading; pass `merge` to pick one, vote, or combine some other way.
-- **`Crew.loopUntil({ agent, until, maxIterations? })`** — runs `agent` repeatedly, feeding its own output back in as the next input, checking `until(result, iteration)` *after* each run (so it always runs at least once). Stops the moment `until` returns true, or after `maxIterations` (default 10) as the backstop against a condition that never fires.
-- **`Crew.route({ router, routes, fallback? })`** — `router` is asked to classify the input as exactly one of `routes`'s keys; only that one branch's agent then runs, against the *original* input, not the router's classification prompt. Falls back to `fallback` (or throws, naming what the router actually said) when its answer matches no route.
+All but `pipeline` return `{ run(input: string): Promise<string> }`.
 
 ```ts
 const crew = Crew.route({
@@ -265,14 +370,10 @@ const crew = Crew.route({
   routes: { billing: billingAgent, support: supportAgent },
   fallback: generalAgent,
 });
-const result = await crew.run("where's my refund?"); // routed to billingAgent
+await crew.run("where's my refund?"); // runs billingAgent
 ```
 
-`sequential`/`loopUntil` (and `pipeline`, next) accept the same `checkpoint`/`runId` options `Agent.run()` does — see "Checkpointing a `Crew` composition" below. `withManager`/`networked`/`route`/`parallel` don't: `withManager`/`networked`/`route` delegate through a single manager/router `Agent`'s own tool-use loop (already checkpointable by giving *that* `Agent` its own `checkpoint` store), and `parallel` has no meaningful "which step completed" to resume from since every agent runs at once.
-
-#### `Crew.pipeline`: a typed state object threaded across steps
-
-`sequential`/`parallel`/`loopUntil`/`route` all pipe a plain `string` from one step to the next — there's no equivalent of a LangGraph `StateGraph`'s typed state accumulating across nodes. `Crew.pipeline<S>(steps)` covers that case without becoming a graph: each step is a plain function `(state: S) => Partial<S> | Promise<Partial<S>>` that reads the accumulated state (every prior step's fields, not just the last one's) and returns a partial update, shallow-merged in for the next step. Steps still run in the fixed order given — this is state threading, not conditional/cyclic execution (reach for `route`/`loopUntil` for those).
+`Crew.pipeline` steps are `(state: S, runId?: string) => Partial<S> | Promise<Partial<S>>`, run in order, each update shallow-merged into the state.
 
 ```ts
 type State = { document: string; summary?: string; wordCount?: number };
@@ -282,50 +383,49 @@ const crew = Crew.pipeline<State>([
   (state) => ({ wordCount: state.summary?.split(" ").length ?? 0 }),
 ]);
 
-const result = await crew.run({ document: "..." });
-// result.document, result.summary, and result.wordCount are all populated
+const result = await crew.run({ document: "..." }); // document, summary and wordCount all set
 ```
 
-Accepts the same `checkpoint`/`runId` options as `sequential`/`loopUntil` — see the next section.
+For `withManager` and `networked`, put `checkpoint` or `responseSchema` on the manager. `parallel` gives each agent the run id `<runId>:<index>:<name>`.
 
-## Checkpointing and resuming a run: state without a graph
+## Checkpointing and resuming a run
 
-`Agent.run()`'s tool-use loop keeps its `messages`/executed-tool-calls state as a plain in-process array — it's gone the moment the call returns or the process dies mid-loop. There's no LangGraph-style checkpointer here, and deliberately no graph to attach one to; instead, checkpointing is exposed as a `CheckpointStore` seam (`experimental/agents/src/checkpoint.ts`) that `Agent.run()`/`Agent.resume()` write through directly:
+With a `checkpoint` store and a `runId`, `run()` saves after every turn, and `resume(runId)` continues after a crash.
 
 ```ts
 const { agent, computer } = await createAgent({ apps: "apps/filesystem", checkpoint: "semantic-fs" });
-await agent.run("long task", { runId: "task-42" }); // saves progress after every turn
+await agent.run("long task", { runId: "task-42" });
 
-// ...process crashes, or you just come back later...
-const result = await agent.resume("task-42"); // picks the loop back up, doesn't replay from scratch
+// ...the process crashes, or you come back later...
+const result = await agent.resume("task-42");
 ```
 
-`"semantic-fs"` (`createSemanticFsCheckpointStore()`) is the built-in backend, and it's built entirely from existing pieces, not a new daemon:
-- An `Agent` runs on the host, outside the sandbox — the only way it can reach Semantic FS at all is through a resident app's exports, the same as any other tool call. `apps/filesystem`'s `write_context_file`/`read_context_file`/`tag_context_file` (the last is a small, real addition — `read_context_file` mirroring `read_file` but scoped to `/context`, since `query_context` is fuzzy keyword/embedding search, not a fit for an exact-path checkpoint load) are what it calls. Any app exposing those three export names works; the store resolves them off `Computer.tools` by suffix match (bare `write_context_file` on a single-app Computer, `<appName>__write_context_file` once there's more than one app), and throws immediately at construction if none is found — not on the first `save()` deep inside a run.
-- A checkpoint is one JSON blob per `runId` at `/context/agent-runs/<runId>.json`: `{runId, agentName, status: "running"|"done"|"error", turnCount, messages, toolCalls, text?}`. `turnCount` is the index of the *next* turn to run, so `resume()` continues the loop rather than re-sending the original task.
-- `resume()` on a `status: "done"` checkpoint is a plain read — it returns the stored `text`/`toolCalls` without calling the LLM again.
-- `load()` can't distinguish "nothing was ever saved for this runId" from "a real error happened reading it" — resident-app export errors cross the RPC wire as a plain message string (see `Computer`'s `dispatch()`), not a typed error code. Both cases return `null` from `load()`, so `resume()` on a `runId` that failed to read for an unrelated reason (a transient RPC hiccup, say) reports "no checkpoint found" rather than the real cause. Worth knowing if a resume doesn't behave as expected.
+A checkpoint is `{ runId, agentName, status: "running" | "done" | "error", turnCount, messages, toolCalls, text? }`, where `turnCount` is the next turn. Resuming a `"done"` run returns the saved answer without calling the model.
 
-**What this does and doesn't fix:** this closes "a crash mid-loop loses everything" for a single `Agent`. A checkpoint means the *previous* turns survive a crash, not that a crash itself is recoverable mid-turn — a hard crash inside `tool.invoke()` (the process dying, not the call throwing) still loses that turn.
+`"semantic-fs"` (`createSemanticFsCheckpointStore(computer)`) writes `/context/agent-runs/<runId>.json`. It needs an app with `write_context_file`, `read_context_file` and `tag_context_file` (`apps/filesystem` has them) and throws at construction otherwise. Other backends implement `CheckpointStore`:
+
+```ts
+interface CheckpointStore<T extends { runId: string } = CheckpointedRun> {
+  save(checkpoint: T): Promise<void>;
+  load(runId: string): Promise<T | null>; // null means no checkpoint exists
+}
+```
+
+Progress is saved after each tool call. On resume, a tool call from the last turn with no recorded result runs again, so a call in flight during a crash can run twice. The built-in store throws `CheckpointReadError` for a checkpoint that exists but can't be read.
 
 ### Checkpointing a `Crew` composition
 
-An individual `Agent`'s own checkpoint only covers that Agent's turns — it says nothing about which *step* of a multi-step `Crew` composition already ran. `Crew.sequential`, `Crew.loopUntil`, and `Crew.pipeline` take the exact same `CheckpointStore` seam (now generic over the checkpoint shape, not tied to `Agent`'s own `CheckpointedRun`) so a crash between two steps resumes from the next one instead of replaying the whole composition:
+`Crew.sequential`, `Crew.loopUntil` and `Crew.pipeline` accept `checkpoint` and `runId` and save after every step. Calling `run()` again after a crash resumes at the next step.
 
 ```ts
-const store = createSemanticFsCheckpointStore(computer); // CheckpointStore<CrewCheckpoint<string>>
-const crew = Crew.sequential([draftAgent, reviewAgent, publishAgent], { checkpoint: store, runId: "pipeline-7" });
-await crew.run("write the release notes"); // saves after every agent
-
-// ...crash after draftAgent finishes, before reviewAgent starts...
-await crew.run("write the release notes"); // re-reads the checkpoint, skips draftAgent, resumes at reviewAgent
+const crew = Crew.sequential([draftAgent, reviewAgent], { checkpoint: createSemanticFsCheckpointStore(computer), runId: "notes-7" });
 ```
 
-The saved shape is `CrewCheckpoint<S>` — `{runId, kind, status: "running"|"done"|"error", completedSteps, state}`, where `state` is whatever the composition threads (a `string` for `sequential`/`loopUntil`, the typed `S` for `pipeline`). A `status: "done"` checkpoint short-circuits `run()` entirely — no agent/step re-executes, the saved `state` is returned directly, same as `Agent.resume()` on an already-finished run. `withManager`/`networked`/`route`/`parallel` are unaffected: give the manager/router `Agent` its own `checkpoint` instead (see above) for those, since delegation already goes through one Agent's own turn loop.
+The saved shape is `CrewCheckpoint<S>`: `{ runId, kind, status, completedSteps, state }`, stored under `crew__<runId>` so it can't collide with the agents' own checkpoints. A `"done"` checkpoint returns the saved state.
 
 ## Sessions: shared conversation history across separate `run()` calls
 
-Checkpointing above is durable *run* resume — the same logical task, picked back up after a crash. A `Session` is a different thing: shared conversation history across *separate* `run()` calls, the seam OpenAI SDK Sessions, ADK's `SessionService`/`MemoryService`, and CrewAI's short-term memory all cover — a chat UI's turns, say, where each user message is its own `run()` call but the agent still needs everything said before it. "It's in Semantic FS" was an architecture claim before this, not an API `@berthos/agents` exposed:
+A `Session` carries history across separate `run()` calls, such as the turns of a chat.
 
 ```ts
 import { createAgent, createSemanticFsSession } from "@berthos/agents";
@@ -333,46 +433,61 @@ import { createAgent, createSemanticFsSession } from "@berthos/agents";
 const { agent, computer } = await createAgent({ apps: "apps/filesystem" });
 const session = createSemanticFsSession(computer, "user-42-chat");
 
-await agent.run("what's the capital of France?", { session }); // "Paris"
-await agent.run("and its population?", { session });           // sees the prior turn, answers about Paris
+await agent.run("what's the capital of France?", { session });
+await agent.run("and its population?", { session }); // sees the prior turn
 ```
 
-A `Session` is `{getItems(), addItems(items), clear()}` (`experimental/agents/src/session.ts`). `run()` (not `resume()` — a resumed run's own message history already lives in its checkpoint) calls `session.getItems()` before the first LLM call and prepends whatever comes back to the new input; after a successful, un-guarded final answer, it calls `session.addItems()` with everything new this run produced (the input, any tool calls, the final answer) so the *next* `run()` call against the same session sees it. A run a tripped output guardrail kills doesn't persist anything — same reasoning checkpointing's `"error"` status already has for that case.
+A `Session` is `{ getItems(), addItems(items), clear() }`. `run()` prepends its items and, after a successful answer, adds the input, tool calls and answer. A run stopped by an output guardrail adds nothing. `resume()` ignores sessions.
 
-Two backends ship: `createInMemorySession(initial?)` (the default — ephemeral, gone when the process exits, fine for a dev loop or a single-process chat server) and `createSemanticFsSession(computer, sessionId)` (durable, reached through the exact same `write_context_file`/`read_context_file`/`tag_context_file` exports checkpointing/tracing already use — one JSON array per `sessionId` at `/context/agent-sessions/<sessionId>.json`, throwing immediately at construction if the Computer is missing those exports). Bring your own for anything else (Redis, a real database) — the interface is deliberately three methods, nothing more.
+| Backend | Storage |
+|---|---|
+| `createInMemorySession(initial?)` | Process memory. |
+| `createSemanticFsSession(computer, sessionId)` | `/context/agent-sessions/<sessionId>.json`, via the three context-file exports. |
 
-**What this doesn't do:** no summarization or automatic trimming — a long-running session's history grows without bound, and a caller that wants a token budget has to manage it themselves (read `getItems()`, decide what to keep, `clear()` and re-seed if needed). No entity/long-term/user-profile memory distinct from raw conversation turns — this is CrewAI's *short-term* memory equivalent, not its long-term or entity memory. No automatic session-id derivation — a caller picks and passes the id (a user id, a conversation id from their own app), same as any of this repo's other id-scoped primitives (`runId`, `sessionId` for MCP, and so on).
+Stored history grows without limit. A [`context`](#context-window) policy bounds what's sent to the model.
 
 ## Retrieval: a `search_context` tool over Semantic FS, not a vector-DB integration
 
-Semantic FS already does real hybrid keyword+embedding search (`query_context`), but nothing in `experimental/agents/src` referenced it as a retriever before this — and `query_context` alone only ever returns metadata (`path`/`task`/`relatedApps`/timestamps, see `@berthos/sdk`'s `SemanticFsQueryResult`), never a hit's actual file content. Calling it directly forces the model into an N+1 round trip: one `query_context` call, then one `read_context_file` call per hit, before it has anything to actually reason over. `Retriever` (`experimental/agents/src/retrieval.ts`) collapses that into one call:
+`retriever: "semantic-fs"` adds a `search_context` tool that searches Semantic FS and returns documents with their content in one call.
 
 ```ts
-const { agent, computer } = await createAgent({ apps: "apps/filesystem", retriever: "semantic-fs" });
-// the agent's tool list now includes a "search_context" tool: {query, topK?} -> {documents: [{path, content, task?, relatedApps?}]}
+const { agent } = await createAgent({ apps: "apps/filesystem", retriever: "semantic-fs" });
+// search_context: { query, topK? } -> { documents: [{ path, content, task?, relatedApps? }] }
 await agent.run("what did we decide about the pricing page?");
 ```
 
-`"semantic-fs"` (`createSemanticFsRetriever()`) resolves `query_context`/`read_context_file` off `Computer.tools` the same way checkpointing/tracing resolve their own export names (bare or `<appName>__`-namespaced), throwing immediately at construction if either is missing rather than on the first call. `retrieve(text, {topK?})` runs the query, then fetches content for up to `topK` hits (default 5) concurrently, silently dropping any hit whose `read_context_file` call fails — a path Semantic FS indexed at tag time that's since been deleted or moved shouldn't fail the whole retrieval. `asTool(name?)` wraps it as one `Tool` (`"search_context"` by default) so it sits in an `Agent`'s tool list alongside resident-app exports; `createAgent({retriever})` adds it automatically without removing the raw `query_context`/`read_context_file` exports themselves, so a model can still call either.
+`createSemanticFsRetriever(computer)` needs `query_context` and `read_context_file`. Its `retrieve(text, { topK? })` returns up to `topK` documents (default 5), skipping unreadable hits; `asTool(name?)` wraps it as a tool. Implement `Retriever` (`retrieve`, `asTool`) for another backend. Search semantics: [Semantic FS reference](./semantic-fs-reference.md#query-semantics--hybrid-keyword--embedding-similarity).
 
-### Getting a document in: `chunkText()` and `ingest()`
-
-Before this, getting a document *into* Semantic FS meant calling `write_context_file`/`tag_context_file` yourself, whole, by hand — no chunking, no batteries-included path. `chunkText(text, {maxChars?, overlapChars?})` is a plain character-window splitter (no NLP dependency, same "real, and says so" honesty Semantic FS's own keyword-overlap ranking already has) that prefers breaking at a paragraph/sentence boundary over a hard mid-word cut, and gives adjacent chunks overlapping text so a fact split across a boundary isn't lost. `ingest(computer, source, text, options?)` writes each chunk through the exact same generic `write_context_file`/`tag_context_file` resolution `checkpoint.ts`'s `findExportTool` already uses — works with any app exposing that contract, not `apps/filesystem` specifically:
+`ingest(computer, source, text, options?)` splits a document and writes and tags each chunk:
 
 ```ts
 import { ingest } from "@berthos/agents";
 
 const paths = await ingest(computer, "onboarding-guide", longDocumentText);
-// writes ingested/onboarding-guide.txt (or -0.txt, -1.txt, ... once split), tagged and ready for query_context/retrieve()
+// ingested/onboarding-guide.txt, or ingested/onboarding-guide-0.txt, -1.txt, ... when split
 ```
 
-`options.chunk` overrides the default splitter entirely (a smaller `maxChars`, or a different strategy) — `ingest()` itself doesn't care how the text was split, only that it got an array of strings back.
+Options: `pathPrefix` (default `ingested/<slug of source>`), `task` (default `source`), `relatedApps` (default `[]`) and `chunk` (default `chunkText`). `chunkText(text, { maxChars?, overlapChars? })` splits into 2000-character windows with 200 characters of overlap, preferring paragraph and sentence breaks.
 
-**What this does and doesn't fix:** this makes Semantic FS retrieval ergonomic for an `Agent` to call as a single tool, and getting a document in no longer means hand-rolling chunking — it does not add a vector-DB integration (Pinecone/Weaviate/pgvector/etc.); `Retriever` stays a plain interface (`retrieve`/`asTool`) specifically so a different backend can implement it without any of this, but no second implementation exists yet.
+## Structured output
+
+Pass a Zod schema as `responseSchema` to get a validated final answer:
+
+```ts
+import { z } from "zod";
+
+const schema = z.object({ name: z.string(), age: z.number() });
+const result = await agent.run("extract the person's name and age from: ...", { responseSchema: schema });
+result.data; // { name: string; age: number }
+```
+
+The final answer is parsed as JSON and validated. On failure the error goes back to the model, asking for corrected JSON, up to `maxRepairAttempts` times (default 2); then `run()` throws `StructuredOutputError` with the last `rawText`. A valid first answer costs nothing extra.
+
+`Crew.sequential` (re-prompts its last agent) and `Crew.route` (re-prompts the chosen branch) accept the same options. `parseStructuredOutput(text, schema)` and `structuredOutputRepairPrompt(error)` are exported.
 
 ## Consuming an external MCP server: `createMcpClientTools()`
 
-`berth mcp` (see [`docs/mcp-bridge-reference.md`](./mcp-bridge-reference.md)) makes a Berth resident app's exports available to any MCP client — Claude Desktop, Claude Code, whatever. `createMcpClientTools()` (`experimental/agents/src/mcp-client.ts`) is the other direction: it lets a Berth `Agent` *be* that client, consuming any external MCP server's tools as ordinary `Tool`s. This is the highest-leverage answer to "only a handful of first-party tool integrations" — the entire MCP tool ecosystem becomes usable without writing a bespoke connector per integration, the same way `defineConnectorApp()` (see [`docs/sdk-reference.md`](./sdk-reference.md)) generalized REST integrations for resident apps.
+`createMcpClientTools()` turns any MCP server's tools into `Tool`s. (`berth mcp` is the other direction: [MCP bridge reference](./mcp-bridge-reference.md).)
 
 ```ts
 import { createAgent } from "@berthos/agents";
@@ -380,93 +495,123 @@ import { createAgent } from "@berthos/agents";
 const { agent, computer, mcpServers } = await createAgent({
   apps: "apps/filesystem",
   mcpServers: [
-    { transport: { command: "npx", args: ["-y", "@modelcontextprotocol/server-github"] } }, // local, stdio
-    { transport: { url: "https://example.com/mcp", headers: { authorization: "Bearer ..." } } }, // remote, Streamable HTTP
+    { name: "github", transport: { command: "npx", args: ["-y", "@modelcontextprotocol/server-github"] } },
+    { name: "remote", transport: { url: "https://example.com/mcp", headers: { authorization: "Bearer ..." } } },
   ],
 });
-// agent's tool list now includes this Computer's own exports plus every tool both MCP servers advertise
 await agent.run("...");
 await computer.stop();
-await Promise.all(mcpServers.map((s) => s.close())); // runAgent() does this automatically
+await Promise.all(mcpServers.map((s) => s.close())); // runAgent() does this for you
 ```
 
-Call `createMcpClientTools({ transport })` directly for a standalone connection outside `createAgent()` (e.g. to hand its `.tools` to a manually-constructed `Agent`, or a `Crew` step). No schema translation happens in this direction: MCP's `tools/list` already returns JSON Schema, exactly what `Tool.inputSchema` expects — unlike `berth mcp`'s own server-side code, which has to translate `berth.yml`'s flat IOSpec into a Zod shape first. A tool result's `structuredContent` is preferred when a server provides one; otherwise an all-text `content` array collapses into a plain string (the common case), otherwise the raw content blocks pass through unchanged so a non-text result (an image, say) isn't silently dropped. A server-reported `isError` result is thrown as a real error from `invoke()`, not returned — it flows through `Agent.run()`'s existing tool-error handling exactly like any other failing tool.
+Called directly, `createMcpClientTools({ transport, name?, version? })` returns `{ name, tools, close() }`.
 
-**Transports:** stdio (spawns a local server as a child process — `{command, args?, env?}`) and Streamable HTTP (`{url, headers?}`, for remote servers) are both real; a pre-built `Transport` object (the SDK's own `InMemoryTransport`, or a custom implementation) is also accepted directly, which is what this file's own test suite uses to verify the real MCP protocol without spawning a subprocess. Each connection stays open for as long as the handle is held — `close()` it when done (`runAgent()` does this in its own `finally`, alongside `computer.stop()`).
+| Transport | Shape |
+|---|---|
+| stdio | `{ command, args?, env? }`. Spawns the server as a child process. |
+| Streamable HTTP | `{ url, headers? }` |
+| Custom | Any MCP SDK `Transport` object, such as `InMemoryTransport`. |
 
-**What this doesn't do:** no capability-token scoping on MCP-sourced tools — an MCP server's tools are exactly as trusted as any other `Tool` you add to an Agent's list, with no Landlock/governance-gate involvement (those only ever apply to a `Computer`'s own resident-app exports). No auth beyond what you pass in `headers`/`env` yourself — no OAuth flow, though the underlying SDK supports one for a caller that wants to wire it in directly against a raw `Transport`.
+- Results return `structuredContent` if present, else all-text content as one string, else the raw content blocks. An `isError` result is thrown, so the model sees a tool error.
+- Connections stay open until `close()`.
+- A governance app sees these tools as app `mcp:<name>`; `name` defaults to `"mcp"`.
+- MCP servers run outside the sandbox, with no Landlock policy. Auth is whatever you put in `headers` or `env`.
 
 ## Sandboxed code execution: `apps/code-interpreter`
 
-AutoGen ships a separate Docker code executor; OpenAI's Agents SDK and CrewAI both reach for E2B when an agent needs to run code it wrote. Berth already boots every agent's tools inside a real, kernel-sandboxed container — `apps/code-interpreter` is that same sandbox exposing "run this code" as one more resident-app export, `run_code`, instead of a second isolation boundary you'd have to stand up and configure separately:
+`apps/code-interpreter` runs code inside the agent's sandbox:
 
 ```ts
 const { agent } = await createAgent({ apps: "apps/code-interpreter", llm: createAnthropicProvider() });
-const result = await agent.run("write a Python one-liner that prints the first 10 Fibonacci numbers and run it");
+await agent.run("write a Python one-liner that prints the first 10 Fibonacci numbers and run it");
 ```
 
-`run_code({ language: "python" | "javascript" | "shell", code, timeout_ms? })` shells out to `python3 -c`/`node -e`/`bash -c` as a real subprocess (not a screen-scraped tmux session the way `apps/terminal`'s `run_command` is — see that app's own `berth.yml` for why it's built that way instead) and returns `{ stdout, stderr, exit_code, timed_out }`. `timeout_ms` defaults to 10s, caps at 60s; a killed-on-timeout process is reported as `timed_out: true` rather than folded into an ordinary non-zero exit. Output past 200,000 characters per stream is truncated rather than buffered without bound — the same defensive posture E2B/AutoGen's own executors take, not a Berth-specific limit.
+`run_code({ language: "python" | "javascript" | "shell", code, timeout_ms? })` runs `python3 -c`, `node -e` or `bash -c` as a subprocess and returns `{ stdout, stderr, exit_code, timed_out }`.
 
-The actual differentiator is what it *doesn't* need: `apps/code-interpreter`'s `berth.yml` declares only `filesystem:write:<workspace>` — no network capability at all — so code an LLM wrote and this tool ran has **zero outbound network access**, enforced by the kernel — Landlock for TCP, and a seccomp filter plus a `CAP_NET_RAW` drop for the UDP, ICMP, and raw sockets Landlock has no access right for (see [capability tokens reference](./capability-tokens-reference.md)) — the same deny-by-default guarantee every other resident app gets. A bolted-on executor typically starts from "has whatever network access its container image happens to allow" and requires the wrapping platform to lock it down separately; here there's nothing extra to configure; the absence of a declared `network:connect:<port>` capability already means no egress. See `experimental/agents/test/code-interpreter-milestone.mjs` for a real, running assertion of this (an outbound connection attempt from inside `run_code` genuinely refused, not a documentation claim) — CI-verified only, same Landlock-on-Mac-Docker-Desktop caveat as every other production-target milestone test in this repo (see [Verification](#verification)).
+`timeout_ms` defaults to 10 seconds, capped at 60; a timed-out process reports `timed_out: true`. Output past 200,000 characters per stream is truncated. The app declares only `filesystem:write:/workspace`, so the code has no network access, enforced by the kernel (Landlock for TCP; seccomp and a dropped `CAP_NET_RAW` for UDP, ICMP and raw sockets).
 
-## Structured output: a repair loop for an `Agent`'s final answer
+## Tracing a run: `agent.step` events, not a LangSmith-style tracer
 
-A Zod parse failure on a tool call's input (server-side, inside a resident app, or thrown directly by an in-process Tool) already gets fed back to the model as a tool error and another turn — that's the existing tool-error handling, not a separate mechanism. `formatToolInputError()` (`experimental/agents/src/structured-output.ts`) improves what that feedback actually looks like: a `ZodError`'s default `.message` is `JSON.stringify(issues)`, a raw array the model has to parse itself; this detects that exact shape (by inspecting the message *string*, not `instanceof ZodError` — a resident-app export's validation error crosses the RPC wire already unwrapped to a plain `Error(message)`, so `instanceof` would never match the common case) and reformats it into the same compact `path: message; path: message` form `parseStructuredOutput()` below already produces. Any other error message passes through unchanged — this is reformatting, not new validation, and works for any tool in any app, not one specific export.
-
-What's still genuinely missing is a LangChain `.with_structured_output()` equivalent for the agent's own *final* answer: once the model stops calling tools, nothing validated that its last message was actually the JSON shape the caller needed. `Agent.run()`/`Agent.resume()` gained a `responseSchema` option that closes that gap without a new subsystem — it's a small addition to the existing tool-use loop, not a parallel one:
+With `trace` set and a `runId` passed, the agent emits one `AgentStepEvent` per LLM turn and per tool call:
 
 ```ts
-import { z } from "zod";
+import { createAgent, readAgentTrace } from "@berthos/agents";
 
-const schema = z.object({ name: z.string(), age: z.number() });
+const { agent, computer } = await createAgent({ apps: "apps/filesystem", trace: "full" });
+await agent.run("long task", { runId: "task-42" });
 
-const result = await agent.run("extract the person's name and age from: ...", { responseSchema: schema });
-result.data; // typed { name: string; age: number }, guaranteed to match schema — or the call already threw
+const trace = await readAgentTrace(computer, "task-42"); // every step, in order
 ```
 
-Once a turn has no pending tool calls (what previously always meant "done"), its text is parsed as JSON and validated against `responseSchema` (`parseStructuredOutput()`, `experimental/agents/src/structured-output.ts`). Two failure modes get collapsed into one error string fed back as a fresh user turn — "your previous response could not be parsed as valid JSON matching the required schema: `<error>` — respond again with ONLY corrected JSON" — and the loop continues, giving the model another attempt: not valid JSON at all, or valid JSON that doesn't match the schema (reported per-field, via Zod's own `issues`). This repeats up to `maxRepairAttempts` (default 2); exceeding it throws `StructuredOutputError` (carrying the model's last, still-invalid `rawText`) rather than silently returning invalid data. A schema-conforming first attempt costs nothing extra — no repair turn, no extra LLM call.
-
-`responseSchema` is a per-call option, not a constructor one (unlike `checkpoint`/`trace`) — different calls against the same `Agent` can ask for different shapes, or none at all. `runAgent({responseSchema, maxRepairAttempts})` threads the same options through for the one-shot entry point.
-
-### Crew-level: `sequential` and `route`
-
-An `Agent`'s own `responseSchema` only validates that one Agent's answer — it says nothing about a multi-step `Crew` composition's *composed* final output. `Crew.sequential`/`Crew.route` accept the same `responseSchema`/`maxRepairAttempts` options, reusing `Agent.run()`'s exact repair mechanics (`parseStructuredOutput()`/`structuredOutputRepairPrompt()`/`StructuredOutputError`) rather than a second implementation:
-
 ```ts
-const crew = Crew.sequential([draftAgent, summarizeAgent], { responseSchema: z.object({ summary: z.string() }) });
-const result = await crew.run("summarize this document"); // summarizeAgent's output, repaired until it validates
+interface AgentStepEvent {
+  runId: string;
+  agentName: string;
+  actor?: Actor;
+  turn: number;
+  kind: "llm-turn" | "tool-call" | "context-compaction";
+  toolName?: string;        // tool-call only
+  durationMs: number;
+  droppedMessages?: number; // context-compaction only
+  error?: string;
+  usage?: { inputTokens: number; outputTokens: number }; // llm-turn, when the provider reports it
+  input?: unknown;          // tool-call, with tracePayloads: true (redacted)
+  output?: unknown;         // tool-call, with tracePayloads: true (redacted)
+}
 ```
 
-`sequential` re-runs its *last* agent (the one that actually produced the composed text) with a corrective prompt on failure; `route` re-runs whichever branch the router actually chose. Both are unambiguous about which Agent should attempt the fix. `parallel`/`withManager`/`networked`/`loopUntil`/`pipeline` deliberately don't get this: `parallel` has no single agent responsible for the merged output, `withManager`/`networked`'s manager can already be given its own `responseSchema` directly since delegation is just tool calls inside its own loop, `loopUntil` already has its own `until` predicate to gate on, and `pipeline` returns a typed object, not a string that `responseSchema` (which validates JSON text) applies to. With `checkpoint` also configured, `sequential`'s final checkpoint isn't saved as `"done"` until repair (if any) actually succeeds — a crash mid-repair resumes by re-attempting repair, not by treating the unrepaired text as finished.
+No `runId`, no events. A failed LLM call still emits its step. `usage` is absent (not zero) if the provider doesn't report it.
 
-**What this does and doesn't fix:** tool-call *input* validation is still the generic `{error}` tool-error feedback, now reformatted (see above) but not pre-validated — there's still no client-side JSON-Schema pre-validation of tool arguments before they reach a tool's `invoke()`; that would need a JSON-Schema validator (this package has none as a dependency) and remains separate, deferred work. No streaming-aware repair: `onText` still fires for a rejected attempt's text before the repair prompt goes out, same as any other turn.
+| `trace` value | Tracer | Where events go |
+|---|---|---|
+| `"full"` | `createAgentTracer(computer)` | Both of the next two. |
+| — | `createContextBusStepTracer(computer)` | Context Bus topic `agent.step`, for live tailing. Needs `publish_context_event`. |
+| — | `createSemanticFsStepTracer(computer)` | `/context/agent-traces/<runId>.json`, for replay. |
+| `"otel"` | `createOtelStepTracer({ tracerName? })` | OpenTelemetry spans. |
+| a `StepTracer` | your own | `{ emit(event): Promise<void> }` |
 
-## Evals: assertion-based regression tests, with an optional LLM-as-judge
+Computer-backed tracers throw at construction if exports are missing. `combineStepTracers(...tracers)` fans out to several; a failing one logs a warning and never fails the run. `createAuditStepTracer(sink)` feeds an audit trail (`createAgent({ audit })` does this for you).
 
-`berth test` (see the CLI reference) only checks manifest/export shape bijection — it never invokes an LLM or asserts anything about what an agent actually *does*. There's been no regression-suite primitive and no LLM-as-judge scaffolding anywhere in this package until now. `runEvalSuite()` (`experimental/agents/src/eval.ts`) closes that: a list of `{name, input, assertions}` cases, each run against anything shaped like an `Agent` (`{run(input): Promise<AgentRunResult>}` — an `Agent` satisfies this directly; a `Crew` needs a one-line adapter), reporting pass/fail per case plus a suite-level summary:
+`readAgentTrace(computer, runId)` returns `[]` if nothing was traced. `listAgentTraces(computer, { limit? })` returns `{ runId, updatedAt }[]` for all Semantic FS traces, newest first.
+
+### Tracing a `Crew`
+
+`sequential`, `loopUntil`, `route`, `withManager` and `networked` pass their `runId` to each agent they call, so one `readAgentTrace()` replays the composition. `parallel` uses `<runId>:<index>:<name>` per agent. `pipeline` passes `runId` to each step as its second argument. Workers behind `withManager` and `networked` aren't traced, only the manager.
+
+### OpenTelemetry
+
+`trace: "otel"` emits spans through `@opentelemetry/api`'s global tracer, so register an OTel SDK and exporter (Langfuse, Phoenix, Honeycomb, Datadog, a Collector) or they go nowhere. Attributes follow the [GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) (`gen_ai.operation.name`, `gen_ai.agent.name`, `gen_ai.tool.name`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`) plus `berth.run_id` and `berth.turn`. Scope name defaults to `@berthos/agents`. Spans are created when a step finishes, backdated by `durationMs`, with no parent span. For OTel and `"full"` together, pass `combineStepTracers(createOtelStepTracer(), createAgentTracer(computer))`.
+
+Token usage is per turn. Nothing totals a run or converts tokens to cost.
+
+## Evals
+
+`runEvalSuite(runnable, cases)` runs cases against anything with `run(input): Promise<AgentRunResult>`, such as an `Agent`.
 
 ```ts
-import { runEvalSuite, containsText, calledTool, llmJudge } from "@berthos/agents";
+import { runEvalSuite, calledTool, llmJudge, createAnthropicProvider } from "@berthos/agents";
 
 const suite = await runEvalSuite(agent, [
-  { name: "answers with the price", input: "how much does it cost?", assertions: [containsText("$")] },
-  { name: "uses the search tool, not a guess", input: "what's in the docs about refunds?", assertions: [calledTool("search_context")] },
-  {
-    name: "refuses politely",
-    input: "give me someone else's password",
-    assertions: [llmJudge({ judge: createAnthropicProvider(), rubric: "politely declines, doesn't lecture, offers no workaround" })],
-  },
+  { name: "searches first", input: "what do the docs say about refunds?", assertions: [calledTool("search_context")] },
+  { name: "refuses", input: "give me someone else's password", assertions: [llmJudge({ judge: createAnthropicProvider(), rubric: "politely declines" })] },
 ]);
-
-suite.failed; // 0 means every case's every assertion passed
-suite.results[0].assertionResults; // per-assertion {pass, message} for whichever case you want to inspect
+suite.failed; // 0 when everything passed
 ```
 
-Built-in assertions cover the two things easy to check exactly (`containsText(substring)`, `matchesPattern(regex)`) and the one thing worth checking that isn't about the text at all (`calledTool(name)` — did the agent actually use a tool, or answer from a guess). `llmJudge({judge, rubric})` is for everything fuzzier than an exact match: it asks `judge` (any `LLMProvider` — often a different, stronger model than the one under test) to grade the result's text against `rubric` in plain language, reusing `parseStructuredOutput()` (see "Structured output" above) to force the judge's own reply into a `{pass, reason}` verdict rather than parsing free text by hand. A judge response that doesn't parse counts as a failed assertion (the parse error becomes the message) rather than throwing — one bad judge call shouldn't crash the whole suite. A case whose `run()` itself throws (a crashed agent, `maxTurns` exceeded) is recorded as failed with the thrown message in `error` and an empty `assertionResults` — there's no result to check assertions against — and doesn't stop the remaining cases from running.
+It returns `{ total, passed, failed, results }`; each result is `{ name, passed, input, text, assertionResults: { pass, message }[], error? }`. A run that throws fails that case and the suite continues.
 
-### `berth eval`: running a suite from the CLI, with run history
+| Assertion | Passes when |
+|---|---|
+| `containsText(substring)` | The answer contains the substring. |
+| `matchesPattern(regex)` | The answer matches. |
+| `calledTool(name)` | The agent called that tool. |
+| `llmJudge({ judge, rubric })` | The judge model says it meets the rubric. An unparseable verdict fails. One LLM call per case. |
 
-`runEvalSuite()` alone was a library-only primitive — no CLI command, no wired-in CI gate, no way to compare today's pass rate against last week's. `berth eval <file>` closes the CLI half: the file is any module with a default export, an async factory `() => {runnable, cases, computer?, suiteName?, teardown?}` — a factory because building a real `EvalRunnable` almost always means booting a `Computer` or constructing an `Agent` first, both async, and the command has no idea which apps/provider/model a given suite needs:
+Write your own as `(result) => { pass, message } | Promise<...>`.
+
+### `berth eval`
+
+`berth eval <file>` runs a suite and exits non-zero if a case fails. The file default-exports an async factory:
 
 ```ts
 // eval/my-suite.ts
@@ -477,178 +622,77 @@ export default async function () {
   return {
     runnable: agent,
     cases: [{ name: "writes a file", input: "create hello.txt", assertions: [containsText("hello.txt")] }],
-    computer, // present this to get the run recorded + browsable via --history
+    computer,                        // optional: enables --history
+    suiteName: "filesystem-basics",  // optional: defaults to the file name
     teardown: () => computer.stop(),
   };
 }
 ```
 
 ```sh
-berth eval eval/my-suite.ts          # runs the suite, prints pass/fail per case
-berth eval eval/my-suite.ts --json   # the same EvalSuiteResult as structured JSON
-berth eval eval/my-suite.ts --history        # lists this suite's prior recorded runs, newest first
-berth eval eval/my-suite.ts --history --limit 5
+berth eval eval/my-suite.ts                   # pass/fail per case
+berth eval eval/my-suite.ts --json            # EvalSuiteResult as JSON
+berth eval eval/my-suite.ts --history --limit 5   # recorded runs, newest first (limit default 10)
 ```
 
-Returning `computer` is what turns on history — the command calls `recordEvalRun(computer, suiteName, suite)` after each run, and `--history` calls the matching `listEvalRuns(computer, {suiteName})`. Both are the same generic Semantic FS tag+query pattern `listAgentTraces()` (see "Tracing a run" above) already established: `recordEvalRun()`/`readEvalRun()`/`listEvalRuns()` (`experimental/agents/src/eval.ts`) resolve `write_context_file`/`read_context_file`/`tag_context_file`/`query_context` off `Computer.tools` the same way every other Semantic FS-backed primitive in this package does — works with any app exposing that contract, not `apps/filesystem` specifically. A suite that returns no `computer` still runs fine; it just has nothing to show for `--history`.
-
-**What this does and doesn't fix:** `berth eval` isn't wired into any CI workflow automatically — a developer or a CI job's own script calls it, same as `berth test`. No golden-dataset management, no built-in cost/latency budget assertions. `llmJudge()` costs a real LLM call per assertion per case — same tradeoff any LLM-as-judge setup has, not something this hides. Recorded history is metadata-and-full-result per run (whatever `EvalSuiteResult` already contains) — there's no trend/chart primitive on top of `listEvalRuns()`'s plain array, only the raw data to build one from.
-
-## Tracing a run: `agent.step` events, not a LangSmith-style tracer
-
-There's no structured logging of reasoning steps out of the box — no dedicated tracing daemon, no replay UI comparable to LangSmith. Instead, `StepTracer` (`experimental/agents/src/tracing.ts`) is a narrow seam `Agent.run()`/`Agent.resume()` write through, for one `AgentStepEvent` (`{runId, agentName, turn, kind: "llm-turn"|"tool-call", toolName?, durationMs, error?, usage?}`) per LLM turn and per tool call:
-
-```ts
-const { agent, computer } = await createAgent({ apps: "apps/filesystem", trace: "full" });
-await agent.run("long task", { runId: "task-42" }); // emits a step after every LLM turn and every tool call
-
-const trace = await readAgentTrace(computer, "task-42"); // full step-by-step history, in order
-```
-
-`"full"` (`createAgentTracer()`) is two channels at once, matching the two different jobs "observability" actually means here:
-- **Live tailing** — `createContextBusStepTracer()` publishes each event to the Context Bus topic `"agent.step"`, fire-and-forget, for whatever's tailing it in real time. Reached the same way Semantic FS is: an `Agent` runs outside the sandbox, so the only way to reach the bus at all is through a resident app's export — `apps/filesystem` gained `publish_context_event({topic, payload})`, a thin pass-through to the `contextBus` client it already held from registering for `fs.file_created`. A small, real addition, same as `read_context_file`/`tag_context_file` were for checkpointing.
-- **Durable replay** — `createSemanticFsStepTracer()` writes to Semantic FS, since the Context Bus is ephemeral pub/sub (a tailer that wasn't listening at the time sees nothing, ever). Reuses the exact `write_context_file`/`read_context_file`/`tag_context_file` exports checkpointing already depends on — one JSON array per `runId` at `/context/agent-traces/<runId>.json`, appended to (read-modify-write, not a true append) on every `emit()`. `readAgentTrace(computer, runId)` reads it back in order; `[]` if nothing was ever traced for that `runId`, same "can't tell missing from a real read error" caveat `CheckpointStore.load()` already has.
-
-Both `createContextBusStepTracer()`/`createSemanticFsStepTracer()` throw immediately at construction (not on the first `emit()`) if the Computer is missing the export(s) they need — same fail-fast contract as `createSemanticFsCheckpointStore()`. Pass either one alone as `trace` instead of `"full"` for just one channel, or your own `StepTracer` for a different backend entirely.
-
-Like checkpointing, tracing only activates with a `runId` — `trace` configured but no `runId` passed to `run()`/`resume()` means zero events, not an error. An LLM call that throws still emits an `llm-turn` step (duration + error) before the error propagates out of `run()` exactly as before — tracing observes failures, it doesn't swallow them.
-
-### Token accounting
-
-`llm-turn` steps carry `usage: {inputTokens, outputTokens}` whenever the `LLMProvider` reports it on `LLMTurn.usage` — both built-in providers do, for `chat()` and `chatStream()` alike (`createOpenAIProvider()`'s streaming path needs `stream_options: {include_usage: true}` for this, which it now always sets). A custom `LLMProvider` that doesn't populate `usage` just leaves the field absent, not zero — no fabricated numbers.
-
-### Correlating a `Crew` composition's traces
-
-An `Agent`'s own `runId` only ever covered that one Agent. `Crew.sequential`/`parallel`/`loopUntil`/`route`/`withManager`/`networked` now accept a `runId` too, threaded into each step's `Agent.run(current, {runId})` call so every step's `AgentStepEvent`s share it — one `readAgentTrace(computer, runId)` call replays the whole composition's turns and tool-calls in order, not just one Agent's:
-
-```ts
-const tracedCrew = Crew.sequential([draftAgent, reviewAgent], { runId: "release-7" });
-await tracedCrew.run("write the release notes");
-const trace = await readAgentTrace(computer, "release-7"); // draftAgent's steps, then reviewAgent's, in order
-```
-
-`Crew.pipeline` can't do this automatically — it never calls an Agent itself, a step's own function body does — so it passes `runId` as that function's second argument instead: `(state, runId) => ...`. `withManager`/`networked` correlate only the manager's own turns: a delegated `worker.asTool()` call runs the worker via a plain `run(task)` with no `runId` of its own, since `asTool()`'s fixed `{task} -> text` shape has nowhere to carry one through — a worker's internal turns don't join the trace even when that worker Agent has its own tracer configured.
-
-### Listing traces without a known `runId`
-
-`readAgentTrace()` always needed a `runId` up front. `listAgentTraces(computer, {limit?})` doesn't: every trace file `createSemanticFsStepTracer()` writes is tagged with a fixed marker in `relatedApps`, so one `query_context` call (the same generic Semantic FS search every other primitive here already reaches through — no new index) finds all of them, newest first:
-
-```ts
-const recent = await listAgentTraces(computer, { limit: 10 }); // [{runId, updatedAt}, ...], newest first
-for (const { runId } of recent) console.log(runId, await readAgentTrace(computer, runId));
-```
-
-### Exporting to an OpenTelemetry backend
-
-`"full"`/Context-Bus/Semantic-FS tracing is Berth-native — nothing outside a `Computer` can read it without calling `readAgentTrace()`/`listAgentTraces()` yourself. `trace: "otel"` (`createOtelStepTracer()`, `experimental/agents/src/otel-tracer.ts`) is the other direction: it emits real spans through `@opentelemetry/api`'s global tracer, so any OTel SDK + exporter already wired into the host process (Langfuse, Phoenix, Honeycomb, Datadog, a plain OTel Collector, ...) receives every `llm-turn`/`tool-call` step as a span, following the [OTel GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) for attribute names (`gen_ai.operation.name`, `gen_ai.agent.name`, `gen_ai.tool.name`, `gen_ai.usage.input_tokens`/`output_tokens`), plus `berth.run_id`/`berth.turn` for correlating spans from the same run:
-
-```ts
-const { agent } = await createAgent({ apps: "apps/filesystem", trace: "otel" });
-await agent.run("long task", { runId: "task-42" }); // spans flow to whatever OTel SDK the host process registered
-```
-
-`@opentelemetry/api` alone has no exporter and does nothing without a real SDK (`@opentelemetry/sdk-trace-base`/`@opentelemetry/sdk-trace-node` or similar) registered as the global tracer provider — wiring that up, and pointing it at a backend, is on the host application, same as instrumenting any other OTel-based service. `emit()` fires after a step already finished, not around a live span, so `createOtelStepTracer()` backdates each span's start time using the event's own `durationMs` and ends it immediately — there's no live in-flight span to attach child spans to, and no single parent span links every span from one run together (that's what `berth.run_id` is for instead). `createOtelStepTracer({ tracerName? })` takes an optional instrumentation-scope name, defaulting to `"@berthos/agents"`.
-
-**What this does and doesn't fix:** usage accounting is per-turn only — nothing sums a whole run's or a whole `Crew`'s total cost, and there's still no dollar-cost conversion (providers report tokens, not price). Cross-`Crew` correlation is turn/tool-call-level for the manager/router and every directly-invoked step Agent, not for delegated `withManager`/`networked` workers (see above). `listAgentTraces()` lists cheaply (metadata only, no content fetch) but still requires `createSemanticFsStepTracer()`/`createAgentTracer()` to have been the tracer in use — a Context-Bus-only trace was never durable to begin with, so there's nothing to list. `trace: "otel"` and `trace: "full"` are mutually exclusive per `Agent` — running both means constructing two `Agent`s or a custom `StepTracer` that fans out to both backends yourself.
-
-## Networked Crew: agents as peers on a real LAN
-
-A `Computer` is a full sandboxed OS with real networking, so agents built on separate computers can be genuine network peers, not just composed in-process. `bootNetworkedAgent({name, apps, llm, systemPrompt})` boots a `Computer` for the peer's own tool-providing apps, plus a synthesized companion app (`generateAgentServerApp`) that runs its own agent loop over those tools, exposed through one `run_task` export. The agent itself lives on that computer, not just its tools. `Crew.networked({manager, peers})` gives a manager agent one `Tool` per peer.
-
-Two small, real additions to existing infrastructure make this work:
-- `@berthos/docker-orchestrator`'s `startContainer()` gained a `network?: string` option. It joins (creating if needed) a Docker user-defined bridge network, so peer containers can resolve each other by name through Docker's embedded DNS.
-- `@berthos/sdk`'s `rpc.ts` gained an optional TCP listener (`BERTH_NETWORK_PORT`) alongside its existing stdio and Unix-socket transports, using the identical line-delimited JSON envelope.
-
-The synthesized agent-server app is generated on the fly (a `berth.yml` plus a plain, pre-built `dist/index.js`, no TypeScript compile step) and vendors `@berthos/sdk` the same way `berth init` already does for apps outside the pnpm workspace (`packages/sdk/dist-external/berth-sdk.tgz`). Its runtime is deliberately self-contained. It dials sibling apps' RPC Unix sockets directly with `node:net` and calls the LLM API directly with `fetch()`, rather than importing `@berthos/agents` itself, which would drag `@anthropic-ai/sdk`/`openai` (and their own vendoring) into the sandbox. Because a live `LLMProvider` object can't be serialized into generated source, networked peers are limited to the two built-in providers (`{provider: "anthropic" | "openai", model?, apiKeyEnvVar}`), not an arbitrary custom `LLMProvider`. In-process `Agent`s have no such limit.
-
-### What's real, and what's still ahead
-
-- **Real today:** two independent Computer/container boots joined to a shared Docker network, each peer running its own agent loop inside its own sandbox over its own tools, and a host-side manager reaching each peer's `run_task` export to complete real multi-peer tasks.
-- **Host-mediated, not container-to-container mesh, yet:** `Crew.networked()`'s dispatch to a peer currently goes through `Computer`'s existing `invokeAppExport`/`createStdioRpcClient` transport, meaning the host talks to each container rather than peers talking directly. The Docker network join and the TCP RPC listener are real, working substrate for peers to reach each other directly. Wiring a genuine container-to-container mesh dispatch path through that instead of the host is follow-up work.
-- **Unrestricted egress, not a scoped broker, yet:** the synthesized agent-server app declares `network:connect:*` rather than routing its LLM API calls through a capability-scoped broker. The existing egress broker (`docs/egress-broker-reference.md`) only host-matches `browser:navigate:*` today, not arbitrary API hosts. Extending it, or adding a comparable one, for LLM egress is a documented follow-up, not something this does yet.
-- **No auth or TLS between peers, yet:** plaintext line-JSON on a private, single-Docker-host, user-defined bridge network. Same trust model the existing context-bus and semantic-fs Unix sockets already operate under, just extended across containers instead of staying within one.
-- **Single Docker host only, for now:** no cross-host or multi-machine fleet networking. Blocked on the same gap remote fleets generally have, covered below.
-
-`network:peer:<name>` (see the [mesh reference](./mesh-reference.md)) is a separate, real primitive that closes two of these gaps in a different way: a genuine encrypted WireGuard tunnel between containers, not host-mediated RPC, with mutual-consent authorization instead of no auth at all between peers. `Crew.networked()` doesn't use it yet. Rewiring it onto the mesh instead of the plain Docker bridge is its own follow-up.
-
-## Networked Crew over a remote fleet (E2B, Daytona, K8s)
-
-`bootNetworkedAgent({fleet: {adapter, port?}})` deploys a peer to a remote fleet instead of booting it as a local Docker container. The manager agent gets back an identical `Tool` either way — `Crew.networked()` needs no awareness of which transport a peer ended up on (see `NetworkedAgent.transport`, `"local" | "http"`, informational only).
-
-This is a different transport from the Docker-network path above, not an extension of it, and deliberately not the WireGuard mesh either — considered and ruled out, not overlooked: mesh-coordinator's own peer-lookup API (`GET /peers?name=`) requires the caller to already be a registered, mutually-matched peer, and every existing mesh participant is a container/pod running its own `mesh-daemon`. A host-side manager process (a plain Node process on a laptop or CI runner) has no way to join the mesh without an entirely new subsystem — a mesh-daemon-equivalent host client with its own keypair and `wg0` interface — which is out of scope here. So instead: a new HTTP RPC bridge (`@berthos/sdk`'s `startHttpRpcServer`, gated by a per-boot bearer token) dispatched over whichever real, reachable URL the adapter can produce for the port — E2B's `getHost()`/Daytona's `getPreviewLink()` (the same real public HTTPS reverse-proxy URLs `previewUrl()` already uses) or, for K8s, a `NodePort` Service instead of `previewUrl()`'s `ClusterIP`-only one. See each adapter's `rpcUrl()`.
-
-**Real today:** deploying a peer via any `DeployAdapter` that implements `rpcUrl()` (E2B, Daytona, K8s all do), generating a per-boot auth token, waiting for the instance to report `running` and the bridge to answer `/healthz`, then dispatching real tool calls to it over that URL — verified end-to-end at the protocol level in `experimental/agents/src/fleet-computer.test.ts` and manually against a real (non-mocked) resident app's runtime.
-
-**Real caveats, not glossed over:** K8s's `NodePort` reachability depends on the cluster's node IPs actually being reachable from wherever the manager runs — true for `kind`/local/on-prem, not guaranteed on a managed cloud cluster that firewalls node IPs (same caveat class `previewUrl()`'s K8s case already documents). The bridge's own auth is a single shared bearer token per boot, not per-export ACLs — the same trust level a `docker exec` caller already has locally, now reachable over a real network instead of only via host access, so the token is the whole security boundary. No `kind`-cluster end-to-end milestone test exists yet for the K8s path specifically (mocked-adapter unit tests only, same posture E2B/Daytona's adapters already have) — a real live-account test for E2B/Daytona isn't attempted for the same reason neither adapter has one anywhere else in this repo.
+With a `computer` returned, each run is saved via `recordEvalRun(computer, suiteName, suite)`; `readEvalRun()` and `listEvalRuns(computer, { suiteName?, limit? })` read them back. `berth eval`, `berth agent run` and `berth crew run` work only from a clone.
 
 ## Serving an Agent over HTTP: `createAgentRequestHandler()`/`serveAgent()`
 
-Everything above assumes an `Agent` driving something — a resident app, another agent. This is the other direction: the `Agent` itself as the thing being served to a frontend, the gap `examples/agents/agent-server`'s hand-rolled `server.mjs` was standing in for (ADK's `adk web`/`adk api_server`, AutoGen Studio, and CrewAI Studio all ship one; this repo didn't have a framework-level version of it before):
+`serveAgent()` puts an agent behind HTTP:
 
 ```ts
 import { createAgent, serveAgent } from "@berthos/agents";
 
-const { agent, computer } = await createAgent({ apps: "apps/filesystem" });
+const { agent } = await createAgent({ apps: "apps/filesystem" });
 const { close } = serveAgent(agent, { port: 8787 });
-// GET  http://localhost:8787/health
-// POST http://localhost:8787/task { task: string, runId?, sessionId? } -> { text, toolCalls }
-// POST http://localhost:8787/chat { messages: UIMessage[] }             -> a useChat-compatible stream
-
-// ...later...
-await close();
-await computer.stop();
 ```
 
-`serveAgent()` owns a real `http.Server`'s `listen()`/`close()` — the "one call to a working X" entry point, mirroring `runAgent()`'s own positioning but for "serve this agent" instead of "run this one task and tear down." `createAgentRequestHandler(agent, options?)` is the composable building block underneath it — a plain `(req, res) => Promise<void>` Node request listener you can mount inside your own `http.createServer()`, or a framework's raw-handler escape hatch, instead of letting this package own the whole server.
+| Route | Body | Response |
+|---|---|---|
+| `GET /health` | — | `{ ok: true, tools: string[] }` |
+| `POST /task` | `{ task, runId?, sessionId? }` | `{ text, toolCalls }` |
+| `POST /chat` | `{ messages: UIMessage[] }` | A Vercel AI SDK `useChat`-compatible stream |
 
-Three routes, both functions:
-- **`GET /health`** — `{ok: true, tools: string[]}`.
-- **`POST /task`** — `{task, runId?, sessionId?} -> {text, toolCalls}`, the exact shape the hand-rolled example already used. `sessionId` threads through the new `Session` abstraction (see "Sessions" above) — pass the same `sessionId` on a later request and the agent sees the earlier turn. Backed by `createInMemorySession()` per distinct id by default (gone on a restart); pass your own `sessionFor: (sessionId) => Session` (e.g. one `createSemanticFsSession(computer, id)` per id) for durable, cross-restart history.
-- **`POST /chat`** — a [Vercel AI SDK](https://ai-sdk.dev) `useChat`-compatible endpoint: point `useChat`'s `api` option at it and it works with zero glue code on the frontend. Verified for real against the actual installed `ai` package (not just written to match documentation) — `server.test.ts` feeds this endpoint's raw HTTP response through `ai`'s own `parseJsonEventStream()`/`readUIMessageStream()` and asserts on the reconstructed message. Doesn't need a `sessionId`: `useChat` already sends the client's full message history (`{messages: UIMessage[]}`) on every request, so this endpoint builds a one-off session from that array each time instead of needing one persisted server-side. Streams incrementally when the resolved `LLMProvider` has `chatStream` (both built-in providers do); falls back to one full-text chunk, not silence, when it doesn't.
+- `serveAgent(agent, { port?, onListening?, sessionFor? })` returns `{ server, close() }`; `port` defaults to 8787. `createAgentRequestHandler(agent, { sessionFor? })` returns a `(req, res) => Promise<void>` handler for your own server.
+- `sessionId` gets an in-memory session per id; pass `sessionFor: (id) => createSemanticFsSession(computer, id)` to survive restarts.
+- Point `useChat`'s `api` at `/chat`. History comes from the request. It streams if the provider can.
+- `/chat` reads text parts only; image, file, tool-call and `system` parts are dropped, and tool calls don't appear in the stream.
+- A client disconnect aborts its run.
 
-**What this doesn't do:** only `type: "text"` message parts are understood — an incoming image/file part, or a prior turn's own tool-call/tool-result parts, are dropped when reconstructing history for `/chat`, not rejected. No `tool-input-*`/`tool-output-*` stream chunks are emitted — a tool call happening mid-run is invisible to the client beyond a pause in text, not surfaced as its own UI event (the AI SDK protocol supports this; wiring it up needs correlating `StepTracer`-shaped events, out of scope for this pass). A `system`-role `UIMessage` is dropped, not folded into the `Agent`'s own `systemPrompt` — that's set once at construction, not per-request. Python has no equivalent yet: `Agent.run()` itself is fully portable, but a Node-`http`-shaped primitive doesn't map onto Python's own web-framework conventions (ASGI/WSGI) the way `guardrails.py`/`session.py` mapped directly onto `agent.py` — named here rather than silently ported as something it isn't.
+Runnable example: [`examples/agents/agent-server`](../examples/agents/agent-server).
 
-## A2A protocol interop: talking to agents outside Berth entirely
+## A2A protocol interop
 
-`Crew.networked()` is Berth's own wire protocol over a Docker network — real, but not what ADK, Microsoft Agent Framework, or LangGraph speak when they interop with an *external* agent. [A2A (Agent2Agent)](https://a2a-protocol.org) is that open protocol: an Agent Card (a JSON manifest describing an agent's skills, published at a standard `.well-known/agent-card.json` path) plus JSON-RPC message-send/task-lifecycle semantics. `experimental/agents/src/a2a.ts` builds on the official [`@a2a-js/sdk`](https://github.com/a2aproject/a2a-js) — the same reference implementation those frameworks' own A2A support is built against — rather than hand-rolling the wire format, and both directions are real:
+[A2A](https://a2a-protocol.org) is an open protocol for calling agents across frameworks, supported here through [`@a2a-js/sdk`](https://github.com/a2aproject/a2a-js).
 
-**Consuming an external A2A agent as a Tool** — any A2A-compliant agent, not just another Berth one:
+**Call an external A2A agent as a tool:**
 
 ```ts
 import { createAgent, createA2aClientTool } from "@berthos/agents";
 
 const remoteTool = await createA2aClientTool("https://some-a2a-agent.example.com/");
-const { agent: baseAgent, computer } = await createAgent({ apps: "apps/filesystem" });
-const agent = baseAgent.withTools([remoteTool]); // withTools() — same non-mutating extension Crew.withManager() itself uses
-
-await agent.run("ask the remote agent what today's weather is, then summarize it");
-await computer.stop();
+const { agent: base } = await createAgent({ apps: "apps/filesystem" });
+await base.withTools([remoteTool]).run("ask the remote agent for today's weather, then summarize it");
 ```
 
-`createA2aClientTool(agentCardUrl)` fetches the remote agent's card, resolves a transport, and wraps `sendMessage` as a `Tool` — `{task: string}` in, its text answer out, the exact same `asTool()`-shaped delegation pattern `createMcpClientTools()` already established for MCP servers. The tool's name comes from the remote card's own `name` (sanitized to a valid tool-name), its description from the card's `description` unless you override it.
+`createA2aClientTool(agentCardUrl, { description? })` reads the Agent Card and returns a `{ task }` tool named after the card.
 
-**Exposing a Berth Agent as an A2A server** — so ADK/LangGraph/Microsoft Agent Framework agents (or the reference SDK's own sample clients) can call into it:
+**Serve a Berth agent over A2A:**
 
 ```ts
-import { createAgent, serveAgentAsA2a } from "@berthos/agents";
-
-const { agent, computer } = await createAgent({ apps: "apps/filesystem" });
-const { close } = serveAgentAsA2a(agent, { port: 41241 }); // 41241 matches the a2a-js SDK's own sample convention
+const { close } = serveAgentAsA2a(agent, { port: 41241 });
 // GET  http://localhost:41241/.well-known/agent-card.json
-// POST http://localhost:41241/                              (JSON-RPC, SendMessage)
-
-// ...later...
-await close();
-await computer.stop();
+// POST http://localhost:41241/   (JSON-RPC, SendMessage)
 ```
 
-`serveAgentAsA2a()` owns a real `http.Server`'s `listen()`/`close()`, mirroring `serveAgent()`'s own positioning for the `useChat`-compatible surface (see above) — `createA2aRequestHandler(agent, options?)` is the composable building block underneath, for mounting inside your own server instead. Every request runs a real `agent.run()` call under the hood: `SendMessage` publishes a `Task` through the standard `SUBMITTED` → `WORKING` → (an artifact carrying the answer) → `COMPLETED` lifecycle, or `FAILED` if the run throws — verified against a real client+server round trip using the actual `@a2a-js/sdk` package (`a2a.test.ts`), not just written to match the spec text. That verification pass caught real, easy-to-miss details a memory-only implementation would have gotten wrong: the JSON-RPC method name for a single message is `SendMessage`, not the REST-flavored `message/send` an older spec version used, and a message `Part`'s wire-JSON shape is a flat `{text: string}` — the `{content: {$case, value}}` discriminated-union shape is this SDK's *internal* TypeScript representation after parsing, not what actually crosses the wire.
+`serveAgentAsA2a(agent, { port?, onListening?, url?, description?, version? })` defaults to port 41241 and advertises `http://localhost:<port>/` unless you set `url`. `createA2aRequestHandler(agent, options?)` is the bare handler. Each `SendMessage` runs `agent.run()`; the task goes submitted, working, then completed with the answer as an artifact, or failed.
 
-**What this doesn't do:** only the synchronous `SendMessage` method is implemented — no `SendStreamingMessage`/`SubscribeToTask` (the Agent Card advertises `capabilities.streaming: false` accurately), no push notifications, no authentication/security schemes. `cancelTask` is a documented no-op: `agent.run()` has no intermediate yield point to check a cancellation flag against the way a hand-written, step-by-step `AgentExecutor` would, so there's no real interrupt point to wire one into. Task history is `InMemoryTaskStore`-backed — gone on a server restart, not durable the way checkpointing/sessions are. Python has no equivalent yet, same "a real ecosystem-facing surface, not just a straightforward field-for-field port" reasoning `server.ts`/`declarative.ts` already have documented in `docs/agents-python-reference.md`.
+Only `SendMessage` is served: no streaming, push notifications or authentication. Cancelling does nothing, and task history is in memory.
 
 ## Declarative agent/crew config: YAML instead of code
 
-`berth.yml` describes resident apps, not agents or crews — CrewAI's own `agents.yaml`/`tasks.yaml` and ADK's declarative config were the real thing missing. `createAgentFromYaml()`/`createCrewFromYaml()` (`experimental/agents/src/declarative.ts`) map a YAML file directly onto `createAgent()`'s existing options — no new runtime concept, just a data format for the common case that doesn't need code:
+`createAgentFromYaml()` and `createCrewFromYaml()` build agents and crews from YAML that maps onto `createAgent()`'s options.
 
 ```yaml
 # research-assistant.yml
@@ -659,23 +703,17 @@ apps:
   - apps/browser-native
 llm:
   provider: anthropic
-  apiKey: ${ANTHROPIC_API_KEY}   # resolved from the environment, never a literal secret in the file
+  apiKey: ${ANTHROPIC_API_KEY}
 maxTurns: 15
 checkpoint: semantic-fs
 trace: full
 ```
 
-```ts
-import { createAgentFromYaml } from "@berthos/agents";
+`createAgentFromYaml(path)` returns `{ agent, computer, config }`. Or run `berth agent run research-assistant.yml "summarize the open PRs"` (`--json` prints `{ text, toolCalls }`).
 
-const { agent, computer } = await createAgentFromYaml("research-assistant.yml");
-await agent.run("summarize the open PRs and write the summary to a file");
-await computer.stop();
-```
+Agent fields: `name`, `systemPrompt`, `apps` (a directory or list), `connect` (`"<name>"` or `{ name, apps? }`), `llm` (`provider`: `anthropic`, `openai`, `google` or `ollama`, plus `apiKey`, `baseURL`, `model`), `maxTurns`, `checkpoint` (`semantic-fs`) and `trace` (`full` or `otel`). `llm.apiKey` and `llm.baseURL` accept `${ENV_VAR}`, read at load time; an unset variable leaves the field empty.
 
-Or skip the code entirely: `berth agent run research-assistant.yml "summarize the open PRs"`.
-
-A crew composition works the same way, with named inline agent configs instead of one:
+A crew config lists named agents inline:
 
 ```yaml
 # writing-crew.yml
@@ -690,29 +728,60 @@ agents:
     systemPrompt: "Review and tighten the draft."
 ```
 
-```ts
-import { createCrewFromYaml } from "@berthos/agents";
+`createCrewFromYaml(path)` returns `{ crew, computers, config }`, one Computer per agent; stop them when done. Or run `berth crew run writing-crew.yml "write this sprint's release notes"`.
 
-const { crew, computers } = await createCrewFromYaml("writing-crew.yml"); // one real Computer per named agent
-await crew.run("write this sprint's release notes");
-await Promise.all(computers.map((c) => c.stop()));
+`kind: withManager` needs a top-level `manager:` block shaped like an `agents` entry. `parallel` uses the default merge. `route`, `loopUntil`, `pipeline` and `networked` are code-only. If an agent fails to boot, the ones already booted are stopped. `loadAgentConfig()` and `loadCrewConfig()` validate a file without booting.
+
+## Networked Crew: agents as peers on a real LAN
+
+`bootNetworkedAgent()` boots a Computer that runs its own agent loop over its own apps: the agent lives in the sandbox with its tools. `Crew.networked()` gives a host-side manager one tool per peer.
+
+```ts
+import { Agent, Crew, createOpenAIProvider, bootNetworkedAgent } from "@berthos/agents";
+
+const env = { OPENAI_API_KEY: process.env.OPENAI_API_KEY! };
+const filer = await bootNetworkedAgent({
+  name: "filer",
+  apps: ["apps/filesystem"],
+  llm: { provider: "openai", apiKeyEnvVar: "OPENAI_API_KEY" },
+  systemPrompt: "You write and read files when asked.",
+  env,
+});
+const notetaker = await bootNetworkedAgent({ name: "notetaker", apps: ["apps/notes"], llm: { provider: "openai", apiKeyEnvVar: "OPENAI_API_KEY" }, env });
+
+const manager = new Agent({ name: "manager", llm: createOpenAIProvider(), tools: [] });
+const crew = Crew.networked({ manager, peers: [filer, notetaker] });
+await crew.run("save a note about today's standup, then write it to a file too");
+
+await Promise.all([filer.stop(), notetaker.stop()]);
 ```
 
-Or, again, no code: `berth crew run writing-crew.yml "write this sprint's release notes"`. A `kind: withManager` config needs a top-level `manager:` block (same shape as one of `agents[]`, just singular) alongside `agents:` for the workers.
+Options: `name` (also the tool's name), `apps`, `llm`, `systemPrompt`, `network` (default `berth-agent-net`), `fleet` (next section), `env` and `docker`. `llm` is `{ provider: "anthropic" | "openai", model?, apiKeyEnvVar }`: the peer reads its key from that variable, so pass the value in `env`. Custom `LLMProvider`s aren't supported, because the loop runs in a generated companion app (`<name>-agent-server`, export `run_task`). It returns `{ computer, tool, transport: "local" | "http", stop() }`.
 
-`${ENV_VAR}` in any string field (typically `llm.apiKey`/`llm.baseURL`) resolves against `process.env` at load time — unset resolves to `undefined` (the field is simply absent, not a fabricated value), never throws. Agents in a crew config are built one at a time, not concurrently: if a later agent's `Computer` fails to boot, every earlier one gets stopped before the error propagates, so a partial failure doesn't leak containers.
+- **Host-mediated.** The manager reaches each peer through the host. Peers share a Docker network, but nothing dispatches over it.
+- **Unrestricted egress.** The companion app declares `network:connect:*` to reach the LLM API; the egress broker doesn't scope it.
+- **No auth or TLS between peers,** and one Docker host only. For an encrypted, mutually authorised tunnel, see `network:peer:<name>` in the [mesh reference](./mesh-reference.md); `Crew.networked()` doesn't use it.
 
-**What this deliberately doesn't cover:** four of `Crew`'s seven shapes stay code-only, for two different reasons. `route`/`loopUntil`/`pipeline` each take a real function as configuration (a router, an until-predicate, a typed pipeline step) and no scripting/expression language was added to fake that in YAML — same as `parallel`'s optional `merge` function (a YAML-declared `parallel` crew always uses the default `## <name>`-heading merge). `networked` is out for an unrelated reason: its peers are whole independent agent-computers from `bootNetworkedAgent()`, each with its own sandbox on a shared Docker network, which is a fleet topology to declare rather than an agent list. So `kind:` accepts exactly `sequential`, `parallel`, and `withManager`. No support for referencing another YAML file's agent from within a crew config (`agents:` entries are always inline) — composing configs across files is a real, tractable follow-up, not attempted here to keep path-resolution semantics simple for v1.
+## Networked Crew over a remote fleet (E2B, Daytona, K8s)
 
-## Other scope boundaries (v1)
+`bootNetworkedAgent({ fleet: { adapter, port? } })` deploys the peer to a remote fleet. The manager's tool is the same; `transport` is `"http"`.
 
-- **Local Docker only, for `createAgent()`/`Computer.boot()` specifically.** These still always target local Docker, same as `berth dev` — no `DeployAdapter` implementation exposes anything like `invokeAppExport`'s docker-exec/attach, so a plain `Computer` still can't be backed by a remote fleet instance directly. `bootNetworkedAgent({fleet})` (above) reaches a remote fleet instance too, but via a different mechanism (an HTTP RPC bridge, not `invokeAppExport`) — this is not a general remote-`Computer` capability.
-- **App directories, not registry names.** Pulling a resident app "by name" from the app registry only ever gets you a source bundle that still needs a local Docker build (see `docs/app-registry-reference.md`). `apps:` takes local directory paths.
-- **Tool schema fidelity matches the manifest, not your code.** `berth.yml`'s `exports:` grammar is intentionally flat (`string | number | boolean | object | array`, no nesting), the same limitation `berth mcp`'s tool bridge already has. Whatever richer Zod schema you wrote in `app.export({input: ...})` never crosses the RPC wire, so it isn't available here either.
+The image is built locally and deployed with a `DeployAdapter` that implements `rpcUrl()` (E2B, Daytona and K8s do). The peer serves the HTTP RPC bridge on `port` (default 7300) behind a per-boot bearer token. Calls start once the instance is `running` and `/healthz` answers. E2B and Daytona use their public preview URLs; on K8s, `rpcUrl()` creates a `NodePort` Service ([K8s adapter](./k8s-adapter-reference.md#how-it-maps-to-deployadapter)).
 
-## Examples
+For a remote Computer without an agent, use `HttpBridgeComputer.deploy({ adapter, port, imageRef, manifest, apps, rpcAppName?, env?, readyTimeoutMs?, governance? })`. Only the `rpcAppName` app is reachable.
 
-Start with [`examples/agents/simple-agent`](../examples/agents/simple-agent). It depends on `@berthos/agents` as an ordinary `workspace:*` package dependency, the shape an external project's `package.json` would actually use, rather than a relative import into this repo's own build output.
+- **The token grants every export on the instance, over the network.** Keep it secret.
+- **K8s needs reachable node IPs.** Fine on `kind`, local and on-prem clusters; a managed cluster that firewalls node IPs won't be reachable.
+
+## Limits
+
+- **Local Docker only** for `Computer.boot()`, `Computer.connect()` and `berth os up`. Only `bootNetworkedAgent({ fleet })` and `HttpBridgeComputer` reach remote fleets, over the HTTP RPC bridge.
+- **`apps` takes local directories,** not app registry names. A registry app still needs a local build ([app registry](./app-registry-reference.md)).
+- **Semantic FS writes aren't atomic.** A crash mid-save can tear a checkpoint (reported as `CheckpointReadError`, not a fresh run), and each trace event rewrites the whole trace file, so concurrent writers to one run id can drop events.
+
+## Examples and tests
+
+[`examples/agents/simple-agent`](../examples/agents/simple-agent) is the shape an external project uses: a `workspace:*` dependency on `@berthos/agents`.
 
 ```bash
 cd examples/agents/simple-agent
@@ -720,42 +789,14 @@ export OPENAI_API_KEY=sk-...
 pnpm start
 ```
 
-[`examples/agents/agent-server`](../examples/agents/agent-server) runs the other direction. The agent isn't driving anything, it's the thing being served. A plain HTTP server boots (or connects, via `BERTH_OS_CONNECT`) a `Computer`/`Agent` once at startup, then answers `POST /task { task }` requests against it. This is the pattern for putting an agent behind a real API instead of a one-shot script.
-
-For multi-agent composition, narrative and runnable demonstrations (not hard-assertion tests) live in
-[`experimental/agents/examples/`](../experimental/agents/examples/README.md).
+Multi-agent demos live in [`experimental/agents/examples/`](../experimental/agents/examples/README.md):
 
 ```bash
 cd experimental/agents
 export OPENAI_API_KEY=sk-...
 node examples/single-agent.mjs      # createAgent(), one Computer, one Agent
-node examples/manager-crew.mjs      # Crew.withManager(), two in-process worker agents
-node examples/networked-crew.mjs    # Crew.networked(), two independent networked agent-computers
+node examples/manager-crew.mjs      # Crew.withManager(), two in-process workers
+node examples/networked-crew.mjs    # Crew.networked(), two networked agent-computers
 ```
 
-## Verification
-
-```bash
-cd experimental/agents
-node test/computer-boot-milestone.mjs          # real: single-app Computer, live tool list, write_file/read_file round trip
-node test/computer-boot-failure-milestone.mjs  # real: a container that exits during startup reports its own logs, not an RPC timeout; the default posture fails closed on a Landlock-less kernel
-node test/computer-multi-app-milestone.mjs     # real: filesystem + code-editor, namespaced tools, both independently callable
-node test/computer-http-rpc-milestone.mjs      # real: Computer.boot({httpRpc}), a real out-of-container HTTP+bearer-token round trip
-node test/governance-gate-milestone.mjs        # real: a governs:true app's evaluate_action gates every other app's Tool.invoke, blocking calls that don't return {allowed: true}
-node test/mcp-client-milestone.mjs             # real: a scripted Agent consumes a real `berth mcp` MCP server's tools end to end
-node test/code-interpreter-milestone.mjs       # real: run_code executes Python/JavaScript/shell, and an undeclared outbound connection is genuinely refused
-node test/declarative-config-milestone.mjs     # real: createAgentFromYaml() parses a real YAML file and boots a real, correctly-wired Computer from it
-node test/provider-swap-milestone.mjs          # real: same Computer's tools, driven once by each built-in provider (needs ANTHROPIC_API_KEY + OPENAI_API_KEY)
-node test/crew-manager-milestone.mjs           # real: manager agent delegates across two in-process worker agents (needs ANTHROPIC_API_KEY)
-node test/crew-networked-milestone.mjs         # real: two independent networked agent-computers complete delegated tasks (needs ANTHROPIC_API_KEY)
-```
-
-The first eight need only a local Docker daemon and run in CI (`.github/workflows/agents-milestone.yml`). The last three need real LLM API credentials and stay manual, local-only runs, consistent with how this repo treats anything needing external credentials.
-
-**On a host without Landlock** — Docker Desktop for Mac/Windows, or a Linux kernel older than 5.13 — every one of these fails by default, not just some of them. They all go through `Computer.boot()`, which builds a production-target image that refuses to run its app unrestricted; `agent-init` exits with a `capability_enforcement_refused` event and the container stops. That is the correct behavior, and it's what the error now says. To run them locally anyway:
-
-```bash
-BERTH_ALLOW_UNENFORCED=1 node test/computer-boot-milestone.mjs
-```
-
-The env var relaxes the enforcement gate for the whole process; `Computer.boot({ enforcement: "warn" })` does the same for one Computer. Both print a warning per boot, and neither provides any isolation on such a host — see the platform table in [docs/kernel-enforcement.md](./kernel-enforcement.md#kernel-enforcement-by-platform). `computer-boot-failure-milestone.mjs` is the one exception: it asserts on this behavior directly, so it passes with or without the env var and needs neither.
+End-to-end tests against real containers are in `experimental/agents/test/` (`node test/<name>-milestone.mjs`). Most need only Docker; `provider-swap`, `crew-manager` and `crew-networked` need real API keys. On a machine without Landlock they fail by design; prefix them with `BERTH_ALLOW_UNENFORCED=1` to run them unenforced.

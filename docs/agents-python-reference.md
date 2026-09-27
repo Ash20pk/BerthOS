@@ -1,70 +1,203 @@
-# Python agent runtime reference (Slice 8)
+# Python agent reference
 
-> **Frozen subsystem.** This lives in [`experimental/`](../experimental/README.md) and is not part of the core artifact (a `berth.yml` compiled into a kernel-enforced policy, plus the evidence for it). It still builds, still runs its tests, and nothing was deleted — it simply is not what `npm install @berthos/cli` gives you. See [`experimental/README.md`](../experimental/README.md) for why.
+`berthos-agents` (imported as `berth_agents`) is the Python version of [`@berthos/agents`](./agents-reference.md): an `Agent` tool-use loop, six `Crew` composition shapes, and a `Computer.connect()` that gives an agent a running Berth sandbox's tools. Field names match the TypeScript package, in snake_case. Where TypeScript uses zod, Python uses pydantic.
 
-`experimental/agents-python` (`berth_agents` on PyPI-style import) is a real second-language `Agent`/`Crew` — not a stub, not a design doc. Before this package existed, `packages/sdk-python` only let you author a *tool* (a resident app); there was no way to write an agent loop in Python at all, a real strategic mismatch given LangChain/LangGraph are Python-first. Slice 1 closed that gap for a deliberately minimal core (the tool-use loop and `Crew.sequential`); Slice 2 closed most of what Slice 1 named as still open — checkpointing, token-level streaming, structured-output repair, a second LLM provider plus retry/fallback, and five more of `Crew`'s seven composition shapes, bringing Python to six of the seven. Slice 3 closed real-sandbox access: `Computer.connect(name)` reaches an already-running `berth os up --http-rpc` instance and exposes its exports as `Tool`s over plain HTTP, no Docker API access needed. Slice 4 added `create_mcp_client_tools()`, letting a Python `Agent` consume any external MCP server's tools too. Slice 5 added four more built-in providers — Gemini, Azure OpenAI, Bedrock, Ollama — the same set `@berthos/agents` just gained. Slice 6 ported the `StepTracer` seam itself (`Agent.run()`/`Agent.resume()` now emit `AgentStepEvent`s per LLM turn and per tool call, same as TypeScript) plus an OpenTelemetry backend for it. Slice 7 added `input_guardrails`/`output_guardrails` (`guardrails.py`) — gating the model's own input/final answer, distinct from tool-call governance, which stays TypeScript-only (`governance.ts`, see "what's deliberately out" below). This slice adds `Session` (`session.py`) — shared conversation history across separate `run()` calls, distinct from checkpointing's durable *run* resume. What's still genuinely missing is named in "What's deliberately out of this slice" below.
+This is part of the experimental agent framework in [`experimental/`](../experimental/README.md): frozen, bug and security fixes only. It isn't published to PyPI; releases ship the sandbox only. Use it from a clone of this repo.
 
-## What's reused vs. rewritten
+## Install
 
-Same reasoning `docs/sdk-python-reference.md` used for the resident-app SDK, applied to the agent loop instead of the RPC wire protocol: `Agent`'s tool-use loop is a plain in-process algorithm with no TypeScript-specific runtime behavior (no Node APIs, no `zod`), so it's a direct algorithmic port — same field names (snake_case instead of camelCase), same control flow — rather than an "idiomatic Python equivalent" that happens to behave differently at the edges. Two adaptations were unavoidable, not stylistic choices:
+Python 3.11 or later:
 
-- **pydantic instead of zod.** `zod`'s schema/validation role (both for `response_schema` and for reformatting a tool's own input-validation error) is played by pydantic — already the schema library `berth_sdk`'s own `manifest.py` uses elsewhere in this repo, so this isn't a new dependency family for the Python side.
-- **No Semantic FS-backed `CheckpointStore`.** `createSemanticFsCheckpointStore()` in TypeScript reaches Semantic FS through a resident app's exports. This slice (Slice 2) shipped a real local-filesystem-backed `FileCheckpointStore` instead: the exact same `CheckpointStore` interface (`save`/`load` by id), a different, honestly-named backend, not a claim that Python checkpoints land in Semantic FS. Slice 3's `Computer.connect()` now makes a Semantic-FS-backed store *possible* in principle (if the connected instance's bridge app exposes `write_context_file`/`read_context_file`/`tag_context_file`, `find_export_tool()`-style resolution off `computer.tools` would work the same way it does in TypeScript) — not built yet, since it needs its own deliberate slice, not a drive-by addition here.
-
-## What's in this slice
-
-- **`berth_agents/types.py`** — `Usage` (`input_tokens`/`output_tokens`) added to `LLMTurn`; `LLMProvider`'s optional `chat_stream` is deliberately *not* declared on the `Protocol` (same "absent means no incremental events" contract as `chatStream?` in `types.ts`) — `Agent` checks for it via `getattr(llm, "chat_stream", None)` at call time instead.
-- **`berth_agents/agent.py`** — `Agent.run()` gained `run_id`/`on_text`/`response_schema`/`max_repair_attempts`; `Agent.resume(run_id)` continues a checkpointed run that never finished. `checkpoint=` on the constructor turns on persistence after every turn (`with_tools()` carries it through, matching TypeScript). `on_text` takes the streaming path only when the configured `LLMProvider` also has `chat_stream` — a provider without it still works, just without incremental deltas. A tool call that raises a pydantic `ValidationError` gets its error reformatted into the same compact per-field shape a `response_schema` repair prompt uses (`format_tool_input_error()`), same idea as `formatToolInputError()` in TypeScript. **One real behavioral difference from `formatToolInputError()`, not an oversight**: every `Tool` here runs in-process, so `format_tool_input_error()` checks `isinstance(err, ValidationError)` directly — the TypeScript version can't do that (a resident-app export's validation error crosses an RPC wire and arrives as a plain string by the time `Agent.run()`'s catch block sees it), so it detects the error *message's shape* instead. Both converge on the same output for the case that matters (a schema-validation failure), reached by the path each language's tools actually need.
-- **`berth_agents/checkpoint.py`** — `CheckpointedRun` dataclass + `CheckpointStore` `Protocol`, generic the same way `CheckpointStore<T>` is in TypeScript. `FileCheckpointStore(directory, to_dict=..., from_dict=...)` is the shipped implementation — defaults serialize `CheckpointedRun`; pass `to_dict=dataclasses.asdict, from_dict=lambda d: CheckpointedCrewRun(**d)` to reuse the exact same store for `Crew`-level checkpoints (see `tests/test_crew.py`'s `crew_checkpoint_store()` helper) instead of building a second storage type.
-- **`berth_agents/structured_output.py`** — `parse_structured_output(text, schema)` returns `(success, data, error)` where `schema` is a pydantic `BaseModel` subclass; pydantic's `model_validate_json()` already collapses "not valid JSON at all" and "valid JSON that fails validation" into the same `ValidationError` type (a `json_invalid` issue for the former), so both flow through one formatting path. `structured_output_repair_prompt(error)` and `StructuredOutputError` mirror their TypeScript counterparts directly.
-- **`berth_agents/crew.py`** — six of `Crew`'s seven shapes: `sequential` (now with `checkpoint`/`run_id`/`response_schema`), `with_manager`, `parallel` (with a `merge` override), `loop_until` (with `checkpoint`), `route` (with `response_schema`), and `pipeline` (typed dict state, with `checkpoint`). `checkpoint_key_for(run_id)` namespaces `Crew`'s own checkpoint key (`crew__<run_id>`) away from the bare `run_id` a step's own `Agent` might use for its own independent checkpoint — same collision-avoidance `crew.ts` has. `networked` isn't ported — see below.
-- **`berth_agents/providers/anthropic.py`** — gained `chat_stream()` (real `client.messages.stream()`, an `async with` context manager whose `text_stream` yields incremental text) and `usage` on every returned `LLMTurn`.
-- **`berth_agents/providers/openai.py`** (new) — `create_openai_provider(api_key=None, base_url=None, model=None, max_retries=None)`, a thin adapter over `openai`'s async Chat Completions API, `chat()` and `chat_stream()` (accumulating fragmented tool-call deltas by index, `stream_options={"include_usage": True}` to get a usage-bearing final chunk — without that flag a streamed OpenAI response never carries usage at all). Default model `gpt-4o`, matching the TypeScript provider.
-- **`berth_agents/providers/fallback.py`** (new) — `create_fallback_provider(providers, on_fallback=None)`: tries providers in order, falls through on any raised exception, propagates the last one's error unchanged. `chat_stream` is present on the returned provider only when every provider in the chain has it (mirrors the TypeScript version's conditional-spread trick, done here by deleting the method off a per-call class if the chain doesn't qualify).
-- **`berth_agents/providers/auto.py`** (new) — `detect_llm_provider()` (env-key sniffing, `ANTHROPIC_API_KEY` then `OPENAI_API_KEY`), `LLMProviderConfig` (a plain dataclass alternative to constructing a provider directly), `resolve_llm_provider()`.
-- **`berth_agents/computer.py`** (new in Slice 3) — `Computer.connect(name, os_dir=None)`, an async classmethod returning a `ComputerHandle` (`tools`, `call()`, `stop()`). Reads `~/.berth/os/<name>.json` (written by `berth os up`), requires an `httpRpc` field (i.e. the instance was started with the new `berth os up --http-rpc` flag — see [`docs/berth-os-reference.md`](./berth-os-reference.md)), then loads the designated bridge app's `berth.yml` directly (plain `yaml.safe_load`, no zod/pydantic manifest model needed — `berth.yml`'s `exports[].input` is already a flat `{field: primitive-type-name}` dict, a 5-case table away from JSON Schema) and builds one `Tool` per export, dispatching over `POST {url}/rpc` with the recorded bearer token via `httpx`. There's no `Computer.boot()` — see below for why.
-- **`berth_agents/mcp_client.py`** (new in Slice 4) — `create_mcp_client_tools(command=, args=, env=)` (stdio, spawns a local server) or `create_mcp_client_tools(url=, headers=)` (a remote server over Streamable HTTP), built on the official `mcp` package (`ClientSession`, `stdio_client`, `streamable_http_client`). Returns an `McpClientHandle` (`tools`, `close()`); mix `.tools` into any `Agent`'s tool list. No schema translation in this direction — MCP's `list_tools()` already returns JSON Schema. A tool result's `structured_content` is preferred when present, otherwise an all-text `content` list collapses into a plain string, otherwise the raw content list passes through; a server-reported `is_error` result raises a real `RuntimeError` from `invoke()` instead of returning, so it flows through `Agent.run()`'s existing tool-error handling. Field names are the one real difference from the wire spec's camelCase (`structuredContent`/`isError`/`inputSchema`) — the official Python SDK itself exposes them as `structured_content`/`is_error`/`input_schema`, so this file follows the SDK's own naming rather than re-translating back to camelCase.
-- **`berth_agents/providers/google.py`** (new this slice) — `create_google_provider(api_key=None, vertexai=False, project=None, location=None, model=None)`, real native Gemini support via the `google-genai` package's async client (`client.aio.models.generate_content`/`generate_content_stream`) — not a relabeled OpenAI request. `parameters_json_schema` accepts a `Tool`'s `input_schema` directly, no translation needed. `vertexai=True` (plus `project`/`location`) uses Vertex AI with Application Default Credentials instead of an API key.
-- **`berth_agents/providers/azure_openai.py`**/**`bedrock.py`**/**`ollama.py`** (new in Slice 5) — `create_azure_openai_provider(api_key=, endpoint=, deployment=, api_version=)`, `create_bedrock_provider(api_key=, aws_region=, base_url=, model=)`, `create_ollama_provider(base_url=, model=)`. All three build on the `openai` package's own specialized async clients (`AsyncAzureOpenAI`, `AsyncBedrockOpenAI` from `openai.lib.bedrock`, plain `AsyncOpenAI` for Ollama) and share `openai.py`'s existing `_OpenAIProvider` class — the same message-mapping/tool-calling logic `create_openai_provider()` already had, just constructed with a different client and `name`. Azure and Bedrock aren't `{apiKey, baseURL, model}`-shaped (a deployment name, an AWS region), so `LLMProviderConfig`/`resolve_llm_provider()` don't cover them — call the factory functions directly.
-- **`berth_agents/tracing.py`** (new this slice) — `AgentStepEvent` dataclass (`run_id`, `agent_name`, `turn`, `kind: "llm-turn"|"tool-call"`, `duration_ms`, `tool_name=None`, `error=None`, `usage=None`) and a `StepTracer` `Protocol` (one `async def emit(self, event)`), a direct port of `tracing.ts`'s shape (snake_case fields). `Agent.__init__` gained `trace: StepTracer | None = None`; `_loop()` emits one `llm-turn` event per model call (wrapped in `try`/`except` so a raising `LLMProvider.chat()` still gets traced, with `error` set, before the exception re-raises) and one `tool-call` event per tool invocation (`tool_name` + `error` when the tool raised or didn't exist). Same activation gate as checkpointing: a `trace` configured but no `run_id` passed to `run()`/`resume()` emits nothing. `with_tools()` carries `trace` over to the new `Agent`, matching `checkpoint`.
-- **`berth_agents/otel_tracer.py`** (new in Slice 6) — `create_otel_step_tracer(tracer_name="berth_agents")`, a `StepTracer` implementation that emits real spans through `opentelemetry-api`'s global tracer instead of storing anything itself — a direct port of `otel-tracer.ts`, same OTel GenAI semantic-convention attribute names (`gen_ai.operation.name`, `gen_ai.agent.name`, `gen_ai.tool.name`, `gen_ai.usage.input_tokens`/`output_tokens`) plus `berth.run_id`/`berth.turn`. Since `emit()` fires after a step already completed rather than around a live span, it backdates the span's start time (`end_time - duration_ms * 1_000_000` nanoseconds) and ends it immediately. **One real API difference from the TypeScript version, not a port artifact:** `opentelemetry-api`'s Python `Span.start_span()`/`.end()` take integer nanosecond timestamps directly, where the JS `@opentelemetry/api` takes `Date`/`HrTime` — no wrapper needed either way, just a different unit. `record_exception()` also wants a real exception object in Python (`Exception(event.error)`) rather than the string-or-`Error` union the JS API accepts. `opentelemetry-api` alone has no exporter and does nothing without a real SDK (`opentelemetry-sdk`) registered as the global tracer provider — wiring that up is on the host application, not this package.
-- **`berth_agents/guardrails.py`** (new in Slice 7) — `GuardrailResult` dataclass (`tripwire_triggered`, `message=None`), a `Guardrail` type alias (`Callable[[str], GuardrailResult | Awaitable[GuardrailResult]]`), `GuardrailTripwireError(stage, guardrail_message)`, and `run_guardrails(guardrails, text, stage)` — a direct port of `guardrails.ts`, snake_case fields. `Agent.__init__` gained `input_guardrails`/`output_guardrails` (both default `[]`); `run()` checks `input_guardrails` against its raw `input` string before calling `_loop()` at all (not on `resume()` — a resumed run's original input already passed this check by the time there was anything to checkpoint); a `guard_output()` closure inside `_loop()` (mirroring the existing `checkpoint()`/`emit_trace()` closures) checks `output_guardrails` on every final-answer path, `resume()`'s included, checkpointing the run as `"error"` before re-raising a tripped guardrail rather than leaving the checkpoint in a state that reads as `"done"`. `with_tools()` carries both lists over, matching `checkpoint`/`trace`. Three built-in factories ship too: `create_keyword_guardrail(words, case_sensitive=False)`, `create_regex_guardrail(pattern, message=None)`, and `create_llm_guardrail(judge=, rubric=)` — the last one asks its judge for snake_case JSON (`{"tripwire_triggered": ..., "reason": ...}`) directly rather than the TypeScript version's camelCase, a per-language adaptation to each side's native field-naming convention, not an inconsistency; it fails **closed** (an unparseable judge response counts as tripped) the same as the TypeScript version does.
-- **`berth_agents/session.py`** (new this slice) — a `Session` `Protocol` (`get_items()`, `add_items(items)`, `clear()`), a direct port of `session.ts`. `InMemorySession`/`create_in_memory_session(initial=None)` is the default, ephemeral backend. `SemanticFsSession`/`create_semantic_fs_session(computer, session_id)` is the durable one — reached through `Computer.connect()`'s `write_context_file`/`read_context_file`/`tag_context_file` tools, the same three exports checkpointing (Slice 2) and this session's OTel-adjacent Slice-6 tracing analog would use, now that `computer.py` (Slice 3) makes them reachable at all. **One real simplification from the TypeScript version, not a missed detail:** `Computer.connect()` only ever reaches the single app `--http-rpc` designated, so every tool name in `computer.tools` is already bare — `session.py`'s tool-name resolution doesn't need `session.ts`'s `<app>__name`-namespace-matching fallback for a multi-app Computer, since that case can't occur here. `Agent.run()` gained a `session=` keyword-only param — `get_items()` before the first LLM call, `add_items()` with everything new after a successful, un-guarded final answer (not on `resume()`, matching guardrails' own boundary reasoning: a resumed run's session-relevant history was already handled by whichever `run()` call originally started it). Serializing `AgentMessage`'s nested `ToolCall`/`ToolResult` dataclasses reuses the exact same `dataclasses.asdict()`-out / manual-reconstruction-in pattern `checkpoint.py`'s `FileCheckpointStore` already established for its own `messages` field, not a new serialization scheme.
-
-```python
-from berth_agents import Agent, Computer, create_anthropic_provider
-
-computer = await Computer.connect("my-agent")  # berth os up my-agent --apps=apps/filesystem --http-rpc
-agent = Agent(llm=create_anthropic_provider(), tools=computer.tools)
-result = await agent.run("read hello.txt and summarize it")
+```bash
+pip install -e experimental/agents-python
 ```
 
-  `stop()` is a no-op, same reasoning as TypeScript's `Computer.connect()`: this is a long-lived instance other processes may still be using, not something this handle owns the lifecycle of — use `berth os down <name>` to actually tear it down. **The one real limitation, inherited from the bridge itself, not this client:** only the one app `--http-rpc`/`--http-rpc-app` designated is reachable — a multi-app OS's other apps' exports simply aren't in `computer.tools` at all, not an error, just absent (see `docs/agents-reference.md`'s "Reaching a Computer from outside Node/Docker" section for why the bridge itself is single-app-only).
+## Quick start
 
-## What's deliberately out of this slice
+Start a sandbox with the HTTP RPC bridge on, then connect to it from Python:
 
-- **`Computer.boot()` — still no Python-side sandbox *creation*.** `Computer.connect()` above only ever attaches to an instance a `berth os up --http-rpc` call already started; there's still no way for a Python process to build an image or start a container itself (that needs either a Docker-Engine-API client via `docker-py`, re-porting a meaningful slice of `container.ts`/`build.ts`, or shelling out to the `berth` CLI, neither attempted here). In practice this is a smaller gap than it sounds: `berth os up` is normally a one-time, human-run setup step anyway (see `docs/berth-os-reference.md`) — the thing a Python *agent* process needs at runtime is `connect()`, which this slice provides.
-- **`Crew.networked`.** The other five shapes are pure composition over `Agent` and need nothing beyond this package; `networked`'s peers are independent agent-computers (`bootNetworkedAgent()`), which needs real sandbox-creation from Python, not just `connect()`. Ported once that exists.
-- **Context-Bus/Semantic-FS-backed tracing, retrieval, the eval harness.** `tracing.py`/`otel_tracer.py` (this slice) port the `StepTracer` seam itself plus an OTel export backend, but not `createContextBusStepTracer()`/`createSemanticFsStepTracer()`/`readAgentTrace()`/`listAgentTraces()` — those, along with `retrieval.ts`/`eval.ts`, reach Semantic FS through a resident app's *own* exports (`write_context_file`, `query_context`, etc.) — mechanically now reachable through `Computer.connect()`'s `Tool` list the same as any other export, since nothing about those TypeScript implementations is Computer-specific beyond "resolve a few named tools off `computer.tools`". Not ported this slice purely for scope reasons, not a new blocker — a real, tractable follow-up now that `computer.py` exists, unlike before this slice.
-- **Not actually published to PyPI yet, though the packaging itself is real.** `pyproject.toml` has full PyPI metadata (license, classifiers, `[project.urls]`, a package-level `README.md`/`LICENSE`) and `pip install -e experimental/agents-python[dev]` (this reference's own test setup) still works the same way it always did — but `pip install berthos-agents` doesn't resolve anything yet. A real `sdist`+`wheel` build and `twine check` were both run and passed as part of publish prep; it is deliberately left out of releases, which ship the sandbox only (`berthos-sdk`), while the agent framework stays experimental.
-- **No capability-token scoping on MCP-sourced tools, no OAuth wiring.** Same boundary the TypeScript version has — an MCP server's tools are exactly as trusted as any hand-built `Tool`, and auth beyond `headers=`/`env=` needs a caller-supplied transport.
-- **Tool-call governance (`governance.ts`) — TypeScript-only.** `guardrails.py` (Slice 7) gates the model's own input/output; gating *tool calls* via a `governs: true` app's `evaluate_action` export is `Computer`-level wrapping done in TypeScript's `computer.ts`, not yet ported. A Python `Agent` driven through `Computer.connect()`'s tools doesn't get that wrapping today.
-- **`server.ts`/`serveAgent()` (agent-facing HTTP surface) — TypeScript-only.** `Agent.run()` itself is fully portable Python, and every other Slice 6-8 feature (tracing, guardrails, sessions) mapped directly onto `agent.py` for exactly that reason. An HTTP-serving primitive doesn't: `server.ts` is built on Node's own `http` module, and Python has no equally-universal built-in equivalent — a real port needs a real design decision (ASGI app? framework-agnostic WSGI callable? both?) that a straight field-for-field port would just paper over. Named as a real gap, not silently skipped.
-- **`declarative.ts`/`createAgentFromYaml()` (YAML-declared agents/crews) — TypeScript-only.** Same shape of decision as `server.ts`: `createAgent()`/`Crew.*` are already fully portable, so a Python port of the YAML *schema itself* (parse+validate, no Docker) would be a straightforward `pyyaml`+pydantic mirror of `declarative.ts`'s zod schemas — genuinely tractable, just not done this slice. Not attempted alongside `server.ts` to avoid rushing two ecosystem-facing surfaces in the same pass.
-- **`a2a.ts`/A2A protocol interop — TypeScript-only.** Built on `@a2a-js/sdk`, the JavaScript reference implementation — a real Python port needs the official Python equivalent (`a2a-sdk` on PyPI) instead, a separate integration with its own API surface to verify against, not a mechanical translation of `a2a.ts`. `Agent.run()` itself would plug into either an `AgentExecutor`-equivalent (server side) or a client `sendMessage` call (client side) the same straightforward way it does in TypeScript, once that integration exists.
+```bash
+berth os up my-agent --apps=apps/filesystem --http-rpc
+```
+
+```python
+import asyncio
+from berth_agents import Agent, Computer, create_anthropic_provider
+
+async def main():
+    computer = await Computer.connect("my-agent")
+    agent = Agent(llm=create_anthropic_provider(), tools=computer.tools)
+    result = await agent.run("read hello.txt and summarize it")
+    print(result.text)
+
+asyncio.run(main())
+```
+
+`berth os down my-agent` stops the sandbox. [Berth OS reference](./berth-os-reference.md) covers `berth os up` in full.
+
+## Connecting to a sandbox: `Computer.connect()`
+
+`await Computer.connect(name, os_dir=None)` reads `~/.berth/os/<name>.json` (written by `berth os up`), loads the bridge app's `berth.yml`, and returns a `ComputerHandle`:
+
+| Member | What it does |
+|---|---|
+| `tools` | One `Tool` per export of the bridge app, called over `POST <url>/rpc` with the recorded bearer token |
+| `await call(tool_name, input)` | Calls one tool directly |
+| `await stop()` | Does nothing. The sandbox is shared and long-lived; stop it with `berth os down <name>` |
+
+The bridge serves one app. With several apps loaded, `berth os up --http-rpc-app=<name>` picks which one (default: the first). Tool names are the export's own name (`write_file`), not namespaced.
+
+`ComputerConnectionError` is raised when there's no state file for `name`, the sandbox was started without `--http-rpc`, or the bridge app's `berth.yml` is missing.
+
+## `Agent`
+
+```python
+Agent(
+    llm=provider,                  # required: an LLMProvider
+    tools=[...],                   # required: list of Tool
+    name="agent",
+    system_prompt=None,
+    max_turns=25,
+    checkpoint=None,               # a CheckpointStore
+    trace=None,                    # a StepTracer
+    input_guardrails=None,         # list of Guardrail
+    output_guardrails=None,
+)
+```
+
+| Method | What it does |
+|---|---|
+| `await run(input, *, run_id=None, on_text=None, response_schema=None, max_repair_attempts=2, session=None)` | Runs the tool-use loop until the model gives a final answer. Returns `AgentRunResult(text, tool_calls)` |
+| `await resume(run_id, *, on_text=None, response_schema=None, max_repair_attempts=2)` | Continues a checkpointed run that didn't finish. Needs `checkpoint` on the constructor. A run already marked `done` returns its saved answer |
+| `with_tools(extra_tools)` | Returns a new `Agent` with the same settings and more tools |
+| `as_tool(description)` | Wraps the agent as a `Tool` taking `{"task": str}`, for delegation |
+
+- `on_text` receives text as it streams, when the provider has `chat_stream`. Other providers still work, without incremental text.
+- A tool that raises, or a tool name the agent doesn't have, goes back to the model as an `{"error": ...}` tool result instead of ending the run. A pydantic `ValidationError` from a tool is reformatted into a short per-field message (`format_tool_input_error()`).
+- A run that passes `max_turns` without a final answer raises `RuntimeError`.
+
+A `Tool` is any object with `name`, `description`, `input_schema` (JSON Schema) and `async invoke(input)`. An `LLMProvider` is any object with `name` and `async chat(*, system, messages, tools) -> LLMTurn`, plus an optional `chat_stream(..., on_text)`.
+
+## Providers
+
+| Factory | Arguments | Default model | Reads from the environment |
+|---|---|---|---|
+| `create_anthropic_provider()` | `api_key`, `base_url`, `model`, `max_tokens` (4096), `max_retries` | `claude-sonnet-5` | `ANTHROPIC_API_KEY` |
+| `create_openai_provider()` | `api_key`, `base_url`, `model`, `max_retries` | `gpt-4o` | `OPENAI_API_KEY` |
+| `create_google_provider()` | `api_key`, `vertexai=False`, `project`, `location`, `model` | `gemini-2.5-flash` | `GOOGLE_API_KEY` or `GEMINI_API_KEY` |
+| `create_azure_openai_provider()` | `api_key`, `endpoint`, `deployment` (required), `api_version` (`2024-10-21`) | the deployment | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT`, `AZURE_OPENAI_API_VERSION` |
+| `create_bedrock_provider()` | `api_key`, `aws_region`, `base_url`, `model` | `anthropic.claude-sonnet-5` | the `openai` package's Bedrock client settings |
+| `create_ollama_provider()` | `base_url` (`http://127.0.0.1:11434/v1`), `model` | `llama3.1` | none |
+
+With `vertexai=True`, the Google provider uses Vertex AI with Application Default Credentials instead of an API key.
+
+- **`create_fallback_provider(providers, on_fallback=None)`** tries each provider in order and moves to the next on any exception; the last one's error propagates unchanged. It streams only if every provider in the chain can. Use it for a provider outage; each provider already retries single failed calls through its SDK client.
+- **`detect_llm_provider()`** picks a provider from whichever key is set: `ANTHROPIC_API_KEY`, then `OPENAI_API_KEY`, then `GOOGLE_API_KEY` / `GEMINI_API_KEY`. Azure, Bedrock and Ollama are never auto-detected.
+- **`resolve_llm_provider(llm)`** passes a provider through, builds one from an `LLMProviderConfig(provider, api_key=None, base_url=None, model=None)` (`provider` is `"anthropic"`, `"openai"`, `"google"` or `"ollama"`), or auto-detects when `llm` is `None`.
+
+## `Crew`
+
+Each shape returns an object with `await run(input)`. `pipeline` takes and returns a dict.
+
+| Shape | What it does |
+|---|---|
+| `Crew.sequential(agents, *, checkpoint, run_id, response_schema, max_repair_attempts)` | Pipes each agent's output into the next; returns the last one's |
+| `Crew.with_manager(*, manager, workers, run_id)` | Gives the manager one tool per worker (via `as_tool`) and lets it delegate |
+| `Crew.parallel(agents, *, merge, run_id)` | Runs every agent on the same input at once. The default `merge` puts each output under a `## <name>` heading |
+| `Crew.loop_until(*, agent, until, max_iterations=10, checkpoint, run_id)` | Feeds the agent its own output until `until(result, iteration)` returns `True` |
+| `Crew.route(*, router, routes, fallback, run_id, response_schema, max_repair_attempts)` | Asks `router` to pick one key of `routes`, then runs that agent on the original input. With no match and no `fallback`, it raises |
+| `Crew.pipeline(steps, *, checkpoint, run_id)` | Calls each `step(state, run_id)` in order, shallow-merging each returned dict into a shared state dict. Steps can be sync or async |
+
+## Checkpointing
+
+Pass a `CheckpointStore` as `checkpoint=` and a `run_id` to `run()`. The run is saved after every turn, and `resume(run_id)` continues it from another process. Without a `run_id`, nothing is saved.
+
+`FileCheckpointStore(directory)` writes one `<directory>/<run_id>.json` per run. A store is anything with `async save(checkpoint)` and `async load(run_id)`.
+
+For `Crew` checkpoints (`sequential`, `loop_until`, `pipeline`), use the same store with the crew's record type:
+
+```python
+import dataclasses
+from berth_agents import CheckpointedCrewRun, FileCheckpointStore
+
+store = FileCheckpointStore(
+    "checkpoints",
+    to_dict=dataclasses.asdict,
+    from_dict=lambda d: CheckpointedCrewRun(**d),
+)
+```
+
+A crew saves under `checkpoint_key_for(run_id)` (`crew__<run_id>`), so it doesn't collide with its agents' own checkpoints.
+
+## Structured output
+
+Pass a pydantic model as `response_schema=` and the final answer is validated as JSON against it. On a failure the model is asked to fix its answer, up to `max_repair_attempts` times (default 2); after that, `StructuredOutputError` is raised. `result.text` holds the valid JSON.
+
+`parse_structured_output(text, schema)` returns `(success, data, error)` if you want to validate text yourself.
+
+## Guardrails
+
+Guardrails check the agent's own input and final answer, not its tool calls.
+
+```python
+from berth_agents import Agent, create_keyword_guardrail, create_regex_guardrail, create_llm_guardrail
+
+agent = Agent(
+    llm=llm,
+    tools=tools,
+    input_guardrails=[create_keyword_guardrail(["password"])],
+    output_guardrails=[create_llm_guardrail(judge=llm, rubric="No personal data.")],
+)
+```
+
+- A guardrail is a function `(text) -> GuardrailResult(tripwire_triggered, message=None)`, sync or async.
+- Built in: `create_keyword_guardrail(words, case_sensitive=False)`, `create_regex_guardrail(pattern, message=None)`, `create_llm_guardrail(judge=, rubric=)`. The LLM guardrail counts an unparseable judge answer as tripped.
+- A tripped guardrail raises `GuardrailTripwireError(stage, guardrail_message)`. Input guardrails run before the first model call, on `run()` only. Output guardrails run on every final answer, including after `resume()`, and mark the checkpoint `error`.
+
+## Sessions
+
+A session carries conversation history across separate `run()` calls. Pass `session=` to `run()`: its items are loaded before the new input, and the new messages are added after a successful answer (not when an output guardrail trips).
+
+| Backend | Where it stores history |
+|---|---|
+| `create_in_memory_session(initial=None)` | In memory, gone when the process exits |
+| `create_semantic_fs_session(computer, session_id)` | `/context/agent-sessions/<session_id>.json` in the sandbox, through the `write_context_file`, `read_context_file` and `tag_context_file` exports (`apps/filesystem` has them). Fails at construction if they're missing |
+
+A `Session` is anything with `async get_items()`, `async add_items(items)` and `async clear()`.
+
+## Tracing
+
+Pass a `StepTracer` as `trace=` and a `run_id` to `run()`. The agent emits one `AgentStepEvent` per model call (`kind="llm-turn"`, with `usage` when the provider reports it) and one per tool call (`kind="tool-call"`, with `tool_name`). Both carry `run_id`, `agent_name`, `turn`, `duration_ms`, and `error` when the step raised. Without a `run_id`, nothing is emitted.
+
+`create_otel_step_tracer(tracer_name="berth_agents")` turns events into OpenTelemetry spans named `chat <agent>` or `execute_tool <tool>`, with the GenAI attributes (`gen_ai.operation.name`, `gen_ai.agent.name`, `gen_ai.tool.name`, `gen_ai.usage.input_tokens` / `output_tokens`) plus `berth.run_id` and `berth.turn`. It uses `opentelemetry-api`'s global tracer, so you must register an `opentelemetry-sdk` tracer provider and exporter yourself; without one, spans go nowhere.
+
+## External MCP servers: `create_mcp_client_tools()`
+
+```python
+from berth_agents import create_mcp_client_tools
+
+mcp = await create_mcp_client_tools(command="python", args=["my_mcp_server.py"])
+# or: await create_mcp_client_tools(url="https://example.com/mcp", headers={"Authorization": "Bearer ..."})
+agent = Agent(llm=llm, tools=[*computer.tools, *mcp.tools])
+...
+await mcp.close()
+```
+
+Pass `command=` / `args=` / `env=` for a local server over stdio, or `url=` / `headers=` for a remote one over Streamable HTTP, not both. A tool returns the result's structured content when present, otherwise its text (or the raw content list if it isn't all text). A result the server marks as an error raises `RuntimeError`, which the agent sees as a tool error. MCP tools are trusted as much as any other `Tool`; authentication beyond `headers` / `env` needs your own transport.
 
 ## Testing
 
-`experimental/agents-python/tests/` uses `pytest` + `pytest-asyncio` (`asyncio_mode = "auto"` in `pyproject.toml`). `test_agent.py`/`test_crew.py`/`test_checkpoint.py`/`test_structured_output.py`/`test_fallback.py` follow the corresponding `*.test.ts` files' fake-provider patterns directly (`ScriptedLLM`, `EchoTool`/`ThrowingTool`, a `FileCheckpointStore` pointed at `tmp_path` for real-filesystem checkpoint round-trips) — no real API key or network access needed. `test_agent.py`'s tracing tests use the same pattern for a `StepTracer`: a plain `RecordingTracer` fake capturing every emitted `AgentStepEvent`, asserting per-turn/per-tool-call emission, error propagation on both a raising `LLMProvider.chat()` and a raising tool, and that no `run_id` means no events. `test_computer.py` spins up a real `http.server.HTTPServer` speaking the exact `/rpc`+`/healthz` wire protocol `@berthos/sdk`'s `startHttpRpcServer` does (bearer-token check, `{id,export,input}` in, `{id,result}`/`{id,error}` out), against hand-written `~/.berth/os/`-shaped fixture files and a real `berth.yml` — the real request/response parsing and manifest-to-`Tool` mapping, without needing Docker or a live `berth os up` instance. `test_mcp_client.py` spawns `tests/fixtures/fake_mcp_server.py` (a real, minimal MCP server built on the official SDK's `MCPServer`) as a real subprocess over stdio — no Docker needed here either, since MCP's stdio transport is just a child process. `test_otel_tracer.py` registers a real `opentelemetry-sdk` pipeline (`TracerProvider` + `SimpleSpanProcessor` + `InMemorySpanExporter`, set as the actual global tracer provider `opentelemetry-api` reads from — process-global and settable only once, so the pipeline is built once at import time and each test just clears the exporter) and asserts on real finished spans: names, GenAI attributes, error status + exception event, and an `Agent.run()` round trip emitting real spans end to end. `test_guardrails.py` covers the three built-in factories directly plus `run_guardrails()`'s stop-at-first-trip behavior; `test_agent.py`'s guardrail tests cover the `Agent`-level wiring — a tripped input guardrail short-circuiting before the LLM is ever called, a tripped output guardrail raising and checkpointing `"error"` instead of `"done"`, `with_tools()` carrying both lists over, and a resumed run's final answer still passing through `output_guardrails`. `test_session.py` covers `InMemorySession`/`SemanticFsSession` directly, including a real round trip of `ToolCall`/`ToolResult`-bearing messages through the fake `write_context_file`/`read_context_file` tools; `test_agent.py`'s session tests cover the `Agent`-level wiring — prior items prepended before a new run's input, new items (including tool-call turns) persisted after a successful run, and nothing persisted when an output guardrail kills the run. Run from the package directory:
-
-```
+```bash
 cd experimental/agents-python
 pip install -e ".[dev]"
 pytest
 ```
 
-This also runs in CI as a step in `build-lint-test.yml`, alongside the existing `pnpm test`.
+The tests use fake providers and a local fake RPC server, so they need no API key, network or Docker.
 
-All six providers' message-mapping *and* real request/response parsing were verified against the actual installed SDK packages using a local HTTP server standing in for each vendor's API (Anthropic/OpenAI via `httpx.MockTransport`; Google/Azure/Bedrock/Ollama via a plain `http.server.HTTPServer`, confirming e.g. Azure's real `/openai/deployments/<name>/chat/completions?api-version=...` URL shape and `api-key` header) — no real API key or network call, but exercising the real SDK client code end-to-end. None of this is part of the committed suite, matching this repo's existing convention of leaving thin SDK-wrapping provider adapters themselves untested at the unit level: of the eight files in `experimental/agents/src/providers/`, the six vendor adapters (`anthropic`, `openai`, `google`, `azure-openai`, `bedrock`, `ollama`) have no unit tests in the TypeScript package either. The convention stops there and shouldn't be read wider — `fallback.ts` is not a vendor adapter but real chain-walking logic, and it *is* tested (`fallback.test.ts`, 9 cases). `fallback.py` here is likewise covered, by `tests/test_fallback.py`.
+## Limits
 
-The TypeScript side of the bridge (`startContainer()`'s `httpRpc` option, `Computer.boot({httpRpc})`, `berth os up --http-rpc`) is verified for real against actual Docker containers — see `packages/docker-orchestrator/test/http-rpc-bridge-milestone.mjs` (a dev-target image; passes on any Docker host, including this class of dev Mac) and `experimental/agents/test/computer-http-rpc-milestone.mjs` (a production-target image via `Computer.boot()`; needs a kernel that can actually enforce Landlock, so — like every other production-target milestone test in this repo — it's CI-verified on `ubuntu-latest`, not locally on Docker Desktop for Mac/Windows). **Both tests genuinely caught a real bug on their first CI run**, not just theoretical Landlock-vs-not scaffolding: `agent-init` never granted `AccessNet::BindTcp` for any port (only `ConnectTcp`, from `network:connect:<port>` capabilities), so the resident app's own `listen()` call for the HTTP RPC bridge got kernel-level `EPERM` the moment Landlock actually enforced — invisible on this dev Mac (Landlock is `NotEnforced` here regardless, fail-open), only surfacing on CI's real kernel. See [`docs/capability-tokens-reference.md`](./capability-tokens-reference.md#verification-status--read-this-before-trusting-phase-3-in-any-environment) for the full writeup; fixed via a new `bindPorts` policy field. A full `berth os up --http-rpc` + real Python `Computer.connect()` round trip was exercised by hand during development (confirmed the CLI flag reaches the identical, already-documented Landlock wall on this dev machine, not a new bug) but isn't a committed automated test — `test_computer.py`'s fake-server tests plus the two real-Docker milestone tests above already cover, respectively, "does the Python client speak the wire protocol correctly" and "does the TypeScript side of the bridge actually work," which together is the same coverage a full cross-process test would add, without the CI complexity of provisioning a Python venv inside a Node-oriented milestone-test job.
+- **No sandbox creation from Python.** There's no `Computer.boot()`; start a sandbox with `berth os up --http-rpc` and connect to it.
+- **One app per connection.** `Computer.connect()` only sees the app the HTTP bridge serves. Other apps in the same sandbox aren't in `computer.tools`.
+- **No governance gate in the Python agent.** A `governs: true` app's `evaluate_action` still checks calls that arrive over the HTTP bridge, inside the sandbox, but the Python `Agent` doesn't gate calls itself the way the TypeScript `Computer` does. See the [governance reference](./governance-reference.md).
+- **TypeScript-only features:** `Crew.networked`, serving an agent over HTTP (`serveAgent()`), YAML-declared agents (`createAgentFromYaml()`), A2A, retrieval, evals, the Semantic FS checkpoint store, and the Context Bus and Semantic FS tracers.

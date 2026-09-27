@@ -1,63 +1,102 @@
 # `berth doctor`
 
-Answers one question, loudly: **can the kernel that will run your apps actually enforce the capabilities in your `berth.yml`?**
+`berth doctor` answers one question: **can the kernel that runs your apps enforce the capabilities in your `berth.yml`?** Run it before trusting any enforcement claim on a new machine, and in CI as a preflight.
 
-```
+```bash
 berth doctor
 berth doctor --json
+berth doctor --fix
+berth doctor --runtime runsc
 berth doctor --image berth/filesystem:dev
 berth doctor --no-probe
 ```
 
-Exit code is `0` only when enforcement is active. Anything else — off, or not established — exits `1`, so this works as a CI gate or a preflight in a script.
+## Flags
 
-## Why this is not a check on your laptop
+| Flag | What it does |
+|---|---|
+| `--json` | Print the report as JSON only, so `berth doctor --json \| jq` works. Schema below |
+| `--fix` | On macOS, set up a Colima VM that enforces, then check again against it. See [`--fix`](#--fix) |
+| `--runtime=<name>` | Check a container runtime, e.g. `runsc` for gVisor, and run the kernel probe under it. Defaults to `BERTH_RUNTIME` |
+| `--image=<image>` | Image to run the kernel probe in. Defaults to a local Berth image |
+| `--no-probe` | Skip the container probe. The kernel checks then report `unknown` |
 
-The kernel that matters is almost never the one the CLI runs on. On macOS and Windows your apps run inside Docker's Linux VM, so the honest question is about *that* kernel. Reading the host's `/sys/kernel/security/lsm` would answer a question nobody asked — on macOS the file doesn't exist, and its absence says nothing at all about whether Berth can enforce.
+## Exit codes
 
-So every kernel-level check runs **inside a container**, against the daemon's kernel. `berth doctor` prints which kernel that was, first, because it's the single most misread thing here.
+| Code | Meaning |
+|---|---|
+| `0` | Enforcement is active |
+| `1` | Enforcement is off, or couldn't be established. `unknown` fails too: a check that didn't run hasn't passed |
+
+With `--fix`, the exit code reflects the re-check against the new VM.
+
+## Which kernel it checks
+
+On macOS and Windows your apps run inside Docker's Linux VM, so the kernel that matters is the VM's, not your laptop's. Every kernel check runs **inside a container**, against the Docker daemon's kernel, and the output starts by naming that kernel:
+
+```
+Kernel that runs Berth's apps: 6.10.14-linuxkit (Docker Desktop)
+Probed in: berth/filesystem:dev
+
+  ✔ Docker daemon reachable
+      Docker Desktop (28.0.1), kernel 6.10.14-linuxkit on aarch64
+  ...
+  ✘ Landlock enforcement in the container kernel
+      the Landlock syscalls are not available in this kernel (Function not implemented)
+      → Berth's filesystem and network capabilities cannot be enforced here. ...
+
+enforcement: NOT ACTIVE (the Landlock syscalls are not available in this kernel (Function not implemented))
+```
+
+Each check prints `✔` ok, `!` warn, `✘` fail or `?` unknown, with what was observed and, on a line starting `→`, what to do about it. The last line is the verdict: `enforcement: ACTIVE`, `enforcement: NOT ACTIVE (…)`, or `enforcement: UNKNOWN (…)` when the check couldn't be run.
 
 ## What it checks
 
 | Check | `id` | What it means |
 |---|---|---|
-| Docker daemon reachable | `docker` | `ping()` plus version, kernel and arch. Gating: every kernel fact below comes from a container. |
-| Landlock enforcement | `landlock` | The verdict-deciding check. See below. |
-| Docker's default seccomp profile | `seccomp` | Read from the daemon. A `warn` here is not fatal — `agent-init` installs its own two filters regardless — but Docker's defence-in-depth is absent. |
-| Container runtime for sandboxes | `runtime` | Which runtime a sandbox would boot with (`BERTH_RUNTIME` / `--runtime`, else the daemon default), and whether the daemon actually has it. Informational when nothing was requested — with a pointer when `runsc` is registered. A requested runtime the daemon lacks is a `fail` (every boot would die at `createContainer`), and the kernel probe is then skipped rather than run under a different runtime and passed off as the answer. When a runtime *is* requested, the Landlock probe runs under it — under gVisor the kernel being probed is the sentry, not the host's Linux, and the two answers differ (see [kernel-enforcement.md § Optional hardened runtime](./kernel-enforcement.md#optional-hardened-runtime-gvisor--berth_runtime)). |
-| `/dev/fuse` available | `fuse` | Probed with the same `Devices` and `CapAdd` a real boot uses, because `/dev/fuse` is never present in a default container. Semantic FS mounts `/context` over FUSE. |
+| Docker daemon reachable | `docker` | The daemon answers, with its version, kernel and architecture. Every check below runs in a container, so they depend on this one |
+| Landlock enforcement | `landlock` | The check that decides the verdict. See below |
+| Docker's default seccomp profile | `seccomp` | A `warn` isn't fatal: `agent-init` installs its own seccomp filters regardless. You lose Docker's extra layer |
+| Container runtime for sandboxes | `runtime` | Which runtime sandboxes boot with (`--runtime` or `BERTH_RUNTIME`, else the daemon default) and whether the daemon has it. A requested runtime the daemon lacks is a `fail`, and the kernel probe is skipped |
+| `/dev/fuse` available | `fuse` | Probed with the same device and capability settings a real boot uses. Semantic FS needs it to mount `/context` |
 
-### The Landlock check is behavioural, and that's the point
+### How the Landlock check works
 
-Landlock can be missing in two ways that look identical from the outside:
+Landlock can be missing in two ways:
 
-1. **The syscalls aren't there.** `landlock_create_ruleset` returns `ENOSYS`. This is Docker Desktop for Mac's linuxkit kernel.
-2. **The syscalls are there but `landlock` isn't in the kernel's active LSM stack.** Every call succeeds, `restrict_self()` returns 0, and *nothing is ever denied*.
+1. **The syscalls aren't there.** They return `ENOSYS`. Docker Desktop for Mac's kernel is like this.
+2. **The syscalls are there but Landlock isn't active in the kernel.** Every call succeeds and nothing is ever denied.
 
-(2) is the dangerous one — the sandbox is decorative and every code path reports success. So the probe doesn't ask the kernel what it supports; it **builds a ruleset that grants nothing and then tries to open a file for writing.** An enforcing kernel refuses it. That answer can't be faked by a kernel with the ABI present and the LSM absent.
+The second is the dangerous one, because everything looks fine. So the probe doesn't ask the kernel what it supports. It builds a Landlock ruleset that grants nothing and tries to write a file. An enforcing kernel refuses the write. The probe needs no special privileges.
 
-Reading `/sys/kernel/security/lsm` would also distinguish them, but securityfs isn't mounted in an unprivileged container, so it costs a `--privileged` container. A diagnostic shouldn't need that. This probe needs no privilege at all — Landlock is unprivileged by design.
+The probe tests the kernel, not your app's policy.
 
-The probe tests the *kernel*, not Berth's policy. It deliberately does not rebuild what `agent-init` composes from a manifest; that would be a second implementation to drift.
+### Under a hardened runtime
+
+With `--runtime runsc`, the probe runs under gVisor, so the kernel being tested is gVisor's, not the host's, and the answers can differ. See [Optional hardened runtime](./kernel-enforcement.md#optional-hardened-runtime-gvisor--berth_runtime).
 
 ## `--fix`
 
-On macOS, when the verdict is anything but enforcement, `--fix` provisions
-the host this command already knows how to verify: it installs Colima via
-Homebrew if missing, starts the VM with the flags
-[docs/mac-enforcement.md](./mac-enforcement.md) documents (`--vm-type vz
---mount-type virtiofs --mount "$HOME:w"`), and then **re-runs the same checks
-against the Colima socket** — success is only ever claimed from that second,
-observed run. It exits non-zero if the re-check still can't observe
-enforcement, and finishes by printing how to keep Berth on Colima: `docker
-context use colima` once (Berth follows the current Docker context), or the
-`DOCKER_HOST` export per shell. On Linux it refuses with an explanation:
-enforcement there is a property of the running kernel's LSM stack, not
-something a VM swap fixes.
+On macOS, when enforcement isn't active, `--fix`:
+
+1. Installs Colima and the Docker CLI with Homebrew, if Colima is missing.
+2. Starts the Colima VM with the settings from [mac-enforcement.md](./mac-enforcement.md): `--vm-type vz --mount-type virtiofs --mount "$HOME:w"`, plus 4 CPUs, 8 GB memory and a 60 GB disk.
+3. Runs the same checks again against the Colima socket, and reports success only if that second run observes enforcement.
+
+It then tells you how to keep Berth on Colima: `docker context use colima` once (Berth follows the current Docker context), or `export DOCKER_HOST=...` per shell.
+
+| Variable | Default | What it sets |
+|---|---|---|
+| `COLIMA_PROFILE` | `default` | The Colima profile to use. A non-default profile's context is `colima-<profile>` |
+| `BERTH_COLIMA_CPU` | `4` | VM CPUs |
+| `BERTH_COLIMA_MEMORY` | `8` | VM memory, in GB |
+| `BERTH_COLIMA_DISK` | `60` | VM disk, in GB |
+
+On Linux, `--fix` refuses and explains why: enforcement there depends on the running kernel, not on a VM.
 
 ## `--json`
 
-Schema version `1`. Additive changes (new checks, new optional fields) keep `schemaVersion: 1`; anything that breaks a reader bumps it.
+Schema version `1`. New checks and new optional fields keep version `1`; anything that breaks a reader bumps it.
 
 ```jsonc
 {
@@ -86,19 +125,19 @@ Schema version `1`. Additive changes (new checks, new optional fields) keep `sch
 }
 ```
 
-Three contract details worth relying on:
+How to read it:
 
-- **`unknown` never means "probably fine".** A check that didn't run has not passed. `--no-probe`, an unreachable daemon, and a probe that failed to start all report `unknown`.
-- **`enforcementActive: false` is not by itself a finding.** Pair it with `enforcementDetermined`: `false`/`true` means enforcement is off; `false`/`false` means the check failed and nothing was established. The `verdict` string says `NOT ACTIVE` vs `UNKNOWN` for the same reason.
-- **A `warn` never decides the verdict.** Only the `landlock` check does. `seccomp` and `fuse` warnings describe real losses (Docker's default profile, Semantic FS) that are not the capability boundary. A `runtime` **fail** reaches the verdict indirectly and honestly: the probe can't start under a runtime the daemon doesn't have, so `landlock` reports `unknown` and the verdict is `UNKNOWN`, with the runtime failure in `reasons`.
+- **`unknown` never means "probably fine".** `--no-probe`, an unreachable daemon, and a probe that failed to start all report `unknown`.
+- **Read `enforcementActive` with `enforcementDetermined`.** `false`/`true` means enforcement is off. `false`/`false` means the check couldn't be completed. The verdict says `NOT ACTIVE` or `UNKNOWN` to match.
+- **Only the `landlock` check decides the verdict.** `seccomp` and `fuse` warnings are real losses but not the capability boundary. A `runtime` fail stops the probe, so `landlock` is `unknown`, the verdict is `UNKNOWN`, and the runtime failure appears in `reasons`.
 
 ## The probe image
 
-The probe needs a container with `python3`, which every Berth app image has. It prefers an image already present locally, because a diagnostic that silently pulls hundreds of megabytes before answering is one people stop running. Order: a `berth/*` image, then a `python*` image, then `unknown` with a remedy — never a pull you didn't ask for. `--image` overrides.
+The probe needs an image with `python3`, which every Berth app image has. It uses, in order: `--image` if given, a local `berth/*` or `berth-agent/*` image, a local `python*` image, and otherwise it pulls `python:3.13-alpine`. `--image` or `--no-probe` avoid the pull.
 
 ## The boot banner
 
-The same check runs at every `Computer.boot()`, `berth dev` and `berth os up` — they all funnel through `startContainer()` — and prints an unmissable banner **before** the container starts when enforcement is positively determined to be off:
+`Computer.boot()`, `berth dev` and `berth os up` run the same kernel check before starting a container. When enforcement is known to be off, they print this before the container starts:
 
 ```
 ────────────────────────────────────────────────────────────────────────
@@ -114,44 +153,14 @@ The same check runs at every `Computer.boot()`, `berth dev` and `berth os up` �
 ────────────────────────────────────────────────────────────────────────
 ```
 
-Three deliberate choices:
+- **Cached per kernel**, in `~/.berth/enforcement-cache.json` (under `BERTH_HOME` if set), keyed by kernel version, architecture and runtime. A kernel upgrade re-probes on its own. A probe that failed to run isn't cached.
+- **Silent when the answer is `unknown`.** Run `berth doctor` to see an `unknown`.
+- **Printed once per process**, even in a multi-app boot. `BERTH_NO_ENFORCEMENT_BANNER=1` turns it off.
 
-- **Cached per kernel**, in `~/.berth/enforcement-cache.json`, keyed by kernel version and architecture. This is a property of a kernel, not of a boot, so re-probing on every `berth dev` would put a container start in the primary workflow for no new information. A kernel upgrade re-keys and re-probes on its own. A probe that *failed* is never cached, since it established nothing.
-- **Silent on `unknown`.** A preflight that cries wolf whenever it couldn't reach something gets configured away, and then the real banner goes unread too. `berth doctor` is where `unknown` is reported as `unknown`, because someone running it is asking directly.
-- **Once per process.** A banner repeated per app in a multi-app boot is one people learn to skip. `BERTH_NO_ENFORCEMENT_BANNER=1` suppresses it.
+Inside the container, `agent-init` also logs what it did. On a kernel that didn't apply the ruleset, that line starts `[agent-init] NOT RESTRICTED` and says the capabilities are recorded but not enforced.
 
-### The `agent-init` line this replaced
+When Berth can't enforce, it runs apps unrestricted with this warning. Set `BERTH_REQUIRE_ENFORCEMENT=1` to refuse to start an app it can't lock down instead. `Computer.boot()` sets it by default.
 
-On a kernel without Landlock, and when enforcement is not *required* — which is every `berth dev`, the primary workflow — `agent-init` used to print:
+## What a passing verdict tells you
 
-```
-[agent-init] restricted "filesystem" — write access allowed only under: /workspace (…)
-```
-
-That sentence was false: nothing had been restricted. It was also the only thing the boot said about enforcement. It now follows the ruleset status, and says `NOT RESTRICTED … recorded but NOT enforced` when that's what happened.
-
-## What a passing verdict does and doesn't tell you
-
-`enforcement: ACTIVE` means a Landlock ruleset **binds** on this kernel. It does not mean any particular app's policy is correct, that the brokers are scoped as intended, or that the boundaries hold under attack — those are separate claims with their own tests ([the threat model](./threat-model.md), and the milestone suite). It is a floor, not a proof.
-
-## Verdicts observed, and on what
-
-Both halves of the verdict table have now been seen on real hardware, which
-matters because until 2026-08-18 only the failing half had:
-
-| Host | Kernel | Verdict | Exit |
-|---|---|---|---|
-| Docker Desktop for Mac 28.0.1 | `6.10.14-linuxkit` | `NOT ACTIVE (the Landlock syscalls are not available in this kernel (Function not implemented))` | 1 |
-| Colima 0.10.3, default VM | `6.8.0-117-generic` (Ubuntu 24.04) | `ACTIVE` — "a ruleset granting nothing denied a write (ABI 4)" | 0 |
-
-The second row is the recipe in [mac-enforcement.md](./mac-enforcement.md), and
-running it found a bug in this command. The probe resolved its scratch path with
-`tempfile.gettempdir()` *after* calling `restrict_self()` on a ruleset that
-grants nothing — and `gettempdir()` finds a writable directory by creating a
-file in each candidate, so on a genuinely enforcing kernel it raised instead of
-returning a path. The probe died with a traceback and the report said `UNKNOWN`.
-The one class of host where the answer was `ACTIVE` was the one class that could
-not report it, and every unit test passed throughout, because the tests inject a
-fake probe rather than running the Python. Fixed by resolving the path first;
-recorded here because "the failing path is well tested and the passing path has
-never run" is the shape of the next bug too.
+`enforcement: ACTIVE` means a Landlock ruleset binds on this kernel. It doesn't mean a given app's policy is right or that the brokers are scoped as intended. It's a floor, not a proof. What Berth does and doesn't protect against is in [the threat model](./threat-model.md).

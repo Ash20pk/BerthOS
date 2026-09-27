@@ -36,7 +36,7 @@ Each capability's layer is listed in [enforcement](./kernel-enforcement.md#avail
 
 ### It needs a kernel that can enforce
 
-Everything in the kernel layer depends on Landlock, which Linux has had since 5.13. Docker Desktop's VM on macOS and Windows doesn't provide it. Run `berth doctor` to see what your machine supports; on a Mac, `berth doctor --fix` sets up a VM that does.
+Everything in the kernel layer depends on Landlock, and full enforcement needs Linux 6.7 or later. Docker Desktop's VM on macOS and Windows doesn't provide it. Run `berth doctor` to see what your machine supports; on a Mac, `berth doctor --fix` sets up a VM that does.
 
 So that local development still works on those machines, Berth **runs apps unrestricted, with a warning, when it can't enforce**. For anything that matters, set `BERTH_REQUIRE_ENFORCEMENT=1`: Berth then refuses to start an app it can't lock down. `Computer.boot()` turns this on by default.
 

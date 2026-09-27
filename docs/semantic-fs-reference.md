@@ -1,124 +1,109 @@
-# Semantic Filesystem Reference (Phase 4)
+# Semantic FS
 
-Phase 4 gives resident apps a filesystem that carries searchable metadata about *why* a file exists — `created_by`, `task`, `related_apps` — and a query API to find files by that metadata ("find files related to the auth bug") rather than by path. This is a userspace primitive on a stock kernel, with **no dependency on Phase 3**.
+Semantic FS is a shared filesystem at `/context` whose files carry tags about why they exist: which app created them (`created_by`), what task they belong to (`task`), and which apps they relate to (`related_apps`). Apps can then find files by those tags ("files related to the auth bug") instead of by path. Use it for state that several apps, or several runs, need to find again.
 
-**What the search is, stated up front**, because "semantic filesystem" invites a bigger reading than the code supports: it is a hybrid keyword-and-embedding ranker over *tag text*, not a content index. It sees `path`, `created_by`, `task`, and `related_apps`; it never reads a byte of any file. A file nothing ever called `tag()` on has no embedding at all, so it is reachable only by words that happen to appear in its path. Keyword hits are whole integers added to a cosine similarity in [0,1], so one substring hit outranks a perfect semantic match — deliberate (see [Query semantics](#query-semantics--hybrid-keyword--embedding-similarity)), and worth knowing before reading anything into a result order. And there is no vector index: every query is a full scan of the table. All three are v0 boundaries, described where they're relevant below rather than only here.
-
-## Architecture
-
-`semantic-fs-daemon` (`packages/semantic-fs-daemon`, Go) mounts a FUSE filesystem at `$BERTH_CONTEXT_MOUNT` (default `/context`), backed by a real directory (`$BERTH_CONTEXT_DATA`, default `/var/berth/context-data`). Every read/write through `/context` is forwarded verbatim to that backing directory — resident apps see ordinary POSIX semantics — while every write also updates a SQLite sidecar index (`$BERTH_CONTEXT_INDEX_DB`, default `/var/berth/context-index.db`) keyed by path.
-
-```
-resident app ──┐
-  (filesystem)  │  read()/write() through /context (FUSE, ordinary POSIX)
-                ▼
-        semantic-fs-daemon ──► backing dir ($BERTH_CONTEXT_DATA)
-                │
-                └──► SQLite index (created_by, task, related_apps)
-                        ▲
-  register/tag/query ───┘  (Unix control socket, length-prefixed JSON)
-```
-
-The control socket path is `$BERTH_SEMANTIC_FS_SOCKET` (default `/tmp/berth-semantic-fs.sock`) — the semantic-fs equivalent of the context bus's `$BERTH_CONTEXT_BUS_SOCKET` (see [Context Bus Reference](./context-bus-reference.md)).
-
-A sidecar SQLite index was chosen over real extended attributes (the other option considered): xattrs would round-trip through FUSE's getxattr/setxattr on every access, and the actual deliverable — a query API — needs SQL regardless of where the raw values live. `modernc.org/sqlite` (pure Go, no cgo) keeps the daemon a single static binary, cross-compiled the same way `agent-init` and `context-bus-daemon`'s Rust binaries are, via its own Docker builder stage in `base.Dockerfile`.
-
-**`created_by` is inferred automatically**, not declared: every FUSE request carries the calling process's pid, and the daemon maps pid → app name via a registry populated by `ctx.semanticFs.register({app})` (called once, in `onAgentReady` — the same pattern as `ctx.contextBus.register()`). A resident app gets attribution for free just by writing through `/context`.
-
-**`task` and `related_apps` are explicit**, not inferred — the daemon has no way to know an app's task-level intent from raw POSIX writes, so `ctx.semanticFs.tag(path, { task, relatedApps })` is a deliberate, separate call after a write.
-
-### Where the mount comes from, and how to have none
-
-Three postures, selected by env var at boot:
-
-| Posture | Selected by | `/context` | `CAP_SYS_ADMIN` / `/dev/fuse` |
-|---|---|---|---|
-| **Sidecar** (default) | nothing — this is the default | Mounted by a per-sandbox sidecar container and propagated in as a bind | Held by the **sidecar**, and only until its `fuse.Mount` returns — then it empties its own capability bounding set ([threat model](./threat-model.md)). Never on the app container |
-| **In-sandbox** (legacy fallback) | `BERTH_DISABLE_FS_SIDECAR=1`, and only that. A sidecar whose mount cannot propagate on this host (always the case on Docker Desktop for Mac) does **not** land here: that boot gets the Off posture below, with a warning naming this variable | Mounted by `semantic-fs-daemon` inside the app container | **On the app container**, for its whole life. Logged loudly, and visible in `docker inspect` |
-| **Off** | `BERTH_NO_SEMANTIC_FS=1` | Absent — no mount is attempted | Neither, anywhere in the boot |
-
-Note what `BERTH_DISABLE_FS_SIDECAR=1` does **not** mean: it is not "no semantic FS", it is "mount it here instead", which is the posture with *more* privilege, not less. Until 2026-08-29 those were the only two options, so every boot paid for either a second container or an in-sandbox `CAP_SYS_ADMIN` — including a boot whose apps would never read `/context`. `BERTH_NO_SEMANTIC_FS=1` is the third option: no sidecar, no mount, no capability, and no boot-time wait on a socket nothing will use.
-
-It is **opt-in and stays opt-in.** Deciding automatically would mean inferring whether a boot needs `/context`, and the manifest does not say: an app reaches the daemon over the control socket rather than by declaring a capability, and `@berthos/agents`' checkpointing, sessions, and `trace` are all Semantic-FS-backed without any `berth.yml` line naming it. Guess wrong and the failure surfaces far from its cause. With it off, `@berthos/sdk`'s runtime reports the socket as unreachable and `/context` operations **throw** rather than returning empty results (`createUnavailableSemanticFs`) — a loud failure is the point.
+The search looks at tags and paths only. It never reads file contents, and a file nobody tagged can only be found by words in its path or its creator's app name.
 
 ## Using it from a resident app
 
+Declare `/context` in `berth.yml`, like any other path:
+
+```yaml
+capabilities:
+  - filesystem:read:/context
+  - filesystem:write:/context
+```
+
+Then write ordinary files there, and tag and search them through `ctx.semanticFs`:
+
 ```ts
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import type { SemanticFsClient } from "@berthos/sdk";
+
+let semanticFs: SemanticFsClient | undefined;
+
 app.onAgentReady(async (ctx) => {
-  await ctx.semanticFs.register({ app: "filesystem" });
+  await ctx.semanticFs.register({ app: "notes" });   // attributes this app's writes
+  semanticFs = ctx.semanticFs;
 });
 
 app.export({
-  name: "write_context_file",
-  handler: async ({ path, content }) => {
-    await writeFile(join("/context", path), content, "utf-8");
-    // created_by is attributed automatically from this process's registered pid
+  name: "save_note",
+  handler: async ({ path, content, task }) => {
+    await writeFile(join("/context", path), content, "utf-8");   // created_by is recorded automatically
+    await semanticFs!.tag(path, { task, relatedApps: ["code-editor"] });
   },
 });
 
 app.export({
-  name: "read_context_file",
-  handler: async ({ path }) => ({ content: await readFile(join("/context", path), "utf-8") }),
-});
-
-app.export({
-  name: "tag_context_file",
-  handler: async ({ path, task, relatedApps }) => {
-    await ctx.semanticFs.tag(path, { task, relatedApps });
-  },
-});
-
-app.export({
-  name: "query_context",
-  handler: async ({ text }) => ({ results: await ctx.semanticFs.query(text) }),
+  name: "find_notes",
+  handler: async ({ text }) => ({ results: await semanticFs!.query(text, 5) }),
 });
 ```
 
-`ctx.semanticFs` behaves differently when no daemon is reachable depending on **where the app is running**, and the difference matters more than it looks:
+| Method | What it does |
+|---|---|
+| `register({ app })` | Call once in `onAgentReady`. Later writes through `/context` are attributed to this app as `created_by`. |
+| `tag(path, { task?, relatedApps? })` | Attach tags to a file. `path` is relative to `/context`. Tagging again replaces the previous tags. |
+| `query(text, limit?)` | Search tags and paths. Returns up to `limit` results (all matches if omitted), best first. |
 
-- **Outside a sandbox** — a bare `node dist/index.js`, a unit test — it falls back to an in-process no-op (`createLocalSemanticFs`, returning `[]` from `query`), mirroring the context bus's local-no-op pattern. There is genuinely no index, so an empty result set is a truthful answer.
-- **Inside a sandbox** — anything `entrypoint.sh` started, detected via `BERTH_BOOT_ID` — `query()` and `tag()` **throw**. The index exists and the daemon is meant to be serving it, so `[]` would be indistinguishable from "nothing matched" on the path every checkpoint, session, trace and retrieval read goes through. `register()` is the one exception: it warns loudly and continues, because it runs at boot and killing the app over unavailable attribution is the worse outcome.
+Each result is `{ path, createdBy?, task?, relatedApps?, createdAt, updatedAt }`. Results carry metadata only, so read the file for its contents. `apps/filesystem` exposes all of this as the `write_context_file`, `read_context_file`, `tag_context_file` and `query_context` exports.
 
-A daemon that dies *after* the client connected behaves the same way: later calls reject immediately, naming the closed socket, rather than waiting out the 5s call timeout.
+`created_by` is set on a file's first write and doesn't change when another app writes it later.
 
-## Interaction with Phase 3's capability tokens
+With the experimental agent framework, `createAgent({ retriever: "semantic-fs" })` wraps query-then-read into one `search_context` tool. See [retrieval](./agents-reference.md#retrieval-a-search_context-tool-over-semantic-fs-not-a-vector-db-integration).
 
-Writing through `/context` is a real filesystem write, so it's subject to the same Landlock write-path restriction as any other path: an app must declare `filesystem:write:/context` in its `berth.yml` to write there, exactly like `filesystem:write:/workspace`. This falls out of the existing Phase 3 design with no changes needed to `generate-capability-policy.ts` — the control socket (`register`/`tag`/`query`) is a Unix socket connection, not a write-ish filesystem operation, so it's reachable regardless of declared capabilities (same reasoning as the context-bus socket).
+### When the daemon isn't there
+
+- **Outside a sandbox** (a bare `node dist/index.js`, a unit test), `ctx.semanticFs` is a no-op and `query()` returns `[]`.
+- **Inside a sandbox**, `tag()` and `query()` throw, so an outage never looks like "nothing matched". `register()` logs a warning and carries on, and that app's writes go unattributed.
 
 ## Query semantics — hybrid keyword + embedding similarity
 
-`Query(text, queryEmbedding, queryModel, limit)` combines the original v0 keyword-overlap score (how many query words appear as substrings in `path`, `created_by`, `task`, or `related_apps`) with a cosine-similarity term against a stored embedding, when one exists for that row and it came from the same model as the query. A row is included if it clears *either* signal — `keywordScore > 0 || cosineSim >= 0.2` — not just keyword hits, since v0 silently dropped every zero-keyword-hit row regardless of how semantically close it was. Keyword hits (small integers) still dominate ranking over the 0–1 cosine range, so exact-name/author lookups keep winning; purely-semantic matches rank among themselves by cosine.
+Each file in the index is scored two ways against the query:
 
-**Scaling limit — every query is a full scan, and the sort is quadratic.** `Query()` issues a bare `SELECT ... FROM files LEFT JOIN files_vec` with no `WHERE` and no `LIMIT`: every row in the index is read, lowercased, substring-scanned once per query word, and (if it has an embedding from the same model) run through a 384-dimension cosine in plain Go. Surviving candidates are then ranked with an **insertion sort** — O(n²) in the number of matches, not O(n log n) — before `limit` is applied at the very end, so asking for the top 5 does not make any of the preceding work smaller. `limit` bounds the response, not the search.
+- **Keywords.** One point for each query word that appears (as a case-insensitive substring) in the file's path, `created_by`, `task` or `related_apps`.
+- **Meaning.** The cosine similarity, between 0 and 1, of the query's embedding and the embedding stored when the file was tagged. Embeddings are computed from the tag text (`task`, `relatedApps` and path), never from file contents.
 
-This is a real choice, not an oversight: `modernc.org/sqlite` is pure Go with no C extension support, so `sqlite-vec` and friends aren't available, and a brute-force scan is genuinely fine at the scale one sandbox's `/context` reaches — hundreds to low thousands of tagged files, where the embedding round trip in `@berthos/sdk` dominates anyway. It is *not* fine as a general document store, and nothing here degrades gracefully if it's used as one: there's no pagination, no index on any scored column, and no early termination. A workload that needs more wants a real vector index behind the same `query()` interface, which is a different piece of work than tuning this one.
+A file is returned if it has at least one keyword hit or a similarity of at least `0.2`. It's ranked by keyword points plus similarity, so **any keyword hit outranks a purely semantic match.** Exact names and authors win; files that only match by meaning rank among themselves by similarity.
 
-**Compute-on-tag, not compute-on-write.** `write_context_file` (`apps/filesystem`) does a raw `fs.writeFile` into the FUSE mount — it never calls into `@berthos/sdk` at all, so there's no JS-reachable hook on the write path itself. The only control-plane calls that do reach JS are `register`/`tag`/`query`, so embeddings are computed from `tag()`'s `task + relatedApps + path` text (the same text the keyword ranker already uses) and from `query()`'s query text — not from file content. A file that's written but never tagged keeps keyword-only scoring; that's a deliberate v0 boundary, not a bug.
+The embedding model is `Xenova/all-MiniLM-L6-v2` (384 dimensions), run inside `@berthos/sdk`. Its weights are downloaded when the SDK is installed, never at runtime. If they're missing or fail to load, search falls back to keywords only and logs why.
 
-**Model**: `Xenova/all-MiniLM-L6-v2` (quantized, 384-dim, L2-normalized) via `@xenova/transformers`, computed in `@berthos/sdk` (`src/semantic-fs/embeddings.ts`) — the daemon itself (Go) never runs any ML model, it only stores a `BLOB` vector per path (`files_vec` sidecar table, `internal/index/vector.go`'s plain-Go cosine similarity — `modernc.org/sqlite` has no C extension support for a real vector index, and brute-force is fine at this table's scale) and computes cosine similarity in `Query()`.
+## How it works
 
-**Weights are baked in at `pnpm install` time**, not fetched at container runtime — `packages/sdk/scripts/prefetch-embedding-model.mjs` (this package's `postinstall`) downloads them into `packages/sdk/models/`, the one point in the pipeline with guaranteed network access (production images are staged via `pnpm deploy` on the host before the Docker build context even exists; containers have no guaranteed runtime internet). `embeddings.ts` sets `env.allowRemoteModels = false` — a missing cache fails closed (falls back to keyword-only ranking) rather than reaching out to the Hub from inside a sandbox.
+`semantic-fs-daemon` (Go) serves a FUSE filesystem at `$BERTH_CONTEXT_MOUNT` (default `/context`). Reads and writes pass straight through to a backing directory, and every write also updates a SQLite index keyed by path. Apps reach the daemon's control socket for `register`, `tag` and `query`, which needs no capability.
 
-**Three non-obvious fixes were needed to make this actually run under plain Node** (found by hand, not assumed — see the git history for the real failures each one fixed):
-1. `onnxruntime-node` (a hard dependency of `@xenova/transformers` on Node, preferred over the WASM backend unconditionally) `require()`s a prebuilt native binary with **no try/catch** — it crashes the whole import if that binary doesn't load, which it won't on Alpine (musl; the prebuilt is glibc-linked). This isn't fixed in newer versions either — `@huggingface/transformers` (the successor package) has the identical unconditional import. Fixed via a root `package.json` `pnpm.overrides`: `"onnxruntime-node": "npm:onnxruntime-web@1.14.0"` — both specifiers now resolve to the same real, working WASM backend, so it doesn't matter that the library always prefers "the node one" when running in Node.
-2. Same failure mode, different dependency: `sharp` (image support this SDK never uses — only text/feature-extraction) is also a hard, unconditional top-level import, and throws explicitly (`Unable to load image processing library`) if it's falsy. Fixed via `packages/sdk/vendor/sharp-stub/` — a two-file local package (aliased over `sharp` via the same `pnpm.overrides`) that's truthy but throws loudly if anything ever actually calls it, which nothing in a text-only pipeline does.
-3. `onnxruntime-web`'s multi-threaded WASM path spawns a `Worker` from a `blob:` URL — unsupported by Node's `worker_threads` (`ERR_WORKER_PATH`), and confirmed by hand to **hang indefinitely** rather than throw. `embeddings.ts` sets `env.backends.onnx.wasm.numThreads = 1` unconditionally, before creating the pipeline, to avoid that code path entirely.
+| Env var | Default |
+|---|---|
+| `BERTH_CONTEXT_MOUNT` | `/context` |
+| `BERTH_CONTEXT_DATA` (backing directory) | `/var/berth/context-data` |
+| `BERTH_CONTEXT_INDEX_DB` (tag index) | `/var/berth/context-index.db` |
+| `BERTH_SEMANTIC_FS_SOCKET` (control socket) | `/tmp/berth-semantic-fs.sock` |
 
-External consumers of `@berthos/sdk` (via `berth init --registry=<url>`) don't inherit fixes #1/#2 — those are workspace-level `pnpm.overrides`, scoped to this monorepo's own `pnpm install`. That's fine: `embedText()`/`loadPipeline()` wrap the dynamic `import("@xenova/transformers")` in a try/catch, and a Node dynamic `import()` failure (unlike the worker-thread hang) is a normal rejected promise — so an external consumer without these overrides gets a clean fallback to keyword-only ranking (logged, not crashed), not a broken build. Fix #3 (`numThreads = 1`) is set unconditionally in `embeddings.ts` itself, so every consumer gets it regardless.
+[`berth snapshot`](./computer-snapshots-reference.md) captures both the backing directory and the index.
 
-**Calibration note**: `embeddingMatchThreshold` (0.2, in `index.go`) was set from real measured cosine similarities for this SDK's actual embedding input shape — short `task + relatedApps + path` strings, not full sentences. A genuinely related pair scored ~0.30; an unrelated pair in the same short/tag-like style scored ~0.04. 0.2 sits clear of both. This is a real, hand-tuned number for this text style, not an arbitrary constant — if the embedded text shape changes materially (e.g. if a future pass embeds full file content), re-calibrate rather than assuming this threshold still holds.
+### Where the mount comes from, and how to have none
 
-## Consuming query_context from `@berthos/agents`
+Mounting FUSE needs `CAP_SYS_ADMIN` and `/dev/fuse`. Set one of these on the host process that starts the sandbox (`berth dev`, `Computer.boot()` and so on) to choose who holds them:
 
-`query_context` returns metadata only (`path`/`task`/`relatedApps`/timestamps) — no file content — so calling it directly still needs a `read_context_file` per hit to get anything an LLM can reason over. `@berthos/agents`' `createSemanticFsRetriever()` (see the [Agents Reference](./agents-reference.md)'s "Retrieval" section) wraps that two-step round trip as a single `search_context` tool, via `createAgent({retriever: "semantic-fs"})`.
+| Posture | Selected by | `/context` | `CAP_SYS_ADMIN` and `/dev/fuse` |
+|---|---|---|---|
+| **Sidecar** (default) | Nothing | Mounted by a separate per-sandbox container and shared into the sandbox | Held by the sidecar only until its mount is up, then dropped. Never on the app container |
+| **In-sandbox** | `BERTH_DISABLE_FS_SIDECAR=1` | Mounted by the daemon inside the app container | On the app container for its whole life, with a warning |
+| **Off** | `BERTH_NO_SEMANTIC_FS=1` | Absent | Nowhere |
 
-## Verification status
+`BERTH_DISABLE_FS_SIDECAR=1` doesn't turn Semantic FS off; it moves the mount into the sandbox, which grants *more* privilege. To turn it off, use `BERTH_NO_SEMANTIC_FS=1`.
 
-**Fully verified in this dev environment** — unlike Phase 3's Landlock gap (see [Capability Tokens Reference](./capability-tokens-reference.md)), FUSE-in-Docker-Desktop-for-Mac works end-to-end: confirmed via a standalone mount test (`/dev/fuse` present, `fusermount3` present, a real `bazil.org/fuse` mount serves reads) and via `packages/docker-orchestrator/test/semantic-fs-milestone.mjs`, which builds the real image, starts a real container with `--device /dev/fuse --cap-add SYS_ADMIN`, writes and tags fixtures through the actual FUSE mount, and asserts query correctness against the real daemon (not a mock) — including a purely-semantic match (zero keyword overlap with the query) that v0's keyword-only ranker would have silently dropped, confirming the embedding half of the hybrid ranking is actually running inside Alpine, not silently falling back.
+If the sidecar can't share its mount on this host (always the case on Docker Desktop for Mac), that boot runs with Semantic FS off and a warning naming both variables.
 
-## Running it yourself
+Off is never chosen for you when the sidecar works. The agent framework's checkpointing, sessions and traces rely on `/context` without any `berth.yml` line saying so, and with it off, those `/context` calls throw.
 
-```bash
-cd packages/docker-orchestrator
-node test/semantic-fs-milestone.mjs
-```
+## Limits
+
+- **Not a content index.** Search sees tags and paths, never file contents, and untagged files have no embedding. Content search is on the [roadmap](../ROADMAP.md#later).
+- **Shared by every app.** Any app with write access to `/context` can overwrite another app's files, and any app can tag any path. `created_by` records who wrote a file first; it doesn't protect it.
+- **Every query scans the whole index.** There's no vector index or pagination, and `limit` only trims the results. That's fine for hundreds to low thousands of tagged files, not as a general document store.
+- **The `0.2` threshold is tuned for short tag text.** Related tag strings score around `0.3` and unrelated ones around `0.04`. Long, sentence-like tags may need a different threshold.
+
+The end-to-end test is `packages/docker-orchestrator/test/semantic-fs-milestone.mjs`.

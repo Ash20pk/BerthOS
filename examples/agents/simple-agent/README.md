@@ -1,47 +1,45 @@
-# `simple-agent` example
+# `simple-agent`
 
-The agent-side counterpart to [`../../resident-apps/hello-world`](../../resident-apps/hello-world), a resident app example. This one boots a `Computer` from a resident app and drives it with an `Agent`, using `@berthos/agents` as an ordinary installed dependency. Check `package.json`'s `"@berthos/agents": "workspace:*"` and `index.mjs`'s `import ... from "@berthos/agents"`. That's the same shape an external project would use once `@berthos/agents` is published. Nothing here reaches into this monorepo's source or build output by relative path.
+Boot a sandbox from a resident app and let an LLM agent use it. This example boots [`apps/filesystem`](../../../apps/filesystem), turns its exports (`write_file`, `read_file` and the rest) into tools, and asks the agent to write a file and read it back. It is the agent-side counterpart to the [`hello-world`](../../resident-apps/hello-world) resident app.
 
-Two scripts, two levels of the API:
+It uses the experimental agent framework, `@berthos/agents`, which isn't published. Run it from a clone.
 
-- **`index.mjs`**: the dead-simple form. `runAgent({ apps, task })`, no `llm` passed at all. `createAgent()`/`runAgent()` auto-detect whichever of `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` is set, so this is the whole thing: boot, run one task, clean up.
-- **`index-manual.mjs`**: the fuller form. An explicit `LLMProvider`, and the `Agent`/`Computer` handles kept around for more than one turn, calling tools directly, or snapshotting before stopping. Also shows `--connect=<name>`, for attaching to an already-running `berth os up <name>` instance instead of booting a fresh one (see "Cold start" below).
+## Run it
 
-## Prerequisites
-
-```bash
-pnpm install
-pnpm build          # from the repo root, builds @berthos/agents and its deps
-```
-
-A local Docker daemon needs to be running (this example boots a real container, not a mock), and either `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` needs to be set. The script prints `SKIP` and exits cleanly if neither is, rather than failing.
-
-## Running
+Needs Docker, and `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`. Without a key the script prints `SKIP` and exits cleanly.
 
 ```bash
+pnpm install && pnpm build            # once, from the repo root
 cd examples/agents/simple-agent
 export ANTHROPIC_API_KEY=sk-ant-...   # or OPENAI_API_KEY
 pnpm start
 ```
 
-This boots `apps/filesystem` as the resident app, wires its exports (`write_file`, `read_file`, and so on) up as tools, and asks the agent to write a file and then read it back.
+On a machine whose kernel can't enforce (Docker Desktop on macOS or Windows), the boot is refused. Prefix the command with `BERTH_ALLOW_UNENFORCED=1` to run it unenforced, or see [enforcement by platform](../../../docs/kernel-enforcement.md#kernel-enforcement-by-platform).
 
-## Cold start: skip the boot on every run
+The script prints what the agent said and the tools it called.
 
-Booting a fresh Computer (image build plus container start) on every single run of this script is real seconds of latency you don't want to pay while iterating. Boot once with `berth os up`, then reconnect instantly.
+## Two scripts
+
+- **`index.mjs`** is the shortest form: `runAgent({ apps, task })` with no `llm` passed. It picks up whichever of `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` is set, boots, runs one task and cleans up.
+- **`index-manual.mjs`** is the fuller form: an explicit `LLMProvider`, and `Agent` and `Computer` handles you keep for more than one turn. It also accepts `--connect=<name>` to attach to a running `berth os up` instance.
+
+## Skip the boot on every run
+
+Building the image and starting the container on every run adds seconds. Boot once with `berth os up`, then reconnect:
 
 ```bash
 # from the repo root
 berth os up my-agent --apps=apps/filesystem
 
 cd examples/agents/simple-agent
-node index-manual.mjs --connect=my-agent   # reconnects in milliseconds, no build or boot
+node index-manual.mjs --connect=my-agent   # reconnects in milliseconds
 
 berth os down my-agent                     # from the repo root, when you're done
 ```
 
-See [`docs/berth-os-reference.md`](../../../docs/berth-os-reference.md).
+See the [Berth OS reference](../../../docs/berth-os-reference.md).
 
-## Multi-agent composition
+## Multi-agent crews
 
-For `Crew.withManager()`/`Crew.networked()`, see [`experimental/agents/examples`](../../../experimental/agents/examples) and [`docs/agents-reference.md`](../../../docs/agents-reference.md).
+For `Crew.withManager()` and `Crew.networked()`, see [`experimental/agents/examples`](../../../experimental/agents/examples) and the [agents reference](../../../docs/agents-reference.md).

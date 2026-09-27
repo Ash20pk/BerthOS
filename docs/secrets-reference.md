@@ -1,97 +1,69 @@
 # Secrets reference
 
-What Berth does with a credential you hand it, where each one is written, and — the part that matters for deciding whether to trust this — what it deliberately does not protect.
+How API keys and other credentials reach a sandbox, and who can read them. Berth keeps credentials out of the container's configuration, so they don't show up in `docker inspect` or in snapshots, and a secret an app declares reaches only that app.
 
-Before this work, a booted sandbox's provider API key and RPC bearer token were permanently readable from `docker inspect`, `~/.berthrc` and `~/.berth/os/<name>.json` were written at the umask's 0644, and `berth snapshot create` copied the whole container environment into a `env.json` that any snapshot copied to another machine carried with it — under a comment claiming snapshots captured no secrets.
+## Use it
 
-## The one rule
-
-**A credential never becomes container configuration.**
-
-Docker's `Env` on `createContainer` is permanent, immutable metadata. A value put there is readable by anything that can reach the Docker socket for the container's whole life, is copied verbatim into every `docker commit` of it, appears in every fresh `docker exec` process, and is what `berth snapshot create` reads back out to build a snapshot. There is no way to remove it from a running container and no way to redact it after the fact.
-
-So credentials travel a different road. `startContainer()` splits the environment it was given by name:
-
-| | Where it goes | Visible in `docker inspect` | In a `commit` / snapshot |
-|---|---|---|---|
-| `BERTH_APPS`, `BERTH_HTTP_RPC_PORT`, `BERTH_WORKSPACE_ROOT`, … | Docker `Env` | yes | yes |
-| `ANTHROPIC_API_KEY`, `BERTH_HTTP_RPC_TOKEN`, `BERTH_TERMINAL_CREDENTIAL`, `BERTH_VNC_PASSWORD`, … | a 0600 host file, bind-mounted read-only at `/run/berth/secrets.env` | **no** — only the mount path | **no** — `commit` excludes mount points |
-
-`docker/entrypoint.sh` sources that file (`set -a`) before any daemon or app starts, so every process in the container inherits these exactly as if they had been passed as `Env` all along. Nothing in an app changes; `process.env.ANTHROPIC_API_KEY` is there either way.
-
-The file lives at `~/.berth/run/<container name>/secrets.env`, 0600 inside a 0700 directory, and `stopContainer()` deletes the directory. A container whose environment holds no credentials gets no mount and no file — it is byte-for-byte what it was before this existed.
-
-### What decides that a name is a credential
-
-`isSecretEnvName()` in `packages/docker-orchestrator/src/secrets.ts`. Case-insensitive substring match on `SECRET`, `TOKEN`, `PASSWORD`, `PASSWD`, `CREDENTIAL`, `API_KEY`, `APIKEY`, `ACCESS_KEY`, `PRIVATE_KEY`, `SESSION_KEY`, `AUTH`, plus a `_KEY` / `_PAT` suffix rule for the names a substring can't catch safely (`AZURE_OPENAI_KEY` is a key; `BERTH_MESH_KEY_PATH` is a path).
-
-Deliberately broad and deliberately dumb, because the costs are not symmetric. A false positive means a non-secret value travels through a file instead of through `Env`, which nothing can observe. A false negative means a credential in `docker inspect` forever.
-
-If you have a credential in a variable this misses, **rename it** — anything ending `_TOKEN` or `_KEY` works — or add it to `EXPLICIT_SECRET_NAMES`, which exists precisely so that the alternative (broadening a fragment until it catches one name and a hundred others) doesn't happen.
-
-### Fails closed
-
-If `BERTH_SECRETS_FILE` is set and the file is unreadable, `entrypoint.sh` prints what is missing and exits 1 rather than booting an app without the credential it asked for. A sandbox that boots and then 401s against a model provider is much harder to diagnose from inside the container than a refusal is from outside it.
-
-## Snapshots
-
-`createSnapshot()` strips credential-valued entries from `env.json`, writes it 0600 in a 0700 snapshot directory, and records the withheld *names* in `metadata.redactedEnvNames`. `berth snapshot restore` prints them:
-
-```
-Warning: this snapshot deliberately did not capture 1 credential-valued environment variable(s):
-ANTHROPIC_API_KEY. The restored sandbox boots without them.
-```
-
-The names are kept because "this snapshot contains no secrets" is only a useful guarantee if what it cost you is visible. `BERTH_SECRETS_FILE` is dropped silently and separately — it points at a mount that exists only for the boot that made it, and replaying it into a restore on another machine would hit the fail-closed path above.
-
-This is belt and braces: because `berth snapshot create` builds its `env` by reading the running container's `Config.Env` back out of `docker inspect`, the split above already keeps credentials out of a snapshot. The strip runs anyway, for a caller that assembles `env` by hand or snapshots a container something else started.
-
-## Files on the host
-
-| File | Holds | Mode |
-|---|---|---|
-| `~/.berth/run/<container>/secrets.env` | this boot's container credentials | 0600 in a 0700 dir, deleted on stop |
-| `~/.berth/os/<name>.json` | `berth os up --http-rpc`'s bearer token | 0600 in a 0700 dir |
-| `~/.berth/snapshots/<app>/<id>/` | committed image, context-data, `env.json` | 0700 dir, `env.json` 0600 |
-| `~/.berthrc` | fleet alias adapters **and their `env`**, i.e. provider keys for remote deploys | **yours to set.** `berth` warns, once, when a credential-carrying one is group- or world-readable |
-
-Berth chmods files it creates. It does not chmod `~/.berthrc`: that is the developer's own file, silently rewriting its mode is a surprise in the other direction, and refusing to read it would break every existing `--fleet` invocation on upgrade. The warning names the fix (`chmod 600 ~/.berthrc`) and only fires when an alias actually carries `env`.
-
-Modes are set with an explicit `chmod` after the write, not with `writeFile`'s `mode` option alone — that option is masked by the umask on creation and **ignored entirely for a file that already exists**, and every one of these files already exists on the second run.
-
-## What this does not protect against
-
-Stated plainly, because a partial protection sold as a complete one is worse than none.
-
-- **Anyone who can reach the Docker socket.** They can `docker exec` into the container, read `/run/berth/secrets.env` as root, or read the host file directly — the bind mount's host path is right there in `docker inspect`. Docker socket access is root-equivalent on the host; this change does not pretend otherwise. What it closes is the far weaker requirement of *merely being able to inspect metadata*, or of receiving a snapshot someone else made.
-- **Anything running inside the container — with one boundary that is now real.** A secret an app declares under `secrets:` in `berth.yml` is delivered only to that app: it leaves the shared file, arrives as `/run/berth/secrets.<app>.env` (0600, owned by that app's uid), and is sourced only in that app's own process tree — a sibling cannot read it by env, by `/proc/<pid>/environ` (per-app uids; container root itself lacks `CAP_SYS_PTRACE`), or by the file's DAC. What per-app scoping does **not** cover: an *undeclared* secret still travels through the shared file to every app (backward compatibility is explicit — declare it to scope it); the pre-`agent-init` root daemons can still read anything (threat model B4); and root — `docker exec` — reads every file regardless.
-- **Encryption at rest.** Nothing here is encrypted. These are plaintext files protected by file modes; a host backup, a stolen disk, or root reads them.
-- **Remote fleets.** `berth deploy --fleet=…` passes `env` to the provider's own API (E2B, Daytona, a Kubernetes Pod spec). Those values live in that provider's control plane, on their terms — a K8s deployment puts them in the Pod spec, where `kubectl get pod -o yaml` shows them. Berth does not create Kubernetes `Secret` objects. The `~/.berthrc` warning is about the local copy; the remote copy is the provider's exposure surface, not one Berth can close.
-- **The audit log and logs generally.** Berth's audit records don't capture env, and payload capture is off by default — but an app that prints its own key to stdout puts it in `docker logs`, and nothing intercepts that.
-- **`git`, your shell history, and your CI provider.** A key exported in a shell, committed to a repo, or pasted into a CI variable is outside Berth entirely.
-
-## What is verified, and how
-
-- `secrets-milestone.mjs` — a real container, and the assertion that matters in both directions: `docker inspect` carries neither the RPC token nor the API key under any name, the host file is 0600 in a 0700 dir, **and** the HTTP RPC bridge authenticates the bearer token it was never given in `Env` (a token that is merely never delivered would pass the absence checks and fail this one). Plus: `docker exec env` sees neither value, a real `createSnapshot()` of that container writes an `env.json` with neither value at 0600 and names what it withheld, the committed `image.tar` contains neither byte-string, and stopping the container removes the host file.
-- `published-port-security-milestone.mjs` — the same mechanism for two non-Node consumers started by `entrypoint.sh` rather than by the SDK: `BERTH_TERMINAL_CREDENTIAL` is absent from `Env`, and ttyd still refuses an unauthenticated request, refuses a wrong credential, and accepts the generated one. Same for x11vnc, asserted at the RFB protocol level. This file used to assert the exact opposite — that the password *was* in the container's `Env`.
-- Unit tests — the classifier against Berth's own names and real provider names in both directions; the serializer round-tripped through a real `bash` with values containing `$(…)`, backticks, single quotes and newlines (getting this wrong would make the shell *execute* part of a credential at boot); modes re-tightened on a file that already exists; `~/.berthrc`'s warning firing for a loose credential-carrying config, staying quiet for a 0600 one and for a loose one with no `env`, and never printing the credential it warns about.
-
-### Declaring per-app secrets
+Declare the environment variables an app needs in its `berth.yml`. Names only, never values:
 
 ```yaml
 # berth.yml
 name: github-assistant
 secrets:
-  - GITHUB_TOKEN        # names, never values — values come from the boot environment
+  - GITHUB_TOKEN
 ```
 
-A name declared by any app in the container leaves the shared file entirely and is delivered only to the apps that declared it. Two apps may declare the same name and each receives it. A declared name with no value at boot is warned about by name (never by value) and the app boots without it. A container in which no app declares `secrets:` boots byte-for-byte as it did before this existed.
+Pass the values in the `env` you boot the sandbox with: the `env` option of `startContainer()` from `@berthos/docker-orchestrator`, or `Computer.boot({ apps, env })` in the experimental agent framework. For example `env: { GITHUB_TOKEN: process.env.GITHUB_TOKEN }`. Inside the app, read it as usual: `process.env.GITHUB_TOKEN`.
 
-Verified by `per-app-secrets-milestone.mjs`: a two-app boot where app A declares a token — absent from `docker inspect`, absent from the shared file, present in A's process environment and absent from B's (each read as its own uid), unreadable by B through `/proc/<pidA>/environ` and through the 0600 file, readable by A (the positive control) — followed by a control boot with no declaration in which the token reaches both apps, proving the isolation assertions can fail.
+- A declared name reaches only the apps that declared it. Two apps may declare the same name, and each gets it.
+- A declared name with no value at boot prints a warning naming it (never the value), and the app boots without it.
+- A `secrets:` entry must be a valid environment variable name.
 
-## Still open
+## How it works
 
-- No secret store integration. There is a seam (`secrets.ts` is the one place that decides what a secret is and where it goes) and no Vault/KMS/1Password backend behind it. Values still come from the caller's own environment.
-- No rotation. A credential is delivered at boot; changing it means restarting the container.
-- ~~No per-app scoping~~ **Per-app scoping shipped:** `secrets:` in `berth.yml` names the env vars an app needs; declared names are delivered only to declaring apps. Verified by `per-app-secrets-milestone.mjs` (see below). Undeclared secrets keep the shared-file behavior deliberately.
-- Nothing encrypted at rest, and no identity model to scope a secret to.
+Docker's container environment (`Env`) is permanent: anyone who can inspect the container sees it, and it is copied into every `docker commit` and snapshot. So Berth splits the environment it's given before creating the container:
+
+| | Where it goes | In `docker inspect` | In a commit or snapshot |
+|---|---|---|---|
+| Ordinary variables (`BERTH_APPS`, `BERTH_WORKSPACE_ROOT`, ...) | Docker `Env` | yes | yes |
+| Credentials no app declared (`ANTHROPIC_API_KEY`, `BERTH_HTTP_RPC_TOKEN`, `BERTH_TERMINAL_CREDENTIAL`, `BERTH_VNC_PASSWORD`, ...) | a shared file, mounted read-only at `/run/berth/secrets.env` | no, only the mount path | no |
+| Names an app declared under `secrets:` | a file per app, delivered as `/run/berth/secrets.<app>.env`, mode 0600, owned by that app's uid | no | no |
+
+The sandbox's entrypoint loads the shared file before anything starts, so every process sees those values. It loads each per-app file only in that app's own process tree, so other apps can't read it from their environment, from `/proc/<pid>/environ`, or from the file.
+
+On the host, the files live in `~/.berth/run/<container name>/` (files 0600, directory 0700) and are deleted when the container stops. A container with no credentials gets no files and no mount.
+
+If a secrets file is set but can't be read at boot, the sandbox refuses to start rather than running the app without its credentials.
+
+### Which names count as credentials
+
+A name you declare under `secrets:` is always treated as a credential. Any other name is treated as one if it contains (case-insensitive) `SECRET`, `TOKEN`, `PASSWORD`, `PASSWD`, `CREDENTIAL`, `API_KEY`, `APIKEY`, `ACCESS_KEY`, `PRIVATE_KEY`, `SESSION_KEY` or `AUTH`, or ends in `_KEY` or `_PAT`. So `AZURE_OPENAI_KEY` is a credential and `BERTH_MESH_KEY_PATH` is not. The rules are in `isSecretEnvName()` in `packages/docker-orchestrator/src/secrets.ts`.
+
+If a credential's name matches none of these, declare it under `secrets:` or rename it (anything ending in `_TOKEN` or `_KEY` works). Otherwise it goes into `Env` in plain text.
+
+## Snapshots
+
+`berth snapshot create` saves the container's environment to `env.json`, minus any credential-named values, and records the names it left out. `berth snapshot restore` tells you which ones to supply again:
+
+```
+Warning: this snapshot deliberately did not capture 1 credential-valued environment variable(s): ANTHROPIC_API_KEY. The restored sandbox boots without them — set them in the environment of whatever drives it (see docs/secrets-reference.md).
+```
+
+Snapshots are stored in `~/.berth/snapshots/<app>/<id>/` (directory 0700, `env.json` 0600).
+
+## Files on the host
+
+| File | Holds | Mode |
+|---|---|---|
+| `~/.berth/run/<container>/` | this boot's credentials | files 0600 in a 0700 directory, deleted on stop |
+| `~/.berth/os/<name>.json` | the bearer token for `berth os up --http-rpc` | 0600 in a 0700 directory |
+| `~/.berth/snapshots/<app>/<id>/` | snapshot image, context data, `env.json` | 0700 directory, `env.json` 0600 |
+| `~/.berthrc` | fleet aliases and their `env`, usually provider keys for remote deploys | you set it. `berth` warns if an alias carries `env` and the file isn't 0600: `chmod 600 ~/.berthrc` |
+
+## What this does not protect against
+
+- **Anyone who can reach the Docker socket.** They can `docker exec` into the container as root, or read the host files directly. Docker socket access is root on the host.
+- **Undeclared secrets inside the container.** A credential no app declares under `secrets:` goes into the shared file, which every app in the container can read. Declare it to scope it to one app. Berth's own daemons, which start before any app, can read everything.
+- **Encryption at rest.** The files are plain text protected by file modes. A host backup, a stolen disk or root can read them.
+- **Remote fleets.** `berth deploy --fleet=...` hands `env` to the provider (E2B, Daytona, or a Kubernetes Pod spec). There it is stored on the provider's terms; on Kubernetes, `kubectl get pod -o yaml` shows it. Berth doesn't create Kubernetes `Secret` objects.
+- **Rotation.** Credentials are delivered at boot. Changing one means restarting the container.

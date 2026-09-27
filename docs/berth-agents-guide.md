@@ -1,16 +1,12 @@
 # Building with `@berthos/agents`
 
-> **Frozen subsystem.** This lives in [`experimental/`](../experimental/README.md) and is not part of the core artifact (a `berth.yml` compiled into a kernel-enforced policy, plus the evidence for it). It still builds, still runs its tests, and nothing was deleted — it simply is not what `npm install @berthos/cli` gives you. See [`experimental/README.md`](../experimental/README.md) for why.
+`@berthos/agents` is an agent framework built on Berth: you boot a sandbox, load it with resident apps, and every app export becomes a tool for the LLM you plug in. You don't need it to use Berth; [your existing framework](./why-berth.md#use-it-from-your-existing-framework) works too. Full API: [agents reference](./agents-reference.md).
 
-`@berthos/agents` is the reference consumer of the Berth substrate: computer, then
-agent, then tool. It is optional — [using Berth from the framework you already
-have](./why-berth.md#use-it-from-your-existing-framework) is a first-class path,
-and the substrate is the product. Full API surface:
-[docs/agents-reference.md](./agents-reference.md).
+It lives in [`experimental/`](../experimental/README.md): frozen, bug and security fixes only. It isn't published to npm; releases ship the sandbox only. Use it from a clone of this repo.
 
 ## Building a Berth Agent
 
-Most frameworks wire agent straight to tool. `@berthos/agents` flips that around: computer, then agent, then tool. Build the computer first, load it with whichever resident apps this agent needs, first-party and custom mixed freely, there's no separate mechanism reserved for either one. Then build the agent on top of it. Every export the computer's apps have becomes a tool for whatever LLM provider you plug in.
+Build the computer first, then the agent on top of it. Load whichever resident apps the agent needs; first-party and custom apps mix freely.
 
 ```ts
 import { Computer, createAgent } from "@berthos/agents";
@@ -21,28 +17,30 @@ const computer = await Computer.boot({
 
 const { agent } = await createAgent({
   computer,
-  llm: { provider: "anthropic", apiKey: "..." }, // omit llm entirely to auto-detect ANTHROPIC_API_KEY/OPENAI_API_KEY, or pass a real LLMProvider
+  llm: { provider: "anthropic", apiKey: "..." },
 });
 
 const result = await agent.run("write a file called hello.txt with the text 'hi', then read it back");
 await computer.stop();
 ```
 
-`computer` comes back from `createAgent()` too, so you can keep using it after the `Agent` is created: call tools directly, snapshot it, or hand that same instance to a second `createAgent()` call. You own its lifecycle regardless of who built it. `createAgent()` never calls `stop()` on a `Computer` you handed it.
+`llm` takes a provider (`createAnthropicProvider()`, `createOpenAIProvider()` or your own `LLMProvider`), or a plain config like `{ provider: "openai", apiKey, baseURL }` for a custom endpoint. Leave it out to pick a provider from `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` or `GOOGLE_API_KEY` / `GEMINI_API_KEY`, in that order.
 
-Want to limit a specific agent to only some of a shared OS's apps, instead of booting a fresh one? Build the computer with `Computer.connect()` instead of `Computer.boot()`, and pass an `apps` filter. Everything else about wiring it into `createAgent()` stays exactly the same.
+`createAgent()` returns `{ agent, computer, mcpServers }`. You own the computer: `createAgent()` never stops it, so you can call its tools directly, snapshot it, or pass it to another `createAgent()`.
+
+To give an agent only some of a running sandbox's apps, use `Computer.connect()` with an `apps` filter:
 
 ```ts
-// team-os was started once with `berth os up team-os --apps=apps/filesystem,apps/notes,apps/terminal`
+// started once with: berth os up team-os --apps=apps/filesystem,apps/notes,apps/terminal
 const writerComputer = await Computer.connect({ name: "team-os", apps: ["filesystem"] });
-const { agent: writer } = await createAgent({ computer: writerComputer, llm: { provider: "anthropic", apiKey: "..." } });
+const { agent: writer } = await createAgent({ computer: writerComputer });
 ```
 
 ## Shortcuts for the common case
 
-Building the computer yourself pays off when you need to limit which apps an agent sees, mix in a custom resident app, or reuse one Computer across several agents. Most of the time you don't need any of that, so `@berthos/agents` also gives you two shortcuts that build the Computer for you behind the scenes, from whatever you pass as `apps`.
+If you don't need to share or scope the computer, let the framework build it from `apps`.
 
-The simplest version needs nothing but an app directory and a task. `llm` figures itself out from whichever of `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` is set, and `runAgent()` boots, runs, and cleans up in one call.
+`runAgent()` boots, runs one task and cleans up:
 
 ```ts
 import { runAgent } from "@berthos/agents";
@@ -53,47 +51,48 @@ const result = await runAgent({
 });
 ```
 
-Need more than one turn, but don't need to touch the Computer yourself? Keep the `Agent` and `Computer` handles around with `createAgent({ apps })` instead of `createAgent({ computer })`.
+`createAgent({ apps })` keeps the agent and computer around for more than one turn:
 
 ```ts
 import { createAgent, createAnthropicProvider } from "@berthos/agents";
 
 const { agent, computer } = await createAgent({
   apps: ["apps/filesystem"],
-  llm: createAnthropicProvider(), // optional: omit it to auto-detect, pass createOpenAIProvider() or your own LLMProvider, or a plain object like { provider: "openai", apiKey, baseURL } for a custom endpoint
+  llm: createAnthropicProvider(), // optional
 });
 
 const result = await agent.run("write a file called hello.txt with the text 'hi', then read it back");
 await computer.stop();
 ```
 
-Composing multiple agents — in-process, or fully networked peers each on their own computer — is a first-class pattern here, not an afterthought. See [Multi-agent architecture](./berth-agents-guide.md#multi-agent-architecture).
-
-Want an app to review every other app's tool calls before they happen, allow or deny? See [Governance and scoping](./berth-agents-guide.md#governance-and-scoping).
+`apps`, `connect` and `computer` are mutually exclusive.
 
 ## What is a Berth OS?
 
-Every `runAgent()` or `createAgent()` call above needs somewhere for its tools to actually live and run. That's a Berth OS: a real, sandboxed computer (a Docker container today) loaded with one or more resident apps, each independently enforced by the kernel, all able to collaborate through a shared context bus and semantic filesystem. In code, that's the `Computer` class.
+A Berth OS is the sandbox your agent's tools run in: a Docker container loaded with one or more resident apps, each enforced separately by the kernel, sharing a context bus and a semantic filesystem. In code it's the `Computer` class. [Berth OS reference](./berth-os-reference.md) covers what's inside.
 
-Want the full picture? [docs/berth-os-reference.md](./berth-os-reference.md) walks through what's actually inside one and how it relates to a resident app.
-
-Here's the part that matters for your day to day: by default, every `createAgent()` or `runAgent()` call boots a fresh, throwaway Berth OS. That's fine for a one-off script, but you'll feel it as real seconds of latency on every single dev loop iteration. `berth os up` pays that cost once, keeps the sandbox running, and lets your agent code reconnect in milliseconds instead of rebuilding and rebooting.
+By default, every `runAgent()` or `createAgent({ apps })` boots a fresh one, which costs seconds on every run. During development, boot it once with `berth os up` and reconnect in milliseconds:
 
 ```bash
-berth os up my-agent --apps=apps/filesystem,apps/notes   # or --config=<path to a small YAML>
+berth os up my-agent --apps=apps/filesystem,apps/notes   # or --config=<path to a YAML file>
 ```
 
 ```ts
-const result = await runAgent({ connect: "my-agent", task: "..." }); // reconnects instantly, no build, no boot
+const result = await runAgent({ connect: "my-agent", task: "..." });
 ```
 
-`berth os down my-agent` tears it down when you're done. The same doc has the full command and API reference, including how to scope one agent to a subset of a shared OS's loaded apps.
+`connect` also takes `{ name, apps }` to scope the agent to some of the sandbox's apps. Stopping a connected computer does nothing; `berth os down my-agent` tears the sandbox down.
 
 ## Multi-agent architecture
 
-Most frameworks compose agents in-process: a manager calls a worker's function, all inside one Node process. `Crew.sequential(agents)` and `Crew.withManager({ manager, workers })` do exactly that here too — pipe outputs forward, or hand a manager one `Tool` per worker and let its own LLM decide when to delegate.
+`Crew` composes agents. In one process:
 
-`Crew.networked()` goes further, because it can: each peer is a full Berth OS with its own `Agent` and its own LLM loop, not just a function call. `bootNetworkedAgent()` boots one independent `Computer` per peer — its own resident apps, its own synthesized agent-server companion — joined to a shared Docker network. A manager `Agent` then gets one delegation `Tool` per peer, over a real network, not an in-process call:
+- `Crew.sequential(agents)` pipes each agent's output into the next.
+- `Crew.withManager({ manager, workers })` gives the manager one tool per worker and lets its LLM decide when to delegate.
+
+The [agents reference](./agents-reference.md) covers the other shapes (`parallel`, `loopUntil`, `route`, `pipeline`).
+
+`Crew.networked()` makes each peer a full agent on its own computer. `bootNetworkedAgent()` boots one `Computer` per peer, with its own apps and its own agent loop, on a shared Docker network. The manager gets one delegation tool per peer:
 
 ```ts
 import { Agent, Crew, createOpenAIProvider, bootNetworkedAgent } from "@berthos/agents";
@@ -107,14 +106,18 @@ const crew = Crew.networked({ manager, peers: [filer, notetaker] });
 const output = await crew.run("Ask notetaker to log this run, then ask filer to write the result to a file.");
 ```
 
-Each peer keeps driving its own agent loop independently, on its own sandboxed computer — this is the architecture, not a demo trick, and it's why multi-agent here scales past "one process calling itself." Full API, and what's real vs. deferred today (host-mediated dispatch, a genuine container-to-container mesh as follow-up work): [docs/agents-reference.md](./agents-reference.md).
+A peer's `llm` is `{ provider: "anthropic" | "openai", model?, apiKeyEnvVar }`: the name of the env var the peer reads its key from, so the key itself never lands in generated code. Each peer has a `stop()`.
 
-Peers don't have to be local either. `bootNetworkedAgent({ fleet: { adapter, port } })` deploys a peer to a remote E2B/Daytona/K8s instance instead of a local Docker container, and `Crew.networked()` dispatches to it the same way — over a per-boot-authenticated HTTP RPC bridge instead of the Docker network. See [docs/agents-reference.md](./agents-reference.md#networked-crew-over-a-remote-fleet-e2b-daytona-k8s) for what's verified end-to-end versus reasoned-but-not-live-tested.
+Peers can run remotely too. `bootNetworkedAgent({ fleet: { adapter, port } })` deploys a peer to E2B, Daytona or Kubernetes, and `Crew.networked()` reaches it over an HTTP RPC bridge with a per-boot token instead of the Docker network. See [networked crew over a remote fleet](./agents-reference.md#networked-crew-over-a-remote-fleet-e2b-daytona-k8s).
 
 ## Governance and scoping
 
-Capabilities (see [Available capabilities](./kernel-enforcement.md#available-capabilities)) control what a single app can do, enforced by the kernel or a broker before the call happens. Governance controls what happens next: any app can put itself in front of every *other* app's tool calls in the same Berth OS and decide, per call, whether it's allowed to run at all.
+Capabilities decide what a single app can do ([available capabilities](./kernel-enforcement.md#available-capabilities)). Governance decides, call by call, whether a tool call runs at all: one app reviews every other app's calls in the same Berth OS.
 
-Declare `governs: true` in your `berth.yml` and export a fixed-contract `evaluate_action({ app, export, input }) -> { allowed, reason }`. Load it alongside whatever else the Computer needs, and every other app's tool calls now route through it automatically — no other wiring required. Any app can opt out with `governance: { exempt: true }`.
+To write a governance app, declare `governs: true` in its `berth.yml` and export `evaluate_action({ app, export, input }) -> { allowed, reason }`. Load it into the computer with the other apps; every other app's calls then go through it. An app opts out with `governance: { exempt: true }`.
 
-Worth being precise about: this gates what goes through `Computer`/`Agent` — an LLM-driven agent's tool use, including MCP tools (as `mcp:<server>`) and delegation to another agent (as `agent:<name>`). It is **not** kernel-level like Landlock's per-syscall capability enforcement, and it doesn't cover `berth rpc`, `berth mcp`, the HTTP RPC bridge, or direct `invokeAppExport()` calls — separate transports with no governance app on their path. It fails **closed** by default: if `evaluate_action` errors or times out, the call is refused rather than run, because "the policy check didn't happen" should not quietly become "the policy check passed." Pass `governance: { mode: "fail-open" }` where availability matters more. Full contract in [docs/governance-reference.md](./governance-reference.md).
+- **What's gated:** tool calls through a `Computer` (including MCP tools, as `mcp:<server>`, and delegation to another agent, as `agent:<name>`), and calls that reach an app another way (`berth rpc`, `berth mcp`, the HTTP RPC bridge, another app's socket), checked inside the sandbox by `@berthos/sdk`.
+- **Fails closed:** if `evaluate_action` errors or times out, the call is refused. At the `Computer` you can pass `governance: { mode: "fail-open" }` where availability matters more.
+- **Not kernel enforcement:** it's a policy layer, and root on the host can bypass it.
+
+Full contract: [governance reference](./governance-reference.md).
