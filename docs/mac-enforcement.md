@@ -1,28 +1,33 @@
-# Real kernel enforcement on macOS
+# Enforcement on macOS
 
-Berth's capability scoping is enforced by [Landlock](https://docs.kernel.org/userspace-api/landlock.html),
-which is a Linux kernel feature. On macOS your apps do not run on your laptop's
-kernel — they run on the kernel inside whatever Linux VM your Docker daemon
-lives in. So the question "can Berth enforce anything on my Mac?" is entirely a
-question about that VM's kernel, and the two common answers differ completely:
+On a Mac, Berth's apps run on the kernel of the Linux VM your Docker daemon lives in, not on macOS. Docker Desktop's VM has no Landlock, so nothing is enforced. Colima's default VM has it. This page sets up Colima so the kernel refuses an undeclared write.
 
 | Docker runtime | Kernel | `berth doctor` |
 |---|---|---|
-| Docker Desktop | `6.10.14-linuxkit` — no Landlock at all; `landlock_create_ruleset` returns `ENOSYS` | `enforcement: NOT ACTIVE` |
-| Colima (default VM) | `6.8.0-117-generic`, Ubuntu 24.04 — Landlock ABI 4, active in the LSM stack | `enforcement: ACTIVE` |
+| Docker Desktop | `linuxkit`, no Landlock (`landlock_create_ruleset` returns `ENOSYS`) | `enforcement: NOT ACTIVE` |
+| Colima (default VM) | Ubuntu 24.04, Landlock ABI 4 | `enforcement: ACTIVE` |
 
-This page is the second row: one recipe, run start to finish on an Apple-silicon
-Mac, that ends in a kernel that really refuses an undeclared write. Everything
-below was observed, not inferred — the verdicts and error strings are copied
-from the run recorded at the bottom.
+No custom kernel is needed.
 
-**No custom kernel is needed.** Earlier notes in this repo assumed a Mac
-enforcement path would mean building or fetching a Landlock-enabled kernel
-image. It doesn't: Colima's default Ubuntu 24.04 guest already ships `landlock`
-in its active LSM stack, which is the part Docker Desktop's linuxkit kernel is
-missing. The recipe is therefore an install and four flags.
+## Quick setup
 
-## The recipe
+```bash
+berth doctor --fix                    # install and start Colima, then re-check against it
+./scripts/mac-enforcement.sh          # the same steps as a standalone script
+```
+
+`--fix` installs Colima with Homebrew if it's missing, starts the VM with the flags in step 2 below, and re-runs doctor against the Colima socket. It reports success only if the re-check sees enforcement. It can't change your shell, so it prints the `docker context use` and `DOCKER_HOST` lines for you to run.
+
+Both read these env vars:
+
+| Variable | Default |
+|---|---|
+| `COLIMA_PROFILE` | `default` |
+| `BERTH_COLIMA_CPU` | `4` |
+| `BERTH_COLIMA_MEMORY` | `8` (GB) |
+| `BERTH_COLIMA_DISK` | `60` (GB) |
+
+## Step by step
 
 ### 1. Install Colima
 
@@ -30,9 +35,7 @@ missing. The recipe is therefore an install and four flags.
 brew install colima docker
 ```
 
-`docker` is the CLI only (Colima provides the daemon). If you already have
-Docker Desktop installed, leave it — Colima registers a separate daemon and a
-separate `docker` context, and step 5 shows how to go back.
+`docker` here is just the CLI; Colima provides the daemon. You can keep Docker Desktop installed: Colima registers its own daemon and Docker context, and step 5 switches back.
 
 ### 2. Start the VM
 
@@ -43,53 +46,22 @@ colima start \
   --mount "$HOME:w"
 ```
 
-Each flag is load-bearing:
+- **`--cpu 4 --memory 8 --disk 60`**: Colima's default of 2 CPUs and 2 GB makes the first image build slow enough to look hung. The disk holds the layer cache for several app images.
+- **`--vm-type vz`**: Apple's Virtualization framework instead of QEMU, so the VM runs at native speed on Apple silicon.
+- **`--mount-type virtiofs`**: required by `vz`, and faster than sshfs for the bind mount `berth dev` uses.
+- **`--mount "$HOME:w"`**: Colima mounts your home directory read-only by default. Without `:w`, writes fail with `EROFS`, which is easy to mistake for an enforcement denial.
 
-- **`--cpu 4 --memory 8 --disk 60`** — Berth's app images build a Rust
-  `context-bus` binary and a Go/Rust `agent-init`; Colima's 2 CPU / 2 GB default
-  makes a first build slow enough to look hung. 60 GB of disk is for the layer
-  cache across several app images.
-- **`--vm-type vz`** — Apple's Virtualization framework rather than QEMU. On
-  Apple silicon this is the difference between a native-speed VM and an emulated
-  one.
-- **`--mount-type virtiofs`** — required by `vz`, and much faster than sshfs for
-  the repo bind mount that `berth dev` puts at `/workspace`.
-- **`--mount "$HOME:w"`** — Colima mounts your home directory **read-only** by
-  default. Berth bind-mounts your checkout into the container read-write, so
-  without `:w` every app write fails with `EROFS` and you will misread it as an
-  enforcement denial.
-
-### 3. Point Berth at the Colima daemon
+### 3. Point Berth at Colima
 
 ```bash
 docker context use colima
 ```
 
-`colima start` usually does this for you. Berth follows the current Docker
-context the way the `docker` CLI does (`DOCKER_HOST`, then `DOCKER_CONTEXT`,
-then `currentContext` in `~/.docker/config.json`), so once `docker info`
-reports the Ubuntu kernel, `berth doctor` probes that same daemon. Its first
-line names the socket it used and why, e.g. `via unix:///Users/you/.colima/default/docker.sock
-(current Docker context "colima")`. Before 2026-09-26 Berth ignored contexts
-and needed `DOCKER_HOST` exported by hand; that still works, and still wins
-over any context, if you'd rather pin it per shell:
+`colima start` usually does this for you. Berth picks the daemon the way the `docker` CLI does: `DOCKER_HOST`, then `DOCKER_CONTEXT`, then the current context in `~/.docker/config.json`. To pin it for one shell instead, export `DOCKER_HOST`, which wins over any context:
 
 ```bash
 export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"
 ```
-
-Or let doctor do the whole thing:
-
-```bash
-berth doctor --fix                    # install + start colima, then re-check against it
-./scripts/mac-enforcement.sh          # the same steps as a standalone script
-```
-
-`--fix` runs exactly the steps this document describes (brew install if
-missing, `colima start --vm-type vz --mount-type virtiofs --mount "$HOME:w"`),
-then re-runs doctor against the Colima socket — it reports success only when
-the re-check observes enforcement, and prints the `DOCKER_HOST` export it
-cannot do for you.
 
 ### 4. Check
 
@@ -97,7 +69,7 @@ cannot do for you.
 berth doctor
 ```
 
-On a correct setup, all four checks pass and the command exits 0:
+On a working setup every check passes and the command exits 0:
 
 ```
 Kernel that runs Berth's apps: 6.8.0-117-generic (Ubuntu 24.04.4 LTS)
@@ -115,12 +87,18 @@ Probed in: python:3.12-slim
 enforcement: ACTIVE
 ```
 
-If the kernel line still says `linuxkit`, Berth is still pointed at Docker
-Desktop — the `via` on the daemon line says which setting chose it; go back to
-step 3. `berth doctor` probes inside a local image containing `python3` (any
-Berth app image qualifies); before you have built one, it pulls
-`python:3.13-alpine` for the probe, and `--image` picks your own instead. See [doctor-reference.md](./doctor-reference.md) for the `--json`
-contract and the full verdict table.
+If the kernel line says `linuxkit`, Berth is still talking to Docker Desktop. The daemon line says which setting chose the socket (for example `via unix:///Users/you/.colima/default/docker.sock (current Docker context "colima")`); go back to step 3.
+
+Doctor runs its probe in a local image that has `python3` (any Berth app image works). If you haven't built one yet it pulls `python:3.13-alpine`; `--image` picks a different one. The `--json` output and every verdict are in the [doctor reference](./doctor-reference.md).
+
+To test the full boundary against a real app, not just the kernel:
+
+```bash
+export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"   # this script doesn't follow Docker contexts
+node packages/docker-orchestrator/test/capability-enforcement.mjs
+```
+
+It should exit 0, and the log should include `ruleset=FullyEnforced`. That line means every denial check ran for real.
 
 ### 5. Going back to Docker Desktop
 
@@ -130,87 +108,12 @@ docker context use desktop-linux
 colima stop                 # or `colima delete` to reclaim the disk
 ```
 
-Nothing Berth writes is Colima-specific, so you can move back and forth; you
-will just be back to `enforcement: NOT ACTIVE` when you do.
+Nothing Berth writes is Colima-specific, so you can switch back and forth. On Docker Desktop you're back to `enforcement: NOT ACTIVE`.
 
-## What was actually verified here
+## Other VMs
 
-`berth doctor` reporting `ACTIVE` is a claim about the kernel, not about Berth's
-policy. So the recipe was also checked against the capability-denial milestone,
-which boots a real app from a real manifest and tries to escape it:
+Colima is a wrapper over [Lima](https://lima-vm.io). Plain Lima with `template://docker`, or any Linux VM whose distro keeps `landlock` in its active LSM list (Ubuntu 22.04+, Fedora, recent Debian), should work the same way; only Colima is tested. To check another VM, run `cat /sys/kernel/security/lsm` inside it (the output must contain `landlock`), then `berth doctor`.
 
-```bash
-export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"
-node packages/docker-orchestrator/test/capability-enforcement.mjs
-```
+## Limits
 
-It exits 0, and `agent-init` reports the ruleset it managed to install:
-
-```
-[agent-init] landlock restrict_self() status: ruleset=FullyEnforced no_new_privs=true
-```
-
-That line is what makes the run meaningful. The milestone's assertions are
-conditional on it: on a non-enforcing kernel the script degrades to warnings, so
-a green run on Docker Desktop proves very little. `FullyEnforced` means every
-assertion below ran as a hard assertion, and the denials are the kernel's:
-
-- an undeclared write outside the declared `filesystem:write:/workspace` scope:
-  `EACCES: permission denied, open '/etc/berth-should-not-exist.txt'`
-- an undeclared read: `EACCES ... open '/opt/berth-should-not-be-readable.txt'`
-- an app declaring no `network:connect`: `connect EACCES 1.1.1.1:80`; UDP
-  `bind EPERM`; raw socket refused
-- a symlink planted *inside* the granted path, pointing out of it — denied at
-  the resolved target, not the link
-- 20 concurrent out-of-scope writes: 20/20 denied
-- `truncate(2)` outside the scope, which is the write path that does not go
-  through `open(O_WRONLY)`: denied
-- `unshare(CLONE_NEWUSER)`, which would undo the capability bounding-set drop:
-  `Operation not permitted`
-- cross-app: app A reaching app B's directory and RPC socket in the same
-  container — `EACCES`, and app C, which declared `app:invoke:boundary-app-b`,
-  reaching only the peer socket declared for it
-
-This is the first time in this repo's history that the enforcing half of that
-matrix has been *observed* rather than reasoned about, and it immediately found
-a bug in `berth doctor` itself: the kernel probe resolved its scratch path with
-`tempfile.gettempdir()` *after* binding a ruleset that grants nothing, and
-`gettempdir()` looks for a writable directory by creating a file in it. On every
-kernel that genuinely enforced the ruleset, the probe therefore died with a
-traceback and the report said `UNKNOWN` — the one host class where the answer
-was `ACTIVE` was the one class it could not report. Fixed by resolving the path
-before `restrict_self()`. The lesson is the same one this doc exists to serve: a
-verdict table exercised only in its failing half is not tested.
-
-## Lima, and other routes
-
-Colima is a thin wrapper over [Lima](https://lima-vm.io) — `colima start`
-provisions a Lima VM from an Ubuntu image and wires up the Docker socket.
-Plain Lima with `template://docker` reaches the same kernel and will work on the
-same principle, and so will any Linux VM running a distro that keeps `landlock`
-in `CONFIG_LSM` (Ubuntu 22.04+, Fedora, recent Debian). Neither was run here, so
-this doc documents the one that was. If you verify another, check
-`cat /sys/kernel/security/lsm` inside the guest — the string must contain
-`landlock` — and then run the two commands above.
-
-## What this does not fix
-
-An enforcing kernel closes the gap between what Berth's manifests declare and
-what the kernel refuses. It does not close the rest:
-
-- The in-container and cross-app residuals named in
-  [the threat model](./threat-model.md) are unaffected by which
-  VM you run. Since the in-container hardening these are named residuals — the mesh
-  daemon's retained root + `CAP_NET_ADMIN` behind a self-asserted-identity
-  control socket, connect-time cross-app grants — not a general in-container
-  escape; see [threat-model.md](./threat-model.md).
-- Colima's daemon reports `seccomp profile=builtin` (Docker Desktop reports
-  `unconfined`), which is a genuine improvement, but Berth's own seccomp filters
-  never depended on it.
-- macOS-side isolation is unchanged: the VM boundary is Docker's, and your
-  bind-mounted home directory is inside it, writable, by construction of step 2.
-
----
-
-*Recorded 2026-08-18 on macOS (Darwin 25.6.0, Apple silicon) with Colima 0.10.3,
-Lima 2.2.0, guest Docker 29.5.2, guest kernel 6.8.0-117-generic, Landlock ABI 4.*
+- Your home directory is mounted writable into the VM (step 2). The boundary between the VM and macOS is Docker's, not Berth's.
