@@ -1,68 +1,57 @@
 # The Berth break-out box
 
-A standing Berth sandbox that hands strangers code execution and dares them to
-reach a flag no capability grants.
+A public Berth sandbox that runs any code a stranger sends and dares them to read a flag no capability grants. It runs exactly what `berth dev` gives any app, with no extra hardening: capabilities from a `berth.yml`, compiled into Landlock and seccomp rules, applied before the stranger's code runs. A flag that stays in is Berth's normal enforcement holding. A flag that gets out is a hole in Berth.
 
-The point is not the box — it is what the box proves. It runs **exactly what
-`berth dev` gives any app**: capabilities from a `berth.yml`, compiled into a
-Landlock domain and a seccomp filter, applied to the app's process before the
-stranger's code runs. There is no hardening added for the challenge. A flag
-that stays in is the shipped enforcement holding; a flag that comes out is a
-hole in Berth.
-
-## The two flags
-
-| Flag | Where | Guarded by |
-|---|---|---|
-| `FLAG_KERNEL` | `/var/breakout/flag-kernel.txt`, mode **0644** | Landlock alone — DAC permits the read, so only the compiled policy refuses it |
-| `FLAG_COTENANT` | a co-tenant app's per-app secret (0600, its uid) | the per-app uid split |
+Challengers read [rules.md](./rules.md), which the server also serves at `GET /`.
 
 ## Run it
 
-The box is only honest on a host whose kernel enforces Landlock, and it should
-run on a **disposable** host holding nothing else — the premise is giving
-strangers code execution on it.
+Use a **disposable** Linux host that holds nothing else, with a kernel that enforces Landlock. You are handing strangers code execution on it.
 
 ```bash
 BREAKOUT_BIND=0.0.0.0 ./breakout/deploy.sh
 ```
 
-The server **refuses to start** on a host that cannot enforce, rather than
-advertise a boundary that is not there (`BREAKOUT_ALLOW_UNENFORCED=1` overrides,
-for a deliberately unprotected demo). Put a TLS-terminating proxy in front for a
-public deployment; the default bind is loopback.
+`deploy.sh` runs `berth doctor`, installs, builds and starts the server. The server **refuses to start** if the host can't enforce Landlock. The default bind is loopback; for a public box, put a TLS-terminating proxy in front.
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `BREAKOUT_BIND` | `127.0.0.1` | Address to listen on. |
+| `BREAKOUT_PORT` | `8099` | Port to listen on. |
+| `BREAKOUT_MAX_CODE_BYTES` | `16384` | Largest accepted request body. |
+| `BREAKOUT_ATTEMPT_TIMEOUT_MS` | `30000` | Time limit per attempt. |
+| `BREAKOUT_ALLOW_UNENFORCED` | unset | `1` serves on a host that can't enforce, for a deliberately unprotected demo. |
+
+## The two flags
+
+| Flag | Where | Guarded by |
+|---|---|---|
+| `FLAG_KERNEL` | `/var/breakout/flag-kernel.txt`, mode 0644 | Landlock alone. File permissions allow the read. |
+| `FLAG_COTENANT` | A second app's per-app secret, a 0600 file owned by its uid | The per-app uid split. |
 
 ## Endpoints
 
-- `GET /` — the rules (`rules.md`).
-- `POST /attempt` `{"code":"…"}` — run an async JS function body in the target
-  app's own process; `require("node:…")` returns the built-in (await it). The
-  response says what you returned or threw, and which flag (if any) your output
-  contained.
-- `GET /attestation` — the box's boot attestation: the enforcement
-  *measured* live at boot, not asserted.
-- `GET /log` — every attempt, hash-chained (`@berthos/audit`). Tamper-evident,
-  not tamper-proof.
+| Endpoint | What it does |
+|---|---|
+| `GET /` | The rules (`rules.md`). |
+| `POST /attempt` `{"code":"…"}` | Runs an async JS function body in the target app's process. Returns `{ ok, output, captured }`, where `captured` lists any flag found in the output. One attempt at a time; a second concurrent one gets `429`. |
+| `GET /attestation` | The enforcement measured at boot (doctor probe, each app's Landlock status, boot ID, image digest). |
+| `GET /log` | Every attempt, hash-chained with `@berthos/audit`, plus whether the chain is intact and its head. |
 
 ## Files
 
 | File | What |
 |---|---|
-| `box.mjs` | Boots the sandbox and runs attempts. **Shared by the server and the test**, so the public endpoint and the proof cannot diverge. |
-| `server.mjs` | The HTTP relay: rate-limited to one attempt at a time, audited, refuses to serve unenforced. |
-| `deploy.sh` | One-command deploy: preflight, install, build, serve. |
-| `apps/breakout-target/` | The target app — runs stranger code, ordinary capabilities. |
-| `apps/flag-keeper/` | The co-tenant holding `FLAG_COTENANT`. |
-| `test/breakout-milestone.mjs` | The verification artifact: the enforced boot's refusals **and** a weakened-boot negative control proving the flag leaks when enforcement is off. |
-| `rules.md` | The public challenge rules and scope. |
+| `box.mjs` | Boots the sandbox and runs attempts. Shared by the server and the test, so the two can't drift apart. |
+| `server.mjs` | The HTTP server: one attempt at a time, every attempt logged, refuses to serve unenforced. |
+| `deploy.sh` | Preflight, install, build, serve. |
+| `apps/breakout-target/` | The target app that runs submitted code, with ordinary capabilities. |
+| `apps/flag-keeper/` | The co-tenant app holding `FLAG_COTENANT`. |
+| `test/breakout-milestone.mjs` | Checks that an enforced boot refuses every flag read, and that a boot with the kernel layer off leaks the flag. |
+| `rules.md` | The public rules and scope. |
 
-## What this does not prove
+## Limits
 
-- **`docker exec` is out of scope.** Root on the host bypasses the sandbox by
-  construction (see [docs/threat-model.md](../docs/threat-model.md)); the box
-  tests the workload's reach, not the host's.
-- **The server is not a boundary.** It is a thin relay on a disposable host;
-  attacking it, the host, or the surrounding network proves nothing about
-  Berth.
-- **Off an enforcing kernel, the kernel flag is not protected** — which is why
-  the server refuses to serve there, and both it and the test say so plainly.
+- **`docker exec` is out of scope.** Root on the host bypasses the sandbox (see the [threat model](../docs/threat-model.md)). The box tests what the workload can reach, not the host.
+- **The server isn't a boundary.** It's a thin relay on a disposable host; attacking it proves nothing about Berth.
+- **The log is tamper-evident, not tamper-proof.** The host could rewrite it, but not without contradicting copies challengers already fetched.
