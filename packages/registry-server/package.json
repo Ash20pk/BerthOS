@@ -1,6 +1,6 @@
 {
   "name": "@berthos/registry-server",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Local app registry: publish/discover/install resident apps (Phase 5)",
   "type": "module",
   "main": "./dist/index.js",

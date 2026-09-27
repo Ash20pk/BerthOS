@@ -1,6 +1,6 @@
 {
   "name": "@berthos/tls",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Shared TLS for Berth servers and clients: cert loading, self-signed generation for dev, and client-side CA trust",
   "type": "module",
   "main": "./dist/index.js",
