@@ -14,14 +14,25 @@ const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 /** packages/docker-orchestrator/docker — shipped alongside dist/ via the package's "files" field. */
 const DOCKER_ASSETS_DIR = join(__dirname, "..", "docker");
-/** packages/context-bus-daemon — a sibling workspace package, staged into every build context so base.Dockerfile's builder stage can compile it. */
-const CONTEXT_BUS_DAEMON_DIR = join(__dirname, "..", "..", "context-bus-daemon");
-/** packages/agent-init — same reasoning as CONTEXT_BUS_DAEMON_DIR. */
-const AGENT_INIT_DIR = join(__dirname, "..", "..", "agent-init");
-/** packages/semantic-fs-daemon — same reasoning as CONTEXT_BUS_DAEMON_DIR. */
-const SEMANTIC_FS_DAEMON_DIR = join(__dirname, "..", "..", "semantic-fs-daemon");
-/** packages/mesh-daemon — same reasoning as CONTEXT_BUS_DAEMON_DIR. */
-const MESH_DAEMON_DIR = join(__dirname, "..", "..", "mesh-daemon");
+/**
+ * Where a sandbox daemon's source is, for the builder stages in
+ * base.Dockerfile to compile. In this repository it's the sibling package
+ * (packages/<daemon>); a published @berthos/docker-orchestrator carries a copy
+ * under daemons/ instead (scripts/bundle-daemons.mjs), since npm installs no
+ * sibling. The checkout wins when both exist, so local edits to a daemon are
+ * what gets built.
+ */
+export function daemonSourceDir(daemon: string, pkgRoot = join(__dirname, "..")): string {
+  const sibling = join(pkgRoot, "..", daemon);
+  return existsSync(join(sibling, daemon === "semantic-fs-daemon" ? "go.mod" : "Cargo.toml"))
+    ? sibling
+    : join(pkgRoot, "daemons", daemon);
+}
+
+const CONTEXT_BUS_DAEMON_DIR = daemonSourceDir("context-bus-daemon");
+const AGENT_INIT_DIR = daemonSourceDir("agent-init");
+const SEMANTIC_FS_DAEMON_DIR = daemonSourceDir("semantic-fs-daemon");
+const MESH_DAEMON_DIR = daemonSourceDir("mesh-daemon");
 
 export type BuildTarget = "dev" | "production";
 
@@ -292,6 +303,13 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
     }
 
     await cp(DOCKER_ASSETS_DIR, join(stagingDir, "docker"), { recursive: true });
+    for (const dir of [CONTEXT_BUS_DAEMON_DIR, AGENT_INIT_DIR, SEMANTIC_FS_DAEMON_DIR, MESH_DAEMON_DIR]) {
+      if (!existsSync(dir)) {
+        throw new Error(
+          `daemon source not found at ${dir}: this @berthos/docker-orchestrator has neither the repository's packages/ nor a bundled daemons/ copy (run its build, which bundles them)`,
+        );
+      }
+    }
     await cp(CONTEXT_BUS_DAEMON_DIR, join(stagingDir, "context-bus-daemon"), {
       recursive: true,
       // target/ is Cargo's build output — large, and rebuilt fresh inside
