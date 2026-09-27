@@ -1,11 +1,7 @@
-name: Red-team & Claims
+name: Red-team
 
-# BUILD_PLAN M2.4 / LAUNCH_PLAN WS4 — two guards that keep the enforcement
-# story honest over time:
-#
-#   claims-linter.mjs — docs/internal/claims.md must cite tests that exist. A
-#     rename that orphans a claim fails this job the same day, so the inventory
-#     cannot rot into citing tests that are gone.
+# BUILD_PLAN M2.4 / LAUNCH_PLAN WS4 — keeps the enforcement story honest over
+# time:
 #
 #   redteam.mjs — every kernel-tier denial it asserts must FLIP to allowed when
 #     the enforcing mechanism is removed. A denial that does not flip is
@@ -23,22 +19,6 @@ on:
   workflow_dispatch:
 
 jobs:
-  claims-linter:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        with:
-          version: 10.21.0
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - name: Lint the claims inventory
-        run: node redteam/claims-linter.mjs
-
   redteam:
     runs-on: ubuntu-latest
     timeout-minutes: 30

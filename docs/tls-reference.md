@@ -88,4 +88,4 @@ Server-side support exists: set `<PREFIX>_TLS_CA` and `<PREFIX>_TLS_REQUIRE_CLIE
 - **No HTTPS by default**, and no redirect from HTTP — a server configured for TLS serves TLS on its one port and nothing listens on plain HTTP to redirect from.
 - **No certificate reloading.** A renewed certificate needs a server restart.
 - **No cipher, curve, or minimum-version pinning** — Node's defaults apply.
-- **The context bus, semantic-fs control socket, and peer RPC sockets are Unix sockets**, not TCP, so TLS does not apply. They are protected by filesystem permissions and `SO_PEERCRED` (see [per-app uid design](./per-app-uid-design.md)).
+- **The context bus, semantic-fs control socket, and peer RPC sockets are Unix sockets**, not TCP, so TLS does not apply. They are protected by filesystem permissions and `SO_PEERCRED` — each app runs as its own uid (see [threat model](./threat-model.md)).
