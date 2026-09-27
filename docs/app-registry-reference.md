@@ -82,7 +82,7 @@ Errors are JSON `{"error": "..."}`:
 | `400` | Missing `manifest` or `bundle`, or the manifest is invalid |
 | `401` | The name is already published and the owner token is missing or wrong |
 | `404` | No such app or version |
-| `409` | That name and version are already published |
+| `409` | That name and version are already published. Versions are immutable: the stored bundle is never replaced |
 
 `latest` means the highest version number, not the most recently published. Publishing `1.5.0` after `2.0.0` leaves `2.0.0` as latest.
 
