@@ -1,83 +1,72 @@
 # Why Berth
 
-> Relocated from the README when it was compressed to a thesis and a demo. Nothing
-> here was rewritten to sound better than it is; the caveats moved with the claims.
-
-The one-paragraph version is in the [README](../README.md). This is the longer
-argument: the gap Berth fills, what you get, and what jobs it makes shippable.
+An agent is only as safe as the tools it can call. Berth gives those tools a boundary the Linux kernel enforces, so you can hand an agent a real shell, a real filesystem and a real browser without handing it your machine. The short version is in the [README](../README.md); this page makes the longer case.
 
 ## The problem
 
-Every agent framework gives you a loop and a tool registry. What it doesn't give you is a computer for the agent to actually stand on. That part is on you: a Python subprocess here, a raw sandbox VM there, a pile of API clients holding the whole thing together. None of it remembers what happened last time. None of it stops the agent from doing something you didn't mean for it to do.
+Agent frameworks give you a loop and a tool registry. They don't give the agent a computer to work on. That part is left to you: a subprocess here, a sandbox VM there, and a system prompt asking the model to behave.
 
-That gap turns into the same four problems on every team that ships an agent past a demo.
+A system prompt is not a permission system. The moment a model reads attacker-controlled text (a web page, a file, a tool result), it can be talked into calling any tool it has, with any arguments. If the file tool can write anywhere, a prompt injection can too. Today you get two choices: give the agent full access and hope, or give it so little that it can't do the job.
 
-- **No permission boundary.** Your agent has full shell access or none. There's no middle ground where a tool can write to `/workspace` and nowhere else, enforced for real instead of politely requested in a system prompt.
-- **No memory between runs.** Every session starts from zero. Whatever the agent built up, files, notes, browser state, has to be re-derived or manually stitched back together.
-- **No way for tools to talk to each other.** A search tool and a file writer that need to coordinate get glued together by hand in your orchestration code, or they don't coordinate at all.
-- **No way to watch it work.** When something breaks, you're reading logs after the fact instead of watching the agent's browser or terminal live, right as it happens.
+Teams that ship agents past a demo hit the same gaps:
 
-Berth exists so these four things are infrastructure you get for free, not homework every team rebuilds from scratch.
+- **No real permission boundary.** Nothing between "full shell" and "no shell". Nothing that says "this tool writes to `/workspace` and nowhere else" and means it.
+- **No way to see what happened.** When something goes wrong you read logs afterwards instead of watching the agent's browser or terminal.
+- **No memory between runs.** Files, notes and state vanish when the session ends.
+- **Tools that can't coordinate.** Two tools that need to react to each other get glued together in your orchestration code.
+
+## What Berth does about it
+
+Every tool runs as a *resident app* with a manifest, `berth.yml`, that lists what it may touch: `filesystem:write:/workspace`, `network:connect:443`, `browser:navigate:*.github.com`. Before the tool's first line of code runs, Berth compiles that list into Landlock and seccomp rules. Anything not declared is refused by the kernel. A prompt-injected write to `/etc` doesn't get argued down; it fails with `EACCES`.
+
+This changes what you have to trust. You no longer need the model to follow instructions. You need the manifest to be right, and the manifest is a short file you can read and review.
+
+Where the kernel can't see what matters (it sees ports, not hostnames), a proxy enforces it instead: browsing by hostname and GitHub API calls by method and path. Which capability is enforced where is listed in [enforcement](./kernel-enforcement.md#available-capabilities).
+
+Around that boundary you also get the other missing pieces: a live view of the agent's browser and terminal, state that survives the run, and a context bus that lets apps react to each other.
 
 ## Use cases
 
-Each of these is a real job people give an agent. What actually makes it shippable is what the Berth OS underneath enforces or provides, not how much you trust the agent to behave.
+**A coding agent with a real shell, not your whole machine.** Give it [`apps/filesystem`](../apps/filesystem) and [`apps/terminal`](../apps/terminal) and it can write files, run tests and drive a shell. `filesystem:write:/workspace` is enforced by the kernel, so `rm -rf /etc` from that shell fails with `EACCES`, and everything the shell starts inherits the same limits. When it writes a file, `apps/filesystem` publishes `fs.file_created`, and [`apps/code-editor`](../apps/code-editor) reacts to it over the context bus with no orchestration code from you.
 
-**A coding agent with real filesystem and shell access, without handing it your whole machine.** Give it `apps/filesystem` and `apps/terminal` and it can write files, run tests, and drive a real shell. Here's what narrows the blast radius: `filesystem:write:/workspace` is enforced by the kernel (Landlock), so a prompt-injected "ignore previous instructions, delete everything" is refused by the kernel rather than by a framework check it could talk its way past — `rm -rf /etc` from that shell dies on `unlink(2)` with `EACCES`. That's the write path specifically, and it's the boundary to plan around: `terminal:attach:*` grants the pty devices the shell needs, not any widening of what that shell may touch, so the filesystem and network scoping is inherited by everything it spawns. There are still [gaps open around the sandbox](./kernel-enforcement.md#what-isnt-enforced-yet) that a determined in-container attacker can work with. The file it writes can also trigger `apps/code-editor` to react over the context bus — `apps/filesystem` publishes `fs.file_created`, `apps/code-editor` subscribes to it — with zero orchestration code from you.
+**A browser agent you can supervise.** [`apps/browser-native`](../apps/browser-native) researches, fills in forms and runs QA, limited to the hostnames it declares, such as `browser:navigate:*.example.com`, by the egress proxy. Under `berth dev` you get a live noVNC view to watch it or take over. Set `expose: { browser: false }` and the same agent, with the same limits, runs headless in CI.
 
-**A browser agent a human can actually supervise.** It researches, fills out forms, does QA, scoped to `browser:navigate:*.example.com` by the egress broker rather than a system prompt instruction it could be talked out of. Open the live noVNC session in `berth dev` and you can watch, or take over, the exact browser it's driving instead of piecing together what happened from a log afterward. Flip `expose: { browser: false }` and the same, identically scoped agent runs headless in CI.
+**An agent that runs its own code.** [`apps/code-interpreter`](../apps/code-interpreter)'s `run_code` runs Python, JavaScript or shell as a real subprocess. It's already inside the kernel sandbox, so with no `network:connect:<port>` declared, that code gets no outbound TCP, and no UDP, ICMP or raw sockets either. There's no second sandbox to set up.
 
-**An assistant that actually remembers you.** `apps/notes` gives it real persisted state instead of a context window that resets every session, and `apps/activity-feed` gives it one queryable history across everything that happened. `berth snapshot create/restore` checkpoints the whole Berth OS, files, tags, context and all, so a container restart doesn't wipe what the agent knows.
+**An agent limited to one API action.** [`apps/github-assistant`](../apps/github-assistant) can read repos and open issues, and nothing else. `github:read:repos` and `github:write:issues` are checked per request, by method and path, by a TLS-terminating proxy, not left to the scopes of an API token. See [GitHub API scoping](./github-api-scoping-reference.md).
 
-**A team of agents, each scoped to only what it needs, sharing one sandbox.** Boot one shared Berth OS with `berth os up team --apps=apps/filesystem,apps/notes,apps/terminal`, then get a writer agent scoped to just `apps/filesystem` and a notetaker scoped to just `apps/notes` with `createAgent({ connect: { name: "team", apps: ["filesystem"] } })` and `createAgent({ connect: { name: "team", apps: ["notes"] } })`. One running sandbox, least privilege per agent, nothing to rebuild between runs. Need each agent driving its own LLM loop on its own computer instead? See [Multi-agent architecture](./berth-agents-guide.md#multi-agent-architecture).
+**An assistant that remembers.** [`apps/notes`](../apps/notes) keeps state on disk and [`apps/activity-feed`](../apps/activity-feed) keeps one searchable history of what happened. `berth snapshot create` and `berth snapshot restore` checkpoint the whole Berth OS (files, tags and context) so a restart doesn't wipe what the agent knows.
 
-**An agent behind a real API, not a one-shot script.** [`examples/agents/agent-server`](../examples/agents/agent-server) boots once and calls `serveAgent()`, answering `POST /task` and a `useChat`-compatible `POST /chat` against the same `Agent` for as long as the process runs. Pair it with `berth os up` and `BERTH_OS_CONNECT`, and restarting the server during development reconnects to the sandbox in milliseconds instead of rebuilding it on every code change.
+**Several agents, each with only what it needs.** Boot one shared sandbox with `berth os up team --apps=apps/filesystem,apps/notes,apps/terminal`, then scope a writer agent to `filesystem` and a note-taker to `notes`. One sandbox, least privilege per agent. This uses the experimental agent framework; see [Multi-agent architecture](./berth-agents-guide.md#multi-agent-architecture).
 
-**An agent scoped to exactly one third-party API action, nothing wider.** `apps/github-assistant` can read repos and open issues, and only that. `github:read:repos` and `github:write:issues` are enforced verb-and-path level by a real TLS-terminating broker, not just "has an API key with these OAuth scopes." It's a deployed, milestone-tested example of least-privilege access for any agent that needs to touch a real external API. See the [GitHub API scoping reference](./github-api-scoping-reference.md).
+## How it fits with what you already use
 
-**An agent that writes and runs its own code, without a bolted-on sandbox.** `apps/code-interpreter`'s `run_code` executes a Python, JavaScript, or shell snippet as a real subprocess and hands back stdout/stderr/exit code — the same primitive AutoGen ships a separate Docker executor for and OpenAI/CrewAI reach for E2B to get. Here it's just another resident app: the code it runs is already inside this agent's own kernel-enforced sandbox, so declaring no `network:connect:<port>` capability means that code gets no outbound network — no TCP (Landlock), and no UDP, ICMP, or raw sockets either (a seccomp filter, since Landlock has no access right for those) — the same deny-by-default guarantee every other app gets — not a second isolation boundary you have to configure separately.
+Berth sits underneath your tools. It doesn't replace your agent or your framework.
 
-**An agent that delegates to (or gets called by) agents built on something else entirely.** `createA2aClientTool(url)` lets a Berth agent hand off a task to any [A2A](https://a2a-protocol.org)-compliant agent — one built on ADK, LangGraph, Microsoft Agent Framework, or anything else that speaks the protocol — the same way it would delegate to a worker built on Berth itself. `serveAgentAsA2a(agent)` is the other direction: those same frameworks' agents can call into a Berth agent as a standard A2A peer, no Berth-specific glue on their side at all.
-
-Convinced, or just curious? Let's get something running.
-
-## Why `@berthos/agents`
-
-| | What you get |
-|---|---|
-| **One call to a working agent, instant reconnects while you iterate** | `runAgent({ apps: "apps/filesystem", task: "..." })` figures out your LLM provider on its own and cleans up after itself. No boilerplate. `berth os up` boots the sandbox once, then `connect: "<name>"` reattaches in milliseconds instead of rebuilding it on every dev loop run. |
-| **Multi-agent by default, not bolted on** | `Crew.sequential()`/`Crew.withManager()` compose agents in-process; `Crew.networked()` goes further — each peer is a full, independently-LLM-driven agent on its own Berth OS, joined over a real Docker network, not just a delegated tool call. See [Multi-agent architecture](./berth-agents-guide.md#multi-agent-architecture). |
-| **A governance gate any app can become** | Declare `governs: true` and export `evaluate_action`, and every other app's tool calls route through your policy first — a rules engine, an ML classifier, a person — before they execute. See [Governance and scoping](./berth-agents-guide.md#governance-and-scoping). |
-| **Bring your own LLM, own your deploy target** | `@berthos/agents` wires any LLM provider (Anthropic, OpenAI, Gemini, Azure OpenAI, Bedrock, Ollama, a custom endpoint through `{provider, apiKey, baseURL}`, or your own `LLMProvider`) into a Berth OS's resident apps as tools. `berth deploy --fleet=e2b\|daytona\|k8s` ships the same sandbox definition to whatever provider you already run on. |
-| **The whole MCP ecosystem, not just resident apps** | `createAgent({ mcpServers: [...] })` connects to any external [MCP](https://modelcontextprotocol.io) server (stdio or Streamable HTTP) and merges its tools in alongside your Computer's own — `createMcpClientTools()` in TypeScript, `create_mcp_client_tools()` in Python. `berth mcp --app=<name>` is the other direction: exposing a resident app's exports *to* an MCP client like Claude Desktop. |
-| **Traces your existing observability stack already understands** | `trace: "otel"` emits real OpenTelemetry GenAI-semantic-convention spans for every LLM turn and tool call — Langfuse, Phoenix, Honeycomb, Datadog, or a plain OTel Collector all pick them up with no Berth-specific integration. `trace: "full"` stays available for durable, Semantic-FS-backed replay without any external backend at all. |
-| **Guardrails on the model's own input and answer, not just its tool calls** | `inputGuardrails`/`outputGuardrails` gate what goes into and comes out of the model itself — a tripped one halts the run via `GuardrailTripwireError`, distinct from the governance gate (tool calls) above. Built-in `createKeywordGuardrail()`/`createRegexGuardrail()`/`createLlmGuardrail()` cover the common cases; write your own for anything else. |
-| **Conversation history across separate `run()` calls, not just one durable run** | `createAgent().run(input, { session })` shares message history across turns — a chat UI's turns, say — distinct from checkpointing's crash-resume of *one* run. `createInMemorySession()` for a dev loop, `createSemanticFsSession(computer, sessionId)` for durable history reached through the same resident-app exports checkpointing already uses. |
-| **A real HTTP surface to serve an agent to a frontend, `useChat` included** | `serveAgent(agent, { port })` — `GET /health`, `POST /task`, and `POST /chat`, a [Vercel AI SDK](https://ai-sdk.dev) `useChat`-compatible streaming endpoint verified against the actual `ai` package's own client-side stream parser, not just written to match docs. `createAgentRequestHandler()` is the composable building block underneath, for mounting inside your own server instead. |
-| **A2A interop — talk to agents outside Berth, and let them talk to yours** | `createA2aClientTool(agentCardUrl)` wraps any [A2A](https://a2a-protocol.org)-compliant agent (ADK, LangGraph, Microsoft Agent Framework, anything) as a `Tool`; `serveAgentAsA2a(agent, { port })` exposes a Berth Agent as a real A2A server those same frameworks can call into. Built on the official `@a2a-js/sdk` and verified against a real client+server round trip through it, not just written to match the spec text. |
-
-What backs every one of those calls, in brief — full picture in [What is a Berth OS?](./berth-agents-guide.md#what-is-a-berth-os):
-
-| | What you get |
-|---|---|
-| **Permissions that are enforced, not just requested** | Every resident app declares `namespace:action:scope` capabilities in its manifest, things like `filesystem:write:/workspace` or `browser:navigate:*.github.com`. A Landlock policy built from that manifest applies before your code even runs, on a kernel that provides Landlock ([which hosts do](./kernel-enforcement.md#kernel-enforcement-by-platform)). An undeclared *write* isn't caught by a try/catch — the kernel refuses the syscall outright. Outbound network is denied the same way. Other capabilities are enforced by a broker, or only recorded: which is which is [spelled out per capability](./kernel-enforcement.md#available-capabilities), along with [what isn't enforced yet](./kernel-enforcement.md#what-isnt-enforced-yet). |
-| **State that survives the session** | A filesystem whose files carry *why they exist* — `created_by`, `task`, `related_apps` — searchable by that metadata rather than only by path, plus `berth snapshot create/restore`, means an agent's work (files, tags, context) outlives any single run. It searches what you tagged, [not file contents](./semantic-fs-reference.md#query-semantics--hybrid-keyword--embedding-similarity). |
-| **Apps that talk to each other without you wiring it** | The context bus is pub/sub between resident apps in the same Berth OS. A filesystem app writes a file, a code editor app reacts to it. Neither one imports or calls the other. |
-| **A workspace you can actually watch, and you decide how much** | In local `berth dev`, `apps/browser-native` opens a live noVNC view of the sandboxed Chromium instance, and `apps/terminal` opens a live, typeable `ttyd` session. You're watching the real thing, not a transcript of it. Set `expose: { browser: false }` or `{ terminal: false }` in `berth.yml` to keep the capability while running headless in CI. Deployed to E2B or Daytona? Opt in with `expose: { preview: true }` and `berth deploy`/`berth fleet status` print that same live view as a real, platform-hosted URL — off by default, since a deployed fleet is potentially public-facing. On Kubernetes, that same opt-in only gets you the in-cluster DNS name; a real public URL there still needs your own Ingress/LoadBalancer. See [Resident apps](./resident-apps.md). |
+- **You already use Claude Code, Cursor or Claude Desktop.** Add `berth mcp` to the client's config and the agent gets Berth's tools as ordinary MCP tools. No code. See [the MCP quickstart](./mcp-quickstart.md).
+- **You already have a tool-calling loop.** Pass Berth's tools to it; see below.
+- **You already run on E2B, Daytona or Kubernetes.** Berth adds the app model and the kernel-enforced permissions on top. `berth deploy --fleet=e2b|daytona|k8s` ships the same sandbox definition there.
+- **You want a Berth-native agent.** The agent framework, `@berthos/agents`, adds agents, crews, governance, tracing and serving over HTTP. It's experimental and unpublished, and runs from a clone. Start with [Building a Berth Agent](./berth-agents-guide.md#building-a-berth-agent).
 
 ## Use it from your existing framework
 
-Berth's differentiator is what its tools are *made of*, and adopting a whole agent framework shouldn't be the price of reaching that. Boot a `Computer`, hand its tools to the loop you already run:
+Boot a `Computer` and hand its tools to the loop you already run:
 
 | Your stack | The call |
 |---|---|
 | Vercel AI SDK | `await toAiSdkTools(computer.tools)` → pass as `tools` to `generateText`/`streamText`/`useChat` |
 | LangChain / LangGraph | `await toLangChainTools(computer.tools)` → pass to `createReactAgent({ tools })`, `ToolNode`, `bindTools` |
-| Claude Code, Cursor, any MCP client | `berth mcp --app=<name>` — a real MCP server, no adapter at all |
-| Anything else | `toToolSpecs(computer.tools)` — name, description, JSON Schema, and a call function |
+| Claude Code, Cursor, any MCP client | `berth mcp --app=<name>`: an MCP server, no adapter needed |
+| Anything else | `toToolSpecs(computer.tools)`: name, description, JSON Schema, and a call function |
 
-Both library adapters are **optional peer dependencies**, imported dynamically: neither is on the import path of `Computer` or `Agent`, so you install only the one you use, or neither. Both are tested against the real package rather than a hand-written idea of its shape — the AI SDK's test drives a full `generateText` tool-calling loop with no Berth `Agent` anywhere in it.
+`Computer` and these adapters come from `@berthos/agents`, which is experimental and not published, so use them from a clone. The Vercel AI SDK and LangChain packages are optional peer dependencies: install only the one you use. An `abortSignal` from `generateText` reaches the resident app's call and stops it. A full example is in [`examples/agents/with-vercel-ai-sdk`](../examples/agents/with-vercel-ai-sdk).
 
-What you get in that loop is the whole point: a filesystem tool whose write scope is enforced by the kernel, a shell whose blast radius is a manifest, a browser scoped by an egress broker, and state that survives the run. Cancellation composes too — an `abortSignal` from `generateText` reaches the resident-app call and stops it.
+What your loop gets is the point: a file tool whose write scope is enforced by the kernel, a shell whose reach is set by a manifest, a browser limited by a proxy, and state that survives the run.
 
-If you're already on E2B or Daytona directly, Berth is the app model and kernel-enforced permission layer on top of that.
+## Limits
+
+- Kernel enforcement needs Landlock (Linux 6.7+). Docker Desktop on macOS and Windows doesn't have it; `berth doctor` checks, and `berth doctor --fix` sets up a Mac VM that does.
+- When Berth can't enforce, it runs apps unrestricted with a warning, unless `BERTH_REQUIRE_ENFORCEMENT=1` is set. `Computer.boot()` sets it.
+- Root on the host bypasses the sandbox: anyone who can `docker exec` into the container gets past every rule.
+
+What's in and out of scope: [the threat model](./threat-model.md). What isn't enforced yet: [enforcement](./kernel-enforcement.md#limits).
