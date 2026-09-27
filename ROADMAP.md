@@ -2,7 +2,7 @@
 
 Berth was built against an original 5-phase plan. All five phases have at least an initial, milestone-tested implementation today, plus several things beyond the original scope. This page is the one place to check "is X real yet" instead of piecing it together from commit history.
 
-"Milestone-tested" below means there's a Docker-backed integration test (`packages/*/test/*-milestone.mjs`) wired into its own CI workflow under `.github/workflows/`, not just a unit test. See [CONTRIBUTING.md](./CONTRIBUTING.md) for how to run them locally.
+"Milestone-tested" below means there's a Docker-backed integration test (a `*-milestone.mjs` under `packages/*/test/`, `experimental/agents/test/` or `breakout/test/`) wired into its own CI workflow under `.github/workflows/`, not just a unit test. See [CONTRIBUTING.md](./CONTRIBUTING.md) for how to run them locally.
 
 ## Original 5 phases — all shipped, varying depth
 
@@ -16,7 +16,7 @@ Berth was built against an original 5-phase plan. All five phases have at least 
 
 ## Beyond the original plan
 
-Built after the initial 5 phases. Most have their own milestone test and CI workflow; one exception is called out below.
+Built after the initial 5 phases. Most have their own milestone test and CI workflow; the ones that don't say so.
 
 - **WireGuard mesh networking** (`network:peer:<name>`) — real mesh, not simulated, coordinated by `mesh-coordinator` and reconciled by `mesh-daemon`. A crash-resilience test (`mesh-coordinator-resilience-milestone.mjs`, proves the tunnel survives a coordinator SIGKILL) is CI-wired too, sharing `.github/workflows/mesh-milestone.yml` with the main mesh test rather than getting its own workflow
 - **Egress broker** — scoped outbound HTTP/browser access by hostname pattern, at the host level
@@ -28,6 +28,11 @@ Built after the initial 5 phases. Most have their own milestone test and CI work
 - **`@berthos/agents`** — the *reference consumer* of the substrate (`Computer`, `createAgent`, `runAgent`, `Crew`). **Frozen**: bug and security fixes only, no new framework features — Berth is a substrate, not an agent framework; see [CONTRIBUTING.md](./CONTRIBUTING.md#the-agents-packages-are-frozen). `Computer`'s milestone tests run in CI credential-free; `Crew`'s (`crew-manager-`, `crew-networked-`, `provider-swap-milestone.mjs`) need real LLM API keys and are intentionally not run there — see `docs/agents-reference.md`
 - **`bootNetworkedAgent({fleet})`** — a `Crew.networked()` peer deployed to a remote E2B/Daytona/K8s instance instead of a local Docker container, dispatched over a new per-boot-authenticated HTTP RPC bridge (`@berthos/sdk`'s `startHttpRpcServer`) rather than the mesh or the local Docker-network path. Protocol-level and mocked-adapter coverage only, no live-account or `kind`-cluster milestone test yet — see `docs/agents-reference.md`'s "Networked Crew over a remote fleet" section for exactly what's verified versus reasoned-but-untested
 - **Framework interop** (`toAiSdkTools`, `toLangChainTools`, `toToolSpecs`) — a booted Computer's tools handed to the Vercel AI SDK, LangChain/LangGraph, or any other loop, so Berth's sandbox is reachable without adopting `@berthos/agents`. Both libraries are optional peer dependencies imported dynamically; both adapters are unit-tested against the real package, and the AI SDK one drives a full `generateText` tool-calling loop. `berth mcp` covers the out-of-process case
+- **`berth doctor`** — a behavioural probe of whether *this* host's kernel enforces Landlock (it builds a ruleset that grants nothing and tries a write), plus `--fix` to provision a Colima host on macOS. Unit-tested, no milestone workflow of its own. See [docs/doctor-reference.md](./docs/doctor-reference.md)
+- **Audit trail** (`@berthos/audit`, `berth audit list|verify`) — hash-chained, actor-attributed records of governance verdicts and agent steps. Tamper-evident, not tamper-proof. Unit-tested here; the chain is exercised end-to-end by the attestation milestone. See [docs/audit-reference.md](./docs/audit-reference.md)
+- **Attestation** (`berth attest <runId>`) — a per-run record binding the run's audit-chain slice to the enforcement status measured for its boot, verified by a standalone script. Milestone-tested (`attestation-milestone.yml`, including a negative control that must yield `NOT_ENFORCED`), with the record format specified separately in [spec/attestation-record](./spec/attestation-record). See [docs/attestation-reference.md](./docs/attestation-reference.md)
+- **Capability manifest spec** — the `berth.yml` grammar as a standalone, versioned spec with a conformance suite ([spec/capability-manifest](./spec/capability-manifest)), run in CI by `spec-conformance.yml`
+- **Containment benchmark and break-out box** — [`bench/`](./bench/README.md) runs one probe unmodified under plain Docker, Berth and a weakened Berth (`containment-benchmark.yml`); [`breakout/`](./breakout/README.md) is a public challenge sandbox with a weakened-boot negative control (`breakout-milestone.yml`)
 - **`berth os up`/`down`/`status`** — long-lived Berth OS with instant reconnect, instead of a fresh boot every dev-loop iteration. No milestone test or CI workflow exists for this one yet, unlike the rest of this list
 
 ## Known gaps
