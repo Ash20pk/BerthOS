@@ -1,18 +1,25 @@
 # @berthos/agents
 
-computer -> agent -> tool: boots a Berth computer loaded with resident apps, generates a tool list from their exports, and wires any LLM provider into single- or multi-agent crews.
+An agent framework built on Berth. It boots a sandbox (a `Computer`) loaded with resident apps, turns their exports into tools, and runs single agents or multi-agent crews against any LLM provider.
 
-Part of [Berth](https://github.com/Ash20pk/BerthOS) — IAM for agents — declared capabilities, kernel-enforced, audit-trailed. The `berth.yml` capability line is the boundary; Landlock + seccomp hold it.
+Experimental and frozen: bug and security fixes only. It isn't published to npm; releases ship the sandbox only. Use it from a clone of the [Berth repo](https://github.com/Ash20pk/BerthOS), where it is a workspace package:
 
-Not published to npm: this package is experimental, and releases ship the sandbox only. Use it from a clone of the repository, where it is a workspace package (`"@berthos/agents": "workspace:*"`).
+```json
+{ "dependencies": { "@berthos/agents": "workspace:*" } }
+```
 
-> **Frozen surface.** This package is a *reference consumer* of the Berth
-> substrate, not a competing agent framework. Its API is frozen: bug and
-> security fixes only — no new Crew shapes, providers, or parity features.
-> See [CONTRIBUTING.md — "The agents packages are frozen"](https://github.com/Ash20pk/BerthOS/blob/main/CONTRIBUTING.md#the-agents-packages-are-frozen)
-> for the canonical statement and the supported integration seams.
+```ts
+import { runAgent } from "@berthos/agents";
 
-## Documentation
+const result = await runAgent({
+  apps: "apps/filesystem",
+  task: "write a file called hello.txt with the text 'hi', then read it back",
+});
+```
 
-- [Agents reference](https://github.com/Ash20pk/BerthOS/blob/main/docs/agents-reference.md)
-- Repo: https://github.com/Ash20pk/BerthOS
+## Docs
+
+- [Building with `@berthos/agents`](https://github.com/Ash20pk/BerthOS/blob/main/docs/berth-agents-guide.md): the guide
+- [Agents reference](https://github.com/Ash20pk/BerthOS/blob/main/docs/agents-reference.md): the full API
+- [Examples](./examples/README.md)
+- [Why it's frozen](https://github.com/Ash20pk/BerthOS/blob/main/CONTRIBUTING.md#the-agents-packages-are-frozen)

@@ -1,45 +1,42 @@
 # berthos-agents
 
-> **Frozen surface.** Like `@berthos/agents`, this package is a *reference
-> consumer* of the Berth substrate, not a competing agent framework. Its API
-> is frozen: bug and security fixes only. See
-> [CONTRIBUTING.md — "The agents packages are frozen"](https://github.com/Ash20pk/BerthOS/blob/main/CONTRIBUTING.md#the-agents-packages-are-frozen).
+The Python side of Berth's agent framework: an `Agent` tool-use loop that works with any LLM provider, and `Crew` shapes for composing several agents. It mirrors [`@berthos/agents`](https://github.com/Ash20pk/BerthOS/tree/main/experimental/agents) field for field, in snake_case. The import name is `berth_agents`.
 
-The Python half of [Berth](https://github.com/Ash20pk/BerthOS)'s agent framework: a provider-agnostic `Agent` tool-use loop and six of `@berthos/agents`' seven `Crew` composition shapes (all but `networked`), mirroring the TypeScript package field-for-field where it covers the same ground.
-
-Not published to PyPI: this package is experimental, and releases ship the sandbox only. Install it from a clone of the repository:
+Experimental and frozen: bug and security fixes only. It isn't published to PyPI; releases ship the sandbox only. Install it from a clone of the [Berth repo](https://github.com/Ash20pk/BerthOS):
 
 ```bash
 pip install -e experimental/agents-python
 ```
 
 ```python
-from berth_agents import Agent, create_anthropic_provider
+import asyncio
+from berth_agents import Agent, Computer, create_anthropic_provider
 
-agent = Agent(llm=create_anthropic_provider(), tools=[])
-result = await agent.run("say hello")
-print(result.text)
+async def main():
+    # started with: berth os up my-agent --apps=apps/filesystem --http-rpc
+    computer = await Computer.connect("my-agent")
+    agent = Agent(llm=create_anthropic_provider(), tools=computer.tools)
+    result = await agent.run("write hello.txt with the text 'hi', then read it back")
+    print(result.text)
+
+asyncio.run(main())
 ```
 
-## What's in the box
+## What's in it
 
-- **`Agent`** — the tool-use loop: checkpointed resume, token-level streaming, `response_schema` structured-output repair, and `StepTracer`-based tracing (Context Bus/Semantic FS backends are TypeScript-only; an [OpenTelemetry](https://opentelemetry.io) backend — `create_otel_step_tracer()` — ships here too, so any OTel-compatible backend picks up real spans for free).
-- **Six built-in `LLMProvider`s** — Anthropic, OpenAI, Google/Gemini (incl. Vertex AI), Azure OpenAI, Amazon Bedrock, and Ollama — plus `create_fallback_provider()` for retry-through-a-chain, and a plain `Protocol` if you want to bring your own.
-- **`Crew`** — `sequential`, `with_manager`, `parallel`, `loop_until`, `route`, and `pipeline` composition shapes over any set of `Agent`s.
-- **`create_mcp_client_tools()`** — consume any external [MCP](https://modelcontextprotocol.io) server's tools (stdio or Streamable HTTP) as ordinary `Tool`s, mixed in alongside anything else.
-- **`Computer.connect(name)`** — attach to an already-running `berth os up --http-rpc` sandbox instance and use its resident apps' exports as real `Tool`s, no Docker API access needed from Python.
+- **`Agent`**: the tool-use loop, with checkpoint and resume, streaming, structured-output repair, guardrails, sessions and step tracing (including an OpenTelemetry tracer).
+- **Providers**: Anthropic, OpenAI, Google Gemini (and Vertex AI), Azure OpenAI, Amazon Bedrock and Ollama, plus `create_fallback_provider()` to chain them.
+- **`Crew`**: `sequential`, `with_manager`, `parallel`, `loop_until`, `route` and `pipeline`.
+- **`create_mcp_client_tools()`**: use any external MCP server's tools (stdio or Streamable HTTP).
+- **`Computer.connect(name)`**: use a running `berth os up --http-rpc` sandbox's tools over HTTP. No Docker access needed from Python.
 
-## What this package deliberately doesn't do
+## Limits
 
-This is the Python *agent loop*, not a Python port of Berth's sandbox orchestration. There's no `Computer.boot()` (sandbox *creation*) from Python — only `connect()` to an instance something else already started — and no `Crew.networked` (which needs that same creation capability). See [`docs/agents-python-reference.md`](https://github.com/Ash20pk/BerthOS/blob/main/docs/agents-python-reference.md) in the main repo for the full, current scope, including exactly what's ported vs. still TypeScript-only.
+- Python can't create a sandbox. There's no `Computer.boot()`; start one with `berth os up --http-rpc` and connect to it.
+- `Computer.connect()` reaches one app per sandbox: the one the HTTP bridge serves.
+- No `Crew.networked`, no HTTP server, no YAML-declared agents, no A2A, no retrieval or evals. Those are TypeScript-only.
 
-## Docs and source
-
-The real documentation lives in the main [BerthOS](https://github.com/Ash20pk/BerthOS) repository:
-
-- [`docs/agents-python-reference.md`](https://github.com/Ash20pk/BerthOS/blob/main/docs/agents-python-reference.md) — this package's full reference
-- [`docs/agents-reference.md`](https://github.com/Ash20pk/BerthOS/blob/main/docs/agents-reference.md) — the TypeScript sibling this mirrors
-- [`experimental/agents-python/`](https://github.com/Ash20pk/BerthOS/tree/main/experimental/agents-python) — source and tests
+Full reference: [`docs/agents-python-reference.md`](https://github.com/Ash20pk/BerthOS/blob/main/docs/agents-python-reference.md).
 
 ## License
 

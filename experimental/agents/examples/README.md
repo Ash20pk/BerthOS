@@ -1,49 +1,27 @@
 # `@berthos/agents` examples
 
-Runnable, narrative demonstrations of `Computer` -> `Agent` -> `Crew`. These
-print what they're doing and what came back — for hard-assertion
-verification of the same code paths, see `../test/*-milestone.mjs` instead
-(those are wired into CI where they don't need external credentials).
+Three runnable scripts that show `Computer`, then `Agent`, then `Crew`. Each prints what it does and what came back.
 
-## Prerequisites
+## Run them
 
-```bash
-pnpm install
-pnpm build          # from the repo root, or `pnpm --filter @berthos/agents... build`
-```
-
-A local Docker daemon must be running — every example boots at least one
-real `Computer` (a real container, not a mock).
-
-All three examples need `OPENAI_API_KEY` in the environment (they drive
-`createOpenAIProvider()`, defaulting to `gpt-4o`); each prints `SKIP` and
-exits cleanly if it's unset, rather than failing.
-
-## Running
+You need a running Docker daemon (every example boots a real container) and `OPENAI_API_KEY` (the examples use `createOpenAIProvider()`, which defaults to `gpt-4o`). Without the key, each example prints `SKIP` and exits cleanly.
 
 ```bash
+pnpm install && pnpm build        # from the repo root
 cd experimental/agents
 export OPENAI_API_KEY=sk-...
 
-node examples/single-agent.mjs      # one Computer (apps/filesystem), one Agent
-node examples/manager-crew.mjs      # one Computer, two apps, Crew.withManager() delegates in-process
-node examples/networked-crew.mjs    # two independent Computers, Crew.networked() delegates across them
+node examples/single-agent.mjs
+node examples/manager-crew.mjs
+node examples/networked-crew.mjs
 ```
 
-Read them in that order — each introduces one new idea on top of the last:
+## What each one shows
 
-- **`single-agent.mjs`** — the one-call entry point, `createAgent()`: boot a
-  `Computer` from a resident app directory, get back an `Agent` whose tools
-  are that app's exports.
-- **`manager-crew.mjs`** — one `Computer` loaded with two resident apps
-  (`apps/filesystem` + `apps/notes`), one worker `Agent` per app, and a
-  manager `Agent` that delegates via `Crew.withManager()` — the
-  "agent-as-tool" pattern (`Agent.asTool()`).
-- **`networked-crew.mjs`** — the same delegation shape, but each worker is a
-  genuinely independent `Computer` (its own container, its own in-container
-  agent loop via `bootNetworkedAgent()`), joined on a shared Docker network
-  and reachable through `Crew.networked()`.
+Read them in order; each adds one idea.
 
-See [`docs/agents-reference.md`](../../../docs/agents-reference.md)
-for the full API reference and what's real vs. deferred about the networked
-pattern.
+- **`single-agent.mjs`**: `createAgent()` boots a `Computer` from `apps/filesystem` and returns an `Agent` whose tools are that app's exports.
+- **`manager-crew.mjs`**: one `Computer` with `apps/filesystem` and `apps/notes`, one worker `Agent` per app, and a manager that delegates to them with `Crew.withManager()` (each worker becomes a tool via `Agent.asTool()`).
+- **`networked-crew.mjs`**: the same delegation, but each worker runs its own agent loop in its own `Computer`, booted with `bootNetworkedAgent()` on a shared Docker network and reached through `Crew.networked()`.
+
+Full API: [agents reference](../../../docs/agents-reference.md).
