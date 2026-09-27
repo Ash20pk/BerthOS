@@ -9,6 +9,7 @@ import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 import { loadManifest } from "@berthos/manifest-schema";
 import type { BerthApp } from "./app.js";
+import { stubValue } from "./stub-value.js";
 
 const MANIFEST_PATH = process.env.BERTH_MANIFEST_PATH ?? join(process.cwd(), "berth.yml");
 const APP_ENTRY = process.env.BERTH_APP_ENTRY ?? join(process.cwd(), "dist", "index.js");
@@ -17,44 +18,6 @@ interface ExportResult {
   export: string;
   ok: boolean;
   error?: string;
-}
-
-// Type-only stub generation (a random string satisfies z.string()) isn't
-// always a *useful* stub — a field named "url" or "selector" needs a
-// semantically valid value or a real handler (like browser-native's
-// `page.goto`/`page.click`) will legitimately reject it. This is a plain
-// field-name heuristic, not a schema feature — it only covers the common
-// cases worth guessing at.
-const FIELD_NAME_HINTS: Record<string, string> = {
-  url: "https://example.com",
-  selector: "body",
-  email: "test@example.com",
-};
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function stubValue(zodType: any, fieldName?: string): unknown {
-  const typeName = zodType?._def?.typeName;
-  switch (typeName) {
-    case "ZodString":
-      return (fieldName && FIELD_NAME_HINTS[fieldName]) ?? "berth-test-stub";
-    case "ZodNumber":
-      return 1;
-    case "ZodBoolean":
-      return true;
-    case "ZodArray":
-      return [];
-    case "ZodObject": {
-      const shape = zodType._def.shape();
-      const obj: Record<string, unknown> = {};
-      for (const key of Object.keys(shape)) obj[key] = stubValue(shape[key], key);
-      return obj;
-    }
-    case "ZodOptional":
-    case "ZodNullable":
-      return undefined;
-    default:
-      return null;
-  }
 }
 
 async function main(): Promise<void> {
