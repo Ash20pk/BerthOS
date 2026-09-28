@@ -166,6 +166,17 @@ live("multipleStatements=true in DATABASE_URL doesn't turn multi-statement strin
   assert.equal(Number((await call("query", { sql: "SELECT count(*) AS n FROM customers", params: [] })).rows[0].n), 3);
 });
 
+live("ssl in DATABASE_URL encrypts the connection", async () => {
+  const port = new URL(TEST_URL!).port;
+  // The test server's certificate is self-signed, so this one isn't verified.
+  const call = await appWith({ DATABASE_URL: `${urlAs("app")}?ssl=${encodeURIComponent('{"rejectUnauthorized":false}')}` }, [`network:connect:${port}`]);
+  const res = await call("query", { sql: "SHOW SESSION STATUS LIKE 'Ssl_cipher'", params: [] });
+  assert.notEqual(res.rows[0].Value, "", "a TLS cipher is in use");
+  // Verified, a self-signed certificate is refused.
+  const strict = await appWith({ DATABASE_URL: `${urlAs("app")}?ssl=true` }, [`network:connect:${port}`]);
+  await assert.rejects(strict("query", { sql: "SELECT 1", params: [] }), /self[- ]signed|certificate/i);
+});
+
 live("read-write mode can change data, one statement at a time", async () => {
   const port = new URL(TEST_URL!).port;
   const call = await appWith({ DATABASE_URL: urlAs("app"), MYSQL_MODE: "read-write" }, [`network:connect:${port}`]);

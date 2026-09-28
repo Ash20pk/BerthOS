@@ -24,6 +24,16 @@ Edit `capabilities:` in `berth.yml`. There are two ways, and the difference matt
 
 The egress proxy never connects to an internal address, which is why a private database needs the second form. The host itself still comes only from `DATABASE_URL`, which the agent can't change, but the sandbox no longer enforces it. If you pick the wrong form, the error says which line to add. Restart the app after editing.
 
+## Encrypt the connection
+
+The connector doesn't use TLS unless `DATABASE_URL` asks for it, so by default the password and every row cross the network in the clear. For any database that isn't on the same machine or a private network you trust, add `ssl=true`:
+
+```
+mysql://reader:...@db.example.com:3306/sales?ssl=true
+```
+
+That verifies the server's certificate against the system's trusted CAs, and its name against the host. `sslmode=REQUIRED` (or `VERIFY_IDENTITY`, or `require`) means the same; `sslmode=DISABLED` turns it off. For a server whose certificate can't be verified (a self-signed one on a private network), `ssl={"rejectUnauthorized":false}`, URL-encoded, encrypts without checking who's at the other end. Through the egress proxy TLS still runs end to end: the proxy only carries the bytes. The connector writes a warning to stderr when it connects to a host that isn't a local or private address without TLS.
+
 ## Read-only, and how far that goes
 
 - **Default: read-only.** Every statement runs with the session set read-only and inside `START TRANSACTION READ ONLY … ROLLBACK`, so `INSERT`, `UPDATE`, `DELETE` and DDL (`CREATE`, `DROP`, `ALTER`) are all refused. Both are needed: MySQL commits DDL implicitly, outside any transaction, so the transaction alone doesn't stop a `DROP TABLE`. The session setting is reapplied on every call, so a statement that turns it off doesn't carry over. Set `MYSQL_MODE=read-write` in the sandbox's environment to allow changes.

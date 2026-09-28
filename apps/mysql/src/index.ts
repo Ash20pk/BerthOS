@@ -161,6 +161,9 @@ async function open(): Promise<Connection> {
   const mode = modeFrom(process.env);
   const { config, ignored } = configOf(connectionString);
   if (ignored.length > 0) console.error(`[mysql] DATABASE_URL options ignored: ${ignored.join(", ")} (only ssl and sslmode are read)`);
+  if (!isInternal(target.host) && !config.ssl) {
+    console.error(`[mysql] DATABASE_URL points at ${target.host}, not a local address, without TLS: the password and every row cross the network unencrypted. Add ?ssl=true to DATABASE_URL.`);
+  }
   const pool = mysql.createPool({
     ...config,
     connectionLimit: 2,
