@@ -28,6 +28,7 @@ The egress proxy never connects to an internal address, which is why a private d
 
 - **Default: read-only.** Every statement runs inside `BEGIN READ ONLY … ROLLBACK`, so `INSERT`, `UPDATE`, `DELETE` and DDL are refused. Set `POSTGRES_MODE=read-write` in the sandbox's environment to allow changes.
 - **One statement per call, in both modes.** Queries use PostgreSQL's extended protocol, which refuses a string holding several statements, so `SELECT 1; DROP TABLE x` doesn't run.
+- **Each call starts from a clean session.** After every call the connection is rolled back and reset (`DISCARD ALL`) before it's reused, so a `SET` (say, `SET statement_timeout = 0`), an advisory lock, a temporary table or a transaction left open doesn't carry over to the next call. A `BEGIN` in one call and a `COMMIT` in the next is therefore not a transaction: in read-write mode each statement commits on its own.
 - **This is a guard in the connector, not in the database.** A read-only transaction still allows reading anything the role can see, and functions with side effects. For a real guarantee, give `DATABASE_URL` a role that can only `SELECT` what the agent should see: the database then refuses everything else, whatever the mode.
 
 ## Exports

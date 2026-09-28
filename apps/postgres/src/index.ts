@@ -12,6 +12,7 @@ const MAX_CELL_CHARS = 10_000;
 // Rows fetched from the server at a time. The driver holds one batch in memory,
 // never the whole result.
 const FETCH_ROWS = 50;
+const STATEMENT_TIMEOUT_MS = 30_000;
 
 export type Mode = "read-only" | "read-write";
 export type Route = { kind: "proxy"; proxy: URL } | { kind: "direct" };
@@ -143,7 +144,7 @@ async function open(): Promise<Connection> {
     max: 2,
     connectionTimeoutMillis: 15_000,
     idleTimeoutMillis: 30_000,
-    statement_timeout: 30_000,
+    statement_timeout: STATEMENT_TIMEOUT_MS,
     ...(route.kind === "proxy" ? { stream: () => new ProxyTunnel(route.proxy) as unknown as import("node:net").Socket } : {}),
   });
   pool.on("error", () => {
@@ -209,25 +210,43 @@ async function collect(client: pg.PoolClient, sql: string, params: unknown[], ma
  * even if it tries to (SET TRANSACTION READ WRITE comes too late inside it).
  * That's a guard in this app, not in the database: for a guarantee, give
  * DATABASE_URL a role that can only read.
+ *
+ * Each call also starts from a clean session. The statement timeout is set
+ * again first, and afterwards the connection is put back as it was
+ * (ROLLBACK, then DISCARD ALL) before it returns to the pool: otherwise a
+ * `SET statement_timeout = 0` in read-write mode, or a session-level
+ * advisory lock, which ROLLBACK doesn't release, would carry over to later
+ * calls on that pooled connection. A connection that can't be put back is
+ * closed instead.
  */
 async function run(sql: string, params: unknown[], max = MAX_ROWS): Promise<Rows> {
   const { pool, mode } = await connection();
   const client = await pool.connect();
   try {
-    if (mode === "read-write") return await collect(client, sql, params, max);
-    await client.query("BEGIN READ ONLY");
-    try {
-      return await collect(client, sql, params, max);
-    } finally {
-      await client.query("ROLLBACK").catch(() => {});
-    }
+    await client.query(`SET statement_timeout = ${STATEMENT_TIMEOUT_MS}`);
+    if (mode === "read-only") await client.query("BEGIN READ ONLY");
+    return await collect(client, sql, params, max);
   } catch (err) {
     const e = err as { message?: string; code?: string };
     if (e.code === "25006") throw new Error(`${e.message}: this connector is read-only (set POSTGRES_MODE=read-write to allow changes)`);
     if (e.code === "42601" && /multiple commands/.test(e.message ?? "")) throw new Error("one statement per query: run them one at a time");
     throw err;
   } finally {
+    await putBack(client);
+  }
+}
+
+async function putBack(client: pg.PoolClient): Promise<void> {
+  try {
+    // Ends the read-only transaction, or one the statement left open in
+    // read-write mode (each call stands alone). DISCARD ALL can't run inside
+    // a transaction, so it comes second: it resets every setting, releases
+    // advisory locks, drops temporary tables and stops LISTENing.
+    await client.query("ROLLBACK");
+    await client.query("DISCARD ALL");
     client.release();
+  } catch (err) {
+    client.release(err as Error);
   }
 }
 

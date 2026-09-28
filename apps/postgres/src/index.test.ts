@@ -180,6 +180,26 @@ live("a huge result is read a batch at a time, never all into memory", async () 
   assert.deepEqual({ n: five.rows.length, truncated: five.truncated, row_count: five.row_count }, { n: 500, truncated: false, row_count: 500 });
 });
 
+live("a call's session settings and locks don't carry over to the next one", async () => {
+  const port = new URL(PG_TEST_URL!).port;
+  const call = await appWith({ DATABASE_URL: urlAs("app"), POSTGRES_MODE: "read-write" }, [`network:connect:${port}`]);
+  const show = async (name: string) => Object.values((await call("query", { sql: `SHOW ${name}`, params: [] })).rows[0])[0];
+  await call("query", { sql: "SET statement_timeout = 0", params: [] });
+  assert.equal(await show("statement_timeout"), "30s", "the timeout is back for the next call");
+  await call("query", { sql: "SET search_path = pg_catalog", params: [] });
+  assert.equal((await call("query", { sql: "SELECT count(*)::int AS n FROM customers", params: [] })).rows[0].n, 3);
+  // A transaction left open is rolled back, not committed by a later call.
+  await call("query", { sql: "BEGIN", params: [] });
+  await call("query", { sql: "INSERT INTO customers (name) VALUES ('Uncommitted')", params: [] });
+  await call("query", { sql: "DELETE FROM customers WHERE name = 'Uncommitted'", params: [] });
+
+  // A session-level advisory lock survives ROLLBACK, so read-only mode doesn't stop it.
+  const ro = await appWith({ DATABASE_URL: urlAs("app") }, [`network:connect:${port}`]);
+  await ro("query", { sql: "SELECT pg_advisory_lock(4242)", params: [] });
+  const held = await admin((db) => db.query("SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND objid = 4242"));
+  assert.equal(held.rows[0].n, 0, "the advisory lock was released before the connection went back to the pool");
+});
+
 live("concurrent first calls share one pool", async () => {
   const port = new URL(PG_TEST_URL!).port;
   const call = await appWith({ DATABASE_URL: urlAs("app") }, [`network:connect:${port}`]);
