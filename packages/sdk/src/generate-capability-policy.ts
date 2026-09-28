@@ -34,7 +34,7 @@
 // can't reach the coordinator's registration API at all.
 import { writeFile, mkdir } from "node:fs/promises";
 import { lstatSync, readdirSync, realpathSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import {
   loadManifest,
   parseCapability,
@@ -503,6 +503,33 @@ export function computeBindPorts(
   return [...new Set(ports)];
 }
 
+/**
+ * Directories holding the HTTP RPC bridge's TLS certificate and key, for the
+ * one app that serves the bridge (the same gating as computeBindPorts()).
+ * They are operator-chosen paths (a mounted secret, a file a deploy adapter
+ * wrote) that runtime.ts reads after agent-init has enforced, so with reads
+ * scoped they'd fail with EACCES unless granted. The directory is granted,
+ * not the file: a read rule on a file leaves the ruleset PartiallyEnforced.
+ * Both the path as given and its real location count, since a Kubernetes
+ * secret mount reaches its files through a symlink. "/" and relative paths
+ * are never granted.
+ */
+export function httpRpcTlsReadPaths(
+  appName: string,
+  env: Partial<Pick<NodeJS.ProcessEnv, "BERTH_HTTP_RPC_PORT" | "BERTH_HTTP_RPC_APP" | "BERTH_HTTP_RPC_TLS_CERT" | "BERTH_HTTP_RPC_TLS_KEY">>,
+): string[] {
+  if (!env.BERTH_HTTP_RPC_PORT || (env.BERTH_HTTP_RPC_APP && env.BERTH_HTTP_RPC_APP !== appName)) return [];
+  const dirs = new Set<string>();
+  for (const file of [env.BERTH_HTTP_RPC_TLS_CERT, env.BERTH_HTTP_RPC_TLS_KEY]) {
+    if (!file || !isAbsolute(file)) continue;
+    for (const path of [file, safeRealpath(file)]) {
+      const dir = path ? dirname(path) : undefined;
+      if (dir && dir !== "/") dirs.add(dir);
+    }
+  }
+  return [...dirs];
+}
+
 async function main(): Promise<void> {
   const manifest = await loadManifest(MANIFEST_PATH);
   const policy = compileCapabilityPolicy(manifest.name, manifest.capabilities);
@@ -512,6 +539,8 @@ async function main(): Promise<void> {
   policy.bindPorts = [
     ...new Set([...policy.bindPorts, ...computeBindPorts(manifest.name, process.env, manifest.capabilities)]),
   ];
+  const covered = (path: string) => policy.readPaths.some((granted) => path === granted || path.startsWith(granted + "/"));
+  policy.readPaths.push(...httpRpcTlsReadPaths(manifest.name, process.env).filter((dir) => !covered(dir)));
 
   await mkdir(dirname(POLICY_PATH), { recursive: true });
   await writeFile(POLICY_PATH, JSON.stringify(policy, null, 2));

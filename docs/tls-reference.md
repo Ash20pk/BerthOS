@@ -74,7 +74,7 @@ berth init --registry https://registry.internal:4873 --ca /path/to/ca.crt
 
 ## The RPC bridge
 
-The HTTP RPC bridge a deployed sandbox exposes serves HTTPS when `BERTH_HTTP_RPC_TLS_CERT` and `BERTH_HTTP_RPC_TLS_KEY` (file paths, not PEM contents) are both set in the container. Setting only one refuses to start. The bearer token is required either way.
+The HTTP RPC bridge a deployed sandbox exposes serves HTTPS when `BERTH_HTTP_RPC_TLS_CERT` and `BERTH_HTTP_RPC_TLS_KEY` (file paths, not PEM contents) are both set in the container. Setting only one refuses to start. The bearer token is required either way. The app serving the bridge is granted read access to the directories holding the two files (and to their real locations, if they are symlinks), since it reads them after its read scope is enforced; don't put them directly in `/`, which is never granted.
 
 Whether you need it depends on how the port is exposed:
 
