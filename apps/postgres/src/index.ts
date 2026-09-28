@@ -276,6 +276,54 @@ function readBatch(cursor: Cursor, n: number): Promise<{ rows: Record<string, un
 }
 
 /**
+ * A cursor that can answer COPY. pg-cursor has no handlers for it, so the
+ * driver's call for one threw inside its socket handler and took the whole
+ * app down: `COPY (SELECT 1) TO STDOUT` in either mode, or `COPY t FROM
+ * STDIN` in read-write mode. The server says so itself when a statement turns
+ * into a COPY, so this doesn't depend on reading the SQL, which a comment or a
+ * WITH in front would get past.
+ *
+ * - FROM STDIN: there's nothing to send, so it tells the server the copy
+ *   failed; the server abandons the statement and the connection carries on.
+ * - TO STDOUT: the server sends the data whatever the client says, so each
+ *   chunk is dropped as it arrives (memory stays flat, and the statement
+ *   timeout still bounds it), and the call then fails rather than report an
+ *   empty result.
+ */
+class RowCursor extends Cursor {
+  copy: "in" | "out" | undefined;
+  private conn: pg.Connection | undefined;
+  // The driver passes CopyOutResponse to no one, so it's heard here: a COPY
+  // that sends no rows at all still counts.
+  private readonly onCopyOut = () => {
+    this.copy = "out";
+  };
+
+  override submit = (connection: pg.Connection): void => {
+    Cursor.prototype.submit.call(this, connection);
+    this.conn = connection;
+    connection.once("copyOutResponse", this.onCopyOut);
+  };
+
+  /** Stops listening on the connection, which outlives this cursor. */
+  detach(): void {
+    this.conn?.removeListener("copyOutResponse", this.onCopyOut);
+  }
+
+  handleCopyInResponse(connection: pg.Connection): void {
+    this.copy = "in";
+    (connection as unknown as { sendCopyFail(msg: string): void }).sendCopyFail("this connector has no data to send to COPY … FROM STDIN");
+  }
+
+  handleCopyData(): void {
+    this.copy = "out";
+  }
+}
+
+const COPY_IN = "COPY … FROM STDIN isn't supported: this connector can't send it data. Use INSERT … VALUES, with params, instead";
+const COPY_OUT = "COPY … TO STDOUT isn't supported: its output doesn't come back through this connector. Run the query inside it as a SELECT instead";
+
+/**
  * The statement's rows, through a cursor: node-postgres would otherwise read
  * every row of the result into memory before any cap applied, and a SELECT
  * over a few million rows took the app down. This asks the server for a
@@ -284,18 +332,26 @@ function readBatch(cursor: Cursor, n: number): Promise<{ rows: Record<string, un
  * query protocol, which refuses a string holding several statements.
  */
 async function collect(client: pg.PoolClient, sql: string, params: unknown[], max: number): Promise<Rows> {
-  const cursor = client.query(new Cursor(sql, params, { types }));
+  const cursor = client.query(new RowCursor(sql, params, { types }));
   const out = new Collector(max);
   let result: pg.QueryResult | undefined;
-  for (;;) {
-    const want = Math.min(FETCH_ROWS, max + 1 - out.rows.length);
-    const batch = await readBatch(cursor, want);
-    result = batch.result;
-    if (!batch.rows.every((row) => out.add(row)) || batch.rows.length < want) break;
+  try {
+    for (;;) {
+      const want = Math.min(FETCH_ROWS, max + 1 - out.rows.length);
+      const batch = await readBatch(cursor, want);
+      result = batch.result;
+      if (!batch.rows.every((row) => out.add(row)) || batch.rows.length < want) break;
+    }
+    // A no-op when the portal ran to the end; otherwise it closes it, and the
+    // server stops producing rows.
+    await cursor.close();
+  } catch (err) {
+    if (cursor.copy === "in") throw new Error(COPY_IN);
+    throw err;
+  } finally {
+    cursor.detach();
   }
-  // A no-op when the portal ran to the end; otherwise it closes it, and the
-  // server stops producing rows.
-  await cursor.close();
+  if (cursor.copy === "out") throw new Error(COPY_OUT);
   const columns = (result?.fields ?? []).map((f) => f.name);
   // For a statement that returns rows, the server's count covers only the
   // last batch fetched, so count them here.

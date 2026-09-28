@@ -329,3 +329,19 @@ live("a role that can only read is refused writes by the database itself, in eit
   const call = await appWith({ DATABASE_URL: urlAs("reader"), POSTGRES_MODE: "read-write" }, [`network:connect:${target.port}`]);
   await assert.rejects(call("query", { sql: "DELETE FROM customers", params: [] }), /permission denied/);
 });
+
+live("COPY to or from the client fails the call cleanly, and the connection carries on", async () => {
+  const port = new URL(PG_TEST_URL!).port;
+  const count = async (call: (name: string, input?: unknown) => Promise<any>) => (await call("query", { sql: "SELECT count(*)::int AS n FROM customers", params: [] })).rows[0].n;
+  // Each of these used to crash the app: pg-cursor had no handler for COPY.
+  const ro = await appWith({ DATABASE_URL: urlAs("app") }, [`network:connect:${port}`]);
+  await assert.rejects(ro("query", { sql: "COPY (SELECT 1) TO STDOUT", params: [] }), /COPY … TO STDOUT isn't supported/);
+  await assert.rejects(ro("query", { sql: "/* hi */ COPY (SELECT 1 WHERE false) TO STDOUT", params: [] }), /COPY … TO STDOUT isn't supported/, "even with no rows to send");
+  await assert.rejects(ro("query", { sql: "COPY (SELECT g, repeat('x', 500) FROM generate_series(1, 200000) AS g) TO STDOUT", params: [] }), /COPY … TO STDOUT isn't supported/);
+  for (let i = 0; i < 3; i++) assert.equal(await count(ro), 3);
+
+  const rw = await appWith({ DATABASE_URL: urlAs("app"), POSTGRES_MODE: "read-write" }, [`network:connect:${port}`]);
+  await assert.rejects(rw("query", { sql: "COPY customers (name) FROM STDIN", params: [] }), /COPY … FROM STDIN isn't supported/);
+  await assert.rejects(rw("query", { sql: "COPY customers TO STDOUT", params: [] }), /COPY … TO STDOUT isn't supported/);
+  for (let i = 0; i < 3; i++) assert.equal(await count(rw), 3);
+});
