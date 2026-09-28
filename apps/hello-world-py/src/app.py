@@ -37,7 +37,11 @@ def _publish_file_created(input: PublishFileCreatedInput) -> None:
     # already subscribes to "fs.file_created" with exactly this
     # {path, createdBy} shape (see its own src/index.ts) — no changes needed
     # on that side to prove a Python app's publish reaches a TS subscriber.
-    _context_bus.publish("fs.file_created", {"path": input.path, "createdBy": input.created_by})
+    #
+    # A no-op before on_agent_ready has run (`berth test` invokes exports
+    # without it), the same as apps/filesystem's `contextBus?.publish`.
+    if _context_bus is not None:
+        _context_bus.publish("fs.file_created", {"path": input.path, "createdBy": input.created_by})
 
 
 def _setup(a):

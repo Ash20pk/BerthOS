@@ -527,6 +527,10 @@ app_runtime() {
   esac
 }
 
+# base.Dockerfile's CMD, which is what a container started with no command of
+# its own passes here.
+NODE_RUNTIME_CMD="node node_modules/@berthos/sdk/dist/runtime.js"
+
 # The copy of berth_sdk every image carries: root-owned, written at build
 # time, and nothing an app can write.
 BERTH_IMAGE_PYTHON_SDK=/opt/berth/sdk-python
@@ -749,10 +753,15 @@ if [ -z "${BERTH_APPS:-}" ]; then
     # plays for a TypeScript one — no pip install needed. Set only here, for
     # the app's own process under agent-init, not for the root tools above.
     export PYTHONPATH="$(python_sdk_path)${PYTHONPATH:+:$PYTHONPATH}"
-    exec /usr/local/bin/agent-init python3 -m berth_sdk.runtime
-  else
-    exec /usr/local/bin/agent-init "$@"
+    # The image's CMD is the Node runtime (one Dockerfile serves both), so
+    # that command, or none, means "start the app". Anything else is a
+    # command someone asked for — `berth test`'s export check — and runs as
+    # given, under the same enforcement, exactly as it does for a Node app.
+    if [ "$#" -eq 0 ] || [ "$*" = "$NODE_RUNTIME_CMD" ]; then
+      exec /usr/local/bin/agent-init python3 -m berth_sdk.runtime
+    fi
   fi
+  exec /usr/local/bin/agent-init "$@"
 fi
 
 # --- Multi-app mode: every app gets its own, real, independent Landlock
