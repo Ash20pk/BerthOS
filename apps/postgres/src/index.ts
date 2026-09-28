@@ -378,21 +378,40 @@ async function collect(client: pg.PoolClient, sql: string, params: unknown[], ma
 async function run(sql: string, params: unknown[], max = MAX_ROWS): Promise<Rows> {
   const { pool, mode } = await connection();
   const client = await pool.connect();
+  // pg-pool listens for a client's 'error' only while it's idle, so the
+  // connection dropping during a call (the server ending the session, as
+  // pg_terminate_backend(pg_backend_pid()) does for any role, or the network
+  // going) was an unhandled 'error' event, and the app crashed. It's this
+  // call's error instead, and that client is thrown away.
+  let lost: Error | undefined;
+  const onError = (err: Error) => {
+    lost ??= err;
+  };
+  client.on("error", onError);
+  let rows: Rows;
   try {
     await client.query(`SET statement_timeout = ${STATEMENT_TIMEOUT_MS}`);
     if (mode === "read-only") await client.query("BEGIN READ ONLY");
-    return await collect(client, sql, params, max);
+    rows = await collect(client, sql, params, max);
   } catch (err) {
+    await putBack(client, () => lost, onError);
     const e = err as { message?: string; code?: string };
+    if (lost) throw new Error(`the connection to the database was lost: ${e.message ?? lost.message}. The next call opens a new one`);
     if (e.code === "25006") throw new Error(`${e.message}: this connector is read-only (set POSTGRES_MODE=read-write to allow changes)`);
     if (e.code === "42601" && /multiple commands/.test(e.message ?? "")) throw new Error("one statement per query: run them one at a time");
     throw err;
-  } finally {
-    await putBack(client);
   }
+  await putBack(client, () => lost, onError);
+  return rows;
 }
 
-async function putBack(client: pg.PoolClient): Promise<void> {
+/**
+ * Puts the client back clean, or, if its connection was lost or can't be
+ * reset, destroys it. The call's 'error' listener stays on a destroyed
+ * client, which may still report the socket closing.
+ */
+async function putBack(client: pg.PoolClient, lost: () => Error | undefined, onError: (err: Error) => void): Promise<void> {
+  if (lost()) return client.release(lost());
   try {
     // Ends the read-only transaction, or one the statement left open in
     // read-write mode (each call stands alone). DISCARD ALL can't run inside
@@ -400,9 +419,10 @@ async function putBack(client: pg.PoolClient): Promise<void> {
     // advisory locks, drops temporary tables and stops LISTENing.
     await client.query("ROLLBACK");
     await client.query("DISCARD ALL");
+    client.removeListener("error", onError);
     client.release();
   } catch (err) {
-    client.release(err as Error);
+    client.release(lost() ?? (err as Error));
   }
 }
 

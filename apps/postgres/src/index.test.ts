@@ -345,3 +345,32 @@ live("COPY to or from the client fails the call cleanly, and the connection carr
   await assert.rejects(rw("query", { sql: "COPY customers TO STDOUT", params: [] }), /COPY … TO STDOUT isn't supported/);
   for (let i = 0; i < 3; i++) assert.equal(await count(rw), 3);
 });
+
+live("a connection that drops during a call fails that call, not the app, and the next call gets a new one", async () => {
+  const port = new URL(PG_TEST_URL!).port;
+  // Any role can end its own session. That was an unhandled 'error' event on
+  // the checked-out client, and the process crashed.
+  const call = await appWith({ DATABASE_URL: urlAs("reader") }, [`network:connect:${port}`]);
+  const pid = async () => (await call("query", { sql: "SELECT pg_backend_pid() AS pid", params: [] })).rows[0].pid;
+  const first = await pid();
+  await assert.rejects(call("query", { sql: "SELECT pg_terminate_backend(pg_backend_pid())", params: [] }), /connection to the database was lost.*terminating connection/s);
+  assert.equal((await call("query", { sql: "SELECT count(*)::int AS n FROM customers", params: [] })).rows[0].n, 3);
+
+  // Ended from outside, mid-statement, as a server restart or a network drop would.
+  const [sleeping] = await Promise.all([
+    call("query", { sql: "SELECT pg_sleep(5)", params: [] }).then(
+      () => undefined,
+      (err: Error) => err,
+    ),
+    (async () => {
+      for (let i = 0; i < 50; i++) {
+        const { rows } = await admin((db) => db.query("SELECT pg_terminate_backend(pid) AS ok FROM pg_stat_activity WHERE usename = 'reader' AND query LIKE 'SELECT pg_sleep%'"));
+        if (rows.length > 0) return;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    })(),
+  ]);
+  assert.match(String(sleeping), /connection to the database was lost/);
+  for (let i = 0; i < 3; i++) assert.equal((await call("query", { sql: "SELECT count(*)::int AS n FROM customers", params: [] })).rows[0].n, 3);
+  assert.notEqual(await pid(), first);
+});
