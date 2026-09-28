@@ -16,6 +16,7 @@ test("targetOf reads host, port, database and user, and never the password", () 
   assert.deepEqual(t, { host: "db.example.com", port: 6543, database: "sales", user: "app@corp" });
   assert.ok(!JSON.stringify(t).includes("s3cret"));
   assert.equal(targetOf("postgresql://u@h/").port, 5432);
+  assert.equal(targetOf("postgresql://analyst@h/").database, "analyst", "no database means the user's, as node-postgres connects to");
   assert.throws(() => targetOf("mysql://u@h/db"), /should start with postgres:\/\//);
   assert.throws(() => targetOf("not a url"), /isn't a valid URL/);
 });

@@ -33,7 +33,10 @@ export function targetOf(connectionString: string): Target {
     throw new Error("DATABASE_URL isn't a valid URL: it should look like postgres://user:password@host:5432/database");
   }
   if (url.protocol !== "postgres:" && url.protocol !== "postgresql:") throw new Error(`DATABASE_URL should start with postgres://, not ${url.protocol}//`);
-  return { host: url.hostname, port: Number(url.port) || 5432, database: decodeURIComponent(url.pathname.slice(1)) || "postgres", user: decodeURIComponent(url.username) };
+  const user = decodeURIComponent(url.username);
+  // With no database in the URL, node-postgres connects to the one named
+  // after the user, as libpq does, not to "postgres".
+  return { host: url.hostname, port: Number(url.port) || 5432, database: decodeURIComponent(url.pathname.slice(1)) || user, user };
 }
 
 /**
