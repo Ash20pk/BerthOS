@@ -247,10 +247,12 @@ interface FakeImage {
   ParentId?: string;
   RepoTags: string[];
   Labels?: Record<string, string>;
+  /** Unix seconds, as the daemon reports it; an hour ago unless a test says otherwise. */
+  Created?: number;
 }
 
 /** Just enough of dockerode's image API for retainLatestBuild(), with the removals it made. */
-function fakeDocker(images: FakeImage[], inUse: string[] = []) {
+function fakeDocker(images: FakeImage[], inUse: string[] = [], { tagFails = false } = {}) {
   const removed: string[] = [];
   const find = (ref: string) => images.find((i) => i.Id === ref || i.RepoTags.includes(ref));
   const docker = {
@@ -261,6 +263,7 @@ function fakeDocker(images: FakeImage[], inUse: string[] = []) {
         return { Id: image.Id, RepoTags: [...image.RepoTags], Config: { Labels: image.Labels ?? null } };
       },
       tag: async ({ repo, tag }: { repo: string; tag: string }) => {
+        if (tagFails) throw new Error("(HTTP code 500) server error - tag refused");
         const name = `${repo}:${tag}`;
         for (const image of images) image.RepoTags = image.RepoTags.filter((t) => t !== name);
         find(ref)!.RepoTags.push(name);
@@ -278,8 +281,22 @@ function fakeDocker(images: FakeImage[], inUse: string[] = []) {
       images
         .filter((i) => options?.all || !images.some((c) => c.ParentId === i.Id))
         .filter((i) => !options?.filters?.dangling || i.RepoTags.length === 0)
-        .filter((i) => !options?.filters?.label || options.filters.label.every((l) => i.Labels?.[l] !== undefined))
-        .map((i) => ({ Id: i.Id, ParentId: i.ParentId ?? "", RepoTags: i.RepoTags.length ? [...i.RepoTags] : ["<none>:<none>"], Labels: i.Labels ?? {} })),
+        // Docker's own label filter: `key` for presence, `key=value` for an exact value.
+        .filter(
+          (i) =>
+            !options?.filters?.label ||
+            options.filters.label.every((l) => {
+              const [key, ...value] = l.split("=");
+              return value.length === 0 ? i.Labels?.[key!] !== undefined : i.Labels?.[key!] === value.join("=");
+            }),
+        )
+        .map((i) => ({
+          Id: i.Id,
+          ParentId: i.ParentId ?? "",
+          RepoTags: i.RepoTags.length ? [...i.RepoTags] : ["<none>:<none>"],
+          Labels: i.Labels ?? {},
+          Created: i.Created ?? Math.floor(Date.now() / 1000) - 3600,
+        })),
   };
   return { docker: docker as unknown as Docker, removed, images };
 }
@@ -342,3 +359,35 @@ test("only berth-labelled dangling images are cleaned up", async () => {
   await retainLatestBuild(fake.docker, "berth/notes:dev", ref, [undefined, undefined]);
   assert.deepEqual(fake.removed, ["sha256:orphan"]);
 });
+
+test("the sweep leaves other apps' images and images built FROM a berth image alone", async () => {
+  const ref = buildCacheRef("berth/notes:dev", "dev");
+  const other = buildCacheRef("berth/filesystem:dev", "dev");
+  const fake = fakeDocker([
+    { Id: "sha256:base", RepoTags: [] },
+    { Id: "sha256:orphan", ParentId: "sha256:base", RepoTags: [], Labels: labelled(ref) },
+    // Another app's dangling build: that app's own next build reclaims it.
+    { Id: "sha256:other-orphan", ParentId: "sha256:base", RepoTags: [], Labels: labelled(other) },
+    // `FROM berth/notes:dev` in someone's own Dockerfile, since re-tagged:
+    // dangling, and carrying the inherited label with this very value.
+    { Id: "sha256:berth-parent", ParentId: "sha256:base", RepoTags: ["berth/notes:0.9.0"], Labels: labelled(ref) },
+    { Id: "sha256:users-layer", ParentId: "sha256:berth-parent", RepoTags: [] },
+    { Id: "sha256:users-image", ParentId: "sha256:users-layer", RepoTags: [], Labels: labelled(ref) },
+    { Id: "sha256:new", ParentId: "sha256:base", RepoTags: ["berth/notes:dev"], Labels: labelled(ref) },
+  ]);
+  await retainLatestBuild(fake.docker, "berth/notes:dev", ref, [undefined, undefined]);
+  assert.deepEqual(fake.removed, ["sha256:orphan"]);
+});
+
+test("the sweep skips a dangling image too new to be an orphan", async () => {
+  // A concurrent build of the same app, its final image not tagged yet.
+  const ref = buildCacheRef("berth/notes:dev", "dev");
+  const fake = fakeDocker([
+    { Id: "sha256:base", RepoTags: [] },
+    { Id: "sha256:in-flight", ParentId: "sha256:base", RepoTags: [], Labels: labelled(ref), Created: Math.floor(Date.now() / 1000) - 5 },
+    { Id: "sha256:new", ParentId: "sha256:base", RepoTags: ["berth/notes:dev"], Labels: labelled(ref) },
+  ]);
+  await retainLatestBuild(fake.docker, "berth/notes:dev", ref, [undefined, undefined]);
+  assert.deepEqual(fake.removed, []);
+});
+

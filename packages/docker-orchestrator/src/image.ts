@@ -456,6 +456,9 @@ export function buildCacheRef(tag: string, target: BuildTarget): string {
   return `berth-build-cache:${`${target}-${repository}`.replace(/[^A-Za-z0-9_.-]/g, "_").slice(0, 128)}`;
 }
 
+/** How recently created a dangling image must not be for retainLatestBuild()'s sweep to take it. */
+const SWEEP_MIN_AGE_SECONDS = 10 * 60;
+
 /**
  * Keeps exactly one build per app and target, and reclaims the one it
  * replaces.
@@ -471,10 +474,18 @@ export function buildCacheRef(tag: string, target: BuildTarget): string {
  * (removeUnsharedChain()). An old image that still carries some other tag (a
  * published `berth/<app>:1.0.0`, a Computer still running under its own
  * tag) is left alone, and so is one a container is using: Docker refuses
- * that removal. Then every other dangling berth-labelled image goes the same
- * way, which catches a final image orphaned some other way, e.g. by a run
- * killed between its build and this cleanup. Only images carrying
- * BUILD_CACHE_LABEL are ever a starting point.
+ * that removal. Then every other dangling image of this same app and target
+ * goes the same way, which catches a final image orphaned some other way,
+ * e.g. by a run killed between its build and this cleanup.
+ *
+ * That sweep is narrow on purpose. Labels are inherited, so an image someone
+ * builds FROM a berth image carries BUILD_CACHE_LABEL too: the sweep only
+ * matches this build's own cacheRef as the label's value, and skips an image
+ * whose ancestry already has an image with that label (it was built on top of
+ * a berth build, not by one). It also skips anything created in the last
+ * SWEEP_MIN_AGE_SECONDS, so a concurrent build of the same app whose final
+ * image is momentarily untagged isn't taken for an orphan; a genuine orphan
+ * is still reclaimed by a later build.
  */
 export async function retainLatestBuild(docker: Docker, tag: string, cacheRef: string, previousIds: (string | undefined)[]): Promise<void> {
   const built = await docker.getImage(tag).inspect().catch(() => undefined);
@@ -491,9 +502,23 @@ export async function retainLatestBuild(docker: Docker, tag: string, cacheRef: s
     retired.push(id);
   }
   const dangling = await docker
-    .listImages({ filters: { dangling: ["true"], label: [BUILD_CACHE_LABEL] } })
+    .listImages({ filters: { dangling: ["true"], label: [`${BUILD_CACHE_LABEL}=${cacheRef}`] } })
     .catch(() => [] as Docker.ImageInfo[]);
-  for (const image of dangling) if (image.Id !== built.Id) retired.push(image.Id);
+  if (dangling.length > 0) {
+    const all = await docker.listImages({ all: true }).catch(() => [] as Docker.ImageInfo[]);
+    const byId = new Map(all.map((image) => [image.Id, image]));
+    const builtOnBerthImage = (image: Docker.ImageInfo): boolean => {
+      for (let parent = byId.get(image.ParentId); parent; parent = byId.get(parent.ParentId)) {
+        if (parent.Labels?.[BUILD_CACHE_LABEL] === cacheRef) return true;
+      }
+      return false;
+    };
+    const cutoff = Date.now() / 1000 - SWEEP_MIN_AGE_SECONDS;
+    for (const image of dangling) {
+      if (image.Id === built.Id || image.Created > cutoff || builtOnBerthImage(image)) continue;
+      retired.push(image.Id);
+    }
+  }
 
   for (const id of new Set(retired)) await removeUnsharedChain(docker, id);
 }
