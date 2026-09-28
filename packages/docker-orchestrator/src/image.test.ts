@@ -391,3 +391,19 @@ test("the sweep skips a dangling image too new to be an orphan", async () => {
   assert.deepEqual(fake.removed, []);
 });
 
+test("a failing docker tag is a warning, not a failed build, and retires nothing", async () => {
+  const ref = buildCacheRef("berth-agent/notes:2", "production");
+  const fake = fakeDocker(twoBuilds(ref, "berth-agent/notes:2", [ref]), [], { tagFails: true });
+  const warnings: string[] = [];
+  const warn = console.warn;
+  console.warn = (message: string) => warnings.push(message);
+  try {
+    await retainLatestBuild(fake.docker, "berth-agent/notes:2", ref, [undefined, "sha256:old"]);
+  } finally {
+    console.warn = warn;
+  }
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0]!, /berth-agent\/notes:2.*tag refused/);
+  // The cache reference didn't move, so the build it points at stays.
+  assert.deepEqual(fake.removed, []);
+});

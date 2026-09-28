@@ -486,8 +486,20 @@ const SWEEP_MIN_AGE_SECONDS = 10 * 60;
  * SWEEP_MIN_AGE_SECONDS, so a concurrent build of the same app whose final
  * image is momentarily untagged isn't taken for an orphan; a genuine orphan
  * is still reclaimed by a later build.
+ *
+ * All of this is bookkeeping for the next build, never part of this one: the
+ * image is already built and tagged, so a failure here (a `docker tag` the
+ * daemon refuses, say) is reported as a warning and doesn't fail the build.
  */
 export async function retainLatestBuild(docker: Docker, tag: string, cacheRef: string, previousIds: (string | undefined)[]): Promise<void> {
+  try {
+    await retainLatestBuildOrThrow(docker, tag, cacheRef, previousIds);
+  } catch (err) {
+    console.warn(`[berth:build] couldn't update the build cache for ${tag}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+async function retainLatestBuildOrThrow(docker: Docker, tag: string, cacheRef: string, previousIds: (string | undefined)[]): Promise<void> {
   const built = await docker.getImage(tag).inspect().catch(() => undefined);
   if (!built) return;
   const split = cacheRef.lastIndexOf(":");
