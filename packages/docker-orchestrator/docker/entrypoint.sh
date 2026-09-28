@@ -987,7 +987,7 @@ precreate_declared_paths() {
 
     # Only paths this pass may create as root: the manifest schema's
     # filesystem allowlist (ALLOWED_FILESYSTEM_SCOPE_PREFIXES, canonical, no
-    # globs). Both compilers already drop anything else, but this is the
+    # globs, nothing inside a node_modules). Both compilers already drop anything else, but this is the
     # process doing the mkdir and chown, so it does not take the policy file's
     # word for it — the same reason agent-init re-checks its own copy.
     # Baseline entries outside it (/dev/null, /run/berth/<app>, /dev/pts)
@@ -999,10 +999,10 @@ precreate_declared_paths() {
       const allowed = (p) =>
         typeof p === "string" && !p.includes("\0") && !p.includes("*") &&
         ["/workspace", "/context", "/tmp", "/app"].some((pre) => p === pre || p.startsWith(`${pre}/`)) &&
-        !p.slice(1).split("/").some((s) => s === "" || s === "." || s === "..");
+        !p.slice(1).split("/").some((s) => s === "" || s === "." || s === ".." || s === "node_modules");
       for (const p of policy.writePaths ?? []) {
         if (allowed(p)) process.stdout.write(`${p}\t${process.argv[2]}\n`);
-        else if (typeof p !== "string" || !fs.existsSync(p)) console.error(`[berth:entrypoint] WARNING: not creating ${JSON.stringify(p)} for ${process.argv[3]} — outside /workspace, /context, /tmp, /app`);
+        else if (typeof p !== "string" || !fs.existsSync(p)) console.error(`[berth:entrypoint] WARNING: not creating ${JSON.stringify(p)} for ${process.argv[3]} — outside /workspace, /context, /tmp, /app, or inside a node_modules`);
       }
     ' "$dir/.berth/capability-policy.json" "$uid" "$name" >>"$decls" || true
   done <<<"$tsv"

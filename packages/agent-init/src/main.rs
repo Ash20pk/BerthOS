@@ -607,6 +607,12 @@ fn is_allowed_write_path(path: &str, app_name: &str) -> bool {
     if path.split('/').skip(1).any(|segment| segment.is_empty() || segment == "." || segment == ".." || segment == "*") {
         return false;
     }
+    // An app's dependency tree, which the manifest schema also refuses a
+    // write grant in: creating a directory there as root and handing it to
+    // the app would let it put a module where Node looks before the real one.
+    if path.split('/').any(|segment| segment == "node_modules") {
+        return false;
+    }
     if ALLOWED_WRITE_DEVICE_PATHS.contains(&path) {
         return true;
     }
@@ -1091,6 +1097,9 @@ mod tests {
             "/tmpfoo",
             "/appdata",
             "",
+            "/app/node_modules",
+            "/app/apps/x/node_modules/@berthos/sdk/dist/node_modules",
+            "/workspace/node_modules",
         ] {
             assert!(!is_allowed_write_path(path, "my-app"), "{path:?} must not be an allowed write path");
         }
