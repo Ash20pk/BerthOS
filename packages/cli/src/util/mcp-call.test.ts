@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createMemoryAuditSink, type Actor } from "@berthos/audit";
 import { Duplex } from "node:stream";
 import type Docker from "dockerode";
-import { createStdioRpcClient, type RpcRequest, type RpcResponse, type StdioRpcCallOptions } from "@berthos/docker-orchestrator";
+import { createStdioRpcClient, RpcNotSentError, type RpcRequest, type RpcResponse, type StdioRpcCallOptions } from "@berthos/docker-orchestrator";
 import { createInFlightCalls, createShutdown, handleToolCall, rpcTimeoutFor, TIMEOUT_MS_GRACE, type ToolCallContext } from "./mcp-call.js";
 import { createRunAudit } from "./run-audit.js";
 
@@ -85,6 +85,24 @@ test("no part of a call's input reaches the audit reason when the app never answ
   const reason = sink.records[0]!.reason!;
   assert.match(reason, /no answer from the app: timed out .* write_file \(request mcp-/);
   assert.doesNotMatch(reason, /EXAMPLEKEY|AWS_SECRET|\.env|content/);
+});
+
+// Given up on between being marked in flight and being written: the app
+// never saw it, so "may have run" would be wrong.
+test("a call cancelled before it was sent is recorded as not sent, not as one that may have run", async () => {
+  const { sink, ctx, inFlight } = context(async () => {
+    throw new RpcNotSentError("not sent: the caller gave up on write_file (request 1) before it was written");
+  });
+  const result = await handleToolCall(ctx, {});
+  assert.equal(result.isError, true);
+  assert.match(result.content[0]!.text, /cancelled before it was sent .* did not run/);
+  assert.equal(sink.records.length, 1);
+  const record = sink.records[0]!;
+  assert.equal(record.decision, "allowed");
+  assert.match(record.reason!, /cancelled before it was sent to the app — the call did not run/);
+  assert.equal((record.meta as { outcome?: string }).outcome, "not-sent");
+  assert.equal((record.meta as { failed?: boolean }).failed, undefined);
+  assert.equal(inFlight.size, 0);
 });
 
 test("the RPC waits for the call's own timeout_ms, plus headroom, when it is longer than the bridge's", async () => {

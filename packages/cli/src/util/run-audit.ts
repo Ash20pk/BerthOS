@@ -65,6 +65,8 @@ export interface ToolCallOutcome {
    * already have reached the app, so the call may have run.
    */
   unanswered?: { reason: string; interrupted?: boolean };
+  /** Cancelled before the request was written: the app never saw it, so it did not run. */
+  notSent?: boolean;
 }
 
 /** Longest reason written to a record. The app's raw error can echo its input or file contents. */
@@ -103,11 +105,13 @@ export function createRunAudit(options: RunAuditOptions): RunAudit {
       // attempt with a reason, and so is one that got no answer: it was let
       // through, and whether it ran is unknown (meta.outcome says so).
       const unanswered = outcome.unanswered;
-      const reason = unanswered
-        ? `${unanswered.interrupted ? "the session ended before the app answered" : `no answer from the app: ${auditReason(unanswered.reason)}`} — the call may have run`
-        : outcome.error !== undefined
-          ? auditReason(outcome.error)
-          : undefined;
+      const reason = outcome.notSent
+        ? "cancelled before it was sent to the app — the call did not run"
+        : unanswered
+          ? `${unanswered.interrupted ? "the session ended before the app answered" : `no answer from the app: ${auditReason(unanswered.reason)}`} — the call may have run`
+          : outcome.error !== undefined
+            ? auditReason(outcome.error)
+            : undefined;
       const failed = unanswered !== undefined || (outcome.error !== undefined && !outcome.denied);
       await sink
         .record({
@@ -119,11 +123,12 @@ export function createRunAudit(options: RunAuditOptions): RunAudit {
           decision: outcome.denied ? "denied" : "allowed",
           ...(reason !== undefined ? { reason } : {}),
           input: outcome.input,
-          ...(outcome.error === undefined && !unanswered ? { output: outcome.result } : {}),
+          ...(outcome.error === undefined && !unanswered && !outcome.notSent ? { output: outcome.result } : {}),
           durationMs: outcome.durationMs,
           meta: meta({
             ...(failed ? { failed: true } : {}),
             ...(unanswered ? { outcome: "unknown", ...(unanswered.interrupted ? { interrupted: true } : {}) } : {}),
+            ...(outcome.notSent ? { outcome: "not-sent" } : {}),
           }),
         })
         .catch(() => {});

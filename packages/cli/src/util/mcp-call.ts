@@ -1,4 +1,4 @@
-import type { RpcRequest, RpcResponse, StdioRpcCallOptions } from "@berthos/docker-orchestrator";
+import { RpcNotSentError, type RpcRequest, type RpcResponse, type StdioRpcCallOptions } from "@berthos/docker-orchestrator";
 import type { RunAudit } from "./run-audit.js";
 
 /**
@@ -11,6 +11,8 @@ import type { RunAudit } from "./run-audit.js";
  * answers at all: the RPC times out, the write to the sandbox fails, or the
  * session ends while it's in flight. That last group used to leave no
  * record at all, although the request may well have reached the app and run.
+ * A call the client cancelled before it was written is recorded as not sent:
+ * the app never saw it.
  */
 
 export type ToolResult = { isError?: boolean; content: { type: "text"; text: string }[] };
@@ -51,6 +53,10 @@ export async function handleToolCall(ctx: ToolCallContext, args: Record<string, 
   try {
     response = await ctx.call(request, { timeoutMs: rpcTimeoutFor(args, ctx.callTimeoutMs), ...(signal ? { signal } : {}) });
   } catch (err) {
+    if (err instanceof RpcNotSentError) {
+      if (done()) await ctx.runAudit?.toolCall({ export: ctx.export, input: args, durationMs: Date.now() - startedAt, notSent: true });
+      return { isError: true, content: [{ type: "text", text: `"${ctx.export}" was cancelled before it was sent to the app, so it did not run` }] };
+    }
     const reason = err instanceof Error ? err.message : String(err);
     if (done()) {
       await ctx.runAudit?.toolCall({ export: ctx.export, input: args, durationMs: Date.now() - startedAt, unanswered: { reason } });
