@@ -43,7 +43,7 @@ Every process the shell starts inherits these rules. To keep the capability but 
 
 ## How it works
 
-On first use the app starts a [tmux](https://github.com/tmux/tmux) session named `berth-terminal`, rooted at `/workspace`, and a [ttyd](https://github.com/tsl0922/ttyd) web terminal attached to the same session. Both run as children of the app, under its sandbox rules.
+On first use the app starts a [tmux](https://github.com/tmux/tmux) session named `berth-terminal`, rooted at `/workspace`, and a [ttyd](https://github.com/tsl0922/ttyd) web terminal attached to the same session. Both run as children of the app, under its sandbox rules. They get a minimal environment (`PATH`, `HOME`, the user, temp-dir, locale and terminal variables, and the egress proxy variables when set), not the app's own: the app's credentials, RPC token and declared secrets are not visible in the shell.
 
 `run_command` types the command followed by a unique marker, waits for the marker to appear on screen, and returns the text in between.
 

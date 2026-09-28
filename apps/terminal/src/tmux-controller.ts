@@ -142,9 +142,8 @@ function credential(): string {
  *
  * ttyd is started once and left running (and started again on the next call
  * if it exits) — any number of browser tabs can attach to it concurrently,
- * and (being plain
- * `tmux attach`) they all see the exact same session run_command/send_keys
- * drive, not a fresh shell per connection.
+ * and (being plain `tmux attach`) they all see the exact same session
+ * run_command/send_keys drive, not a fresh shell per connection.
  */
 export function ensureSession(): Promise<void> {
   // Concurrent calls share one check-and-create instead of each running
@@ -194,9 +193,10 @@ async function startSession(): Promise<void> {
   // Unix socket path, not an IP address, so there's no "0.0.0.0" form
   // of it to pass explicitly. Which is exactly why --credential is not
   // optional here: this is a *writable* shell, with every permission the
-  // app's own sandbox grants it, and the only reason it isn't reachable from the LAN is that container.ts
-  // binds the published port to loopback. Defence in depth, because
-  // that binding is one `--publish-host` away from being widened.
+  // app's own sandbox grants it, and the only reason it isn't reachable
+  // from the LAN is that container.ts binds the published port to
+  // loopback. Defence in depth, because that binding is one
+  // `--publish-host` away from being widened.
   //
   // `tmux attach` per connection, so a session recreated above is the one
   // a newly opened tab attaches to.
