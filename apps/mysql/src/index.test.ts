@@ -1,10 +1,11 @@
-import { test, after } from "node:test";
+import { test, after, before } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import net from "node:net";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import mysql from "mysql2/promise";
 import { cell, modeFrom, routeFor, shapeRows, targetOf } from "./index.js";
 import { ProxyTunnel } from "./tunnel.js";
 
@@ -58,12 +59,46 @@ test("the tunnel has every socket method a driver calls", () => {
 
 // --- against a real database, when MYSQL_TEST_URL is set ----------------------
 // e.g. docker run -d -e MYSQL_ROOT_PASSWORD=test -e MYSQL_DATABASE=shop -p 127.0.0.1:53306:3306 mysql:8.4
-// MYSQL_TEST_URL=mysql://root:test@127.0.0.1:53306/shop, with a customers
-// table (id, name, signed_up, plan) holding three rows, and a user
-// reader/reader that can only SELECT it.
+// MYSQL_TEST_URL=mysql://root:test@127.0.0.1:53306/shop, an administrator:
+// the suite creates what it needs itself (a customers table holding three
+// rows, a user app/app with every privilege on that database and none
+// beyond it, and a user reader/reader that can only SELECT the table), and
+// connects as those users, not as the administrator.
 
-const PG_TEST_URL = process.env.MYSQL_TEST_URL;
-const live = (name: string, fn: () => Promise<void>) => test(name, { skip: !PG_TEST_URL && "set MYSQL_TEST_URL to run against a real database" }, fn);
+const TEST_URL = process.env.MYSQL_TEST_URL;
+const live = (name: string, fn: () => Promise<void>) => test(name, { skip: !TEST_URL && "set MYSQL_TEST_URL to run against a real database" }, fn);
+
+/** MYSQL_TEST_URL, as another user. */
+function urlAs(user: string): string {
+  const url = new URL(TEST_URL!);
+  url.username = user;
+  url.password = user;
+  return url.toString();
+}
+
+async function admin<T>(fn: (db: mysql.Connection) => Promise<T>): Promise<T> {
+  const db = await mysql.createConnection(TEST_URL!);
+  try {
+    return await fn(db);
+  } finally {
+    await db.end();
+  }
+}
+
+before(async () => {
+  if (!TEST_URL) return;
+  const database = new URL(TEST_URL).pathname.slice(1);
+  await admin(async (db) => {
+    for (const user of ["app", "reader"]) {
+      await db.query(`CREATE USER IF NOT EXISTS '${user}'@'%' IDENTIFIED BY '${user}'`);
+    }
+    await db.query(`GRANT ALL ON \`${database}\`.* TO 'app'@'%'`);
+    await db.query("DROP TABLE IF EXISTS customers");
+    await db.query("CREATE TABLE customers (id int AUTO_INCREMENT PRIMARY KEY, name varchar(100) NOT NULL, signed_up date NOT NULL DEFAULT (CURRENT_DATE), plan varchar(20) NOT NULL DEFAULT 'free')");
+    await db.query("INSERT INTO customers (name, signed_up, plan) VALUES ('Ada', '2026-01-04', 'pro'), ('Grace', '2026-02-11', 'free'), ('Linus', '2026-03-20', 'pro')");
+    await db.query("GRANT SELECT ON customers TO 'reader'@'%'");
+  });
+});
 
 async function appWith(env: Record<string, string | undefined>, capabilities: string[]) {
   const dir = await mkdtemp(join(tmpdir(), "mysql-app-test-"));
@@ -78,20 +113,20 @@ async function appWith(env: Record<string, string | undefined>, capabilities: st
 }
 
 live("query, list_tables and describe_table against a real database", async () => {
-  const port = new URL(PG_TEST_URL!).port;
-  const call = await appWith({ DATABASE_URL: PG_TEST_URL }, [`network:connect:${port}`]);
+  const port = new URL(TEST_URL!).port;
+  const call = await appWith({ DATABASE_URL: urlAs("app") }, [`network:connect:${port}`]);
   const res = await call("query", { sql: "SELECT name, plan FROM customers WHERE plan = ? ORDER BY id", params: ["pro"] });
   assert.deepEqual(res.columns, ["name", "plan"]);
   assert.deepEqual(res.rows, [{ name: "Ada", plan: "pro" }, { name: "Linus", plan: "pro" }]);
   assert.ok((await call("list_tables", { schema: "" })).tables.some((t: any) => t.name === "customers"));
   assert.deepEqual((await call("describe_table", { table: "customers" })).columns.map((c: any) => c.name), ["id", "name", "signed_up", "plan"]);
   const info = await call("connection_info");
-  assert.deepEqual({ mode: info.mode, route: info.route, user: info.user }, { mode: "read-only", route: "direct", user: "root" });
+  assert.deepEqual({ mode: info.mode, route: info.route, user: info.user }, { mode: "read-only", route: "direct", user: "app" });
 });
 
 live("read-only mode refuses writes, even ones that try to switch the transaction", async () => {
-  const port = new URL(PG_TEST_URL!).port;
-  const call = await appWith({ DATABASE_URL: PG_TEST_URL }, [`network:connect:${port}`]);
+  const port = new URL(TEST_URL!).port;
+  const call = await appWith({ DATABASE_URL: urlAs("app") }, [`network:connect:${port}`]);
   await assert.rejects(call("query", { sql: "INSERT INTO customers (name) VALUES ('Mallory')", params: [] }), /read-only/);
   await assert.rejects(call("query", { sql: "SET SESSION TRANSACTION READ WRITE", params: [] }).then(() => call("query", { sql: "DELETE FROM customers", params: [] })), /read-only/);
   await assert.rejects(call("query", { sql: "SELECT 1; DELETE FROM customers", params: [] }), /one statement per query/);
@@ -100,10 +135,10 @@ live("read-only mode refuses writes, even ones that try to switch the transactio
 
 // MySQL commits DDL implicitly, outside any transaction, so a read-only
 // transaction alone let CREATE and DROP TABLE through for a user allowed to
-// run them. Run as the privileged user, so no grant gets in the way.
+// run them. Run as app, which may, so no grant gets in the way.
 live("read-only mode refuses DDL too, and can't be switched off by a statement", async () => {
-  const port = new URL(PG_TEST_URL!).port;
-  const call = await appWith({ DATABASE_URL: PG_TEST_URL }, [`network:connect:${port}`]);
+  const port = new URL(TEST_URL!).port;
+  const call = await appWith({ DATABASE_URL: urlAs("app") }, [`network:connect:${port}`]);
   await assert.rejects(call("query", { sql: "CREATE TABLE berth_ddl_probe (x int)", params: [] }), /read-only/);
   await assert.rejects(call("query", { sql: "DROP TABLE customers", params: [] }), /read-only/);
   await call("query", { sql: "SET SESSION transaction_read_only = OFF", params: [] });
@@ -112,8 +147,8 @@ live("read-only mode refuses DDL too, and can't be switched off by a statement",
 });
 
 live("read-write mode can change data, one statement at a time", async () => {
-  const port = new URL(PG_TEST_URL!).port;
-  const call = await appWith({ DATABASE_URL: PG_TEST_URL, MYSQL_MODE: "read-write" }, [`network:connect:${port}`]);
+  const port = new URL(TEST_URL!).port;
+  const call = await appWith({ DATABASE_URL: urlAs("app"), MYSQL_MODE: "read-write" }, [`network:connect:${port}`]);
   const inserted = await call("query", { sql: "INSERT INTO customers (name, plan) VALUES (?, ?)", params: ["Temp", "free"] });
   assert.equal(inserted.row_count, 1);
   await call("query", { sql: "DELETE FROM customers WHERE name = ?", params: ["Temp"] });
@@ -121,7 +156,7 @@ live("read-write mode can change data, one statement at a time", async () => {
 });
 
 live("through a CONNECT proxy, as the egress proxy would carry it", async () => {
-  const target = new URL(PG_TEST_URL!);
+  const target = new URL(TEST_URL!);
   const seen: string[] = [];
   const proxy = http.createServer();
   proxy.on("connect", (req, socket, head) => {
@@ -138,7 +173,7 @@ live("through a CONNECT proxy, as the egress proxy would carry it", async () => 
   await new Promise<void>((r) => proxy.listen(0, "127.0.0.1", r));
   after(() => proxy.close());
   const proxyUrl = `http://127.0.0.1:${(proxy.address() as { port: number }).port}`;
-  const viaName = `mysql://${target.username}:${target.password}@db.test.example:${target.port}${target.pathname}`;
+  const viaName = `mysql://app:app@db.test.example:${target.port}${target.pathname}`;
   const call = await appWith({ DATABASE_URL: viaName, BERTH_EGRESS_PROXY_URL: proxyUrl }, [`network:host:db.test.example:${target.port}`, "network:connect:8090"]);
   assert.equal((await call("connection_info")).route, "through the egress proxy");
   assert.equal(Number((await call("query", { sql: "SELECT count(*) AS n FROM customers", params: [] })).rows[0].n), 3);
@@ -148,8 +183,7 @@ live("through a CONNECT proxy, as the egress proxy would carry it", async () => 
 });
 
 live("a role that can only read is refused writes by the database itself, in either mode", async () => {
-  const target = new URL(PG_TEST_URL!);
-  const readerUrl = `mysql://reader:reader@${target.host}${target.pathname}`;
-  const call = await appWith({ DATABASE_URL: readerUrl, MYSQL_MODE: "read-write" }, [`network:connect:${target.port}`]);
+  const target = new URL(TEST_URL!);
+  const call = await appWith({ DATABASE_URL: urlAs("reader"), MYSQL_MODE: "read-write" }, [`network:connect:${target.port}`]);
   await assert.rejects(call("query", { sql: "DELETE FROM customers", params: [] }), /DELETE command denied/);
 });
