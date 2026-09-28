@@ -425,6 +425,18 @@ export async function closeForTests(): Promise<void> {
   await (await current?.catch(() => undefined))?.pool.end().catch(() => {});
 }
 
+/**
+ * With no database in DATABASE_URL, DATABASE() is NULL, and a lookup in "the
+ * URL's database" quietly matched nothing: list_tables said there were no
+ * tables. Say so instead.
+ */
+async function requireDefaultDatabase(what: string): Promise<void> {
+  const { target } = await connection();
+  if (!target.database) {
+    throw new Error(`DATABASE_URL names no database, so ${what} has none to default to: name one (query SHOW DATABASES lists them), or add /<database> to DATABASE_URL`);
+  }
+}
+
 export default defineApp((app) => {
   app.export({
     name: "query",
@@ -442,6 +454,7 @@ export default defineApp((app) => {
     input: z.object({ schema: z.string() }),
     output: z.object({ tables: z.array(z.object({ schema: z.string(), name: z.string(), type: z.string() })) }),
     handler: async ({ schema }) => {
+      if (!schema) await requireDefaultDatabase("list_tables with schema \"\"");
       const result = await run(
         `SELECT TABLE_SCHEMA AS \`schema\`, TABLE_NAME AS name, TABLE_TYPE AS type
            FROM information_schema.TABLES
@@ -460,6 +473,7 @@ export default defineApp((app) => {
     output: z.object({ columns: z.array(z.object({ name: z.string(), type: z.string(), nullable: z.boolean(), default: z.string().nullable() })) }),
     handler: async ({ table }) => {
       const [schema, name] = table.includes(".") ? (table.split(".", 2) as [string, string]) : ["", table];
+      if (!schema) await requireDefaultDatabase(`describe_table of a bare ${table}`);
       const result = await run(
         `SELECT COLUMN_NAME AS name, COLUMN_TYPE AS type, IS_NULLABLE = 'YES' AS nullable, COLUMN_DEFAULT AS \`default\`
            FROM information_schema.COLUMNS

@@ -54,7 +54,7 @@ That verifies the server's certificate against the system's trusted CAs, and its
 | Export | Input | Output |
 |---|---|---|
 | `query` | `{ sql, params }` | `{ columns, rows, row_count, truncated }`. `params` fills `?` placeholders in order; pass `[]` for none |
-| `list_tables` | `{ schema }` | `{ tables: [{ schema, name, type }] }`. `""` means the URL's database |
+| `list_tables` | `{ schema }` | `{ tables: [{ schema, name, type }] }`. `""` means the URL's database (an error if the URL names none) |
 | `describe_table` | `{ table }` | `{ columns: [{ name, type, nullable, default }] }`. `table` or `database.table` |
 | `connection_info` | | `{ host, port, database, user, mode, route }`, never the password |
 

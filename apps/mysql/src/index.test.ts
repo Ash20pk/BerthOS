@@ -189,6 +189,17 @@ live("a date comes back as the same date, whatever the app's time zone", async (
   }
 });
 
+live("with no database in DATABASE_URL, list_tables and describe_table say so rather than finding nothing", async () => {
+  const url = new URL(urlAs("app"));
+  const database = url.pathname.slice(1);
+  url.pathname = "/";
+  const call = await appWith({ DATABASE_URL: url.toString() }, [`network:connect:${url.port}`]);
+  await assert.rejects(call("list_tables", { schema: "" }), /names no database.*SHOW DATABASES/s);
+  await assert.rejects(call("describe_table", { table: "customers" }), /names no database/);
+  assert.ok((await call("list_tables", { schema: database })).tables.some((t: any) => t.name === "customers"));
+  assert.equal((await call("describe_table", { table: `${database}.customers` })).columns.length, 4);
+});
+
 live("read-only mode refuses writes, even ones that try to switch the transaction", async () => {
   const port = new URL(TEST_URL!).port;
   const call = await appWith({ DATABASE_URL: urlAs("app") }, [`network:connect:${port}`]);
