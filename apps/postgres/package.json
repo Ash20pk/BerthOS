@@ -1,0 +1,22 @@
+{
+  "name": "postgres",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test dist/*.test.js"
+  },
+  "dependencies": {
+    "@berthos/manifest-schema": "workspace:*",
+    "@berthos/sdk": "workspace:*",
+    "pg": "^8.23.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "@types/pg": "^8.23.1",
+    "typescript": "^7.0.2"
+  }
+}
