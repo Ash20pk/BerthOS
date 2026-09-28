@@ -394,8 +394,9 @@ async function main() {
     // no privilege at all, and the kernel gives its creator a fresh
     // CAP_FULL_SET bounding set *inside* the new namespace. So `unshare -Urm`
     // handed back everything the drop had just removed, and mount(2) — which
-    // Landlock does not cover — worked again. Reproduced in the real
-    // berth/filesystem image during the audit.
+    // Landlock does not cover — worked again. Reproduced during the audit in
+    // a real Berth container, when this probe still lived in apps/filesystem;
+    // it now runs from the enforcement-probe fixture, on the same base image.
     //
     // Docker's own default seccomp profile blocks this, which is why it is not
     // a problem for containers generally. It stops doing so when the container
