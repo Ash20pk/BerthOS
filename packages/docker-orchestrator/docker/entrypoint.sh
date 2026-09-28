@@ -568,6 +568,27 @@ run_python_sdk_tool() {
     "$BERTH_IMAGE_PYTHON_SDK" "berth_sdk.$1"
 }
 
+# The image's own copy of @berthos/sdk's root-run tools: the policy compiler
+# and the lifecycle flags, each bundled into one file with nothing left to
+# import but node's own modules (scripts/bundle-daemons.mjs). Root-owned,
+# written at build time, and nothing an app can write.
+BERTH_IMAGE_NODE_SDK=/opt/berth/sdk-node
+
+# The Node counterpart of run_python_sdk_tool: runs one of those tools as
+# root, before agent-init, by absolute path. They used to run from the app's
+# own node_modules/@berthos/sdk, and a bare import there is looked up first in
+# node_modules/@berthos/sdk/dist/node_modules, which no image has: an app
+# could declare filesystem:write: for it, have it created for itself by
+# precreate_declared_paths, and plant a module there for root to run on the
+# next boot. The bundle imports nothing but node's own modules, so where it
+# runs from has no say in what it loads. It still runs in the app's directory,
+# which the compiler reads as the app's working directory (the read
+# baseline, and where berth.yml and .berth/ are by default). NODE_OPTIONS
+# and NODE_PATH are dropped, as -I drops PYTHON* for the Python tools.
+run_node_sdk_tool() {
+  env -u NODE_OPTIONS -u NODE_PATH node "$BERTH_IMAGE_NODE_SDK/$1.mjs"
+}
+
 if [ -z "${BERTH_APPS:-}" ]; then
   # --- Single-app mode. ---
   # BERTH_APPS is only ever set by container.ts when more than one app
@@ -596,7 +617,7 @@ if [ -z "${BERTH_APPS:-}" ]; then
   if [ "$APP_RUNTIME" = "python" ]; then
     LIFECYCLE_FLAGS="$(run_python_sdk_tool run_lifecycle | tail -n1)"
   else
-    LIFECYCLE_FLAGS="$(node "$PWD/node_modules/@berthos/sdk/dist/run-lifecycle.js" | tail -n1)"
+    LIFECYCLE_FLAGS="$(run_node_sdk_tool run-lifecycle | tail -n1)"
   fi
   NEEDS_BROWSER="${LIFECYCLE_FLAGS%,*}"
   NEEDS_EGRESS_BROKER="${LIFECYCLE_FLAGS#*,}"
@@ -658,7 +679,7 @@ if [ -z "${BERTH_APPS:-}" ]; then
   if [ "$APP_RUNTIME" = "python" ]; then
     run_python_sdk_tool generate_capability_policy
   else
-    node "$PWD/node_modules/@berthos/sdk/dist/generate-capability-policy.js"
+    run_node_sdk_tool generate-capability-policy
   fi
 
   # The app's name comes from the policy that was just generated rather than
@@ -907,7 +928,7 @@ run_app() {
     export PYTHONPATH="$(python_sdk_path)${PYTHONPATH:+:$PYTHONPATH}"
     exec /usr/local/bin/agent-init python3 -m berth_sdk.runtime
   fi
-  node "node_modules/@berthos/sdk/dist/generate-capability-policy.js"
+  run_node_sdk_tool generate-capability-policy
   secure_capability_policy "$BERTH_CAPABILITY_POLICY"
 
   exec /usr/local/bin/agent-init "$@"
@@ -960,7 +981,7 @@ precreate_declared_paths() {
         && if [ "$(app_runtime "$name")" = "python" ]; then
              run_python_sdk_tool generate_capability_policy >/dev/null
            else
-             node "node_modules/@berthos/sdk/dist/generate-capability-policy.js" >/dev/null
+             run_node_sdk_tool generate-capability-policy >/dev/null
            fi ) \
       || { echo "[berth:entrypoint] WARNING: could not pre-compile ${name}'s capability policy — its declared paths may not exist when a sibling binds a read grant on them" >&2; continue; }
 

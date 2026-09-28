@@ -42,6 +42,17 @@ export function pythonSdkSourceDir(pkgRoot = join(__dirname, "..")): string {
 }
 const PYTHON_SDK_DIR = pythonSdkSourceDir();
 
+/**
+ * @berthos/sdk's root-run tools (the policy compiler and the lifecycle flags),
+ * each bundled into one file with no bare imports by scripts/bundle-daemons.mjs.
+ * Always the bundle, in the checkout too: the source needs esbuild to become
+ * something entrypoint.sh can run, and the build is what runs it.
+ */
+export function nodeSdkToolsDir(pkgRoot = join(__dirname, "..")): string {
+  return join(pkgRoot, "daemons", "sdk-node");
+}
+const NODE_SDK_TOOLS_DIR = nodeSdkToolsDir();
+
 export type BuildTarget = "dev" | "production";
 
 export interface BuildImageOptions {
@@ -335,7 +346,7 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
     await stageAppRuntimes(stagingDir, [{ name: primaryName, appDir: options.appDir }, ...(options.companions ?? [])]);
 
     await cp(DOCKER_ASSETS_DIR, join(stagingDir, "docker"), { recursive: true });
-    for (const dir of [CONTEXT_BUS_DAEMON_DIR, AGENT_INIT_DIR, SEMANTIC_FS_DAEMON_DIR, MESH_DAEMON_DIR, PYTHON_SDK_DIR]) {
+    for (const dir of [CONTEXT_BUS_DAEMON_DIR, AGENT_INIT_DIR, SEMANTIC_FS_DAEMON_DIR, MESH_DAEMON_DIR, PYTHON_SDK_DIR, NODE_SDK_TOOLS_DIR]) {
       if (!existsSync(dir)) {
         throw new Error(
           `daemon source not found at ${dir}: this @berthos/docker-orchestrator has neither the repository's packages/ nor a bundled daemons/ copy (run its build, which bundles them)`,
@@ -357,6 +368,7 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
       recursive: true,
       filter: (src) => !src.includes("__pycache__"),
     });
+    await cp(NODE_SDK_TOOLS_DIR, join(stagingDir, "sdk-node"), { recursive: true });
     await cp(MESH_DAEMON_DIR, join(stagingDir, "mesh-daemon"), {
       recursive: true,
       filter: (src) => !src.includes(join(MESH_DAEMON_DIR, "target")),

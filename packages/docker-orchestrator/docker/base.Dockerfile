@@ -156,6 +156,10 @@ COPY docker/github-api-broker.cjs /usr/local/bin/berth-github-api-broker.js
 # berth_sdk for `runtime: python` apps (entrypoint.sh puts it on PYTHONPATH
 # unless the checkout's own packages/sdk-python is bind-mounted).
 COPY sdk-python /opt/berth/sdk-python
+# @berthos/sdk's policy compiler and lifecycle flags, which entrypoint.sh runs
+# as root before agent-init: one bundled file each, with nothing left to
+# resolve from an app's node_modules.
+COPY sdk-node /opt/berth/sdk-node
 
 # 9222 (CDP) is deliberately not here, and as of the egress-milestone fix
 # Chromium no longer binds it at all: --remote-debugging-port is gone, so
