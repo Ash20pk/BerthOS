@@ -145,7 +145,12 @@ async function withLockfileRestored<T>(workspaceRoot: string, run: () => Promise
  * app. Those paths don't exist inside the container either.
  *
  *  - the target path in `.bin` shims becomes the app's path in the image;
- *  - `.modules.yaml` (pnpm's install bookkeeping, unread at runtime) goes;
+ *  - `.modules.yaml` and `.pnpm-workspace-state-v1.json` (pnpm's install
+ *    bookkeeping, unread at runtime) go. Both carry a fresh timestamp on
+ *    every install, and `.modules.yaml` names the builder's store too, which
+ *    is what made a `pnpm install` run from `on_install` in /app refuse to
+ *    proceed without a TTY (ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY);
+ *    without it pnpm simply reinstalls;
  *  - symlinks that point outside the staged tree go. They were relative
  *    links back into the builder's checkout (the app's own workspace entry,
  *    a pnpm override's target), dangling in the image and naming the
@@ -169,7 +174,7 @@ export async function makeDeployReproducible(stagingDir: string, containerAppRoo
         await walk(path);
         continue;
       }
-      if (entry.name === ".modules.yaml" && dir.endsWith("node_modules")) {
+      if ((entry.name === ".modules.yaml" || entry.name === ".pnpm-workspace-state-v1.json") && dir.endsWith("node_modules")) {
         await rm(path);
         continue;
       }
@@ -193,9 +198,17 @@ export async function makeDeployReproducible(stagingDir: string, containerAppRoo
  * copied in isolation. `pnpm deploy --legacy` is pnpm's own mechanism for
  * producing a fully self-contained package directory from a workspace
  * member — every dependency copied for real, nothing outside the target
- * directory. Standalone (non-workspace) apps just get a normal prod install.
+ * directory. Standalone (non-workspace) apps — every `berth init` project —
+ * just get a normal prod install.
+ *
+ * Both paths end in makeDeployReproducible(). A standalone app needs it as
+ * much as a workspace member: `pnpm install` in the (random, temporary)
+ * staging directory writes that path into the `.bin` shims too, and a fresh
+ * `prunedAt` timestamp into `.modules.yaml`, so without it every boot of an
+ * unchanged `berth init` project missed the `COPY . /app` cache and left
+ * another ~160 MB layer behind.
  */
-async function stageProductionSource(appDir: string, stagingDir: string, containerAppRoot: string): Promise<void> {
+export async function stageProductionSource(appDir: string, stagingDir: string, containerAppRoot: string): Promise<void> {
   const workspaceRoot = workspaceRootAbove(appDir);
 
   if (workspaceRoot) {
@@ -218,6 +231,7 @@ async function stageProductionSource(appDir: string, stagingDir: string, contain
   } catch {
     await execFileAsync("npm", ["install", "--omit=dev"], { cwd: stagingDir });
   }
+  await makeDeployReproducible(stagingDir, containerAppRoot);
 }
 
 /** Wraps a string so a shell reads it as one literal argument, single quotes included. */
