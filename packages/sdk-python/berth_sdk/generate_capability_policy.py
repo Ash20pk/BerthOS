@@ -47,12 +47,31 @@ def _baseline_read_paths(app_name: str) -> list[str]:
     return ["/usr", "/bin", "/sbin", "/lib", "/etc", "/proc", "/dev", "/tmp", f"/run/berth/{app_name}", str(Path.cwd())]
 
 
-def _sdk_read_paths() -> list[str]:
+def _sdk_read_paths(pythonpath: str | None = None, app_dir: str | None = None) -> list[str]:
     """Where berth_sdk itself is loaded from (entrypoint.sh's PYTHONPATH):
     the image's /opt/berth/sdk-python, or the checkout's packages/sdk-python
     when the repo is bind-mounted. The runtime can't start without it once
-    reads are scoped."""
-    return [p for p in os.environ.get("PYTHONPATH", "").split(":") if p]
+    reads are scoped.
+
+    PYTHONPATH is the boot environment's, which entrypoint.sh only prepends
+    to, so an entry is not taken on trust: each is resolved, and kept only if
+    it is an existing directory at least two levels deep that doesn't contain
+    the app's own directory. That drops "/", "/workspace" or "/app" (which
+    would grant every other app's code) and anything that doesn't exist."""
+    raw = os.environ.get("PYTHONPATH", "") if pythonpath is None else pythonpath
+    app_real = os.path.realpath(app_dir if app_dir is not None else os.getcwd())
+    out: list[str] = []
+    for entry in raw.split(":"):
+        if not entry or not os.path.isabs(entry):
+            continue
+        real = os.path.realpath(entry)
+        too_broad = len(Path(real).parts) < 3 or app_real == real or app_real.startswith(real.rstrip("/") + "/")
+        if too_broad or not os.path.isdir(real):
+            print(f"[berth:capability-policy] WARNING: not granting read access to PYTHONPATH entry {entry!r} — it is missing, not a directory, or too broad")
+            continue
+        if real not in out:
+            out.append(real)
+    return out
 
 
 def _strip_trailing_glob(scope: str) -> str:
