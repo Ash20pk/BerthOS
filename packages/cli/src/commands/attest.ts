@@ -137,13 +137,19 @@ export default class Attest extends Command {
    * while the sandbox is up, since it stops the sandbox when the session
    * ends) is attested against that, and anything else against the one
    * `berth os up` instance, live.
+   *
+   * Recorded evidence covers a call only when the same session recorded it,
+   * and a run whose sessions ran in different boots is refused rather than
+   * attested against the latest one (see recordedBootEvidence).
    */
   private async bootEvidence(runRecords: AuditRecord[], flags: { os?: string; container?: string; image?: string }): Promise<BootEvidence> {
     if (!flags.os && !flags.container) {
       const recorded = recordedBootEvidence(runRecords);
+      if (recorded && "problem" in recorded) this.error(`can't attest this run from its recorded boot evidence: ${recorded.problem}`);
       if (recorded) {
-        this.logToStderr(`using the boot evidence recorded with this run (boot ${recorded.bootId}, container ${recorded.containerName}); pass --os or --container to read a running sandbox instead`);
-        return recorded;
+        const { evidence } = recorded;
+        this.logToStderr(`using the boot evidence recorded with this run (boot ${evidence.bootId}, container ${evidence.containerName}); pass --os or --container to read a running sandbox instead`);
+        return evidence;
       }
     }
 

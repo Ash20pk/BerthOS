@@ -51,7 +51,7 @@ export {
 } from "./attest.js";
 export { watchApp, type WatchHandle } from "./watch.js";
 export { invokeAppExport, rpcSocketPathFor, RPC_SOCKET_DIR, type RpcRequest, type RpcResponse } from "./relay.js";
-export { createStdioRpcClient, type StdioRpcClient } from "./stdio-rpc.js";
+export { createStdioRpcClient, DEFAULT_STDIO_RPC_TIMEOUT_MS, type StdioRpcCallOptions, type StdioRpcClient } from "./stdio-rpc.js";
 export {
   createSnapshot,
   restoreSnapshot,

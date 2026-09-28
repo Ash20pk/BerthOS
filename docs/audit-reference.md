@@ -72,7 +72,7 @@ One JSON object per line, in a file with mode 0600:
 | `decision` | `allowed`, `denied` or `unavailable`. |
 | `reason` | Why. Always set for `denied` and `unavailable`. |
 | `input`, `output` | Only with payload capture on (below), always redacted. |
-| `meta` | Extras, redacted. `berth mcp` records and agent steps carry `meta.runId`, which is what `berth attest` looks up. A `sandbox.boot` record carries the boot evidence in `meta.evidence`, and a tool call the app failed carries `meta.failed`. |
+| `meta` | Extras, redacted. `berth mcp` records and agent steps carry `meta.runId`, which is what `berth attest` looks up. Each `berth mcp` record also carries `meta.bridge`, an id for the session that wrote it. A `sandbox.boot` record carries the boot evidence in `meta.evidence`. A tool call the app failed carries `meta.failed`; one the app never answered (timed out, the write to the sandbox failed, or the session ended first) also carries `meta.outcome: "unknown"`, since it may have run. |
 | `prevHash`, `hash` | The chain. |
 
 ### How much to trust `actor`
@@ -90,6 +90,8 @@ This is not an identity system: there's no user directory, tenancy or roles.
 - `denied`: the governor refused the call.
 - `unavailable`: the governor didn't answer (error or timeout). Under `mode: "fail-open"` the call then ran with no policy check, so this is the record to look for. See [governance](./governance-reference.md).
 - An agent step that threw is `allowed` with a `reason`. Nothing refused it; it ran and failed.
+- A `berth mcp` tool call with no answer from the app is `allowed` with `meta.outcome: "unknown"` and a `reason` saying the call may have run. A call still in flight when the session ended also has `meta.interrupted`.
+- `reason` holds the first line of the app's error, capped at 300 characters. It is written even with payload capture off, so the rest (often a stack, or the input the app choked on) is left out.
 
 ## Payload capture
 
@@ -102,7 +104,7 @@ When on, values pass through `redact()`. Keys that look secret (`password`, `tok
 
 ## How the chain works
 
-Each record's `hash` is sha256 over `prevHash` plus the record's canonical JSON. Editing, deleting or reordering a record breaks every hash after it, and `berth audit verify` reports where. The chain continues across restarts and across rotation.
+Each record's `hash` is sha256 over `prevHash` plus the record's canonical JSON. Editing, deleting or reordering a record breaks every hash after it, and `berth audit verify` reports where. The chain continues across restarts and across rotation. Several processes can write the same file at once (two `berth mcp` sessions share the default path): each write takes a lock on `<file>.lock` and reads the chain's head from the file before appending, so they extend one chain rather than forking it. A lock left by a writer that died is broken once its pid is gone, or after 10 s.
 
 [`berth attest`](./attestation-reference.md) builds on this chain to produce a checkable record of one run.
 
