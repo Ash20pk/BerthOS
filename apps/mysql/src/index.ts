@@ -161,14 +161,34 @@ async function grantsOf(conn: mysql.PoolConnection): Promise<string[]> {
   }
 }
 
-export function cell(value: unknown): unknown {
-  if (value === null || typeof value === "number" || typeof value === "boolean") return value;
+const hex = (value: Buffer) => `0x${value.toString("hex")}`;
+
+/**
+ * A value with everything JSON can't carry turned into text, all the way
+ * down: a Buffer inside a JSON column's array otherwise serialized as
+ * {"type":"Buffer","data":[…]}, and a bigint threw.
+ */
+function plain(value: unknown): unknown {
   if (typeof value === "bigint") return value.toString();
   if (value instanceof Date) return value.toISOString();
-  if (Buffer.isBuffer(value)) return `0x${value.subarray(0, MAX_CELL_CHARS / 2).toString("hex")}${value.length > MAX_CELL_CHARS / 2 ? "…" : ""}`;
+  if (Buffer.isBuffer(value)) return hex(value);
+  if (Array.isArray(value)) return value.map(plain);
+  if (value !== null && typeof value === "object") {
+    if (typeof (value as { toJSON?: unknown }).toJSON === "function") return plain((value as { toJSON: () => unknown }).toJSON());
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, plain(v)]));
+  }
+  return value;
+}
+
+/** A value made safe to hand back as JSON, and small enough to read. */
+export function cell(value: unknown): unknown {
+  if (value === null || typeof value === "number" || typeof value === "boolean") return value;
+  if (Buffer.isBuffer(value)) return value.length > MAX_CELL_CHARS / 2 ? `${hex(value.subarray(0, MAX_CELL_CHARS / 2))}…` : hex(value);
   if (typeof value === "string") return value.length > MAX_CELL_CHARS ? `${value.slice(0, MAX_CELL_CHARS)}…` : value;
-  const text = JSON.stringify(value);
-  return text.length > MAX_CELL_CHARS ? `${text.slice(0, MAX_CELL_CHARS)}…` : value;
+  const safe = plain(value);
+  if (typeof safe === "string") return safe.length > MAX_CELL_CHARS ? `${safe.slice(0, MAX_CELL_CHARS)}…` : safe;
+  const text = JSON.stringify(safe);
+  return text.length > MAX_CELL_CHARS ? `${text.slice(0, MAX_CELL_CHARS)}…` : safe;
 }
 
 /**
