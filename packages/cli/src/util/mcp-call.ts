@@ -43,6 +43,8 @@ export function rpcTimeoutFor(args: Record<string, unknown>, callTimeoutMs: numb
 }
 
 export async function handleToolCall(ctx: ToolCallContext, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
+  // Nothing sent, so nothing ran and there's nothing to record.
+  if (signal?.aborted) return { isError: true, content: [{ type: "text", text: `"${ctx.export}" was cancelled by the client before it was sent` }] };
   const startedAt = Date.now();
   const request: RpcRequest = { id: `mcp-${Date.now()}-${Math.random().toString(36).slice(2)}`, export: ctx.export, input: args };
   const done = ctx.inFlight.start({ export: ctx.export, input: args, startedAt });
@@ -144,12 +146,24 @@ export interface ShutdownOptions {
  * The bridge's teardown, run once however it is triggered (a signal, the
  * transport closing, stdin ending): let pending audit writes land, record
  * what's still in flight, stop a sandbox this session owns, exit.
+ *
+ * `{ urgent: true }` (a signal) skips, or cuts short, the wait for pending
+ * writes. MCP clients close the pipe, then send SIGTERM and SIGKILL within
+ * seconds; a SIGTERM is the last notice before a kill that would leave the
+ * sandbox running, so stopping it comes before finishing a record.
  */
-export function createShutdown(options: ShutdownOptions): () => Promise<void> {
+export function createShutdown(options: ShutdownOptions): (trigger?: { urgent?: boolean }) => Promise<void> {
   let running: Promise<void> | undefined;
-  return () => {
+  let hurry: () => void = () => {};
+  let urgent = false;
+  const hurried = new Promise<void>((resolve) => (hurry = resolve));
+  return (trigger = {}) => {
+    if (trigger.urgent) {
+      urgent = true;
+      hurry();
+    }
     running ??= (async () => {
-      await withTimeout(options.pending().catch(() => {}), options.pendingTimeoutMs);
+      if (!urgent) await withTimeout(Promise.race([options.pending().catch(() => {}), hurried]), options.pendingTimeoutMs);
       await options.interrupt().catch(() => {});
       await options.stop?.().catch(() => {});
       options.exit();

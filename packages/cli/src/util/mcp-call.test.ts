@@ -139,3 +139,41 @@ test("shutdown stops waiting for the evidence at its timeout", async () => {
   })();
   assert.deepEqual(order, ["stopped", "exit"]);
 });
+
+// MCP clients close the pipe, then SIGTERM, then SIGKILL within seconds. A
+// SIGTERM is the last chance to stop the sandbox, so it doesn't wait for the
+// boot evidence record, and it cuts short a wait already under way.
+test("an urgent shutdown stops the sandbox without waiting for pending records", async () => {
+  const order: string[] = [];
+  const options = {
+    pending: () => new Promise<void>(() => {}),
+    pendingTimeoutMs: 60_000,
+    interrupt: async () => void order.push("interrupted"),
+    stop: async () => void order.push("stopped"),
+    exit: () => order.push("exit"),
+  };
+  await createShutdown(options)({ urgent: true });
+  assert.deepEqual(order, ["interrupted", "stopped", "exit"]);
+
+  order.length = 0;
+  const shutdown = createShutdown(options);
+  const closing = shutdown(); // stdin ended: waits for the evidence...
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(order, []);
+  void shutdown({ urgent: true }); // ...until the SIGTERM that follows
+  await closing;
+  assert.deepEqual(order, ["interrupted", "stopped", "exit"]);
+});
+
+test("a call its client already cancelled is not sent, and not recorded", async () => {
+  let sent = false;
+  const { sink, ctx } = context(async (request) => {
+    sent = true;
+    return { id: request.id, result: {} };
+  });
+  const result = await handleToolCall(ctx, {}, AbortSignal.abort());
+  assert.equal(result.isError, true);
+  assert.match(result.content[0]!.text, /cancelled by the client before it was sent/);
+  assert.equal(sent, false);
+  assert.equal(sink.records.length, 0);
+});
