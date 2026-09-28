@@ -33,9 +33,16 @@
 // existing networkPorts allow-list, so an app that never opted into the mesh
 // can't reach the coordinator's registration API at all.
 import { writeFile, mkdir } from "node:fs/promises";
-import { lstatSync, readdirSync, realpathSync } from "node:fs";
+import { lstatSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { loadManifest, parseCapability, capabilityIssue, CapabilityString, type ParsedCapability } from "@berthos/manifest-schema";
+import {
+  loadManifest,
+  parseCapability,
+  capabilityIssue,
+  CapabilityString,
+  ALLOWED_FILESYSTEM_SCOPE_PREFIXES,
+  type ParsedCapability,
+} from "@berthos/manifest-schema";
 
 const MANIFEST_PATH = process.env.BERTH_MANIFEST_PATH ?? join(process.cwd(), "berth.yml");
 const POLICY_PATH = process.env.BERTH_CAPABILITY_POLICY ?? join(process.cwd(), ".berth", "capability-policy.json");
@@ -160,10 +167,26 @@ function baselineReadPaths(appName: string): string[] {
  * runtime once reads are scoped (the boundary fixtures used to declare
  * filesystem:read:/workspace/packages and /workspace/node_modules by hand for
  * exactly this). Reads only: this is library code, not another app's data.
+ *
+ * A symlink under the app's node_modules is the app's own content, so where
+ * it points proves nothing: `node_modules/root -> /` would otherwise have
+ * granted the whole filesystem, and `node_modules/x -> ../../other-app` a
+ * sibling's directory. So a target is accepted only if it is one of the two
+ * things pnpm actually links to, both inside the pnpm workspace that
+ * contains the app (the nearest proper ancestor with a pnpm-workspace.yaml):
+ *
+ *  - that workspace's own store, <workspace>/node_modules/.pnpm, and
+ *  - a library package directly under one of WORKSPACE_LIBRARY_DIRS, never
+ *    an app (a directory with a berth.yml) and never the workspace itself.
+ *
+ * Anything else is dropped with a warning naming the link, and every
+ * accepted path is also held to the same prefix allowlist a declared
+ * filesystem path is.
  */
-export function dependencyReadPaths(appDir: string): string[] {
+export function dependencyReadPaths(appDir: string, allowedPrefixes: readonly string[] = ALLOWED_FILESYSTEM_SCOPE_PREFIXES): string[] {
   const out = new Set<string>();
   const appReal = safeRealpath(appDir) ?? appDir;
+  const workspace = findWorkspaceRoot(appReal);
   const visited = new Set<string>();
   const scan = (packageDir: string) => {
     const modules = join(packageDir, "node_modules");
@@ -176,20 +199,62 @@ export function dependencyReadPaths(appDir: string): string[] {
         const linkPath = join(modules, name);
         if (!isSymlink(linkPath)) continue;
         const target = safeRealpath(linkPath);
-        if (!target || target === appReal || target.startsWith(appReal + "/")) continue;
-        const store = target.indexOf("/node_modules/.pnpm/");
-        if (store !== -1) {
-          out.add(target.slice(0, store + "/node_modules/.pnpm".length));
-        } else {
-          // A workspace package: its own node_modules links into the store too.
-          out.add(target);
-          scan(target);
+        if (!target || isWithin(target, appReal)) continue;
+        const dependency = workspace ? acceptedDependency(target, workspace) : undefined;
+        const refusal = !dependency
+          ? "a dependency must resolve into this app's pnpm workspace store or one of its library packages"
+          : !isUnderPrefix(dependency.path, allowedPrefixes)
+            ? `it is outside ${allowedPrefixes.join(", ")}`
+            : undefined;
+        if (!dependency || refusal) {
+          console.error(`[berth:capability-policy] WARNING: ignoring ${linkPath} -> ${target} (${refusal}), so it grants no read access`);
+          continue;
         }
+        out.add(dependency.path);
+        // A workspace package: its own node_modules links into the store too.
+        if (dependency.kind === "package") scan(target);
       }
     }
   };
   scan(appDir);
   return [...out];
+}
+
+/** Workspace directories whose direct children are library packages an app may depend on (see pnpm-workspace.yaml). */
+const WORKSPACE_LIBRARY_DIRS = ["packages", "packages/adapters", "experimental"];
+
+function acceptedDependency(target: string, workspace: string): { path: string; kind: "store" | "package" } | undefined {
+  const store = join(workspace, "node_modules", ".pnpm");
+  if (isWithin(target, store) && target !== store) return { path: store, kind: "store" };
+  const parent = dirname(target);
+  const isLibrary = WORKSPACE_LIBRARY_DIRS.some((dir) => parent === join(workspace, dir));
+  if (isLibrary && isFile(join(target, "package.json")) && !isFile(join(target, "berth.yml"))) return { path: target, kind: "package" };
+  return undefined;
+}
+
+/** The nearest proper ancestor of `dir` holding a pnpm-workspace.yaml — never `dir` itself, which is the app's own content. */
+function findWorkspaceRoot(dir: string): string | undefined {
+  for (let current = dirname(dir); ; current = dirname(current)) {
+    if (current !== "/" && isFile(join(current, "pnpm-workspace.yaml"))) return current;
+    if (current === "/") return undefined;
+  }
+}
+
+function isWithin(path: string, dir: string): boolean {
+  return path === dir || path.startsWith(dir + "/");
+}
+
+function isUnderPrefix(path: string, prefixes: readonly string[]): boolean {
+  return path !== "/" && prefixes.some((prefix) => prefix !== "/" && isWithin(path, prefix));
+}
+
+// The scan reads the filesystem and warns about every link it refuses, and
+// its answer can't change within one run, so it's done once per directory.
+const dependencyCache = new Map<string, string[]>();
+function cachedDependencyReadPaths(appDir: string): string[] {
+  let paths = dependencyCache.get(appDir);
+  if (!paths) dependencyCache.set(appDir, (paths = dependencyReadPaths(appDir)));
+  return paths;
 }
 
 function safeRealpath(path: string): string | undefined {
@@ -204,6 +269,13 @@ function safeReaddir(path: string): string[] {
     return readdirSync(path);
   } catch {
     return [];
+  }
+}
+function isFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
   }
 }
 function isSymlink(path: string): boolean {
@@ -355,7 +427,7 @@ export function compileCapabilityPolicy(appName: string, rawCapabilities: string
   const readPaths = [
     ...new Set([
       ...baseline,
-      ...dependencyReadPaths(process.cwd()),
+      ...cachedDependencyReadPaths(process.cwd()),
       ...[...writePaths].filter((path) => !covered(path)),
       ...(needsGithubBrokerCa ? [GITHUB_BROKER_CERT_DIR] : []),
       ...declaredReadPaths,
