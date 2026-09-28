@@ -62,6 +62,10 @@ test("a context path has one spelling for tagging, however it was written", asyn
   }
   assert.throws(() => relativeUnder("/context", "/workspace/a.txt"), /outside \/context/);
   assert.throws(() => relativeUnder("/context", "../a.txt"), /outside \/context/);
+  // The root names no file, so tagging it would index the key "".
+  for (const root of ["/context", "/context/", ".", "", "findings/.."]) {
+    assert.throws(() => relativeUnder("/context", root), /is \/context itself/, JSON.stringify(root));
+  }
 });
 
 test("tag_context_file tags the path semantic-fs indexes the file under", async () => {
@@ -73,5 +77,11 @@ test("tag_context_file tags the path semantic-fs indexes the file under", async 
   };
   for (const hook of app._onAgentReadyHooks) await hook(ctx as unknown as Parameters<typeof hook>[0]);
   await app._exports.get("tag_context_file")!.handler({ path: `${context}/findings/churn.txt`, task: "t", relatedApps: [] });
+  assert.deepEqual(tagged, ["findings/churn.txt"]);
+
+  // The context root itself is refused rather than tagged under "".
+  for (const path of [context, `${context}/`]) {
+    await assert.rejects(app._exports.get("tag_context_file")!.handler({ path, task: "t", relatedApps: [] }) as Promise<unknown>, /itself/);
+  }
   assert.deepEqual(tagged, ["findings/churn.txt"]);
 });

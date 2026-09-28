@@ -69,12 +69,15 @@ export async function readFileUnder(root: string, path: string): Promise<string>
  * semantic-fs keys its index by the path relative to /context (what a write
  * through the mount records), so "/context/a.txt", "./a.txt" and "a.txt" must
  * all become "a.txt" before they are tagged, or one file ends up with two
- * index entries. A path outside the root has no such spelling.
+ * index entries. A path outside the root has no such spelling, and neither
+ * has the root itself: it would come out as "", a key naming no file.
  */
 export function relativeUnder(root: string, path: string): string {
   const absolutePath = resolveUnder(root, path);
   if (!isInside(root, absolutePath)) {
     throw new Error(`"${path}" resolves to ${absolutePath}, which is outside ${root}. Relative paths are relative to ${root}.`);
   }
-  return relative(resolve(root), absolutePath);
+  const rel = relative(resolve(root), absolutePath);
+  if (rel === "") throw new Error(`"${path}" is ${root} itself, not a file under it.`);
+  return rel;
 }
