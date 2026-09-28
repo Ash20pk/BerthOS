@@ -60,11 +60,13 @@ export interface ToolCallOutcome {
   /** True when the error is a sandbox refusal (see capability-errors.ts), not an app bug. */
   denied?: boolean;
   /**
-   * Refusals inside a call that otherwise succeeded, as the app reported them
-   * (code-interpreter's `denials`: code that caught a Permission denied).
-   * The call ran, so it stays "allowed"; the refusals go in reason and meta.
+   * Paths the app reported as possibly refused inside a call that otherwise
+   * succeeded (code-interpreter's `denials`: code that caught a Permission
+   * denied). The call ran, so it stays "allowed". Only the count and the
+   * paths are recorded: the output lines they came from are the call's
+   * output, which is written only with payload capture on.
    */
-  innerDenials?: string[];
+  reportedDeniedPaths?: string[];
   /**
    * The app never answered: the RPC timed out, the write to the sandbox
    * failed, the caller gave up, or the session ended first. The request may
@@ -113,8 +115,8 @@ export function createRunAudit(options: RunAuditOptions): RunAudit {
         ? `${unanswered.interrupted ? "the session ended before the app answered" : `no answer from the app: ${auditReason(unanswered.reason)}`} — the call may have run`
         : outcome.error !== undefined
           ? auditReason(outcome.error)
-          : outcome.innerDenials?.length
-            ? `the sandbox refused ${outcome.innerDenials.length} operation(s) inside the call: ${outcome.innerDenials[0]}`
+          : outcome.reportedDeniedPaths?.length
+            ? `the app reported ${outcome.reportedDeniedPaths.length} possible sandbox refusal(s) inside the call`
             : undefined;
       const failed = unanswered !== undefined || (outcome.error !== undefined && !outcome.denied);
       await sink
@@ -132,7 +134,7 @@ export function createRunAudit(options: RunAuditOptions): RunAudit {
           meta: meta({
             ...(failed ? { failed: true } : {}),
             ...(unanswered ? { outcome: "unknown", ...(unanswered.interrupted ? { interrupted: true } : {}) } : {}),
-            ...(outcome.innerDenials?.length ? { denials: outcome.innerDenials } : {}),
+            ...(outcome.reportedDeniedPaths?.length ? { reportedDenials: outcome.reportedDeniedPaths.length, reportedDeniedPaths: outcome.reportedDeniedPaths } : {}),
           }),
         })
         .catch(() => {});

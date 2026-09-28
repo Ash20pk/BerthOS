@@ -19,7 +19,7 @@ import { bootDevContainer } from "../util/dev-boot.js";
 import { resolveApps } from "../util/multi-app.js";
 import { explainAppError, enforcementFromContainerLogs, type EnforcementStatus } from "../util/capability-errors.js";
 import { createRunAudit, newRunId, type RunAudit } from "../util/run-audit.js";
-import { createInFlightCalls, createShutdown, handleToolCall } from "../util/mcp-call.js";
+import { createInFlightCalls, createShutdown, describeReportedDenials, exportReportsDenials, handleToolCall } from "../util/mcp-call.js";
 import { startBackgroundSandbox, type SandboxSteps } from "../util/mcp-sandbox.js";
 
 /**
@@ -245,17 +245,8 @@ export default class Mcp extends Command {
             export: tool.name,
             call: (request, options) => ready.rpc!.call(request, options),
             explain: (error) => explain(error, ready.enforcement),
-            // The code handled the error, so nothing else tells the agent that
-            // it was Berth, not a bug, and that retrying won't help.
-            describeInnerDenials: (denials) =>
-              [
-                `BERTH CAPABILITY DENIAL (inside the call)`,
-                `app: ${manifest.name}`,
-                `refused: ${denials.join(" | ")}`,
-                `denied-by: ${ready.enforcement === "enforced" ? "the kernel (Landlock/seccomp), enforcing the app's declared capabilities" : `the sandbox (enforcement status: ${ready.enforcement})`}`,
-                `declared: ${manifest.capabilities.join(", ") || "(none)"}`,
-                `fix: stay inside what the app declares; retrying the same operation will be refused again`,
-              ].join("\n"),
+            reportsDenials: exportReportsDenials(manifest, tool.name),
+            describeReportedDenials: (denials) => describeReportedDenials(manifest, ready.enforcement, denials),
             runAudit,
             callTimeoutMs: flags["call-timeout"] * 1000,
             inFlight,

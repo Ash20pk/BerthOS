@@ -1,4 +1,6 @@
 import type { RpcRequest, RpcResponse, StdioRpcCallOptions } from "@berthos/docker-orchestrator";
+import type { BerthManifest } from "@berthos/manifest-schema";
+import type { EnforcementStatus } from "./capability-errors.js";
 import type { RunAudit } from "./run-audit.js";
 
 /**
@@ -22,10 +24,14 @@ export interface ToolCallContext {
   /** Turns an app error into what the agent reads (capability-errors.ts's explainAppError). */
   explain: (error: string) => string;
   /**
-   * The note added after a successful result that reports refusals inside
-   * the call (code-interpreter's `denials`). Omitted: no note.
+   * Whether this export may report refusals inside a successful call: true
+   * only when its berth.yml output declares `denials` (code-interpreter's
+   * run_code does). Any other app's `denials` field is ignored, since what
+   * the bridge does with one is tell the agent the sandbox refused something.
    */
-  describeInnerDenials?: (denials: string[]) => string;
+  reportsDenials?: boolean;
+  /** The note added after a successful result that reports possible refusals. Omitted: no note. */
+  describeReportedDenials?: (denials: ReportedDenial[]) => string;
   runAudit?: RunAudit;
   /** The bridge's own wait for a response, before any per-call allowance (rpcTimeoutFor). */
   callTimeoutMs: number;
@@ -81,17 +87,79 @@ export async function handleToolCall(ctx: ToolCallContext, args: Record<string, 
     });
     return { isError: true, content: [{ type: "text", text: explained }] };
   }
-  const innerDenials = reportedDenials(response.result);
-  await ctx.runAudit?.toolCall({ export: ctx.export, input: args, durationMs: Date.now() - startedAt, result: response.result, innerDenials });
+  const denials = ctx.reportsDenials ? reportedDenials(response.result) : [];
+  await ctx.runAudit?.toolCall({
+    export: ctx.export,
+    input: args,
+    durationMs: Date.now() - startedAt,
+    result: response.result,
+    ...(denials.length > 0 ? { reportedDeniedPaths: denials.map((d) => d.path) } : {}),
+  });
   const result = resultFor(ctx, response);
-  if (innerDenials.length > 0 && ctx.describeInnerDenials) result.content.push({ type: "text", text: ctx.describeInnerDenials(innerDenials) });
+  if (denials.length > 0 && ctx.describeReportedDenials) result.content.push({ type: "text", text: ctx.describeReportedDenials(denials) });
   return result;
 }
 
-/** An app's own report of refusals inside a successful call (code-interpreter's `denials`). */
-export function reportedDenials(result: unknown): string[] {
+/** A possible refusal inside a successful call, as the app reported it. */
+export interface ReportedDenial {
+  path: string;
+  line: string;
+}
+
+export const MAX_REPORTED_DENIALS = 10;
+const MAX_REPORTED_CHARS = 200;
+
+function clean(text: string): string {
+  return text.replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, MAX_REPORTED_CHARS);
+}
+
+/**
+ * An app's own report of possible refusals inside a successful call
+ * (code-interpreter's `denials`: [{ path, line }]), taken only in that
+ * shape. Entries that aren't an absolute path with a line are dropped, text
+ * is stripped of control characters and cut to 200 characters, and at most
+ * ten are kept: this is the app's text, and it ends up in front of an agent.
+ */
+export function reportedDenials(result: unknown): ReportedDenial[] {
   const denials = (result as { denials?: unknown } | null | undefined)?.denials;
-  return Array.isArray(denials) ? denials.filter((d): d is string => typeof d === "string") : [];
+  if (!Array.isArray(denials)) return [];
+  const out: ReportedDenial[] = [];
+  for (const entry of denials) {
+    const { path, line } = (entry ?? {}) as { path?: unknown; line?: unknown };
+    if (typeof path !== "string" || typeof line !== "string" || !path.startsWith("/")) continue;
+    out.push({ path: clean(path), line: clean(line) });
+    if (out.length === MAX_REPORTED_DENIALS) break;
+  }
+  return out;
+}
+
+/**
+ * Whether an export may report refusals inside a successful call: its
+ * berth.yml output declares `denials` (code-interpreter's run_code does).
+ * An app that doesn't declare it can still return a `denials` field, and it
+ * is passed through as data but never turned into a note about the sandbox.
+ */
+export function exportReportsDenials(manifest: BerthManifest, exportName: string): boolean {
+  return manifest.exports.find((e) => e.name === exportName)?.output?.denials === "array";
+}
+
+/**
+ * The note after a result that reports possible refusals. The code handled
+ * the error, so nothing else tells the agent that it may have been Berth
+ * rather than a bug. Worded as the app's report, not the bridge's: the
+ * bridge never saw these refusals happen, only the app's reading of its own
+ * output. Deliberately not headed BERTH CAPABILITY DENIAL, which the bridge
+ * uses for a refusal it knows about (capability-errors.ts).
+ */
+export function describeReportedDenials(manifest: BerthManifest, enforcement: EnforcementStatus, denials: ReportedDenial[]): string {
+  return [
+    `POSSIBLE SANDBOX REFUSAL (reported by ${manifest.name}, inside a call that succeeded)`,
+    ...denials.map((d) => `reported: ${d.path} — ${JSON.stringify(d.line)}`),
+    `source: lines of the call's own output that ${manifest.name} picked out as permission errors; the bridge did not observe these refusals`,
+    `enforcement in this container: ${enforcement === "enforced" ? "the kernel (Landlock/seccomp) is enforcing the app's declared capabilities" : enforcement}`,
+    `declared: ${manifest.capabilities.join(", ") || "(none)"}`,
+    `if it was the sandbox: the path is outside what the app declares, and the same operation will be refused again`,
+  ].join("\n");
 }
 
 function resultFor(ctx: ToolCallContext, response: RpcResponse): ToolResult {

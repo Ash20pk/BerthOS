@@ -48,6 +48,7 @@ The rules it follows:
 - **Other failures aren't dressed up as capability failures.** `EROFS` is the read-only workspace mount, and the message points at the app's data directory instead. A path the app already declares that still fails points at file ownership. `ENOENT`, input validation errors and ordinary app errors pass through unchanged.
 - **An ambiguous syscall stays ambiguous.** `open(2)` is used for reads and writes, so the message offers both lines and asks you to declare the one the export needs.
 - **Network denials** name the `network:connect:<port>` line to add, and point at `network:host:<pattern>` and the egress broker for hostname scoping.
+- **Possible refusals inside a call that succeeded** are passed on only for an export whose `berth.yml` output declares `denials` (code-interpreter's `run_code`: code that caught a `Permission denied` and carried on). They come after the result as a `POSSIBLE SANDBOX REFUSAL (reported by <app>)` note, never under the bridge's own `BERTH CAPABILITY DENIAL` heading: the app read them out of its output, and the bridge didn't see them happen. The audit record stays `allowed` and carries only how many were reported and their paths (`meta.reportedDenials`, `meta.reportedDeniedPaths`), not the output lines. Any other app's `denials` field is left as plain data.
 
 ## What's real vs. deliberately deferred
 

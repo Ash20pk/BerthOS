@@ -2,7 +2,19 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createMemoryAuditSink, type Actor } from "@berthos/audit";
 import type { RpcRequest, RpcResponse, StdioRpcCallOptions } from "@berthos/docker-orchestrator";
-import { createInFlightCalls, createShutdown, handleToolCall, rpcTimeoutFor, TIMEOUT_MS_GRACE, type ToolCallContext } from "./mcp-call.js";
+import type { BerthManifest } from "@berthos/manifest-schema";
+import {
+  createInFlightCalls,
+  createShutdown,
+  describeReportedDenials,
+  exportReportsDenials,
+  handleToolCall,
+  MAX_REPORTED_DENIALS,
+  reportedDenials,
+  rpcTimeoutFor,
+  TIMEOUT_MS_GRACE,
+  type ToolCallContext,
+} from "./mcp-call.js";
 import { createRunAudit } from "./run-audit.js";
 
 const actor: Actor = { kind: "agent", id: "test-client", verifiedBy: "self-asserted" };
@@ -176,4 +188,70 @@ test("a call its client already cancelled is not sent, and not recorded", async 
   assert.match(result.content[0]!.text, /cancelled by the client before it was sent/);
   assert.equal(sent, false);
   assert.equal(sink.records.length, 0);
+});
+
+const denialResult = {
+  stdout: "PermissionError: [Errno 13] Permission denied: '/etc/x'",
+  exit_code: 0,
+  denials: [
+    { path: "/etc/x", line: "PermissionError: [Errno 13] Permission denied: '/etc/x'" },
+    { path: "relative", line: "not a path the sandbox refused" },
+    "a bare string",
+    { path: "/etc/y\u001b[2J", line: `${"z".repeat(500)}\u0007` },
+  ],
+};
+
+test("possible refusals are reported only for an export that declares them", async () => {
+  const describe = (denials: { path: string; line: string }[]) => `NOTE ${denials.map((d) => d.path).join(",")}`;
+
+  const declared = context(answer({ result: denialResult }));
+  const result = await handleToolCall({ ...declared.ctx, reportsDenials: true, describeReportedDenials: describe }, {});
+  assert.equal(result.content.length, 2);
+  assert.equal(result.content[1]!.text, "NOTE /etc/x,/etc/y [2J");
+  assert.match(declared.sink.records[0]!.reason!, /reported 2 possible sandbox refusal/);
+
+  // Any other app can put a `denials` array in its result; the bridge doesn't
+  // turn that into a statement about the sandbox.
+  const undeclared = context(answer({ result: denialResult }));
+  const plain = await handleToolCall({ ...undeclared.ctx, reportsDenials: false, describeReportedDenials: describe }, {});
+  assert.equal(plain.content.length, 1);
+  assert.equal(undeclared.sink.records[0]!.reason, undefined);
+});
+
+test("reportedDenials takes only { path, line } with an absolute path, cleaned and capped", () => {
+  const denials = reportedDenials(denialResult);
+  assert.deepEqual(denials.map((d) => d.path), ["/etc/x", "/etc/y [2J"]);
+  assert.ok(denials[1]!.line.length <= 200);
+  assert.ok(!/[\u0000-\u001f]/.test(denials[1]!.line));
+
+  const many = { denials: Array.from({ length: 50 }, (_, i) => ({ path: `/p${i}`, line: "x" })) };
+  assert.equal(reportedDenials(many).length, MAX_REPORTED_DENIALS);
+  assert.deepEqual(reportedDenials({ denials: "nope" }), []);
+  assert.deepEqual(reportedDenials(null), []);
+});
+
+test("the note attributes possible refusals to the app, and only a declared export gets one", () => {
+  const manifest = {
+    name: "code-interpreter",
+    version: "0.1.0",
+    capabilities: ["filesystem:write:/workspace"],
+    exports: [
+      { name: "run_code", output: { stdout: "string", denials: "array" } },
+      { name: "other", output: { denials: "string" } },
+      { name: "plain" },
+    ],
+  } as unknown as BerthManifest;
+  assert.equal(exportReportsDenials(manifest, "run_code"), true);
+  assert.equal(exportReportsDenials(manifest, "other"), false);
+  assert.equal(exportReportsDenials(manifest, "plain"), false);
+  assert.equal(exportReportsDenials(manifest, "missing"), false);
+
+  const note = describeReportedDenials(manifest, "enforced", [{ path: "/etc/x", line: "PermissionError: [Errno 13] Permission denied: '/etc/x'" }]);
+  const [header] = note.split("\n");
+  assert.equal(header, "POSSIBLE SANDBOX REFUSAL (reported by code-interpreter, inside a call that succeeded)");
+  assert.ok(!note.includes("BERTH CAPABILITY DENIAL"), "not the bridge's own denial heading");
+  assert.match(note, /^reported: \/etc\/x — "PermissionError/m);
+  assert.match(note, /the bridge did not observe these refusals/);
+  assert.match(note, /^declared: filesystem:write:\/workspace$/m);
+  assert.match(describeReportedDenials(manifest, "not-enforced", []), /enforcement in this container: not-enforced/);
 });
