@@ -174,6 +174,21 @@ live("query, list_tables and describe_table against a real database", async () =
   assert.deepEqual({ mode: info.mode, route: info.route, user: info.user }, { mode: "read-only", route: "direct", user: "app" });
 });
 
+live("a date comes back as the same date, whatever the app's time zone", async () => {
+  const port = new URL(TEST_URL!).port;
+  const tz = process.env.TZ;
+  // East of UTC, a date read as local midnight turned into the day before.
+  process.env.TZ = "Asia/Tokyo";
+  try {
+    const call = await appWith({ DATABASE_URL: urlAs("app") }, [`network:connect:${port}`]);
+    const res = await call("query", { sql: "SELECT signed_up, CAST('2026-01-04 00:30:00' AS DATETIME) AS at FROM customers WHERE name = ?", params: ["Ada"] });
+    assert.deepEqual(res.rows, [{ signed_up: "2026-01-04", at: "2026-01-04 00:30:00" }]);
+  } finally {
+    if (tz === undefined) delete process.env.TZ;
+    else process.env.TZ = tz;
+  }
+});
+
 live("read-only mode refuses writes, even ones that try to switch the transaction", async () => {
   const port = new URL(TEST_URL!).port;
   const call = await appWith({ DATABASE_URL: urlAs("app") }, [`network:connect:${port}`]);

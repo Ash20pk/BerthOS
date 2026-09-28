@@ -239,6 +239,10 @@ async function open(): Promise<Connection> {
     multipleStatements: false,
     supportBigNumbers: true,
     bigNumberStrings: true,
+    // DATE, DATETIME and TIMESTAMP as the text the server sends. As a Date,
+    // mysql2 read them in the app's local time zone: east of UTC a DATE
+    // became local midnight, which toISOString() shifted to the day before.
+    dateStrings: true,
     ...(route.kind === "proxy"
       ? { stream: () => new ProxyTunnel(route.proxy).connect(target.port, target.host) as unknown as import("node:net").Socket }
       : {}),
