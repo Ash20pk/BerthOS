@@ -36,6 +36,31 @@ interface RunCodeResult {
   stderr: string;
   exit_code: number;
   timed_out: boolean;
+  denials: string[];
+}
+
+const DENIAL = /Permission denied|Operation not permitted|\bEACCES\b|\bEPERM\b|PermissionError/;
+const MAX_DENIALS = 10;
+
+/**
+ * The lines of a run's output that report the sandbox refusing something.
+ * Code that hits a denial usually handles it (a Python `except OSError`
+ * printing the error, a shell `|| echo failed`), so the run itself succeeds
+ * and the refusal is only text in stdout. Pulled out here so a caller, and
+ * berth mcp's audit trail, can see that the kernel said no without parsing
+ * every language's error format.
+ */
+export function findDenials(...outputs: string[]): string[] {
+  const found: string[] = [];
+  for (const output of outputs) {
+    for (const line of output.split("\n")) {
+      const trimmed = line.trim().slice(0, 300);
+      if (!DENIAL.test(trimmed) || found.includes(trimmed)) continue;
+      found.push(trimmed);
+      if (found.length === MAX_DENIALS) return found;
+    }
+  }
+  return found;
 }
 
 function runCode(command: string, args: string[], timeoutMs: number): Promise<RunCodeResult> {
@@ -45,8 +70,9 @@ function runCode(command: string, args: string[], timeoutMs: number): Promise<Ru
       args,
       { timeout: timeoutMs, maxBuffer: MAX_OUTPUT_CHARS * 2, cwd: workspaceRoot() },
       (error, stdout, stderr) => {
+        const denials = findDenials(stderr, stdout);
         if (!error) {
-          resolve({ stdout: truncate(stdout), stderr: truncate(stderr), exit_code: 0, timed_out: false });
+          resolve({ stdout: truncate(stdout), stderr: truncate(stderr), exit_code: 0, timed_out: false, denials });
           return;
         }
         // execFile's timeout option kills the process with `killSignal`
@@ -56,7 +82,7 @@ function runCode(command: string, args: string[], timeoutMs: number): Promise<Ru
         const execError = error as ExecFileException;
         const timedOut = Boolean(execError.killed && execError.signal);
         const exitCode = typeof execError.code === "number" ? execError.code : 1;
-        resolve({ stdout: truncate(stdout), stderr: truncate(stderr), exit_code: exitCode, timed_out: timedOut });
+        resolve({ stdout: truncate(stdout), stderr: truncate(stderr), exit_code: exitCode, timed_out: timedOut, denials });
       },
     );
   });
@@ -75,6 +101,7 @@ export default defineApp((app) => {
       stderr: z.string(),
       exit_code: z.number(),
       timed_out: z.boolean(),
+      denials: z.array(z.string()),
     }),
     handler: async ({ language, code, timeout_ms }) => {
       const { command, args } = RUNNERS[language](code);

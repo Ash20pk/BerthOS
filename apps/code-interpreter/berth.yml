@@ -8,7 +8,10 @@ capabilities:
 exports:
   - name: run_code
     input: { language: string, code: string, timeout_ms: number }
-    output: { stdout: string, stderr: string, exit_code: number, timed_out: boolean }
+    # denials: the output lines where the sandbox refused something (EACCES,
+    # "Permission denied", "Operation not permitted"), even when the code
+    # caught the error and the run succeeded.
+    output: { stdout: string, stderr: string, exit_code: number, timed_out: boolean, denials: array }
 
 on_install: []
 on_agent_ready:

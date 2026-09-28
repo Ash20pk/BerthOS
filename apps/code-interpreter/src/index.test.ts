@@ -95,3 +95,25 @@ test("code runs with BERTH_WORKSPACE_ROOT as its cwd, matching this app's declar
     assert.equal(result.stdout.trim(), expected);
   });
 });
+
+// A refusal the code catches still has to be visible to the caller: the run
+// succeeds, and the only trace of the kernel saying no is a line of output.
+// Printed rather than provoked, because these tests may run as root, where
+// file modes don't refuse anything; the sandbox's Landlock refusals produce
+// exactly these messages (checked end to end in the e2e suite).
+test("a refusal the code caught is reported in denials, and a clean run has none", async () => {
+  await withTempWorkspace(async () => {
+    const caught = (await runCode.handler({
+      language: "python",
+      code: "print('writing...')\nprint(\"PermissionError: [Errno 13] Permission denied: '/etc/berth-x'\")\nprint('done')",
+    })) as { exit_code: number; denials: string[] };
+    assert.equal(caught.exit_code, 0);
+    assert.deepEqual(caught.denials, ["PermissionError: [Errno 13] Permission denied: '/etc/berth-x'"]);
+
+    const shell = (await runCode.handler({ language: "shell", code: "echo 'touch: /etc/y: Permission denied' >&2; echo 'kill: (215) - Operation not permitted' >&2; exit 1" })) as { denials: string[] };
+    assert.deepEqual(shell.denials, ["touch: /etc/y: Permission denied", "kill: (215) - Operation not permitted"]);
+
+    const clean = (await runCode.handler({ language: "python", code: "print('fine')" })) as { denials: string[] };
+    assert.deepEqual(clean.denials, []);
+  });
+});
