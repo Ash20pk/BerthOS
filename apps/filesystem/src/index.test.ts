@@ -37,3 +37,18 @@ test("an absolute path inside the workspace is used as written, not nested", asy
   const { content } = (await app._exports.get("read_file")!.handler({ path: absolute })) as { content: string };
   assert.equal(content, "338350");
 });
+
+test("a path outside the workspace fails saying where it resolved, and how paths are read", async () => {
+  // What an agent means by "/notes.txt" is usually the workspace's notes.txt;
+  // it's taken as written, and the error says so. A directory that doesn't
+  // exist stands in for one the sandbox refuses.
+  const outside = join(await mkdtemp(join(tmpdir(), "filesystem-test-outside-")), "missing", "notes.txt");
+  await assert.rejects(app._exports.get("read_file")!.handler({ path: outside }) as Promise<unknown>, (err: NodeJS.ErrnoException) => {
+    assert.match(err.message, /resolves to .*missing\/notes\.txt, which is outside /);
+    assert.match(err.message, /Relative paths are relative to .*an absolute path is used as written, so "\/notes\.txt" means \/notes\.txt/);
+    assert.equal(err.code, "ENOENT");
+    return true;
+  });
+  // Inside the workspace, the error is left alone.
+  await assert.rejects(app._exports.get("read_file")!.handler({ path: "no-such-file.txt" }) as Promise<unknown>, (err: Error) => !/outside/.test(err.message));
+});

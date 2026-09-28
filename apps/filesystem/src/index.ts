@@ -1,24 +1,13 @@
 import { defineApp, type ContextBusClient, type SemanticFsClient } from "@berthos/sdk";
 import { z } from "zod";
-import { mkdir, readFile, writeFile, readdir } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { mkdir, readdir } from "node:fs/promises";
+import { readFileUnder, writeFileUnder } from "./paths.js";
 
 const WORKSPACE_ROOT = process.env.BERTH_WORKSPACE_ROOT ?? "/workspace";
 const CONTEXT_ROOT = process.env.BERTH_CONTEXT_MOUNT ?? "/context";
 
-// resolve(), not join(): a relative path lands under the root, and an
-// absolute one is taken as written. join() turned "/workspace/calc.txt" into
-// /workspace/workspace/calc.txt, which an agent passing the full path it was
-// told about never meant. Either way the kernel decides whether the result is
-// inside the declared scope.
-function resolveInWorkspace(relativePath: string): string {
-  return resolve(WORKSPACE_ROOT, relativePath);
-}
-
-function resolveInContext(relativePath: string): string {
-  return resolve(CONTEXT_ROOT, relativePath);
-}
-
+// Paths are resolved against the root (see paths.ts): relative ones land under
+// it, absolute ones are used as written.
 export default defineApp((app) => {
   // Captured at onAgentReady and read inside export handlers — export
   // handlers only receive `input`, not the AppContext, so publishing from
@@ -30,13 +19,7 @@ export default defineApp((app) => {
     name: "write_file",
     input: z.object({ path: z.string(), content: z.string() }),
     handler: async ({ path: relativePath, content }) => {
-      const absolutePath = resolveInWorkspace(relativePath);
-      // The file's own directory, not just the root: an agent writing
-      // reports/q4.md into a fresh workspace has no other way to create
-      // reports/. A directory outside the declared scope is refused by the
-      // kernel here, the same as the write would be.
-      await mkdir(dirname(absolutePath), { recursive: true });
-      await writeFile(absolutePath, content, "utf-8");
+      await writeFileUnder(WORKSPACE_ROOT, relativePath, content);
       await contextBus?.publish("fs.file_created", { path: relativePath, createdBy: "filesystem" });
     },
   });
@@ -46,7 +29,7 @@ export default defineApp((app) => {
     input: z.object({ path: z.string() }),
     output: z.object({ content: z.string() }),
     handler: async ({ path: relativePath }) => ({
-      content: await readFile(resolveInWorkspace(relativePath), "utf-8"),
+      content: await readFileUnder(WORKSPACE_ROOT, relativePath),
     }),
   });
 
@@ -63,9 +46,7 @@ export default defineApp((app) => {
     name: "write_context_file",
     input: z.object({ path: z.string(), content: z.string() }),
     handler: async ({ path: relativePath, content }) => {
-      const absolutePath = resolveInContext(relativePath);
-      await mkdir(dirname(absolutePath), { recursive: true });
-      await writeFile(absolutePath, content, "utf-8");
+      await writeFileUnder(CONTEXT_ROOT, relativePath, content);
     },
   });
 
@@ -74,7 +55,7 @@ export default defineApp((app) => {
     input: z.object({ path: z.string() }),
     output: z.object({ content: z.string() }),
     handler: async ({ path: relativePath }) => ({
-      content: await readFile(resolveInContext(relativePath), "utf-8"),
+      content: await readFileUnder(CONTEXT_ROOT, relativePath),
     }),
   });
 
