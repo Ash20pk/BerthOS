@@ -226,6 +226,12 @@ live("read-write mode can change data, one statement at a time", async () => {
   assert.equal((await call("query", { sql: "UPDATE customers SET plan = plan WHERE plan = $1", params: ["pro"] })).row_count, 2);
   await call("query", { sql: "DELETE FROM customers WHERE id = $1", params: [inserted.rows[0].id] });
   await assert.rejects(call("query", { sql: "SELECT 1; SELECT 2", params: [] }), /one statement per query/);
+
+  // The cap limits what comes back, not what the statement does: all 600 rows are written.
+  const many = await call("query", { sql: "INSERT INTO customers (name) SELECT 'Bulk ' || g FROM generate_series(1, 600) AS g RETURNING id", params: [] });
+  assert.deepEqual({ n: many.rows.length, truncated: many.truncated }, { n: 500, truncated: true });
+  assert.equal((await call("query", { sql: "SELECT count(*)::int AS n FROM customers WHERE name LIKE 'Bulk %'", params: [] })).rows[0].n, 600);
+  await call("query", { sql: "DELETE FROM customers WHERE name LIKE 'Bulk %'", params: [] });
 });
 
 live("a huge result is read a batch at a time, never all into memory", async () => {

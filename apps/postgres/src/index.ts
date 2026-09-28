@@ -348,6 +348,11 @@ const COPY_OUT = "COPY … TO STDOUT isn't supported: its output doesn't come ba
  * batch at a time and stops once the collector is full, so memory stays at
  * one batch however large the result. A cursor is a portal in the extended
  * query protocol, which refuses a string holding several statements.
+ *
+ * Stopping early only stops the rows coming back. An INSERT, UPDATE or
+ * DELETE … RETURNING runs to completion on the first fetch, so in read-write
+ * mode one that touches more than the cap changes (and commits) every row,
+ * and returns the first `max` with truncated set.
  */
 async function collect(client: pg.PoolClient, sql: string, params: unknown[], max: number): Promise<Rows> {
   const cursor = client.query(new RowCursor(sql, params, { types }));
