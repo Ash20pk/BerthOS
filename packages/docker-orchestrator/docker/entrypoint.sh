@@ -507,16 +507,24 @@ EOF
   fi
 }
 
-# The runtime an app's code needs, from its own berth.yml (`runtime: python`,
-# default node). BERTH_APP_RUNTIME, when set, overrides it for single-app
-# mode: the Python milestones set it directly.
+# The runtime an app's code needs: node or python. Decided once, at build time,
+# by the manifest loader (image.ts's stageAppRuntimes writes one file per app
+# into the image at /etc/berth/runtime), so this script and the build cannot
+# disagree about what `runtime:` says. $1 is the app's name, or `_primary` in
+# single-app mode, where the name isn't known until the policy is compiled.
+# A missing entry is an image this entrypoint didn't come with; say so, and
+# start it the way every image before `runtime:` existed was started.
 app_runtime() {
-  local manifest="$1"
-  if grep -qE "^runtime:[[:space:]]*[\"']?python[\"']?[[:space:]]*(#.*)?$" "$manifest" 2>/dev/null; then
-    echo python
-  else
+  local entry="/etc/berth/runtime/$1"
+  if [ ! -f "$entry" ]; then
+    echo "[berth:entrypoint] WARNING: no runtime recorded for ${1} in this image (${entry}) — starting it as node" >&2
     echo node
+    return 0
   fi
+  case "$(tr -d '[:space:]' <"$entry")" in
+    python) echo python ;;
+    *) echo node ;;
+  esac
 }
 
 # The copy of berth_sdk every image carries: root-owned, written at build
@@ -567,8 +575,7 @@ if [ -z "${BERTH_APPS:-}" ]; then
     exit 1
   fi
 
-  # The manifest's `runtime:` decides, and BERTH_APP_RUNTIME overrides it.
-  APP_RUNTIME="${BERTH_APP_RUNTIME:-$(app_runtime "$MANIFEST_PATH")}"
+  APP_RUNTIME="$(app_runtime _primary)"
 
   # Reports two independent flags: whether a browser:* capability is declared
   # (needs Xvfb/a display) and whether a browser:navigate:*/network:host:*
@@ -642,7 +649,7 @@ if [ -z "${BERTH_APPS:-}" ]; then
   # Translates berth.yml's capabilities into the JSON policy agent-init reads
   # (see @berthos/sdk's generate-capability-policy.ts for why this lives in
   # Node/TypeScript rather than being parsed from YAML in Rust) — mirrored
-  # exactly in Python for BERTH_APP_RUNTIME=python (same policy JSON shape;
+  # exactly in Python for a `runtime: python` app (same policy JSON shape;
   # agent-init doesn't care which one wrote it).
   if [ "$APP_RUNTIME" = "python" ]; then
     run_python_sdk_tool generate_capability_policy
@@ -885,7 +892,7 @@ run_app() {
   # browser/egress flags (the grep loop above decides those for the whole
   # container), so once on_install moved to build time,
   # the only thing this invocation still did was cost a Node startup per app.
-  if [ "$(app_runtime "$app_dir/berth.yml")" = "python" ]; then
+  if [ "$(app_runtime "$app_name")" = "python" ]; then
     run_python_sdk_tool generate_capability_policy
     secure_capability_policy "$BERTH_CAPABILITY_POLICY"
     export PYTHONPATH="$(python_sdk_path)${PYTHONPATH:+:$PYTHONPATH}"
@@ -941,7 +948,7 @@ precreate_declared_paths() {
     # Node start per app, which buys a deterministic boot.
     ( cd "$dir" \
         && export BERTH_MANIFEST_PATH="$dir/berth.yml" BERTH_CAPABILITY_POLICY="$dir/.berth/capability-policy.json" \
-        && if [ "$(app_runtime "$dir/berth.yml")" = "python" ]; then
+        && if [ "$(app_runtime "$name")" = "python" ]; then
              run_python_sdk_tool generate_capability_policy >/dev/null
            else
              node "node_modules/@berthos/sdk/dist/generate-capability-policy.js" >/dev/null

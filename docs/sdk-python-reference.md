@@ -126,7 +126,6 @@ Exports are served as line-delimited JSON on stdio, and also on a Unix socket wh
 
 | Variable | Default |
 |---|---|
-| `BERTH_APP_RUNTIME` | Overrides the manifest's `runtime` for a single-app sandbox. Leave it unset. |
 | `BERTH_MANIFEST_PATH` | `./berth.yml` |
 | `BERTH_APP_ENTRY` | `./src/app.py` |
 | `BERTH_RPC_SOCKET` | unset (stdio only) |

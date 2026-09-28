@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadManifest } from "@berthos/manifest-schema";
+import { stageAppRuntimes } from "./app-runtime.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -328,6 +329,10 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
       });
       await stageDevOnInstallContext(options, stagingDir);
     }
+
+    // Each app's resolved `runtime:`, for entrypoint.sh — see app-runtime.ts.
+    const primaryName = options.appName ?? (await loadManifest(join(options.appDir, "berth.yml"))).name;
+    await stageAppRuntimes(stagingDir, [{ name: primaryName, appDir: options.appDir }, ...(options.companions ?? [])]);
 
     await cp(DOCKER_ASSETS_DIR, join(stagingDir, "docker"), { recursive: true });
     for (const dir of [CONTEXT_BUS_DAEMON_DIR, AGENT_INIT_DIR, SEMANTIC_FS_DAEMON_DIR, MESH_DAEMON_DIR]) {
