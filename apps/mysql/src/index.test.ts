@@ -239,6 +239,29 @@ live("CALL returns the procedure's rows, not its result sets jumbled together", 
   assert.deepEqual({ columns: two.columns, rows: two.rows }, { columns: ["a"], rows: [{ a: "1" }] }, "the first result set (a literal is a BIGINT, so a string)");
 });
 
+live("a call's session settings and locks don't carry over to the next one", async () => {
+  const port = new URL(TEST_URL!).port;
+  const call = await appWith({ DATABASE_URL: urlAs("app"), MYSQL_MODE: "read-write" }, [`network:connect:${port}`]);
+  const one = async (sql: string, params: unknown[] = []) => Object.values((await call("query", { sql, params })).rows[0])[0];
+  await call("query", { sql: "SET SESSION sql_mode = 'ANSI_QUOTES'", params: [] });
+  assert.ok(!String(await one("SELECT @@SESSION.sql_mode")).includes("ANSI_QUOTES"), "sql_mode is back for the next call");
+  await call("query", { sql: "SET @leftover = 1", params: [] });
+  assert.equal(await one("SELECT @leftover"), null);
+  assert.equal(await one("SELECT ? AS s", ["héllo ✓"]), "héllo ✓", "the character set is set again after the reset");
+  // A transaction left open is rolled back, not committed by a later call.
+  await call("query", { sql: "START TRANSACTION", params: [] });
+  await call("query", { sql: "INSERT INTO customers (name) VALUES ('Uncommitted')", params: [] });
+  await call("query", { sql: "DELETE FROM customers WHERE name = 'Uncommitted'", params: [] });
+
+  // A GET_LOCK() lock outlives ROLLBACK, so read-only mode doesn't stop it.
+  const ro = await appWith({ DATABASE_URL: urlAs("app") }, [`network:connect:${port}`]);
+  await ro("query", { sql: "SELECT GET_LOCK('berth_probe', 0) AS got", params: [] });
+  const [rows] = await admin((db) => db.query("SELECT IS_USED_LOCK('berth_probe') AS holder"));
+  assert.equal((rows as { holder: unknown }[])[0]!.holder, null, "the lock was released before the connection went back to the pool");
+  // The read-only flag is set again after the reset.
+  await assert.rejects(ro("query", { sql: "DROP TABLE customers", params: [] }), /read-only/);
+});
+
 live("concurrent first calls share one pool", async () => {
   const port = new URL(TEST_URL!).port;
   const call = await appWith({ DATABASE_URL: urlAs("app") }, [`network:connect:${port}`]);

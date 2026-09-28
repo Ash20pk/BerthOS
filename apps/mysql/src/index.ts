@@ -311,12 +311,28 @@ async function run(sql: string, params: unknown[], max = MAX_ROWS): Promise<Rows
     if (e.errno === 1064 && /;\s*\S/.test(sql)) throw new Error(`${e.message} (one statement per query: run them one at a time)`);
     throw err;
   } finally {
-    if (reusable) {
-      if (mode === "read-only") await conn.query("ROLLBACK").catch(() => {});
-      conn.release();
-    } else {
-      discard(conn);
-    }
+    if (reusable) await putBack(conn);
+    else discard(conn);
+  }
+}
+
+/**
+ * Returns a connection to the pool as it was when it connected. Without this
+ * a statement's session state stayed on the pooled connection for later
+ * calls: a SET SESSION sql_mode, a user variable, a GET_LOCK() lock, which
+ * no ROLLBACK releases. COM_RESET_CONNECTION rolls back, resets every session
+ * variable to its global value (the character set too, so it's set again),
+ * and releases locks and temporary tables. The per-call flags (read-only,
+ * above) are set again at the start of the next call. A connection that
+ * can't be reset is closed instead.
+ */
+async function putBack(conn: mysql.PoolConnection): Promise<void> {
+  try {
+    await conn.reset();
+    await conn.query("SET NAMES utf8mb4");
+    conn.release();
+  } catch {
+    discard(conn);
   }
 }
 
