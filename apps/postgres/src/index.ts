@@ -101,14 +101,27 @@ export function allowsPrivileged(env: NodeJS.ProcessEnv): boolean {
  * PROGRAM, a shell command on the database host, and pg_reload_conf(),
  * pg_terminate_backend() and the like, none of which a transaction rolls
  * back; pg_execute_server_program and pg_write_server_files give the first
- * of those on their own.
+ * of those on their own. pg_read_server_files changes nothing, but lets
+ * pg_read_file() (once EXECUTE on it is granted, as it usually is alongside)
+ * read any file the server's OS user can: its configuration, its keys, other
+ * databases' files. (COPY … FROM a file and lo_import() read them too, but
+ * they write what they read, which a read-only transaction refuses.)
  */
 const PRIVILEGE_CHECK = `
   SELECT EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolsuper AND pg_has_role(current_user, r.oid, 'MEMBER')) AS superuser,
          COALESCE(pg_has_role(current_user, to_regrole('pg_execute_server_program'), 'MEMBER'), false) AS execute_server_program,
-         COALESCE(pg_has_role(current_user, to_regrole('pg_write_server_files'), 'MEMBER'), false) AS write_server_files`;
+         COALESCE(pg_has_role(current_user, to_regrole('pg_write_server_files'), 'MEMBER'), false) AS write_server_files,
+         COALESCE(pg_has_role(current_user, to_regrole('pg_read_server_files'), 'MEMBER'), false) AS read_server_files`;
 
-export function privilegeProblem(user: string, row: { superuser: boolean; execute_server_program: boolean; write_server_files: boolean }): string | undefined {
+export interface Privileges {
+  superuser: boolean;
+  execute_server_program: boolean;
+  write_server_files: boolean;
+  read_server_files: boolean;
+}
+
+export function privilegeProblem(user: string, row: Privileges): string | undefined {
+  const optIn = "Give DATABASE_URL a role that can only read what the agent should see, or, to accept that, set POSTGRES_ALLOW_PRIVILEGED=true and restart the app.";
   const what = row.superuser
     ? "is a superuser (or can become one with SET ROLE)"
     : row.execute_server_program
@@ -116,8 +129,13 @@ export function privilegeProblem(user: string, row: { superuser: boolean; execut
       : row.write_server_files
         ? "is a member of pg_write_server_files"
         : undefined;
-  if (!what) return undefined;
-  return `DATABASE_URL's role ${user} ${what}, and read-only mode can't hold such a role back: it can still run COPY … TO PROGRAM (a shell command on the database server) or write files there, reload the server's configuration and end other sessions, none of which a read-only transaction stops. Give DATABASE_URL a role that can only read what the agent should see, or, to accept that, set POSTGRES_ALLOW_PRIVILEGED=true and restart the app.`;
+  if (what) {
+    return `DATABASE_URL's role ${user} ${what}, and read-only mode can't hold such a role back: it can still run COPY … TO PROGRAM (a shell command on the database server) or write files there, reload the server's configuration and end other sessions, none of which a read-only transaction stops. ${optIn}`;
+  }
+  if (row.read_server_files) {
+    return `DATABASE_URL's role ${user} is a member of pg_read_server_files, so, with pg_read_file(), it can read any file on the database server that the server itself can: its configuration, its keys, other databases' data. A read-only transaction doesn't stop reading. ${optIn}`;
+  }
+  return undefined;
 }
 
 // date, timestamp and timestamptz, and their arrays. node-postgres turns these

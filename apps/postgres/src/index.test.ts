@@ -47,10 +47,11 @@ test("the mode is read-only unless POSTGRES_MODE says read-write", () => {
 });
 
 test("a privileged role is named, with what it could still do and how to opt in", () => {
-  const none = { superuser: false, execute_server_program: false, write_server_files: false };
+  const none = { superuser: false, execute_server_program: false, write_server_files: false, read_server_files: false };
   assert.equal(privilegeProblem("app", none), undefined);
   assert.match(privilegeProblem("postgres", { ...none, superuser: true })!, /postgres is a superuser.*COPY … TO PROGRAM.*POSTGRES_ALLOW_PRIVILEGED=true/s);
   assert.match(privilegeProblem("ops", { ...none, execute_server_program: true })!, /pg_execute_server_program/);
+  assert.match(privilegeProblem("etl", { ...none, read_server_files: true })!, /etl is a member of pg_read_server_files.*pg_read_file.*POSTGRES_ALLOW_PRIVILEGED=true/s);
   assert.equal(allowsPrivileged({}), false);
   assert.equal(allowsPrivileged({ POSTGRES_ALLOW_PRIVILEGED: "true" }), true);
 });
@@ -281,6 +282,17 @@ live("read-only mode refuses a superuser, which could still run COPY … TO PROG
   });
   const sneaky = await appWith({ DATABASE_URL: urlAs("sneaky") }, [`network:connect:${port}`]);
   await assert.rejects(sneaky("query", { sql: "SELECT 1", params: [] }), /sneaky is a superuser \(or can become one/);
+
+  // So is one that can read the server's files, which a read-only transaction doesn't stop.
+  await admin(async (db) => {
+    await db.query("DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'filer') THEN CREATE ROLE filer LOGIN PASSWORD 'filer'; END IF; END $$");
+    await db.query("GRANT pg_read_server_files TO filer");
+    await db.query("GRANT EXECUTE ON FUNCTION pg_read_file(text) TO filer");
+  });
+  const filer = await appWith({ DATABASE_URL: urlAs("filer") }, [`network:connect:${port}`]);
+  await assert.rejects(filer("query", { sql: "SELECT pg_read_file('/etc/passwd')", params: [] }), /filer is a member of pg_read_server_files.*pg_read_file/s);
+  const filerAllowed = await appWith({ DATABASE_URL: urlAs("filer"), POSTGRES_ALLOW_PRIVILEGED: "true" }, [`network:connect:${port}`]);
+  assert.match((await filerAllowed("query", { sql: "SELECT pg_read_file('/etc/passwd') AS f", params: [] })).rows[0].f, /^root:/, "what the check is there for");
 
   const allowed = await appWith({ DATABASE_URL: PG_TEST_URL, POSTGRES_ALLOW_PRIVILEGED: "true" }, [`network:connect:${port}`]);
   assert.equal((await allowed("query", { sql: "SELECT count(*)::int AS n FROM customers", params: [] })).rows[0].n, 3);
