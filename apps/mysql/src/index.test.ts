@@ -416,3 +416,27 @@ live("a role that can only read is refused writes by the database itself, in eit
   const call = await appWith({ DATABASE_URL: urlAs("reader"), MYSQL_MODE: "read-write" }, [`network:connect:${target.port}`]);
   await assert.rejects(call("query", { sql: "DELETE FROM customers", params: [] }), /DELETE command denied/);
 });
+
+live("a connection lost mid-query fails the call at once, and the next call gets a new one", async () => {
+  const port = new URL(TEST_URL!).port;
+  const call = await appWith({ DATABASE_URL: urlAs("app") }, [`network:connect:${port}`]);
+  const started = Date.now();
+  const [lost] = await Promise.all([
+    call("query", { sql: "SELECT SLEEP(10) AS s /* berth lost */", params: [] }).then(
+      () => undefined,
+      (err: Error) => err,
+    ),
+    (async () => {
+      for (let i = 0; i < 50; i++) {
+        const [rows] = await admin((db) => db.query("SELECT ID AS id FROM information_schema.PROCESSLIST WHERE USER = 'app' AND INFO LIKE '%berth lost%'"));
+        const id = (rows as { id: number }[])[0]?.id;
+        if (id !== undefined) return admin((db) => db.query(`KILL CONNECTION ${Number(id)}`));
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    })(),
+  ]);
+  // It used to go unnoticed until the 30 s timeout, which then called it one.
+  assert.match(String(lost), /Connection lost|closed the connection/);
+  assert.ok(Date.now() - started < 5_000);
+  for (let i = 0; i < 3; i++) assert.equal(Number((await call("query", { sql: "SELECT count(*) AS n FROM customers", params: [] })).rows[0].n), 3);
+});

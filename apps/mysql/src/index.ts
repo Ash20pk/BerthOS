@@ -334,6 +334,8 @@ interface CoreQuery {
 
 interface CoreConnection {
   query(options: { sql: string; values: unknown[] }): CoreQuery;
+  once(event: "error", listener: (err: Error) => void): void;
+  removeListener(event: "error", listener: (err: Error) => void): void;
   pause(): void;
   stream: { destroy(): void };
 }
@@ -367,14 +369,20 @@ function collect(conn: mysql.PoolConnection, sql: string, params: unknown[], max
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      core.removeListener("error", fail);
       resolve({ columns: rowSet?.columns ?? [], rows: out.rows, rowCount: rowSet ? out.rows.length : (affected ?? 0), truncated: out.truncated, abandoned });
     };
     const fail = (err: Error) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      core.removeListener("error", fail);
       reject(err);
     };
+    // A connection lost mid-query (the server closing it, the network going)
+    // is reported to the connection, not to a query read by events: without
+    // this the call waited out the whole timeout, and then called it one.
+    core.once("error", fail);
     core
       .query({ sql, values: params })
       .on("fields", (fields) => {
