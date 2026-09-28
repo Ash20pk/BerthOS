@@ -145,7 +145,9 @@ test("the credential helper answers only a get, for https and its own host", () 
   assert.equal(ask("get", "protocol=https\nhost=evil.example.com\n\n"), "", "another host");
   assert.equal(ask("get", "protocol=https\nhost=github.com.evil.example.com\n\n"), "", "a host that starts the same");
   assert.equal(ask("get", "protocol=http\nhost=github.com\n\n"), "", "plain http");
-  assert.equal(ask("store", "protocol=https\nhost=github.com\n\n"), "");
+  // store and erase exit without reading (git ignores the closed pipe), so nothing is written to them here.
+  assert.equal(ask("store", ""), "");
+  assert.equal(ask("erase", ""), "");
   assert.throws(() => credentialHelper("github.com; rm -rf /"), /isn't a host name/);
 });
 
