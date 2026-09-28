@@ -50,6 +50,12 @@ export interface ToolCallOutcome {
   error?: string;
   /** True when the error is a sandbox refusal (see capability-errors.ts), not an app bug. */
   denied?: boolean;
+  /**
+   * Refusals inside a call that otherwise succeeded, as the app reported them
+   * (code-interpreter's `denials`: code that caught a Permission denied).
+   * The call ran, so it stays "allowed"; the refusals go in reason and meta.
+   */
+  innerDenials?: string[];
 }
 
 export interface RunAudit {
@@ -75,11 +81,18 @@ export function createRunAudit(options: RunAuditOptions): RunAudit {
           action: TOOL_CALL_ACTION,
           target: `${app}.${outcome.export}`,
           decision: outcome.denied ? "denied" : "allowed",
-          ...(outcome.error !== undefined ? { reason: outcome.error } : {}),
+          ...(outcome.error !== undefined
+            ? { reason: outcome.error }
+            : outcome.innerDenials?.length
+              ? { reason: `the sandbox refused ${outcome.innerDenials.length} operation(s) inside the call: ${outcome.innerDenials[0]}` }
+              : {}),
           input: outcome.input,
           ...(outcome.error === undefined ? { output: outcome.result } : {}),
           durationMs: outcome.durationMs,
-          meta: meta(outcome.error !== undefined && !outcome.denied ? { failed: true } : {}),
+          meta: meta({
+            ...(outcome.error !== undefined && !outcome.denied ? { failed: true } : {}),
+            ...(outcome.innerDenials?.length ? { denials: outcome.innerDenials } : {}),
+          }),
         })
         .catch(() => {});
     },

@@ -94,3 +94,18 @@ test("recordedBootEvidence takes the latest boot and ignores malformed ones", as
 
   assert.equal(recordedBootEvidence(sink.records)?.bootId, "boot-2");
 });
+
+test("refusals inside a call that succeeded are recorded, and the call stays allowed", async () => {
+  const { sink, run } = audit();
+  await run.toolCall({
+    export: "run_code",
+    input: {},
+    durationMs: 3,
+    result: { exit_code: 0 },
+    innerDenials: ["PermissionError: [Errno 13] Permission denied: '/etc/x'"],
+  });
+  const [record] = sink.records;
+  assert.equal(record!.decision, "allowed");
+  assert.match(record!.reason!, /refused 1 operation\(s\) inside the call: PermissionError/);
+  assert.deepEqual((record!.meta as { denials?: string[] }).denials, ["PermissionError: [Errno 13] Permission denied: '/etc/x'"]);
+});

@@ -250,8 +250,25 @@ export default class Mcp extends Command {
             });
             return { isError: true, content: [{ type: "text", text: explained }] };
           }
-          await runAudit?.toolCall({ export: tool.name, input: args, durationMs: Date.now() - startedAt, result: response.result });
-          return { content: [{ type: "text", text: JSON.stringify(response.result ?? null) }] };
+          const innerDenials = reportedDenials(response.result);
+          await runAudit?.toolCall({ export: tool.name, input: args, durationMs: Date.now() - startedAt, result: response.result, innerDenials });
+          const content = [{ type: "text" as const, text: JSON.stringify(response.result ?? null) }];
+          if (innerDenials.length > 0) {
+            // The code handled the error, so nothing else tells the agent that
+            // it was Berth, not a bug, and that retrying won't help.
+            content.push({
+              type: "text",
+              text: [
+                `BERTH CAPABILITY DENIAL (inside the call)`,
+                `app: ${manifest.name}`,
+                `refused: ${innerDenials.join(" | ")}`,
+                `denied-by: ${sandbox.enforcement === "enforced" ? "the kernel (Landlock/seccomp), enforcing the app's declared capabilities" : `the sandbox (enforcement status: ${sandbox.enforcement})`}`,
+                `declared: ${manifest.capabilities.join(", ") || "(none)"}`,
+                `fix: stay inside what the app declares; retrying the same operation will be refused again`,
+              ].join("\n"),
+            });
+          }
+          return { content };
         },
       );
     }
@@ -374,6 +391,12 @@ export default class Mcp extends Command {
 
 function withTimeout(promise: Promise<void>, ms: number): Promise<void> {
   return Promise.race([promise, new Promise<void>((resolve) => setTimeout(resolve, ms).unref())]);
+}
+
+/** An app's own report of refusals inside a successful call (code-interpreter's `denials`). */
+function reportedDenials(result: unknown): string[] {
+  const denials = (result as { denials?: unknown } | null | undefined)?.denials;
+  return Array.isArray(denials) ? denials.filter((d): d is string => typeof d === "string") : [];
 }
 
 function errorMessage(err: unknown): string {
