@@ -47,6 +47,11 @@ const server = http.createServer((req, res) => {
       res.writeHead(302, { location: "https://example.org/page" }).end();
     } else if (req.url === "/to-page") {
       res.writeHead(301, { location: "/page" }).end();
+    } else if (req.url === "/heavy-head") {
+      // Like most real pages: more script in <head> than the text cap.
+      res.writeHead(200, { "content-type": "text/html" }).end(
+        `<html><head><title>Heavy</title><script>${"var x = 1;".repeat(20_000)}</script></head><body><p>The article.</p>${"<p>more</p>".repeat(20_000)}</body></html>`,
+      );
     } else if (req.url === "/big") {
       res.writeHead(200, { "content-type": "text/plain" }).end("x".repeat(150_000));
     } else if (req.url === "/image") {
@@ -89,6 +94,14 @@ serverTest("read_page returns readable text, the title and absolute links, and d
     { text: "Next page", href: `${base}/next` },
     { text: "Out", href: "https://example.com/x" },
   ]);
+});
+
+serverTest("read_page reads a page whose <head> alone is longer than the text cap", async () => {
+  const page = await call("read_page", { url: `${base}/heavy-head` });
+  assert.equal(page.title, "Heavy");
+  assert.ok(page.text.startsWith("The article.\nmore"), page.text.slice(0, 80));
+  assert.equal(page.text.length, 100_000);
+  assert.equal(page.truncated, true);
 });
 
 serverTest("a host berth.yml doesn't name is refused before anything is sent, naming the line to add", async () => {

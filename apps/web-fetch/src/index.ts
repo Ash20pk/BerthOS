@@ -110,8 +110,13 @@ function isText(contentType: string): boolean {
  * One request, following redirects by hand so every hop's host is checked
  * against berth.yml first: a redirect to an undeclared host is refused with
  * the same explanation as a direct request to it.
+ *
+ * `maxChars` caps the text body returned. read_page passes Infinity and caps
+ * the page's text instead: most pages carry more than MAX_CHARS of script in
+ * their <head> alone, and cutting the markup there left the parser inside a
+ * <script> with no text at all.
  */
-async function send(method: string, rawUrl: string, body: string | undefined, contentType: string | undefined): Promise<Fetched> {
+async function send(method: string, rawUrl: string, body: string | undefined, contentType: string | undefined, maxChars = MAX_CHARS): Promise<Fetched> {
   const patterns = await allowedPatterns();
   let url = parseUrl(rawUrl);
   let currentMethod = method.toUpperCase();
@@ -158,8 +163,8 @@ async function send(method: string, rawUrl: string, body: string | undefined, co
       return { url: url.toString(), status: res.status, content_type, body: `[${content_type} body, ${bytes.length} bytes${byteCapped ? "+" : ""}, not shown]`, truncated: byteCapped };
     }
     const text = bytes.toString("utf-8");
-    const truncated = byteCapped || text.length > MAX_CHARS;
-    return { url: url.toString(), status: res.status, content_type, body: truncated ? text.slice(0, MAX_CHARS) : text, truncated };
+    const truncated = byteCapped || text.length > maxChars;
+    return { url: url.toString(), status: res.status, content_type, body: text.length > maxChars ? text.slice(0, maxChars) : text, truncated };
   }
 }
 
@@ -201,9 +206,9 @@ export default defineApp((app) => {
       truncated: z.boolean(),
     }),
     handler: async ({ url }) => {
-      const res = await send("GET", url, undefined, undefined);
+      const res = await send("GET", url, undefined, undefined, Infinity);
       if (!/html/i.test(res.content_type)) {
-        return { url: res.url, status: res.status, title: "", text: res.body, links: [], truncated: res.truncated };
+        return { url: res.url, status: res.status, title: "", text: res.body.slice(0, MAX_CHARS), links: [], truncated: res.truncated || res.body.length > MAX_CHARS };
       }
       const page = pageFromHtml(res.body, res.url);
       const truncated = res.truncated || page.text.length > MAX_CHARS;
