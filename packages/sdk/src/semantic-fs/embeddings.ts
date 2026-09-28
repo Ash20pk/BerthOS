@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { register } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -16,7 +17,19 @@ export const EMBEDDING_MODEL = "Xenova/all-MiniLM-L6-v2";
 // Docker build context even exists; containers have no guaranteed runtime
 // internet). Resolved from this file's own location, not process.cwd() —
 // the caller's cwd is the *resident app's* directory, not this package's.
-const MODEL_CACHE_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "models");
+// "Its own location" differs by build: dist/semantic-fs/embeddings.js here,
+// but the package root itself in the external build, where esbuild bundles
+// this module into index.js and runtime.js. So the directory is found by
+// walking up to the nearest package.json, the SDK's own, rather than by a
+// fixed number of "..".
+const MODEL_CACHE_DIR = join(packageRoot(dirname(fileURLToPath(import.meta.url))), "models");
+
+function packageRoot(from: string): string {
+  for (let dir = from; ; dir = dirname(dir)) {
+    if (existsSync(join(dir, "package.json"))) return dir;
+    if (dirname(dir) === dir) return from;
+  }
+}
 
 // Lazily imported: pulling in @xenova/transformers (and its WASM ONNX
 // runtime) at module load time would pay that cost even for apps that never
