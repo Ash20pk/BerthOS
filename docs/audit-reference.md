@@ -104,7 +104,9 @@ When on, values pass through `redact()`. Keys that look secret (`password`, `tok
 
 ## How the chain works
 
-Each record's `hash` is sha256 over `prevHash` plus the record's canonical JSON. Editing, deleting or reordering a record breaks every hash after it, and `berth audit verify` reports where. The chain continues across restarts and across rotation. Several processes can write the same file at once (two `berth mcp` sessions share the default path): each write takes a lock on `<file>.lock` and reads the chain's head from the file before appending, so they extend one chain rather than forking it. A lock left by a writer that died is broken once its pid is gone, or after 10 s.
+Each record's `hash` is sha256 over `prevHash` plus the record's canonical JSON. Editing, deleting or reordering a record breaks every hash after it, and `berth audit verify` reports where. The chain continues across restarts and across rotation. Several processes can write the same file at once (two `berth mcp` sessions share the default path): each write takes a lock on `<file>.lock` and reads the chain's head from the file before appending, so they extend one chain rather than forking it. A lock left by a writer that died is broken once its pid is gone. A live writer's lock is never broken, however slow the writer. A lock from another host (a shared home directory), or one with no readable owner, is broken after 10 s.
+
+Only writers that take the lock keep to one chain. berth 0.2.4 or earlier writing the same file at the same time takes no lock and appends from its own in-memory head, so the chain forks from its first record on. Run one version against a given audit file, or give the older one its own path.
 
 [`berth attest`](./attestation-reference.md) builds on this chain to produce a checkable record of one run.
 
