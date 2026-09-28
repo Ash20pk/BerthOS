@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile, readdir, truncate } from "node:fs/promises"
 import { createConnection } from "node:net";
 import { createSocket } from "node:dgram";
 import { execFile } from "node:child_process";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 const WORKSPACE_ROOT = process.env.BERTH_WORKSPACE_ROOT ?? "/workspace";
 const CONTEXT_ROOT = process.env.BERTH_CONTEXT_MOUNT ?? "/context";
@@ -29,7 +29,11 @@ export default defineApp((app) => {
     input: z.object({ path: z.string(), content: z.string() }),
     handler: async ({ path: relativePath, content }) => {
       const absolutePath = resolveInWorkspace(relativePath);
-      await mkdir(WORKSPACE_ROOT, { recursive: true });
+      // The file's own directory, not just the root: an agent writing
+      // reports/q4.md into a fresh workspace has no other way to create
+      // reports/. A directory outside the declared scope is refused by the
+      // kernel here, the same as the write would be.
+      await mkdir(dirname(absolutePath), { recursive: true });
       await writeFile(absolutePath, content, "utf-8");
       await contextBus?.publish("fs.file_created", { path: relativePath, createdBy: "filesystem" });
     },
@@ -57,8 +61,9 @@ export default defineApp((app) => {
     name: "write_context_file",
     input: z.object({ path: z.string(), content: z.string() }),
     handler: async ({ path: relativePath, content }) => {
-      await mkdir(CONTEXT_ROOT, { recursive: true });
-      await writeFile(resolveInContext(relativePath), content, "utf-8");
+      const absolutePath = resolveInContext(relativePath);
+      await mkdir(dirname(absolutePath), { recursive: true });
+      await writeFile(absolutePath, content, "utf-8");
     },
   });
 
