@@ -187,6 +187,9 @@ export function createFileAuditSink(options: FileAuditSinkOptions): AuditSink {
         const hash = hashRecord(head.hash, payload);
         const record: AuditRecord = { ...payload, prevHash: head.hash, hash };
         rotateIfNeeded();
+        // A last check that nobody broke the lock while we held it: appending
+        // without it would fork the chain, and a lost record is reported below.
+        lock.assertHeld();
         appendFileSync(path, `${JSON.stringify(record)}\n`, { mode: 0o600 });
         // appendFileSync's `mode` only applies when it creates the file, and
         // an operator who pre-created the path (or an older build that wrote
