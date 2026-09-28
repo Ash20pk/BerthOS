@@ -1,4 +1,5 @@
 import { dirname, join } from "node:path";
+import { register } from "node:module";
 import { fileURLToPath } from "node:url";
 
 // Compute-on-tag, not compute-on-write: write_context_file (apps/filesystem)
@@ -23,7 +24,20 @@ const MODEL_CACHE_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", ".."
 type Pipeline = (text: string, options: { pooling: "mean"; normalize: boolean }) => Promise<{ data: Float32Array }>;
 let pipelinePromise: Promise<Pipeline> | undefined;
 
+/**
+ * Points `sharp` at the SDK's own stub before @xenova/transformers loads (see
+ * sharp-stub.ts). Once per process; module.register() applies to every later
+ * import on this thread.
+ */
+let sharpStubRegistered = false;
+export function registerSharpStub(): void {
+  if (sharpStubRegistered) return;
+  register(new URL("./sharp-hook.js", import.meta.url));
+  sharpStubRegistered = true;
+}
+
 async function loadPipeline(): Promise<Pipeline> {
+  registerSharpStub();
   const { pipeline, env } = await import("@xenova/transformers");
   env.allowRemoteModels = false; // fail closed if the cache is missing, rather than reaching out to the Hub
   // Two separate config properties, confirmed the hard way: `cacheDir` only
