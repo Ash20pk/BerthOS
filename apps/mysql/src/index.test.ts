@@ -1,4 +1,4 @@
-import { test, after, before } from "node:test";
+import { test, after, before, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import net from "node:net";
@@ -111,6 +111,7 @@ test("the tunnel has every socket method a driver calls", () => {
 
 // --- against a real database, when MYSQL_TEST_URL is set ----------------------
 // e.g. docker run -d -e MYSQL_ROOT_PASSWORD=test -e MYSQL_DATABASE=shop -p 127.0.0.1:53306:3306 mysql:8.4
+// (or mariadb:10.11 / mariadb:11.4, with MARIADB_ROOT_PASSWORD and MARIADB_DATABASE)
 // MYSQL_TEST_URL=mysql://root:test@127.0.0.1:53306/shop, an administrator:
 // the suite creates what it needs itself (a customers table holding three
 // rows, a user app/app with every privilege on that database and none
@@ -118,7 +119,7 @@ test("the tunnel has every socket method a driver calls", () => {
 // connects as those users, not as the administrator.
 
 const TEST_URL = process.env.MYSQL_TEST_URL;
-const live = (name: string, fn: () => Promise<void>) => test(name, { skip: !TEST_URL && "set MYSQL_TEST_URL to run against a real database" }, fn);
+const live = (name: string, fn: (t: TestContext) => Promise<void>) => test(name, { skip: !TEST_URL && "set MYSQL_TEST_URL to run against a real database" }, fn);
 
 /** MYSQL_TEST_URL, as another user. */
 function urlAs(user: string): string {
@@ -135,6 +136,12 @@ async function admin<T>(fn: (db: mysql.Connection) => Promise<T>): Promise<T> {
   } finally {
     await db.end();
   }
+}
+
+/** The live suite runs against MySQL and MariaDB, which differ in places. */
+async function isMariaDB(): Promise<boolean> {
+  const [rows] = await admin((db) => db.query("SELECT VERSION() AS v"));
+  return /MariaDB/.test((rows as { v: string }[])[0]!.v);
 }
 
 before(async () => {
@@ -238,8 +245,11 @@ live("multipleStatements=true in DATABASE_URL doesn't turn multi-statement strin
   assert.equal(Number((await call("query", { sql: "SELECT count(*) AS n FROM customers", params: [] })).rows[0].n), 3);
 });
 
-live("ssl in DATABASE_URL encrypts the connection", async () => {
+live("ssl in DATABASE_URL encrypts the connection", async (t) => {
   const port = new URL(TEST_URL!).port;
+  // MariaDB before 11.4 comes with TLS off. (MySQL 8.4 has no have_ssl: TLS is always on.)
+  const [have] = await admin((db) => db.query("SHOW VARIABLES LIKE 'have_ssl'"));
+  if ((have as { Value: string }[]).some((r) => r.Value !== "YES")) return t.skip("the test server has TLS turned off");
   // The test server's certificate is self-signed, so this one isn't verified.
   const call = await appWith({ DATABASE_URL: `${urlAs("app")}?ssl=${encodeURIComponent('{"rejectUnauthorized":false}')}` }, [`network:connect:${port}`]);
   const res = await call("query", { sql: "SHOW SESSION STATUS LIKE 'Ssl_cipher'", params: [] });
@@ -288,7 +298,8 @@ live("CALL returns the procedure's rows, not its result sets jumbled together", 
   const res = await call("query", { sql: "CALL customer_names(?)", params: ["pro"] });
   assert.deepEqual({ columns: res.columns, rows: res.rows, row_count: res.row_count }, { columns: ["name"], rows: [{ name: "Ada" }, { name: "Linus" }], row_count: 2 });
   const two = await call("query", { sql: "CALL two_sets()", params: [] });
-  assert.deepEqual({ columns: two.columns, rows: two.rows }, { columns: ["a"], rows: [{ a: "1" }] }, "the first result set (a literal is a BIGINT, so a string)");
+  // The first result set. A literal is a BIGINT in MySQL, so a string, and an INT in MariaDB.
+  assert.deepEqual({ columns: two.columns, rows: two.rows.map((r: any) => ({ a: String(r.a) })) }, { columns: ["a"], rows: [{ a: "1" }] });
 });
 
 live("a call's session settings and locks don't carry over to the next one", async () => {
@@ -317,25 +328,29 @@ live("a call's session settings and locks don't carry over to the next one", asy
 live("read-only mode refuses an administrator, which could still write files or change the server, unless told to allow it", async () => {
   const port = new URL(TEST_URL!).port;
   const call = await appWith({ DATABASE_URL: TEST_URL }, [`network:connect:${port}`]);
-  await assert.rejects(call("query", { sql: "SET GLOBAL max_connections = 152", params: [] }), /root has global privileges.*SUPER.*MYSQL_ALLOW_PRIVILEGED=true/s);
+  // SUPER among them in MySQL; ALL PRIVILEGES in MariaDB.
+  await assert.rejects(call("query", { sql: "SET GLOBAL max_connections = 152", params: [] }), /root has global privileges \((ALL PRIVILEGES|.*SUPER).*MYSQL_ALLOW_PRIVILEGED=true/s);
   await assert.rejects(call("connection_info"), /global privileges/, "every export is refused, not only query");
 
   // A user with just FILE, and one whose only risky privilege comes from a role.
+  // MariaDB has no SYSTEM_VARIABLES_ADMIN, and sets a default role its own way.
+  const maria = await isMariaDB();
+  const tunerPrivilege = maria ? "CONNECTION ADMIN" : "SYSTEM_VARIABLES_ADMIN";
   await admin(async (db) => {
     await db.query("CREATE USER IF NOT EXISTS 'filer'@'%' IDENTIFIED BY 'filer'");
     await db.query("GRANT FILE ON *.* TO 'filer'@'%'");
     await db.query("GRANT SELECT ON customers TO 'filer'@'%'");
     await db.query("CREATE ROLE IF NOT EXISTS 'tuner'");
-    await db.query("GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'tuner'");
+    await db.query(`GRANT ${tunerPrivilege} ON *.* TO 'tuner'`);
     await db.query("CREATE USER IF NOT EXISTS 'sneaky'@'%' IDENTIFIED BY 'sneaky'");
     await db.query("GRANT SELECT ON customers TO 'sneaky'@'%'");
     await db.query("GRANT 'tuner' TO 'sneaky'@'%'");
-    await db.query("SET DEFAULT ROLE ALL TO 'sneaky'@'%'");
+    await db.query(maria ? "SET DEFAULT ROLE tuner FOR 'sneaky'@'%'" : "SET DEFAULT ROLE ALL TO 'sneaky'@'%'");
   });
   const filer = await appWith({ DATABASE_URL: urlAs("filer") }, [`network:connect:${port}`]);
   await assert.rejects(filer("query", { sql: "SELECT 1", params: [] }), /filer has global privileges \(FILE\)/);
   const sneaky = await appWith({ DATABASE_URL: urlAs("sneaky") }, [`network:connect:${port}`]);
-  await assert.rejects(sneaky("query", { sql: "SELECT 1", params: [] }), /sneaky has global privileges \(SYSTEM_VARIABLES_ADMIN\)/);
+  await assert.rejects(sneaky("query", { sql: "SELECT 1", params: [] }), new RegExp(`sneaky has global privileges \\(${tunerPrivilege}\\)`));
 
   const allowed = await appWith({ DATABASE_URL: TEST_URL, MYSQL_ALLOW_PRIVILEGED: "true" }, [`network:connect:${port}`]);
   assert.equal(Number((await allowed("query", { sql: "SELECT count(*) AS n FROM customers", params: [] })).rows[0].n), 3);
