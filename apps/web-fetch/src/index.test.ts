@@ -145,6 +145,20 @@ serverTest("WEB_FETCH_HEADERS adds headers for its host only", async () => {
   assert.equal(hits[0]!.headers.authorization, undefined);
 });
 
+test("WEB_FETCH_HEADERS are only sent over https, so a redirect down to http drops them", async () => {
+  const { secretHeadersFor } = await import("./index.js");
+  process.env.WEB_FETCH_HEADERS = JSON.stringify({ "api.example.com": { authorization: "Bearer from-secret" }, "127.0.0.1": { authorization: "Bearer local" } });
+  try {
+    assert.deepEqual(secretHeadersFor(new URL("https://api.example.com/v1")), { authorization: "Bearer from-secret" });
+    // What an https URL redirected to http on the same host asks for next.
+    assert.deepEqual(secretHeadersFor(new URL("http://api.example.com/v1")), {});
+    // Loopback never leaves the machine.
+    assert.deepEqual(secretHeadersFor(new URL("http://127.0.0.1:8080/")), { authorization: "Bearer local" });
+  } finally {
+    delete process.env.WEB_FETCH_HEADERS;
+  }
+});
+
 serverTest("non-http URLs and unsupported methods are refused", async () => {
   await assert.rejects(call("get", { url: "file:///etc/passwd" }), /only http and https/);
   await assert.rejects(call("get", { url: "not a url" }), /isn't an absolute URL/);

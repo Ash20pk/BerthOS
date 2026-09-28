@@ -71,13 +71,24 @@ function refusal(url: URL, patterns: HostPattern[]): Error {
   );
 }
 
-/** Headers from the optional WEB_FETCH_HEADERS secret, for this host only. */
-function secretHeadersFor(host: string): Record<string, string> {
+function isLoopback(host: string): boolean {
+  return host === "localhost" || host === "[::1]" || /^127\.\d+\.\d+\.\d+$/.test(host);
+}
+
+/**
+ * Headers from the optional WEB_FETCH_HEADERS secret, for this host only, and
+ * only over https: a plain-http request, including one an https URL was
+ * redirected to on the same host, would carry them in cleartext. Loopback is
+ * the exception, since a request to it never leaves the machine (and the
+ * egress proxy refuses loopback inside a sandbox anyway).
+ */
+export function secretHeadersFor(url: URL): Record<string, string> {
   const raw = process.env.WEB_FETCH_HEADERS;
   if (!raw) return {};
+  if (url.protocol !== "https:" && !isLoopback(url.hostname)) return {};
   try {
     const all = JSON.parse(raw) as Record<string, Record<string, string>>;
-    return all[host] ?? {};
+    return all[url.hostname] ?? {};
   } catch {
     throw new Error("WEB_FETCH_HEADERS isn't valid JSON: it should map a host to headers, like {\"api.example.com\": {\"Authorization\": \"Bearer ...\"}}");
   }
@@ -129,7 +140,7 @@ async function send(method: string, rawUrl: string, body: string | undefined, co
         method: currentMethod,
         headers: {
           ...(currentBody !== undefined && contentType ? { "content-type": contentType } : {}),
-          ...secretHeadersFor(url.hostname),
+          ...secretHeadersFor(url),
         },
         ...(currentBody !== undefined && currentMethod !== "GET" && currentMethod !== "HEAD" ? { body: currentBody } : {}),
         redirect: "manual",
