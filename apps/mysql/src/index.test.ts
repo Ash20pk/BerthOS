@@ -226,7 +226,7 @@ live("read-only mode refuses DDL too, and can't be switched off by a statement",
   const call = await appWith({ DATABASE_URL: urlAs("app") }, [`network:connect:${port}`]);
   await assert.rejects(call("query", { sql: "CREATE TABLE berth_ddl_probe (x int)", params: [] }), /read-only/);
   await assert.rejects(call("query", { sql: "DROP TABLE customers", params: [] }), /read-only/);
-  await call("query", { sql: "SET SESSION transaction_read_only = OFF", params: [] });
+  await call("query", { sql: "SET SESSION TRANSACTION READ WRITE", params: [] });
   await assert.rejects(call("query", { sql: "DROP TABLE customers", params: [] }), /read-only/);
   assert.equal(Number((await call("query", { sql: "SELECT count(*) AS n FROM customers", params: [] })).rows[0].n), 3);
 });

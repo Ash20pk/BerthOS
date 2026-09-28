@@ -385,9 +385,11 @@ async function run(sql: string, params: unknown[], max = MAX_ROWS): Promise<Rows
     // CREATE and DROP TABLE ran in a read-only transaction until the session
     // flag was set too. The flag is set again on each call because an agent
     // could turn it off with one statement, which would otherwise stay in
-    // effect on this pooled connection.
+    // effect on this pooled connection. SET SESSION TRANSACTION sets it by
+    // statement, not by variable name, which differs: transaction_read_only
+    // in MySQL and MariaDB 11.1 on, tx_read_only in MariaDB before 11.1.
     if (mode === "read-only") {
-      await conn.query("SET SESSION transaction_read_only = ON");
+      await conn.query("SET SESSION TRANSACTION READ ONLY");
       await conn.query("START TRANSACTION READ ONLY");
     }
     const result = await collect(conn, sql, params, max);
