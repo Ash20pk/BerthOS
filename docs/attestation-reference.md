@@ -5,10 +5,21 @@
 ## Make one
 
 ```bash
-berth attest my-run-id --out my-run.attestation.json
+berth attest mcp-filesystem-20260928T101500Z-3fa2c1 --out session.attestation.json
 ```
 
-The run ID is the `meta.runId` on the run's [audit records](./audit-reference.md), which the agent tracer writes on every step. The run has to happen in a sandbox started with `berth os up` (or you name the container with `--container`), with an audit sink turned on.
+The run ID is the `meta.runId` on the run's [audit records](./audit-reference.md). Two things write one:
+
+- **`berth mcp`**, for every tool call in a session, on by default. The run id is printed on stderr when the session starts, or you set it with `--run-id`. The bridge also records the sandbox's boot evidence while the sandbox is running, so you can attest the session after it has ended and the sandbox is gone. This is how you attest a run by Claude Code, Cursor, or a LangChain loop using an MCP adapter.
+- **The agent framework's tracer** (`@berthos/agents`, experimental), on every step, when you give it an audit sink.
+
+Where the boot evidence comes from:
+
+| You pass | Evidence |
+|---|---|
+| `--os` or `--container` | Read now from that running sandbox. |
+| Neither, and the run recorded its boot (`berth mcp` does) | The evidence recorded with the run, from the boot the run actually happened in. |
+| Neither, and it didn't | Read now from the one `berth os up` instance. |
 
 ```
 berth attest <runId> [--os <name>] [--container <name>] [--image <tag>]
@@ -17,7 +28,7 @@ berth attest <runId> [--os <name>] [--container <name>] [--image <tag>]
 
 | Flag | Meaning |
 |---|---|
-| `--os <name>` | Which `berth os up` instance the run happened in. Defaults to the only recorded one. |
+| `--os <name>` | Which `berth os up` instance the run happened in, read live. Not needed for a `berth mcp` session. Otherwise defaults to the only recorded one. |
 | `--container <name>` | Read boot evidence from this container instead of looking it up with `--os`. Needs `--image`. |
 | `--image <tag>` | Image tag for the enforcement probe. Defaults to the instance's recorded image. |
 | `--file <path>` | Audit file. Default `~/.berth/audit/audit.jsonl`. |
@@ -80,5 +91,5 @@ The record format, digest, status rule, verifier steps and problem codes are a s
 - **Tamper-evident, not tamper-proof.** Every input was read by software on the host being attested. Someone with root there can rewrite the audit chain, re-emit the record, and both will verify. The record only becomes evidence against that person once its `recordSha256` or `auditChain.head` is stored somewhere they can't change. The `trustModel` field in every record says this.
 - **Not signed.** No keys are involved. `recordSha256` detects edits; it doesn't identify who made the record.
 - **Not what the run did.** It shows that a chained trail of the run exists and where the chain stood. Read the [audit trail](./audit-reference.md) for what happened.
-- **Enforcement at measurement time only.** The ruleset reports are from boot, and the probe checks the host when you run `berth attest`.
+- **Enforcement at measurement time only.** The ruleset reports are from boot. The probe checks the host when you run `berth attest`, or, for a `berth mcp` session, when the session started.
 - **Doesn't show pruning.** If rotation has deleted the oldest audit segments, `berth attest` warns on stderr, but the record looks the same as one over a complete chain.

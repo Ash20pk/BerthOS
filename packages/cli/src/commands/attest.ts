@@ -10,7 +10,8 @@ import {
   verifyAuditSegments,
   type AuditRecord,
 } from "@berthos/audit";
-import { gatherBootEvidence, listOsNames, readOsState } from "@berthos/docker-orchestrator";
+import { gatherBootEvidence, listOsNames, readOsState, type BootEvidence } from "@berthos/docker-orchestrator";
+import { recordedBootEvidence } from "../util/run-audit.js";
 
 /** Rotated segments oldest-first — same walk as `berth audit verify`. */
 function segmentsFor(path: string, maxFiles = 50): string[] {
@@ -30,14 +31,21 @@ export default class Attest extends Command {
   static override examples = [
     "<%= config.bin %> attest run-2026-08-23-001",
     "<%= config.bin %> attest run-1 --os demo --out run-1.attestation.json",
+    "<%= config.bin %> attest mcp-filesystem-20260928T101500Z-3fa2c1 --out session.attestation.json",
   ];
 
   static override args = {
-    runId: Args.string({ required: true, description: "the agent run to attest (must appear as meta.runId in the audit trail)" }),
+    runId: Args.string({
+      required: true,
+      description: "the run to attest: a `berth mcp` session's run id (printed when it starts), or an agent run's id. Must appear as meta.runId in the audit trail.",
+    }),
   };
 
   static override flags = {
-    os: Flags.string({ description: "which `berth os up` instance the run happened in (defaults to the only recorded one)" }),
+    os: Flags.string({
+      description:
+        "which `berth os up` instance the run happened in, read live. Not needed for a run that recorded its own boot evidence (`berth mcp` does); defaults to the only recorded instance otherwise.",
+    }),
     container: Flags.string({ description: "container name to read boot evidence from (overrides --os lookup)" }),
     image: Flags.string({ description: "image tag for the enforcement probe (defaults to the instance's recorded image)" }),
     file: Flags.string({ description: "audit file to cite (defaults to ~/.berth/audit/audit.jsonl)" }),
@@ -80,23 +88,13 @@ export default class Attest extends Command {
       }
     }
     if (runRecords.length === 0) {
-      this.error(`no audit records with meta.runId === "${args.runId}" in ${auditPath} — nothing to attest`);
+      this.error(
+        `no audit records with meta.runId === "${args.runId}" in ${auditPath} — nothing to attest. \`berth mcp\` prints its session's run id on stderr when it starts; pass --file if it wrote somewhere else.`,
+      );
     }
 
     // --- the boot the run happened in ---------------------------------------
-    let containerName = flags.container;
-    let imageTag = flags.image;
-    if (!containerName) {
-      const osName = flags.os ?? (await this.onlyOsName());
-      const state = await readOsState(osName);
-      if (!state) this.error(`no \`berth os\` record named "${osName}" — pass --container to name the sandbox directly`);
-      containerName = state.containerName;
-      imageTag ??= state.image;
-    }
-    if (!imageTag) this.error("no image tag known for the enforcement probe — pass --image alongside --container");
-
-    const docker = new Docker();
-    const evidence = await gatherBootEvidence(docker, containerName, imageTag).catch((err: Error) => this.error(err.message));
+    const evidence = await this.bootEvidence(runRecords, flags);
 
     // --- bind and stamp ------------------------------------------------------
     const first = runRecords[0]!;
@@ -131,6 +129,36 @@ export default class Attest extends Command {
     if (record.enforcement.status !== "ACTIVE") {
       this.warn(`this run's boot attests ${record.enforcement.status}: ${record.enforcement.reasons.join("; ")}`);
     }
+  }
+
+  /**
+   * A container named on the command line is read live. Otherwise a run that
+   * recorded its own boot evidence (`berth mcp` writes a sandbox.boot record
+   * while the sandbox is up, since it stops the sandbox when the session
+   * ends) is attested against that, and anything else against the one
+   * `berth os up` instance, live.
+   */
+  private async bootEvidence(runRecords: AuditRecord[], flags: { os?: string; container?: string; image?: string }): Promise<BootEvidence> {
+    if (!flags.os && !flags.container) {
+      const recorded = recordedBootEvidence(runRecords);
+      if (recorded) {
+        this.logToStderr(`using the boot evidence recorded with this run (boot ${recorded.bootId}, container ${recorded.containerName}); pass --os or --container to read a running sandbox instead`);
+        return recorded;
+      }
+    }
+
+    let containerName = flags.container;
+    let imageTag = flags.image;
+    if (!containerName) {
+      const osName = flags.os ?? (await this.onlyOsName());
+      const state = await readOsState(osName);
+      if (!state) this.error(`no \`berth os\` record named "${osName}" — pass --container to name the sandbox directly`);
+      containerName = state.containerName;
+      imageTag ??= state.image;
+    }
+    if (!imageTag) this.error("no image tag known for the enforcement probe — pass --image alongside --container");
+
+    return gatherBootEvidence(new Docker(), containerName, imageTag).catch((err: Error) => this.error(err.message));
   }
 
   private async onlyOsName(): Promise<string> {

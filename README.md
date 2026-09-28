@@ -166,7 +166,7 @@ Several apps can share one sandbox, and each keeps its own policy and its own ui
 
 - **Kernel-enforced:** filesystem read and write scopes, outbound TCP, UDP and raw sockets, namespace creation, and isolation between apps. This is real on any Linux 6.7+ kernel.
 - **Broker-enforced:** browser hostnames and GitHub API verbs go through a proxy that checks them, because the kernel sees ports, not hostnames. Which capability is enforced at which level: [enforcement](./docs/kernel-enforcement.md).
-- **It won't pretend.** On a kernel that can't enforce, `berth doctor` says so and the demos fail. `berth attest <runId>` produces a record of a run and the enforcement measured for its boot, checkable with a standalone script, and it says `NOT_ENFORCED` when nothing was.
+- **It won't pretend.** On a kernel that can't enforce, `berth doctor` says so and the demos fail. Every `berth mcp` session writes its tool calls to a hash-chained audit trail, and `berth attest <runId>` turns a session into a record of what ran and the enforcement measured for its boot. Anyone can check the record with a standalone script, and it says `NOT_ENFORCED` when nothing was enforced.
 - **Not a defence against root on the host.** Anyone who can `docker exec` into the container bypasses all of it. What's in scope and what isn't: [threat model](./docs/threat-model.md).
 
 ## Docs

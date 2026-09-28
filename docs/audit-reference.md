@@ -1,8 +1,20 @@
 # Audit trail reference
 
-`@berthos/audit` writes a hash-chained log of what happened and who did it: every governance verdict and, if you turn it on, every step an agent takes. Use it when you need to answer "what did this agent do, and was it allowed?" after the fact.
+`@berthos/audit` writes a hash-chained log of what happened and who did it: every tool call made through `berth mcp`, every governance verdict and, if you turn it on, every step an agent takes. Use it when you need to answer "what did this agent do, and was it allowed?" after the fact.
 
 ## Turn it on
+
+### `berth mcp`: on by default
+
+Every tool call through [`berth mcp`](./mcp-bridge-reference.md) is recorded under the session's run id, which the bridge prints on stderr when it starts:
+
+```
+[berth:mcp] recording tool calls in ~/.berth/audit/audit.jsonl as run mcp-filesystem-20260928T101500Z-3fa2c1 — attest it with `berth attest mcp-filesystem-20260928T101500Z-3fa2c1`
+```
+
+This covers any agent that reaches Berth over MCP, including Claude Code, Cursor, and a LangChain or other loop using an MCP adapter. Pick the run id yourself with `--run-id`, write somewhere else with `--audit-file`, or turn it off with `--no-audit`. The bridge also records the sandbox's boot evidence once per session, so the run can be [attested](./attestation-reference.md) after the sandbox has stopped.
+
+### The agent framework
 
 ```ts
 import { createFileAuditSink, defaultAuditPath } from "@berthos/audit";
@@ -55,12 +67,12 @@ One JSON object per line, in a file with mode 0600:
 |---|---|
 | `ts`, `seq` | ISO-8601 time and a sequence number, so records with the same timestamp still order. |
 | `actor` | `{ kind, id, verifiedBy }`. `kind` is `operator`, `app`, `agent` or `anonymous`. |
-| `action` | What happened: `governance.evaluate`, or `agent.<step kind>` such as `agent.tool-call`. |
-| `target` | What it happened to: `app.export`, `tool:<name>` or `run:<runId>`. |
+| `action` | What happened: `tool.call` and `sandbox.boot` (from `berth mcp`), `governance.evaluate`, or `agent.<step kind>` such as `agent.tool-call`. |
+| `target` | What it happened to: `app.export`, `container:<name>`, `tool:<name>` or `run:<runId>`. |
 | `decision` | `allowed`, `denied` or `unavailable`. |
 | `reason` | Why. Always set for `denied` and `unavailable`. |
 | `input`, `output` | Only with payload capture on (below), always redacted. |
-| `meta` | Extras, redacted. Agent steps carry `meta.runId`, which is what `berth attest` looks up. |
+| `meta` | Extras, redacted. `berth mcp` records and agent steps carry `meta.runId`, which is what `berth attest` looks up. A `sandbox.boot` record carries the boot evidence in `meta.evidence`, and a tool call the app failed carries `meta.failed`. |
 | `prevHash`, `hash` | The chain. |
 
 ### How much to trust `actor`
