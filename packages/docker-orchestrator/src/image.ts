@@ -437,6 +437,105 @@ async function stageDevOnInstallContext(options: BuildImageOptions, stagingDir: 
 }
 
 /**
+ * The label on every image buildImage() produces. Its value is the image's
+ * build-cache reference (buildCacheRef()), so a berth image can be told
+ * apart from anyone else's without guessing from its name.
+ */
+export const BUILD_CACHE_LABEL = "io.berthos.build-cache";
+
+/**
+ * The tag that keeps the latest build of an app, per image repository and
+ * target, e.g. `berth-build-cache:production-berth-agent_notes` for every
+ * `berth-agent/notes:<timestamp>` a Computer boots. Keyed on the repository
+ * rather than the full tag because Computer.boot() tags each boot uniquely.
+ */
+export function buildCacheRef(tag: string, target: BuildTarget): string {
+  let repository = tag.split("@")[0]!;
+  const colon = repository.lastIndexOf(":");
+  if (colon > repository.lastIndexOf("/")) repository = repository.slice(0, colon);
+  return `berth-build-cache:${`${target}-${repository}`.replace(/[^A-Za-z0-9_.-]/g, "_").slice(0, 128)}`;
+}
+
+/**
+ * Keeps exactly one build per app and target, and reclaims the one it
+ * replaces.
+ *
+ * With the parents kept (removeImageKeepingCache()), a changed app used to
+ * leave its previous build behind: the old final image went `<none>`, and
+ * the `COPY . /app` layer under it (the ~160 MB one) stayed as a hidden
+ * intermediate that `docker image prune` doesn't touch. Every source change
+ * leaked one.
+ *
+ * So the build-cache reference moves to the new image, and the image it
+ * pointed at before is removed along with its unshared parents
+ * (removeUnsharedChain()). An old image that still carries some other tag (a
+ * published `berth/<app>:1.0.0`, a Computer still running under its own
+ * tag) is left alone, and so is one a container is using: Docker refuses
+ * that removal. Then every other dangling berth-labelled image goes the same
+ * way, which catches a final image orphaned some other way, e.g. by a run
+ * killed between its build and this cleanup. Only images carrying
+ * BUILD_CACHE_LABEL are ever a starting point.
+ */
+export async function retainLatestBuild(docker: Docker, tag: string, cacheRef: string, previousIds: (string | undefined)[]): Promise<void> {
+  const built = await docker.getImage(tag).inspect().catch(() => undefined);
+  if (!built) return;
+  const split = cacheRef.lastIndexOf(":");
+  await docker.getImage(built.Id).tag({ repo: cacheRef.slice(0, split), tag: cacheRef.slice(split + 1) });
+
+  const retired: string[] = [];
+  for (const id of new Set(previousIds)) {
+    if (!id || id === built.Id) continue;
+    const old = await docker.getImage(id).inspect().catch(() => undefined);
+    if (!old || old.Config?.Labels?.[BUILD_CACHE_LABEL] === undefined) continue;
+    if ((old.RepoTags ?? []).some((t) => t !== cacheRef)) continue;
+    retired.push(id);
+  }
+  const dangling = await docker
+    .listImages({ filters: { dangling: ["true"], label: [BUILD_CACHE_LABEL] } })
+    .catch(() => [] as Docker.ImageInfo[]);
+  for (const image of dangling) if (image.Id !== built.Id) retired.push(image.Id);
+
+  for (const id of new Set(retired)) await removeUnsharedChain(docker, id);
+}
+
+/**
+ * Removes an image and then each parent that nothing else needs any more,
+ * stopping at the first one that is tagged or still has another child.
+ *
+ * That is what `docker rmi`'s own parent pruning is documented to do, but
+ * it can't be relied on: with Docker's containerd image store, pruning an
+ * old build's parents also deleted intermediates the *current* build still
+ * descends from, i.e. the cached base layers, and the next boot re-ran the
+ * whole base image (checked: the build after such a removal took 160 s
+ * instead of 8 s). So the walk is done here, one `noprune` removal at a
+ * time, with the child counts taken from the daemon's own image list. Any
+ * refusal (a container using the image, a race with another build) ends
+ * the walk and leaves the rest in place.
+ */
+async function removeUnsharedChain(docker: Docker, id: string): Promise<void> {
+  const images = await docker.listImages({ all: true }).catch(() => undefined);
+  if (!images) return;
+  const byId = new Map(images.map((image) => [image.Id, image]));
+  const children = new Map<string, number>();
+  for (const image of images) if (image.ParentId) children.set(image.ParentId, (children.get(image.ParentId) ?? 0) + 1);
+
+  let current: string | undefined = id;
+  while (current) {
+    const image = byId.get(current);
+    if (!image || (children.get(current) ?? 0) > 0) return;
+    if ((image.RepoTags ?? []).some((t) => t !== "<none>:<none>")) return;
+    try {
+      await docker.getImage(current).remove({ noprune: true });
+    } catch {
+      return;
+    }
+    const parent: string | undefined = image.ParentId || undefined;
+    if (parent) children.set(parent, (children.get(parent) ?? 1) - 1);
+    current = parent;
+  }
+}
+
+/**
  * Removes a built image's tag without pruning its parent layers.
  *
  * A plain `docker rmi` also deletes every untagged parent the image had, and
@@ -447,6 +546,11 @@ async function stageDevOnInstallContext(options: BuildImageOptions, stagingDir: 
  * Alpine mirror did, and left the multi-stage builder images behind as new
  * dangling images each time. Keeping the parents costs nothing extra: the
  * next build of the same apps reuses them instead of recreating them.
+ *
+ * An image buildImage() made also carries its build-cache reference
+ * (retainLatestBuild()), so for those this only removes the tag: the latest
+ * build of each app stays, under `berth-build-cache:*`, and is reclaimed by
+ * the next build that replaces it.
  */
 export async function removeImageKeepingCache(docker: Docker, tag: string): Promise<void> {
   await docker
@@ -527,10 +631,22 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
     const dockerfileContents = await readFile(join(DOCKER_ASSETS_DIR, "base.Dockerfile"), "utf-8");
     await writeFile(join(stagingDir, "Dockerfile"), dockerfileContents);
 
+    const cacheRef = buildCacheRef(options.tag, options.target);
+    const previousIds = await Promise.all(
+      [options.tag, cacheRef].map((ref) =>
+        docker
+          .getImage(ref)
+          .inspect()
+          .then((image) => image.Id)
+          .catch(() => undefined),
+      ),
+    );
+
     const tarStream = tarFs.pack(stagingDir);
     const buildStream = await docker.buildImage(tarStream, {
       t: options.tag,
       target: options.target,
+      labels: { [BUILD_CACHE_LABEL]: cacheRef },
     });
 
     await new Promise<void>((resolve, reject) => {
@@ -558,6 +674,7 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
         },
       );
     });
+    await retainLatestBuild(docker, options.tag, cacheRef, previousIds);
   } finally {
     await rm(stagingDir, { recursive: true, force: true });
   }

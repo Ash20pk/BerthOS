@@ -17,7 +17,15 @@ import {
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
-import { makeDeployReproducible, stageProductionSource, withLockfileRestored } from "./image.js";
+import type Docker from "dockerode";
+import {
+  BUILD_CACHE_LABEL,
+  buildCacheRef,
+  makeDeployReproducible,
+  retainLatestBuild,
+  stageProductionSource,
+  withLockfileRestored,
+} from "./image.js";
 
 // A tree shaped like `pnpm deploy --legacy` output, with each thing that made
 // two builds of the same app differ, or dangle inside the image.
@@ -225,4 +233,112 @@ test("Ctrl-C in the middle of a deploy still puts the lockfile back", async () =
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("the build-cache reference is per repository and target, not per tag", () => {
+  assert.equal(buildCacheRef("berth-agent/notes:1790000000000", "production"), "berth-build-cache:production-berth-agent_notes");
+  assert.equal(buildCacheRef("berth-agent/notes:1790000000001", "production"), buildCacheRef("berth-agent/notes:1", "production"));
+  assert.equal(buildCacheRef("berth/notes:dev", "dev"), "berth-build-cache:dev-berth_notes");
+  assert.equal(buildCacheRef("localhost:5000/berth/notes", "production"), "berth-build-cache:production-localhost_5000_berth_notes");
+});
+
+interface FakeImage {
+  Id: string;
+  ParentId?: string;
+  RepoTags: string[];
+  Labels?: Record<string, string>;
+}
+
+/** Just enough of dockerode's image API for retainLatestBuild(), with the removals it made. */
+function fakeDocker(images: FakeImage[], inUse: string[] = []) {
+  const removed: string[] = [];
+  const find = (ref: string) => images.find((i) => i.Id === ref || i.RepoTags.includes(ref));
+  const docker = {
+    getImage: (ref: string) => ({
+      inspect: async () => {
+        const image = find(ref);
+        if (!image) throw new Error(`no such image: ${ref}`);
+        return { Id: image.Id, RepoTags: [...image.RepoTags], Config: { Labels: image.Labels ?? null } };
+      },
+      tag: async ({ repo, tag }: { repo: string; tag: string }) => {
+        const name = `${repo}:${tag}`;
+        for (const image of images) image.RepoTags = image.RepoTags.filter((t) => t !== name);
+        find(ref)!.RepoTags.push(name);
+      },
+      remove: async (options: { noprune?: boolean }) => {
+        assert.equal(options?.noprune, true, "every removal is noprune: the walk is done by hand");
+        const image = find(ref)!;
+        if (image.RepoTags.length > 0 || inUse.includes(image.Id)) throw new Error("conflict");
+        if (images.some((i) => i.ParentId === image.Id)) throw new Error("conflict: image has dependent child images");
+        images.splice(images.indexOf(image), 1);
+        removed.push(image.Id);
+      },
+    }),
+    listImages: async (options?: { all?: boolean; filters?: { dangling?: string[]; label?: string[] } }) =>
+      images
+        .filter((i) => options?.all || !images.some((c) => c.ParentId === i.Id))
+        .filter((i) => !options?.filters?.dangling || i.RepoTags.length === 0)
+        .filter((i) => !options?.filters?.label || options.filters.label.every((l) => i.Labels?.[l] !== undefined))
+        .map((i) => ({ Id: i.Id, ParentId: i.ParentId ?? "", RepoTags: i.RepoTags.length ? [...i.RepoTags] : ["<none>:<none>"], Labels: i.Labels ?? {} })),
+  };
+  return { docker: docker as unknown as Docker, removed, images };
+}
+
+const labelled = (ref: string) => ({ [BUILD_CACHE_LABEL]: ref });
+
+/** base -> shared -> {old copy -> old final, new copy -> new final}: the shape a source change leaves. */
+function twoBuilds(ref: string, newTag: string, oldTags: string[]): FakeImage[] {
+  return [
+    { Id: "sha256:base", RepoTags: [] },
+    { Id: "sha256:shared", ParentId: "sha256:base", RepoTags: [] },
+    { Id: "sha256:old-copy", ParentId: "sha256:shared", RepoTags: [] },
+    { Id: "sha256:old", ParentId: "sha256:old-copy", RepoTags: oldTags, Labels: labelled(ref) },
+    { Id: "sha256:new-copy", ParentId: "sha256:shared", RepoTags: [] },
+    { Id: "sha256:new", ParentId: "sha256:new-copy", RepoTags: [newTag], Labels: labelled(ref) },
+  ];
+}
+
+test("a rebuilt app's previous image and its own layers go; the shared cache stays", async () => {
+  const ref = buildCacheRef("berth-agent/notes:2", "production");
+  // The previous boot's build: its own tag already removed by stop(), so
+  // only the cache reference holds it.
+  const fake = fakeDocker(twoBuilds(ref, "berth-agent/notes:2", [ref]));
+  await retainLatestBuild(fake.docker, "berth-agent/notes:2", ref, [undefined, "sha256:old"]);
+  assert.deepEqual(fake.removed, ["sha256:old", "sha256:old-copy"]);
+  assert.deepEqual(fake.images.map((i) => i.Id), ["sha256:base", "sha256:shared", "sha256:new-copy", "sha256:new"]);
+  assert.deepEqual(fake.images.find((i) => i.Id === "sha256:new")!.RepoTags.sort(), ["berth-agent/notes:2", ref].sort());
+});
+
+test("an unchanged rebuild removes nothing", async () => {
+  const ref = buildCacheRef("berth/notes:dev", "dev");
+  const fake = fakeDocker([
+    { Id: "sha256:base", RepoTags: [] },
+    { Id: "sha256:same", ParentId: "sha256:base", RepoTags: ["berth/notes:dev", ref], Labels: labelled(ref) },
+  ]);
+  await retainLatestBuild(fake.docker, "berth/notes:dev", ref, ["sha256:same", "sha256:same"]);
+  assert.deepEqual(fake.removed, []);
+});
+
+test("a previous image someone else still tags, or a container still uses, is left alone", async () => {
+  const ref = buildCacheRef("berth/notes:1.0.1", "production");
+  const tagged = fakeDocker(twoBuilds(ref, "berth/notes:1.0.1", ["berth/notes:1.0.0", ref]));
+  await retainLatestBuild(tagged.docker, "berth/notes:1.0.1", ref, [undefined, "sha256:old"]);
+  assert.deepEqual(tagged.removed, []);
+  assert.deepEqual(tagged.images.find((i) => i.Id === "sha256:old")!.RepoTags, ["berth/notes:1.0.0"]);
+
+  const running = fakeDocker(twoBuilds(ref, "berth/notes:1.0.1", [ref]), ["sha256:old"]);
+  await retainLatestBuild(running.docker, "berth/notes:1.0.1", ref, [undefined, "sha256:old"]);
+  assert.deepEqual(running.removed, []);
+});
+
+test("only berth-labelled dangling images are cleaned up", async () => {
+  const ref = buildCacheRef("berth/notes:dev", "dev");
+  const fake = fakeDocker([
+    { Id: "sha256:base", RepoTags: [] },
+    { Id: "sha256:orphan", ParentId: "sha256:base", RepoTags: [], Labels: labelled(ref) },
+    { Id: "sha256:someone-elses", ParentId: "sha256:base", RepoTags: [] },
+    { Id: "sha256:new", ParentId: "sha256:base", RepoTags: ["berth/notes:dev"], Labels: labelled(ref) },
+  ]);
+  await retainLatestBuild(fake.docker, "berth/notes:dev", ref, [undefined, undefined]);
+  assert.deepEqual(fake.removed, ["sha256:orphan"]);
 });
