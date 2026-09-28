@@ -1,9 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { cp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { APP_RUNTIME_CONTEXT_DIR, PRIMARY_RUNTIME_ENTRY, stageAppRuntimes } from "./app-runtime.js";
+import { APP_RUNTIME_CONTEXT_DIR, PRIMARY_RUNTIME_ENTRY, excludedFromPythonImage, stageAppRuntimes } from "./app-runtime.js";
 
 function app(root: string, name: string, manifestExtra: string): string {
   const dir = join(root, name);
@@ -44,4 +45,43 @@ test("the directory exists even for one Node app, because the Dockerfile always 
 test("an invalid runtime fails the build rather than being guessed", async () => {
   const root = mkdtempSync(join(tmpdir(), "berth-runtime-"));
   await assert.rejects(stageAppRuntimes(join(root, "staging"), [{ name: "bad", appDir: app(root, "bad", "runtime: ruby\n") }]));
+});
+
+/** Every file under `dir`, relative, sorted. */
+function tree(dir: string, prefix = ""): string[] {
+  return readdirSync(join(dir, prefix), { withFileTypes: true })
+    .flatMap((entry) => (entry.isDirectory() ? tree(dir, join(prefix, entry.name)) : [join(prefix, entry.name)]))
+    .sort();
+}
+
+test("a Python app's production copy leaves out virtualenvs, bytecode, VCS history and .env files", async () => {
+  const root = mkdtempSync(join(tmpdir(), "berth-py-stage-"));
+  const appDir = join(root, "venv"); // the app directory's own name never excludes it
+  const files = [
+    "berth.yml",
+    "src/app.py",
+    "src/pkg/mod.py",
+    "requirements.txt",
+    "envelope.py",
+    ".venv/bin/python",
+    "venv/lib/site.py",
+    "src/__pycache__/app.cpython-312.pyc",
+    "src/stray.pyc",
+    ".git/config",
+    ".env",
+    ".env.local",
+    "src/.env",
+    ".pytest_cache/v/cache",
+    ".mypy_cache/3.12/x.json",
+    "node_modules/x/index.js",
+    ".berth/capability-policy.json",
+  ];
+  for (const file of files) {
+    mkdirSync(join(appDir, file, ".."), { recursive: true });
+    writeFileSync(join(appDir, file), "x");
+  }
+  const staging = join(root, "staging");
+  await cp(appDir, staging, { recursive: true, filter: (src) => !excludedFromPythonImage(appDir, src) });
+
+  assert.deepEqual(tree(staging), ["berth.yml", "envelope.py", "requirements.txt", "src/app.py", "src/pkg/mod.py"].sort());
 });

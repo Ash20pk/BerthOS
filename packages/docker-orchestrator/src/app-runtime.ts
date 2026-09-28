@@ -1,5 +1,5 @@
 import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 import { loadManifest } from "@berthos/manifest-schema";
 
 /**
@@ -38,4 +38,23 @@ export async function stageAppRuntimes(stagingDir: string, apps: { name: string;
     await writeFile(join(dir, app.name), `${runtime}\n`);
     if (index === 0) await writeFile(join(dir, PRIMARY_RUNTIME_ENTRY), `${runtime}\n`);
   }
+}
+
+/**
+ * Directory and file names a Python app's production image never needs, at
+ * any depth: virtualenvs and bytecode are rebuilt or meaningless in the image,
+ * `.git` is history, and `.env` files are local credentials that must not be
+ * baked into a layer anyone with the image can read.
+ */
+const PYTHON_EXCLUDED_NAMES = new Set([".venv", "venv", "__pycache__", ".git", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox", ".env"]);
+
+/** True for a path under `appDir` that stageProductionSource leaves out of a Python app's image. */
+export function excludedFromPythonImage(appDir: string, src: string): boolean {
+  const rel = relative(appDir, src);
+  if (rel === "" || rel.startsWith("..")) return false;
+  const segments = rel.split(sep);
+  if (segments[0] === "node_modules" || segments[0] === ".berth") return true;
+  return segments.some(
+    (segment) => PYTHON_EXCLUDED_NAMES.has(segment) || segment.startsWith(".env.") || segment.endsWith(".pyc") || segment.endsWith(".pyo"),
+  );
 }

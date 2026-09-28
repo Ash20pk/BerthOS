@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadManifest } from "@berthos/manifest-schema";
-import { stageAppRuntimes } from "./app-runtime.js";
+import { excludedFromPythonImage, stageAppRuntimes } from "./app-runtime.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -140,7 +140,7 @@ async function stageProductionSource(appDir: string, stagingDir: string): Promis
   // A Python app has no node_modules to materialize: its SDK is in the image
   // (/opt/berth/sdk-python), so its own directory is the whole of it.
   if ((await loadManifest(join(appDir, "berth.yml"))).runtime === "python") {
-    await cp(appDir, stagingDir, { recursive: true, filter: (src) => !excludedFromBuildContext(appDir, src) });
+    await cp(appDir, stagingDir, { recursive: true, filter: (src) => !excludedFromPythonImage(appDir, src) });
     return;
   }
 
