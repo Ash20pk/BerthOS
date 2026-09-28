@@ -1,6 +1,7 @@
 import { dirname, join } from "node:path";
 import { register } from "node:module";
 import { fileURLToPath } from "node:url";
+import { SHARP_HOOK_URL } from "./sharp-hook.js";
 
 // Compute-on-tag, not compute-on-write: write_context_file (apps/filesystem)
 // does a raw fs write into the FUSE mount, never touching this SDK — the
@@ -25,14 +26,14 @@ type Pipeline = (text: string, options: { pooling: "mean"; normalize: boolean })
 let pipelinePromise: Promise<Pipeline> | undefined;
 
 /**
- * Points `sharp` at the SDK's own stub before @xenova/transformers loads (see
- * sharp-stub.ts). Once per process; module.register() applies to every later
- * import on this thread.
+ * Points @xenova/transformers' `import "sharp"` at the SDK's own stub before
+ * it loads (see sharp-hook.ts). Once per process; module.register() applies
+ * to every later import on this thread.
  */
 let sharpStubRegistered = false;
 export function registerSharpStub(): void {
   if (sharpStubRegistered) return;
-  register(new URL("./sharp-hook.js", import.meta.url));
+  register(SHARP_HOOK_URL);
   sharpStubRegistered = true;
 }
 
