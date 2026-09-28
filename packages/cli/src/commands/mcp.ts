@@ -1,11 +1,12 @@
 import { Command, Flags } from "@oclif/core";
 import Docker from "dockerode";
+import { mkdirSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { loadManifest } from "@berthos/manifest-schema";
-import { createFileAuditSink, defaultAuditPath } from "@berthos/audit";
+import { createFileAuditSink, defaultAuditPath, tryAcquireFileLock } from "@berthos/audit";
 import {
   createStdioRpcClient,
   gatherBootEvidence,
@@ -19,7 +20,7 @@ import { bootDevContainer } from "../util/dev-boot.js";
 import { resolveApps } from "../util/multi-app.js";
 import { explainAppError, enforcementFromContainerLogs, type EnforcementStatus } from "../util/capability-errors.js";
 import { createRunAudit, newRunId, type RunAudit } from "../util/run-audit.js";
-import { createInFlightCalls, createShutdown, describeReportedDenials, exportReportsDenials, handleToolCall } from "../util/mcp-call.js";
+import { createInFlightCalls, createShutdown, describeReportedDenials, exportReportsDenials, handleToolCall, onClientPipesClosed } from "../util/mcp-call.js";
 import { startBackgroundSandbox, type SandboxSteps } from "../util/mcp-sandbox.js";
 
 /**
@@ -150,8 +151,8 @@ export default class Mcp extends Command {
         noBootMessage,
       });
       const stopWarm = () => void sandbox.stop().finally(() => process.exit(1));
-      process.on("SIGINT", stopWarm);
-      process.on("SIGTERM", stopWarm);
+      for (const signal of SHUTDOWN_SIGNALS) process.on(signal, stopWarm);
+      onClientPipesClosed(process, stopWarm);
       const { bootedHere } = await sandbox.ready.catch((err: unknown) => this.error(errorMessage(err)));
       if (bootedHere) await sandbox.stop();
       this.logStderr(`warm: image built and "${manifest.name}" reached ready — an MCP client can now start this server inside its timeout`);
@@ -215,14 +216,14 @@ export default class Mcp extends Command {
       stop: () => sandbox.stop(),
       exit: () => process.exit(0),
     });
-    process.on("SIGINT", () => void shutdown({ urgent: true }));
-    process.on("SIGTERM", () => void shutdown({ urgent: true }));
+    for (const signal of SHUTDOWN_SIGNALS) process.on(signal, () => void shutdown({ urgent: true }));
     // Not just signals: a client that closes the pipe instead of signalling
     // (and `berth mcp < /dev/null`) ends stdin, and the transport's onclose
     // is the only notice this process gets. Without it the sandbox outlives
     // the bridge that owns it, with nothing left to stop it.
     transport.onclose = () => void shutdown();
     process.stdin.on("end", () => void shutdown());
+    onClientPipesClosed(process, () => void shutdown());
 
     const allowed = only ? new Set(only.names) : undefined;
     const explain = (error: string, enforcement: EnforcementStatus) =>
@@ -282,6 +283,7 @@ export default class Mcp extends Command {
     flags: { "boot-timeout": number },
     options: { attachRpc: boolean },
   ): SandboxSteps<Docker.Container, { container: Docker.Container; enforcement: EnforcementStatus; rpc?: StdioRpcClient }> {
+    let toldWaiting = false;
     return {
       find: async () => {
         const existing = docker.getContainer(containerName);
@@ -289,10 +291,21 @@ export default class Mcp extends Command {
         this.logStderr(`attached to the running container "${containerName}"`);
         return existing;
       },
-      boot: async () => {
+      // A file, not Docker: the sidecar is created before the container, so
+      // the container's name can't serve as the claim. The lock names this
+      // process, and lapses with it.
+      claimBoot: () => {
+        const dir = join(homedir(), ".berth", "run");
+        mkdirSync(dir, { recursive: true, mode: 0o700 });
+        const claim = tryAcquireFileLock(join(dir, `${containerName}.boot.lock`));
+        if (!claim && !toldWaiting) this.logStderr(`another berth session is booting "${containerName}" — waiting for it`);
+        toldWaiting ||= !claim;
+        return claim && (() => claim.release());
+      },
+      boot: async (signal) => {
         this.logStderr(`no container named "${containerName}" — booting the sandbox for "${manifest.name}" (this builds an image on first run)`);
         const apps = await resolveApps(appDir, undefined, manifest);
-        const running = await bootDevContainer({ appDir, manifest, apps, docker, containerName, log: (message) => this.logStderr(message) });
+        const running = await bootDevContainer({ appDir, manifest, apps, docker, containerName, log: (message) => this.logStderr(message), signal });
         return running.container;
       },
       waitReady: (container, signal) => this.waitForRuntime(container, manifest.name, flags["boot-timeout"] * 1000, signal),
@@ -379,6 +392,13 @@ export default class Mcp extends Command {
     return enforcementFromContainerLogs(await this.readLogs(container));
   }
 }
+
+/**
+ * SIGHUP too: it is what a client's terminal or process group sends when it
+ * goes away, and left unhandled it kills the process on the spot, leaving a
+ * sandbox this session booted running with no owner.
+ */
+const SHUTDOWN_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);

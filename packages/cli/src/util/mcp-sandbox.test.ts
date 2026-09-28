@@ -16,14 +16,32 @@ function deferred<T = void>() {
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
-function fakeSteps(options: { running?: boolean } = {}) {
+/**
+ * What two sessions on one host share: the container by the session's name,
+ * if there is one, and who holds the claim to boot it.
+ */
+interface Host {
+  container?: string;
+  claim?: string;
+}
+
+function fakeSteps(options: { running?: boolean; host?: Host; session?: string } = {}) {
   const log: string[] = [];
   const boot = deferred<string>();
   const ready = deferred();
   const connect = deferred<{ rpc: string }>();
   let bootSignal: AbortSignal | undefined;
+  const host: Host = options.host ?? (options.running ? { container: "existing" } : {});
+  const session = options.session ?? "a";
   const steps: SandboxSteps<string, { rpc: string }> = {
-    find: async () => (options.running ? "existing" : undefined),
+    find: async () => host.container,
+    claimBoot: () => {
+      if (host.claim) return undefined;
+      host.claim = session;
+      return () => {
+        if (host.claim === session) host.claim = undefined;
+      };
+    },
     boot: (signal) => {
       bootSignal = signal;
       log.push("boot");
@@ -39,7 +57,7 @@ function fakeSteps(options: { running?: boolean } = {}) {
     },
     stopByName: async () => void log.push("stopByName"),
   };
-  return { steps, log, boot, ready, connect, bootSignal: () => bootSignal };
+  return { steps, log, boot, ready, connect, host, bootSignal: () => bootSignal };
 }
 
 const allowBoot = { allowBoot: true, noBootMessage: "no container", settleMs: 50 };
@@ -158,4 +176,70 @@ test("a call's wait is bounded, and ends as soon as its client cancels it", asyn
   // The boot itself carries on for the calls that are still waiting.
   assert.equal(sandbox.state(), "starting");
   await sandbox.stop();
+});
+
+// Two sessions that found no container at once both used to boot it, and the
+// loser's sidecar start removed the winner's semantic-fs sidecar by name.
+test("of two sessions booting the same container at once, one boots and the other attaches to it", async () => {
+  const host: Host = {};
+  const a = fakeSteps({ host, session: "a" });
+  const b = fakeSteps({ host, session: "b" });
+  const options = { ...allowBoot, claimPollMs: 5 };
+  const first = startBackgroundSandbox(a.steps, options);
+  const second = startBackgroundSandbox(b.steps, options);
+  await tick();
+  assert.equal(host.claim, "a");
+  assert.deepEqual(b.log, [], "the second session boots nothing while the first holds the claim");
+  assert.equal(second.owns(), false);
+
+  // The first session's container appears once its boot creates it, before it is ready.
+  host.container = "c1";
+  a.boot.resolve("c1");
+  await tick();
+  a.ready.resolve();
+  await tick();
+  a.connect.resolve({ rpc: "r1" });
+  assert.deepEqual(await first.ready, { rpc: "r1", bootedHere: true });
+  assert.equal(host.claim, undefined, "the claim is let go once the container is up");
+
+  b.ready.resolve();
+  b.connect.resolve({ rpc: "r1" });
+  assert.deepEqual(await second.ready, { rpc: "r1", bootedHere: false });
+  assert.deepEqual(b.log, ["waitReady", "connect c1 false"], "waits for the other session's container to be ready, then attaches");
+  await second.stop();
+  assert.deepEqual(b.log, ["waitReady", "connect c1 false"], "and never stops a container it didn't boot");
+  assert.equal(second.owns(), false);
+});
+
+test("a session waiting on another's boot boots itself once that boot fails", async () => {
+  const host: Host = {};
+  const a = fakeSteps({ host, session: "a" });
+  const b = fakeSteps({ host, session: "b" });
+  const options = { ...allowBoot, claimPollMs: 5 };
+  const first = startBackgroundSandbox(a.steps, options);
+  const second = startBackgroundSandbox(b.steps, options);
+  await tick();
+  a.boot.reject(new Error("image build failed"));
+  await assert.rejects(first.ready, /image build failed/);
+  assert.equal(host.claim, undefined);
+
+  for (let i = 0; i < 50 && !b.log.includes("boot"); i++) await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(host.claim, "b");
+  assert.equal(second.owns(), true);
+  assert.deepEqual(b.log, ["boot"]);
+  await second.stop();
+});
+
+test("a claim taken just after another session finished its boot attaches rather than booting again", async () => {
+  const host: Host = {};
+  const fake = fakeSteps({ host });
+  // Nothing there at the first look; by the time the claim is taken, there is.
+  let looks = 0;
+  fake.steps.find = async () => (looks++ === 0 ? undefined : "c1");
+  fake.connect.resolve({ rpc: "r1" });
+  const sandbox = startBackgroundSandbox(fake.steps, allowBoot);
+  assert.deepEqual(await sandbox.ready, { rpc: "r1", bootedHere: false });
+  assert.deepEqual(fake.log, ["connect c1 false"]);
+  assert.equal(host.claim, undefined);
+  assert.equal(sandbox.owns(), false);
 });

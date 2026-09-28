@@ -1,5 +1,6 @@
 export type { Actor, ActorVerification, AuditDecision, AuditEvent, AuditRecord, AuditSink } from "./types.js";
 export { redact, REDACTED, type RedactOptions } from "./redact.js";
+export { acquireFileLock, tryAcquireFileLock, type FileLockOptions, type HeldLock } from "./file-lock.js";
 export {
   CHAIN_GENESIS,
   combineAuditSinks,

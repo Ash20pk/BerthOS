@@ -1,5 +1,6 @@
-import type { RpcRequest, RpcResponse, StdioRpcCallOptions } from "@berthos/docker-orchestrator";
+import { RpcNotSentError, type RpcRequest, type RpcResponse, type StdioRpcCallOptions } from "@berthos/docker-orchestrator";
 import type { BerthManifest } from "@berthos/manifest-schema";
+import type { EventEmitter } from "node:events";
 import type { EnforcementStatus } from "./capability-errors.js";
 import type { RunAudit } from "./run-audit.js";
 
@@ -13,6 +14,8 @@ import type { RunAudit } from "./run-audit.js";
  * answers at all: the RPC times out, the write to the sandbox fails, or the
  * session ends while it's in flight. That last group used to leave no
  * record at all, although the request may well have reached the app and run.
+ * A call the client cancelled before it was written is recorded as not sent:
+ * the app never saw it.
  */
 
 export type ToolResult = { isError?: boolean; content: { type: "text"; text: string }[] };
@@ -64,6 +67,10 @@ export async function handleToolCall(ctx: ToolCallContext, args: Record<string, 
   try {
     response = await ctx.call(request, { timeoutMs: rpcTimeoutFor(args, ctx.callTimeoutMs), ...(signal ? { signal } : {}) });
   } catch (err) {
+    if (err instanceof RpcNotSentError) {
+      if (done()) await ctx.runAudit?.toolCall({ export: ctx.export, input: args, durationMs: Date.now() - startedAt, notSent: true });
+      return { isError: true, content: [{ type: "text", text: `"${ctx.export}" was cancelled before it was sent to the app, so it did not run` }] };
+    }
     const reason = err instanceof Error ? err.message : String(err);
     if (done()) {
       await ctx.runAudit?.toolCall({ export: ctx.export, input: args, durationMs: Date.now() - startedAt, unanswered: { reason } });
@@ -252,6 +259,19 @@ export function createShutdown(options: ShutdownOptions): (trigger?: { urgent?: 
     })();
     return running;
   };
+}
+
+/**
+ * Once the client has closed its end of the pipes, a write to stdout (an MCP
+ * response, a notification) fails with EPIPE, and the stream reports it as an
+ * 'error' event. Unhandled, that is an uncaught exception wherever the
+ * process happens to be, including partway through stopping the sandbox. It
+ * means the client has left, so it is treated as that. An error on stderr is
+ * a log line with nowhere to go, and is dropped.
+ */
+export function onClientPipesClosed(streams: { stdout: EventEmitter; stderr: EventEmitter }, leave: () => void): void {
+  streams.stdout.on("error", () => leave());
+  streams.stderr.on("error", () => {});
 }
 
 /**
