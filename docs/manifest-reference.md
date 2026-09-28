@@ -180,7 +180,7 @@ A capability is `namespace:action:scope`. The namespace and action are lowercase
 | Capability | What it grants | Enforced by |
 |---|---|---|
 | `filesystem:write:<path>` | Write, create, delete and rename under `<path>`. Without one, the app can write only to its own scratch directory, `/tmp/<app>`. | Kernel |
-| `filesystem:read:<path>` | Adds `<path>` to what the app can read. Reads are always scoped: without any declaration an app reads a system baseline (`/usr`, `/bin`, `/lib`, `/etc`, `/proc`, `/dev`, `/tmp`), its own directory, what it may write, and its dependencies, never another app's directory. | Kernel |
+| `filesystem:read:<path>` | Adds `<path>` to what the app can read. Reads are always scoped: without any declaration an app reads a system baseline (`/usr`, `/bin`, `/lib`, `/etc`, `/proc`, `/dev`, `/tmp`), its own directory, what it may write, and its dependencies. Another app's directory is readable only if a path the app may write or declares contains it; under `berth dev`, `/workspace` is the whole checkout (read-only), so an app that may write `/workspace` can read every app's directory in it. | Kernel |
 | `network:connect:<port>` | Outbound TCP to that port. Without any, the app has no outbound network at all, including UDP and raw sockets. | Kernel |
 | `network:connect:*` | Outbound TCP to any port. An escape hatch; prefer a proxy port. | Kernel |
 | `network:bind:<port>` | Listening on that port. `*` isn't accepted. | Kernel |

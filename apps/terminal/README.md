@@ -27,7 +27,7 @@ capabilities:
   - terminal:attach:*
 ```
 
-- Writes are limited to `/workspace`, and so are reads outside the system baseline: the shell can read `/workspace`, the system (`/usr`, `/etc` and so on) and its own app directory, but not other apps' directories.
+- Writes are limited to `/workspace`, and so are reads outside the system baseline: the shell can read `/workspace`, the system (`/usr`, `/etc` and so on) and its own app directory, but not other apps' directories. Under `berth dev` that exception is real: `/workspace` there is the whole checkout, mounted read-only, so the shell can read every app's directory in it.
 - `terminal:attach:*` starts the web terminal and lets the app open a pty. It doesn't widen what the shell can do.
 - No `network:*` is declared, so the shell has no outbound network. `curl`, `git clone` and package installs fail.
 
