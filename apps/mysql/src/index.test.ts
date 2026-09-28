@@ -161,6 +161,13 @@ before(async () => {
     await db.query("GRANT SELECT ON customers TO 'reader'@'%'");
     await db.query("DROP PROCEDURE IF EXISTS customer_names");
     await db.query("CREATE PROCEDURE customer_names(IN p varchar(20)) SELECT name FROM customers WHERE plan = p ORDER BY id");
+    await db.query("DROP PROCEDURE IF EXISTS rows_then_write");
+    // 600 rows, more than the cap, and then a write.
+    await db.query(`CREATE PROCEDURE rows_then_write() BEGIN
+      WITH RECURSIVE g (n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM g WHERE n < 600) SELECT n FROM g;
+      DO SLEEP(1);
+      INSERT INTO customers (name) VALUES ('After the rows');
+    END`);
     await db.query("DROP PROCEDURE IF EXISTS two_sets");
     await db.query("CREATE PROCEDURE two_sets() BEGIN SELECT 1 AS a; SELECT 2 AS b, 3 AS c; END");
   });
@@ -175,7 +182,17 @@ async function appWith(env: Record<string, string | undefined>, capabilities: st
   const mod = await import(`./index.js?case=${Math.random()}`);
   after(() => mod.closeForTests());
   const call = (name: string, input: unknown = {}) => mod.default._exports.get(name)!.handler(input) as Promise<any>;
-  return call;
+  return Object.assign(call, { mod });
+}
+
+/** Until nothing of user's is running sql on the server, for up to ms; how long that took. */
+async function settled(user: string, like: string, ms = 5_000): Promise<number> {
+  const started = Date.now();
+  for (;;) {
+    const [rows] = await admin((db) => db.query("SELECT count(*) AS n FROM information_schema.PROCESSLIST WHERE USER = ? AND INFO LIKE ?", [user, like]));
+    if (Number((rows as { n: unknown }[])[0]!.n) === 0 || Date.now() - started > ms) return Date.now() - started;
+    await new Promise((r) => setTimeout(r, 100));
+  }
 }
 
 live("query, list_tables and describe_table against a real database", async () => {
@@ -415,6 +432,59 @@ live("a role that can only read is refused writes by the database itself, in eit
   const target = new URL(TEST_URL!);
   const call = await appWith({ DATABASE_URL: urlAs("reader"), MYSQL_MODE: "read-write" }, [`network:connect:${target.port}`]);
   await assert.rejects(call("query", { sql: "DELETE FROM customers", params: [] }), /DELETE command denied/);
+});
+
+live("a query that runs out of time is stopped on the server, and a write it made isn't committed", async () => {
+  const port = new URL(TEST_URL!).port;
+  const count = async (call: (name: string, input?: unknown) => Promise<any>) => Number((await call("query", { sql: "SELECT count(*) AS n FROM customers", params: [] })).rows[0].n);
+  const rw = await appWith({ DATABASE_URL: urlAs("app"), MYSQL_MODE: "read-write" }, [`network:connect:${port}`]);
+  rw.mod.setQueryTimeoutForTests(1_000);
+  // With autocommit, closing the connection didn't stop the INSERT: it was
+  // reported abandoned, and committed a few seconds later.
+  await assert.rejects(rw("query", { sql: "INSERT INTO customers (name) SELECT CONCAT('Slow ', SLEEP(4))", params: [] }), /took longer than 1 s, and it was stopped on the server\. It ran in a transaction that wasn't committed/);
+  assert.ok((await settled("app", "%SLEEP(4)%")) < 1_000, "nothing is left running on the server");
+  await new Promise((r) => setTimeout(r, 4_000));
+  assert.equal(Number((await rw("query", { sql: "SELECT count(*) AS n FROM customers WHERE name LIKE 'Slow%'", params: [] })).rows[0].n), 0, "the INSERT wasn't committed, even after SLEEP would have ended");
+  assert.equal(await count(rw), 3);
+
+  // Read-only, a query that takes a while to compute, rather than a SLEEP(),
+  // which MySQL and MariaDB both let return early and call it success. As a
+  // SELECT, the server's own limit stops it; as a DO, MySQL's
+  // max_execution_time doesn't cover it and this app's timer does. (MariaDB's
+  // max_statement_time stops a DO too, but calls that a warning, not an error.)
+  const ro = await appWith({ DATABASE_URL: urlAs("app") }, [`network:connect:${port}`]);
+  ro.mod.setQueryTimeoutForTests(1_000);
+  const digits = "SELECT 0 AS n UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9";
+  const heavy = `(WITH d AS (${digits}) SELECT count(*) FROM d a, d b, d c, d e, d f, d g, d h, d i, d j, d k) /* berth heavy */`;
+  for (const sql of (await isMariaDB()) ? [`SELECT ${heavy} AS n`] : [`SELECT ${heavy} AS n`, `DO ${heavy}`]) {
+    const started = Date.now();
+    await assert.rejects(ro("query", { sql, params: [] }), (err: Error) => /took longer than 1 s, and it was stopped on the server$/.test(err.message), sql.slice(0, 6));
+    assert.ok(Date.now() - started < 4_000);
+    assert.ok((await settled("app", "%berth heavy%")) < 1_000, "nothing is left running on the server");
+  }
+  assert.equal(await count(ro), 3);
+});
+
+live("a result cut off at the cap stops the statement, and in read-write mode commits nothing it went on to do", async () => {
+  const port = new URL(TEST_URL!).port;
+  const rw = await appWith({ DATABASE_URL: urlAs("app"), MYSQL_MODE: "read-write" }, [`network:connect:${port}`]);
+  const res = await rw("query", { sql: "CALL rows_then_write()", params: [] });
+  assert.deepEqual({ n: res.rows.length, truncated: res.truncated }, { n: 500, truncated: true });
+  assert.ok((await settled("app", "%rows_then_write%")) < 1_000, "the CALL isn't left running on the server");
+  // Past the procedure's SLEEP(1): with autocommit, and the connection only closed, its INSERT ran and committed.
+  await new Promise((r) => setTimeout(r, 1_500));
+  assert.equal(Number((await rw("query", { sql: "SELECT count(*) AS n FROM customers WHERE name = 'After the rows'", params: [] })).rows[0].n), 0);
+  if (await isMariaDB()) {
+    // Its INSERT … RETURNING, which returns a row per row written.
+    const returned = await rw("query", { sql: "INSERT INTO customers (name) WITH RECURSIVE g (n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM g WHERE n < 600) SELECT CONCAT('Returned ', n) FROM g RETURNING id", params: [] });
+    assert.equal(returned.truncated, true);
+    assert.equal(Number((await rw("query", { sql: "SELECT count(*) AS n FROM customers WHERE name LIKE 'Returned %'", params: [] })).rows[0].n), 0, "cut off, so not committed");
+  }
+  // A result read to the end is committed as before.
+  const done = await rw("query", { sql: "INSERT INTO customers (name) VALUES ('Kept')", params: [] });
+  assert.equal(done.row_count, 1);
+  assert.equal(Number((await rw("query", { sql: "SELECT count(*) AS n FROM customers WHERE name = 'Kept'", params: [] })).rows[0].n), 1);
+  await rw("query", { sql: "DELETE FROM customers WHERE name = 'Kept'", params: [] });
 });
 
 live("a connection lost mid-query fails the call at once, and the next call gets a new one", async () => {

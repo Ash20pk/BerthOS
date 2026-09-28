@@ -9,6 +9,18 @@ const MAX_ROWS = 500;
 const MAX_RESULT_CHARS = 200_000;
 const MAX_CELL_CHARS = 10_000;
 const QUERY_TIMEOUT_MS = 30_000;
+// The server's own time limit is tried first; this app's timer fires this much
+// later, for a statement the server's limit doesn't cover.
+const SERVER_FIRST_MS = 1_000;
+// How long to wait for the server to answer a KILL, and for the query to end.
+const KILL_WAIT_MS = 2_000;
+
+let queryTimeoutMs = QUERY_TIMEOUT_MS;
+
+/** For tests: a shorter query timeout than 30 s. */
+export function setQueryTimeoutForTests(ms: number): void {
+  queryTimeoutMs = ms;
+}
 
 export type Mode = "read-only" | "read-write";
 export type Route = { kind: "proxy"; proxy: URL } | { kind: "direct" };
@@ -247,9 +259,12 @@ export function shapeRows(rows: Record<string, unknown>[], max = MAX_ROWS): { ro
 
 interface Connection {
   pool: mysql.Pool;
+  /** One more connection, outside the pool, to KILL a query on: see stop(). */
+  control: mysql.Pool;
   target: Target;
   route: Route;
   mode: Mode;
+  mariadb: boolean;
 }
 
 // The promise, not the pool: two first calls at once would otherwise each
@@ -277,9 +292,8 @@ async function open(): Promise<Connection> {
   if (!isInternal(target.host) && !config.ssl) {
     console.error(`[mysql] DATABASE_URL points at ${target.host}, not a local address, without TLS: the password and every row cross the network unencrypted. Add ?ssl=true to DATABASE_URL.`);
   }
-  const pool = mysql.createPool({
+  const options: mysql.PoolOptions = {
     ...config,
-    connectionLimit: 2,
     connectTimeout: 15_000,
     // Off, so the server refuses a string holding more than one statement.
     multipleStatements: false,
@@ -292,7 +306,18 @@ async function open(): Promise<Connection> {
     ...(route.kind === "proxy"
       ? { stream: () => new ProxyTunnel(route.proxy).connect(target.port, target.host) as unknown as import("node:net").Socket }
       : {}),
-  });
+  };
+  const pool = mysql.createPool({ ...options, connectionLimit: 2 });
+  const control = mysql.createPool({ ...options, connectionLimit: 1 });
+  let mariadb: boolean;
+  try {
+    // MariaDB names the server's time limit differently (see run()).
+    const [version] = await pool.query("SELECT VERSION() AS v");
+    mariadb = /MariaDB/i.test(String((version as { v: unknown }[])[0]?.v));
+  } catch (err) {
+    await Promise.all([pool.end().catch(() => {}), control.end().catch(() => {})]);
+    throw err;
+  }
   if (mode === "read-only" && !allowsPrivileged(process.env)) {
     try {
       const conn = await pool.getConnection();
@@ -308,11 +333,11 @@ async function open(): Promise<Connection> {
       }
       if (problem) throw new Error(problem);
     } catch (err) {
-      await pool.end().catch(() => {});
+      await Promise.all([pool.end().catch(() => {}), control.end().catch(() => {})]);
       throw err;
     }
   }
-  return { pool, target, route, mode };
+  return { pool, control, target, route, mode, mariadb };
 }
 
 export interface Rows {
@@ -331,6 +356,9 @@ interface CoreQuery {
   on(event: "error", listener: (err: Error) => void): this;
   on(event: "end", listener: () => void): this;
 }
+
+/** How a query ended, once it did: to the end of its results, or with an error. */
+type Outcome = { ended: true } | { ended: false; error: Error };
 
 interface CoreConnection {
   query(options: { sql: string; values: unknown[] }): CoreQuery;
@@ -352,8 +380,10 @@ interface CoreConnection {
  * the rows are the first set's; a statement that returns none reports the
  * rows it changed.
  */
-function collect(conn: mysql.PoolConnection, sql: string, params: unknown[], max: number): Promise<Rows> {
+function collect(conn: mysql.PoolConnection, sql: string, params: unknown[], max: number, timeoutMs: number, onTimeout: (outcome: Promise<Outcome>) => Promise<Error>): Promise<Rows> {
   const core = (conn as unknown as { connection: CoreConnection }).connection;
+  let ended!: (outcome: Outcome) => void;
+  const outcome = new Promise<Outcome>((resolve) => (ended = resolve));
   return new Promise((resolve, reject) => {
     const out = new Collector(max);
     let sets = 0;
@@ -363,26 +393,35 @@ function collect(conn: mysql.PoolConnection, sql: string, params: unknown[], max
     let affected: number | undefined;
     let settled = false;
     // This app's own timer, not mysql2's timeout option: that one's timer
-    // outlives a result abandoned mid-stream, and kept the process alive.
-    const timer = setTimeout(() => fail(Object.assign(new Error(`the query took longer than ${QUERY_TIMEOUT_MS / 1000} s, and was abandoned`), { code: "QUERY_TIMEOUT" })), QUERY_TIMEOUT_MS);
+    // outlives a result abandoned mid-stream, and kept the process alive. It
+    // only stops waiting; onTimeout has the server stop the query, and says
+    // how that went.
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      void onTimeout(outcome).then(reject, reject);
+    }, timeoutMs);
     const finish = (abandoned: boolean) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      core.removeListener("error", fail);
       resolve({ columns: rowSet?.columns ?? [], rows: out.rows, rowCount: rowSet ? out.rows.length : (affected ?? 0), truncated: out.truncated, abandoned });
     };
     const fail = (err: Error) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      core.removeListener("error", fail);
       reject(err);
     };
     // A connection lost mid-query (the server closing it, the network going)
     // is reported to the connection, not to a query read by events: without
     // this the call waited out the whole timeout, and then called it one.
-    core.once("error", fail);
+    const lost = (err: Error) => {
+      ended({ ended: false, error: err });
+      fail(err);
+    };
+    core.once("error", lost);
+    void outcome.then(() => core.removeListener("error", lost));
     core
       .query({ sql, values: params })
       .on("fields", (fields) => {
@@ -399,8 +438,14 @@ function collect(conn: mysql.PoolConnection, sql: string, params: unknown[], max
           finish(true);
         }
       })
-      .on("error", fail)
-      .on("end", () => finish(false));
+      .on("error", (err) => {
+        ended({ ended: false, error: err });
+        fail(err);
+      })
+      .on("end", () => {
+        ended({ ended: true });
+        finish(false);
+      });
   });
 }
 
@@ -410,14 +455,30 @@ function collect(conn: mysql.PoolConnection, sql: string, params: unknown[], max
  * inside START TRANSACTION READ ONLY … ROLLBACK, so it can't change data or
  * the schema. That's a guard in this app, not in the
  * database: for a guarantee, give DATABASE_URL a user that can only read.
+ *
+ * In read-write mode it runs inside START TRANSACTION … COMMIT, and the
+ * COMMIT is sent only once the statement has run to the end of its result
+ * within the time limit. A statement that runs out of time, or whose result
+ * is cut off at the cap, is stopped on the server and never committed: the
+ * connection is closed with its transaction open, and the server rolls it
+ * back. With autocommit instead, closing the connection didn't stop the
+ * statement, and `INSERT … SELECT SLEEP(32)` was reported abandoned but
+ * committed anyway. (MySQL's SLEEP() even swallows a KILL and lets the
+ * statement finish, so only the missing COMMIT makes that reliable.)
  */
 async function run(sql: string, params: unknown[], max = MAX_ROWS): Promise<Rows> {
-  const { pool, mode } = await connection();
+  const { pool, control, mode, mariadb } = await connection();
   const conn = await pool.getConnection();
+  const timeoutMs = queryTimeoutMs;
   // Whether the connection can go back to the pool: not if a result was
-  // abandoned mid-stream, or the connection itself failed.
+  // abandoned mid-stream, the query ran out of time, or the connection itself
+  // failed.
   let reusable = true;
   try {
+    // The server's own time limit, which ends the statement there, not just
+    // the wait for it here. MySQL's max_execution_time covers only SELECT;
+    // MariaDB's max_statement_time, in seconds, covers every statement.
+    await conn.query(mariadb ? `SET SESSION max_statement_time = ${timeoutMs / 1000}` : `SET SESSION max_execution_time = ${timeoutMs}`);
     // Both, on every call. START TRANSACTION READ ONLY stops INSERT, UPDATE
     // and DELETE, but MySQL commits DDL implicitly, outside the transaction:
     // CREATE and DROP TABLE ran in a read-only transaction until the session
@@ -429,14 +490,28 @@ async function run(sql: string, params: unknown[], max = MAX_ROWS): Promise<Rows
     if (mode === "read-only") {
       await conn.query("SET SESSION TRANSACTION READ ONLY");
       await conn.query("START TRANSACTION READ ONLY");
+    } else {
+      await conn.query("START TRANSACTION");
     }
-    const result = await collect(conn, sql, params, max);
-    if (result.abandoned) reusable = false;
+    const result = await collect(conn, sql, params, max, timeoutMs + SERVER_FIRST_MS, async (outcome) => {
+      reusable = false;
+      return timeoutError(timeoutMs, mode, await stop(control, conn.threadId, outcome));
+    });
+    if (result.abandoned) {
+      // The server may still be running it: a CALL goes on after the rows
+      // that filled the cap, and a query blocked on sending more rows
+      // otherwise waits until the connection is seen to close.
+      reusable = false;
+      await stop(control, conn.threadId);
+    } else if (mode === "read-write") {
+      await conn.query("COMMIT");
+    }
     return result;
   } catch (err) {
     const e = err as { message?: string; errno?: number; fatal?: boolean; code?: string };
-    // After a timeout the query may still be running, and its rows arriving.
     if (e.fatal || e.code === "QUERY_TIMEOUT") reusable = false;
+    // The server's own time limit: MySQL's max_execution_time, MariaDB's max_statement_time.
+    if (e.errno === 3024 || e.errno === 1969) throw timeoutError(timeoutMs, mode, "stopped");
     if (e.errno === 1792) throw new Error(`${e.message}: this connector is read-only (set MYSQL_MODE=read-write to allow changes)`);
     if (e.errno === 1064 && /;\s*\S/.test(sql)) throw new Error(`${e.message} (one statement per query: run them one at a time)`);
     throw err;
@@ -444,6 +519,53 @@ async function run(sql: string, params: unknown[], max = MAX_ROWS): Promise<Rows
     if (reusable) await putBack(conn);
     else discard(conn);
   }
+}
+
+type Stopped = "stopped" | "asked" | "unreachable";
+
+/**
+ * Has the server stop what's running on a connection this app is about to
+ * close: closing it alone doesn't, and the statement ran on (and, with
+ * autocommit, committed). KILL CONNECTION rather than KILL QUERY: the
+ * connection is closed anyway, and ending the session also rolls back its
+ * transaction there and then. It goes over the control connection, since
+ * the pool may have no other free; a user may always KILL its own
+ * connections. With the query's outcome, it also waits for the query to end,
+ * to say whether it did.
+ */
+async function stop(control: mysql.Pool, threadId: number | null, outcome?: Promise<Outcome>): Promise<Stopped> {
+  if (threadId === null) return "unreachable";
+  try {
+    await within(KILL_WAIT_MS, control.query(`KILL CONNECTION ${Number(threadId)}`));
+  } catch (err) {
+    // No such connection: it's gone already, and nothing runs on it.
+    if ((err as { errno?: number }).errno === 1094) return "stopped";
+    return "unreachable";
+  }
+  if (!outcome) return "asked";
+  return (await within(KILL_WAIT_MS, outcome).then(
+    () => true,
+    () => false,
+  ))
+    ? "stopped"
+    : "asked";
+}
+
+/** p, or a rejection once ms have passed. p's own rejection is always handled. */
+function within<T>(ms: number, p: Promise<T>): Promise<T> {
+  p.catch(() => {});
+  let timer: NodeJS.Timeout;
+  return Promise.race([p, new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new Error("timed out")), ms)))]).finally(() => clearTimeout(timer));
+}
+
+function timeoutError(timeoutMs: number, mode: Mode, how: Stopped): Error {
+  const what =
+    how === "stopped" ? "and it was stopped on the server" : how === "asked" ? "and the server was asked to stop it" : "and the server couldn't be reached to stop it, so it may still be running there";
+  const kept =
+    mode === "read-write"
+      ? ". It ran in a transaction that wasn't committed, so nothing it changed in an InnoDB table was kept; only DDL, which commits itself, or a write to a table without transactions (such as MyISAM) may still have completed"
+      : "";
+  return Object.assign(new Error(`the query took longer than ${timeoutMs / 1000} s, ${what}${kept}`), { code: "QUERY_TIMEOUT" });
 }
 
 /**
@@ -482,7 +604,8 @@ function discard(conn: mysql.PoolConnection): void {
 export async function closeForTests(): Promise<void> {
   const current = opened;
   opened = undefined;
-  await (await current?.catch(() => undefined))?.pool.end().catch(() => {});
+  const c = await current?.catch(() => undefined);
+  await Promise.all([c?.pool.end().catch(() => {}), c?.control.end().catch(() => {})]);
 }
 
 /**
