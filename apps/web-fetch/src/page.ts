@@ -25,22 +25,29 @@ export interface Page {
 
 export function pageFromHtml(html: string, baseUrl: string): Page {
   const title = decode(/<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1] ?? "").replace(/\s+/g, " ").trim();
-  const body = html
-    .replace(/<!--[\s\S]*?-->/g, "")
-    .replace(/<(script|style|noscript|svg|head|template)\b[\s\S]*?<\/\1>/gi, "");
+  // Repeated until nothing changes: one pass over "<scr<script>…</script>ipt>"
+  // would leave a script element behind.
+  let body = html;
+  for (let previous = ""; previous !== body; ) {
+    previous = body;
+    body = body.replace(/<!--[\s\S]*?-->/g, "").replace(/<(script|style|noscript|svg|head|template)\b[\s\S]*?<\/\1\s*>/gi, "");
+  }
 
   const links: Page["links"] = [];
   for (const m of body.matchAll(/<a\b[^>]*\bhref\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>([\s\S]*?)<\/a>/gi)) {
     const href = decode(m[2] ?? m[3] ?? m[4] ?? "");
-    if (!href || href.startsWith("#") || href.startsWith("javascript:")) continue;
-    let absolute: string;
+    if (!href || href.startsWith("#")) continue;
+    let absolute: URL;
     try {
-      absolute = new URL(href, baseUrl).toString();
+      absolute = new URL(href, baseUrl);
     } catch {
       continue;
     }
+    // Only links the agent could follow with this app: not javascript:,
+    // data:, vbscript:, mailto: or anything else.
+    if (absolute.protocol !== "http:" && absolute.protocol !== "https:") continue;
     const text = decode(m[5]!.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
-    if (!links.some((l) => l.href === absolute)) links.push({ text, href: absolute });
+    if (!links.some((l) => l.href === absolute.toString())) links.push({ text, href: absolute.toString() });
     if (links.length === 100) break;
   }
 
@@ -50,7 +57,10 @@ export function pageFromHtml(html: string, baseUrl: string): Page {
       .replace(/<\/?(p|div|section|article|header|footer|main|nav|aside|h[1-6]|li|ul|ol|tr|table|pre|blockquote|dl|dt|dd|figure|figcaption)\b[^>]*>/gi, "\n")
       // A space, not nothing: adjacent inline elements (<a>Next</a><a>Out</a>)
       // are separate words; the whitespace is collapsed below.
-      .replace(/<[^>]+>/g, " "),
+      .replace(/<[^>]+>/g, " ")
+      // Anything still shaped like a tag after that (an unclosed "<script")
+      // goes too: this is text for an agent, never HTML.
+      .replace(/<\/?[a-z!][^\s<]*/gi, " "),
   )
     .split("\n")
     .map((line) => line.replace(/[ \t\f\v ]+/g, " ").trim())

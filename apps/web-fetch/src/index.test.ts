@@ -163,3 +163,14 @@ test("page text decodes entities and keeps block structure", () => {
   const page = pageFromHtml("<ul><li>a &lt;b&gt;</li><li>c&#39;d &#x263A;</li></ul>", "https://x.test/");
   assert.equal(page.text, "a <b>\nc'd ☺");
 });
+
+test("nested and unclosed markup can't leave a script behind, and only http(s) links are kept", () => {
+  const page = pageFromHtml(
+    `<p>before</p><scr<script>x()</script>ipt>alert(1)</script><p>after <script</p>` +
+      `<a href="javascript:alert(1)">a</a><a href="data:text/html,x">b</a><a href="vbscript:x">c</a><a href="mailto:x@y.z">d</a><a href="/ok">ok</a>`,
+    "https://x.test/",
+  );
+  assert.ok(!/<script|<scr/i.test(page.text), page.text);
+  assert.ok(page.text.includes("before") && page.text.includes("after"));
+  assert.deepEqual(page.links, [{ text: "ok", href: "https://x.test/ok" }]);
+});
