@@ -66,7 +66,7 @@ A one-line summary. The [app registry](./app-registry-reference.md) shows it in 
 
 ### `runtime` (default: `node`)
 
-The language the app's code is written in: `node` (the [TypeScript SDK](./sdk-reference.md)) or `python` (the [Python SDK](./sdk-python-reference.md)). Every way of running an app reads it, and apps with different runtimes can share one sandbox.
+The language the app's code is written in: `node` (the [TypeScript SDK](./sdk-reference.md)) or `python` (the [Python SDK](./sdk-python-reference.md)). Every way of running an app reads it, `berth test` included, and apps with different runtimes can share one sandbox. It is recorded in the image when the image is built, so changing it needs a rebuild, as `on_install` does.
 
 ### `capabilities` (default: `[]`)
 

@@ -164,7 +164,7 @@ On an enforcing kernel, a direct connection that skips the proxy is refused too,
 berth test
 ```
 
-`berth test` builds the production image, checks that your code's exports match `berth.yml`, calls each export with a generated input that fits its schema, and runs your `npm test` if `package.json` has one. `--json` prints a summary for CI.
+`berth test` builds the production image, checks that your code's exports match `berth.yml`, calls each export with a generated input that fits its schema, and runs your `npm test` if `package.json` has one (for a `runtime: python` app, `pytest` if it has a `tests/` directory). `--json` prints a summary for CI.
 
 ## 5. Use it from an agent
 
