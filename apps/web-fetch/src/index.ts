@@ -1,5 +1,6 @@
 import { defineApp } from "@berthos/sdk";
 import { z } from "zod";
+import { isIPv6 } from "node:net";
 import { fetch, ProxyAgent, type Dispatcher } from "undici";
 import { allowedPatterns, isAllowed, type HostPattern } from "./hosts.js";
 import { pageFromHtml } from "./page.js";
@@ -72,23 +73,59 @@ function portOf(url: URL): number {
   return url.port ? Number(url.port) : url.protocol === "https:" ? 443 : 80;
 }
 
-/**
- * Names the egress proxy refuses under every pattern, `*` included. Only
- * literal addresses and the two well-known names can be recognised here; a
- * name that resolves to one is caught by the proxy itself (the 403 path).
- */
-function isInternal(host: string): boolean {
-  if (host === "localhost" || host === "host.docker.internal") return true;
-  const m = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(host);
-  if (!m) return host.startsWith("[");
-  const [a, b] = [Number(m[1]), Number(m[2])];
+/** The IPv4 ranges the egress proxy's isBlockedAddress refuses, by first two octets. */
+function isInternalV4(a: number, b: number): boolean {
   return a === 0 || a === 10 || a === 127 || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || a >= 224;
 }
 
+/** A bracketed IPv6 literal, as URL.hostname writes one, as eight 16-bit groups. */
+function ipv6Groups(host: string): number[] | null {
+  if (!host.startsWith("[") || !host.endsWith("]")) return null;
+  const addr = host.slice(1, -1);
+  // URL has already normalised it: hex groups only, no embedded dotted IPv4.
+  if (!isIPv6(addr) || addr.includes(".")) return null;
+  const [head, tail] = addr.split("::") as [string, string | undefined];
+  const parse = (part: string | undefined) => (part ? part.split(":").map((g) => parseInt(g, 16)) : []);
+  const start = parse(head);
+  const end = parse(tail);
+  return tail === undefined ? start : [...start, ...new Array<number>(8 - start.length - end.length).fill(0), ...end];
+}
+
+/**
+ * Why the egress proxy would refuse this host under every pattern, `*`
+ * included, if it can be told from the name alone: "internal" for loopback,
+ * private, link-local and the like, "ipv6" for any other IPv6 literal (the
+ * proxy dials IPv4 only). Only literal addresses and the two well-known
+ * names can be recognised here; a name that resolves to an internal address
+ * is caught by the proxy itself (proxyRefusal).
+ */
+function unreachable(host: string): "internal" | "ipv6" | null {
+  if (host === "localhost" || host === "host.docker.internal") return "internal";
+  const m = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(host);
+  if (m) return isInternalV4(Number(m[1]), Number(m[2])) ? "internal" : null;
+  const g = ipv6Groups(host);
+  if (!g) return null;
+  const zeroTo = (n: number) => g.slice(0, n).every((x) => x === 0);
+  const embeddedV4Internal = () => isInternalV4(g[6]! >> 8, g[6]! & 0xff);
+  if (zeroTo(7) && (g[7] === 0 || g[7] === 1)) return "internal"; // :: and ::1
+  if ((g[0]! & 0xffc0) === 0xfe80 || (g[0]! & 0xffc0) === 0xfec0) return "internal"; // link-local, old site-local
+  if ((g[0]! & 0xfe00) === 0xfc00) return "internal"; // unique local (fc00::/7)
+  if ((g[0]! & 0xff00) === 0xff00) return "internal"; // multicast
+  if (zeroTo(5) && g[5] === 0xffff && embeddedV4Internal()) return "internal"; // IPv4-mapped
+  if (g[0] === 0x64 && g[1] === 0xff9b && g.slice(2, 6).every((x) => x === 0) && embeddedV4Internal()) return "internal"; // NAT64
+  return "ipv6";
+}
+
 function refusal(url: URL, patterns: HostPattern[]): Error {
-  if (isInternal(url.hostname)) {
+  const why = unreachable(url.hostname);
+  if (why === "internal") {
     return new Error(
       `${url.hostname} is an internal address (loopback, a private range, link-local such as the cloud metadata address, or the Docker host): the sandbox never lets an app reach one, whatever berth.yml declares.`,
+    );
+  }
+  if (why === "ipv6") {
+    return new Error(
+      `${url.hostname} is an IPv6 address, and the sandbox's egress proxy connects over IPv4 only, so no line in berth.yml would let web-fetch reach it. Use the host's name instead.`,
     );
   }
   const declared = patterns.map((p) => p.scope).join(", ") || "(none)";

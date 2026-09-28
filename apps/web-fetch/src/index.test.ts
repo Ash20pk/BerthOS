@@ -196,6 +196,15 @@ test("an internal address is explained as never reachable, not as a missing decl
   await assert.rejects(call("get", { url: "http://10.0.0.5/" }), /internal address/);
 });
 
+test("IPv6 literals are told apart: internal ones as internal, public ones as unreachable over IPv4", async () => {
+  for (const host of ["[::1]", "[::]", "[fe80::1]", "[fd00::1]", "[fc12:3456::1]", "[ff02::1]", "[::ffff:10.0.0.1]", "[::ffff:169.254.169.254]", "[64:ff9b::7f00:1]"]) {
+    await assert.rejects(call("get", { url: `http://${host}/` }), /is an internal address/, host);
+  }
+  for (const host of ["[2606:4700::1111]", "[::ffff:8.8.8.8]"]) {
+    await assert.rejects(call("get", { url: `http://${host}/` }), /is an IPv6 address, and the sandbox's egress proxy connects over IPv4 only/, host);
+  }
+});
+
 test("allowed_hosts lists the declared patterns", async () => {
   assert.deepEqual(await call("allowed_hosts"), { hosts: ["127.0.0.1:*"] });
 });
