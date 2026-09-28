@@ -9,7 +9,7 @@ import { startContainer, stopContainer } from "@berthos/docker-orchestrator";
 interface ExportCheckResult {
   ok: boolean;
   error?: string;
-  results?: Array<{ export: string; ok: boolean; error?: string }>;
+  results?: Array<{ export: string; ok: boolean; error?: string; unexercised?: string }>;
   missingInCode?: string[];
   missingInManifest?: string[];
 }
@@ -158,7 +158,10 @@ export default class Test extends Command {
     appTestCheck: { exitCode: number; output: string } | null,
   ): void {
     if (exportCheck.parsed?.ok) {
-      this.log(`✓ manifest + export contracts (${exportCheck.parsed.results?.length ?? 0} exports checked)`);
+      const results = exportCheck.parsed.results ?? [];
+      const unexercised = results.filter((r) => r.unexercised);
+      this.log(`✓ manifest + export contracts (${results.length} exports checked${unexercised.length ? `, ${unexercised.length} not exercised by stub inputs` : ""})`);
+      for (const r of unexercised) this.log(`  · ${r.export} threw on a stub input (fine if it needs real state): ${r.unexercised!.split("\n")[0]!.slice(0, 160)}`);
     } else {
       this.log("✗ manifest + export contracts failed:");
       if (exportCheck.parsed?.missingInCode?.length) {

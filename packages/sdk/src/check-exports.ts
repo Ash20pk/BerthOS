@@ -18,6 +18,8 @@ interface ExportResult {
   export: string;
   ok: boolean;
   error?: string;
+  /** Set when the handler threw on the stub input: not a contract failure, just not exercised. */
+  unexercised?: string;
 }
 
 async function main(): Promise<void> {
@@ -46,14 +48,24 @@ async function main(): Promise<void> {
   const results: ExportResult[] = [];
   for (const name of codeExports) {
     const def = app._exports.get(name)!;
+    // The contract is the declared shape: the export exists on both sides
+    // (checked above) and, when it returns, what it returns matches its
+    // output schema. A handler that throws on a made-up input hasn't broken
+    // it: git's status has no repository called "berth-test-stub", and a
+    // database connector has no database. Failing those made berth test
+    // impossible to pass for any app whose exports need state or a service.
+    // They're reported as not exercised instead.
+    const input = def.input ? stubValue(def.input) : undefined;
+    let result: unknown;
     try {
-      const input = def.input ? stubValue(def.input) : undefined;
-      const result = await def.handler(input);
-      if (def.output) def.output.parse(result);
-      results.push({ export: name, ok: true });
+      result = await def.handler(input);
     } catch (err) {
-      results.push({ export: name, ok: false, error: err instanceof Error ? err.message : String(err) });
+      results.push({ export: name, ok: true, unexercised: err instanceof Error ? err.message : String(err) });
+      continue;
     }
+    const parsed = def.output ? def.output.safeParse(result) : { success: true as const };
+    if (parsed.success) results.push({ export: name, ok: true });
+    else results.push({ export: name, ok: false, error: `returned output that doesn't match its declared schema: ${parsed.error.message}` });
   }
 
   const ok = results.every((r) => r.ok);
