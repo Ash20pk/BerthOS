@@ -6,8 +6,9 @@ implementation validates the exact same shape rather than porting any code.
 
 from __future__ import annotations
 
+import json
 import re
-from typing import Literal
+from typing import Literal, Optional
 
 import yaml
 from pydantic import BaseModel, Field, field_validator
@@ -52,9 +53,20 @@ class BerthManifest(BaseModel):
     @classmethod
     def _validate_capabilities(cls, v: list[str]) -> list[str]:
         for cap in v:
-            if not CAPABILITY_RE.match(cap):
+            if not is_capability_string(cap):
                 raise ValueError(f"capability must be 'namespace:action:scope', got {cap!r}")
+            # The same semantic check BerthManifestSchema's superRefine makes:
+            # a filesystem: scope becomes a real path created as root.
+            issue = capability_issue(cap)
+            if issue:
+                raise ValueError(f"capability {cap!r}: {issue}")
         return v
+
+
+def is_capability_string(capability: object) -> bool:
+    """CapabilityString in schema.ts. fullmatch rather than match: Python's
+    `$` also matches before a trailing newline, which JavaScript's does not."""
+    return isinstance(capability, str) and CAPABILITY_RE.fullmatch(capability) is not None
 
 
 def load_manifest(path: str) -> BerthManifest:
@@ -91,3 +103,51 @@ def matches_capability(granted: str, requested: str) -> bool:
     if g.namespace != r.namespace or g.action != r.action:
         return False
     return bool(_glob_to_regex(g.scope).match(r.scope))
+
+
+# Mirrors ALLOWED_FILESYSTEM_SCOPE_PREFIXES in @berthos/manifest-schema's
+# capability.ts — the only path prefixes a filesystem:read:/filesystem:write:
+# capability may name. Every declared write path is created as root before
+# enforcement (precreate_declared_paths in entrypoint.sh, and agent-init), so
+# an unconstrained scope would let a manifest create and be granted any path
+# in the container. Keep the two lists identical; agent-init re-checks its
+# own copy in Rust.
+ALLOWED_FILESYSTEM_SCOPE_PREFIXES = ["/workspace", "/context", "/tmp", "/app"]
+
+
+def _quote(value: str) -> str:
+    """JSON.stringify(value), for messages that read the same as the TypeScript ones."""
+    return json.dumps(value, ensure_ascii=False)
+
+
+def filesystem_scope_issue(scope: str) -> Optional[str]:
+    """filesystemScopeIssue() in capability.ts: a reason a filesystem: scope
+    is not allowed, or None. Messages match the TypeScript ones."""
+    if "\0" in scope:
+        return "filesystem path must not contain a null byte"
+    if not scope.startswith("/"):
+        return f'filesystem path must be absolute (start with "/"), got {_quote(scope)}'
+    path = scope[:-2] if scope.endswith("/*") else scope
+    if "*" in path:
+        return f'filesystem path may only use a trailing "/*" glob (a "*" anywhere else becomes a literal directory name), got {_quote(scope)}'
+    prefixes = ", ".join(ALLOWED_FILESYSTEM_SCOPE_PREFIXES)
+    if path == "/":
+        return f"filesystem:*:/ would grant the entire container filesystem — declare a path under {prefixes} instead"
+    segments = path[1:].split("/")
+    if any(segment in ("", ".", "..") for segment in segments):
+        return f'filesystem path must be canonical — no empty, "." or ".." segments, and no trailing slash — got {_quote(scope)}'
+    if not any(path == prefix or path.startswith(f"{prefix}/") for prefix in ALLOWED_FILESYSTEM_SCOPE_PREFIXES):
+        return f"filesystem path must be {prefixes} or a path beneath one of them, got {_quote(scope)}"
+    return None
+
+
+def capability_issue(capability: str) -> Optional[str]:
+    """capabilityIssue() in capability.ts: a reason `capability` is not an
+    acceptable declaration, or None. Assumes the grammar already holds."""
+    try:
+        parsed = parse_capability(capability)
+    except ValueError as err:
+        return str(err)
+    if parsed.namespace == "filesystem" and parsed.action in ("read", "write"):
+        return filesystem_scope_issue(parsed.scope)
+    return None
