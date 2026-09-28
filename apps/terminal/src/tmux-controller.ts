@@ -32,6 +32,7 @@ async function tmux(...args: string[]): Promise<string> {
 }
 
 let ttydStarted = false;
+let inFlight: Promise<void> | null = null;
 
 /**
  * `user:password` for ttyd's HTTP basic auth. Normally generated per boot by
@@ -67,7 +68,20 @@ function credential(): string {
  * `tmux attach`) they all see the exact same session run_command/send_keys
  * drive, not a fresh shell per connection.
  */
-export async function ensureSession(): Promise<void> {
+export function ensureSession(): Promise<void> {
+  // Concurrent calls share one check-and-create instead of each running
+  // has-session and then new-session: two calls racing on the first use both
+  // saw no session and both created one, and the loser failed with
+  // "duplicate session". The promise is dropped once it settles, so a later
+  // call checks again and a session that has since ended is recreated, and a
+  // failed attempt is retried rather than remembered.
+  inFlight ??= startSession().finally(() => {
+    inFlight = null;
+  });
+  return inFlight;
+}
+
+async function startSession(): Promise<void> {
   // Checked on every call, not once: a session that ended (someone typed
   // `exit`, or the shell was killed) is recreated instead of leaving every
   // later call failing for the rest of the container's life.
@@ -85,7 +99,14 @@ export async function ensureSession(): Promise<void> {
     // a long sentinel split mid-line. Widening the pane itself (rather
     // than shrinking the sentinel further) keeps room for genuinely long
     // agent-issued commands too.
-    await tmux("new-session", "-d", "-x", "500", "-y", "50", "-s", SESSION_NAME, "-c", workspaceRoot(), sessionShell());
+    await tmux("new-session", "-d", "-x", "500", "-y", "50", "-s", SESSION_NAME, "-c", workspaceRoot(), sessionShell()).catch(
+      (err: unknown) => {
+        // Someone else (a human attached over ttyd, another process on the
+        // same server) created it between the check and here: it exists,
+        // which is all this wanted.
+        if (!/duplicate session/.test(String((err as { stderr?: string }).stderr ?? err))) throw err;
+      },
+    );
   }
   if (ttydStarted) return;
   ttydStarted = true;
