@@ -1,4 +1,5 @@
 import { Args, Command, Flags } from "@oclif/core";
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 import Docker from "dockerode";
@@ -13,6 +14,7 @@ import {
   assertAtMostOneEgressBrokerApp,
 } from "../../util/os-config.js";
 import { isContainerRunning, removeStaleContainer } from "../../util/os-docker.js";
+import { parseEnvFile, resolveEnvFlags } from "../../util/env-args.js";
 
 export default class OsUp extends Command {
   static override description =
@@ -22,6 +24,12 @@ export default class OsUp extends Command {
     name: Args.string({ description: "name for this OS instance — used by `berth os down`/`status` and Computer.connect()/createAgent({ connect })" }),
   };
 
+  static override examples = [
+    "<%= config.bin %> os up demo --apps=apps/filesystem,apps/notes",
+    "GITHUB_TOKEN=... <%= config.bin %> os up gh --apps=apps/github-assistant --env GITHUB_TOKEN --env GITHUB_REPO=owner/name",
+    "<%= config.bin %> os up gh --apps=apps/github-assistant --env-file .env",
+  ];
+
   static override flags = {
     apps: Flags.string({ description: "comma-separated resident app directories to load (paths relative to cwd)" }),
     config: Flags.string({ description: "path to an OS config file (name + apps: [...] + network?) instead of --apps" }),
@@ -30,6 +38,12 @@ export default class OsUp extends Command {
       description:
         "expose @berthos/sdk's HTTP RPC bridge on a host port, for a process with no Docker API access (e.g. a Python client via berth_agents.Computer.connect()) to call this OS's exports over plain HTTP+bearer-token instead of docker exec",
     }),
+    env: Flags.string({
+      multiple: true,
+      description:
+        "a variable for the sandbox: NAME (value taken from this shell, so it stays out of shell history) or NAME=value. Repeatable. A name an app declares under secrets: is delivered to that app alone. Values are never saved in the instance's state file.",
+    }),
+    "env-file": Flags.string({ description: "dotenv file (NAME=value lines) of variables for the sandbox, applied before --env" }),
     "http-rpc-app": Flags.string({
       description: "which loaded app should bind the HTTP RPC bridge, when more than one is loaded (defaults to the first)",
     }),
@@ -77,6 +91,14 @@ export default class OsUp extends Command {
 
     const name = args.name ?? configName ?? apps[0]!.name;
 
+    let env: Record<string, string> = {};
+    try {
+      const fromFile = flags["env-file"] ? parseEnvFile(await readFile(flags["env-file"], "utf-8")) : {};
+      env = resolveEnvFlags(flags.env ?? [], fromFile, process.env);
+    } catch (err) {
+      this.error(`${flags["env-file"] && !(flags.env ?? []).length ? `--env-file ${flags["env-file"]}: ` : ""}${err instanceof Error ? err.message : String(err)}`);
+    }
+
     const docker = new Docker();
 
     const existing = await readOsState(name);
@@ -110,6 +132,7 @@ export default class OsUp extends Command {
       apps: apps.map((a) => ({ name: a.name, workingDir: `/app/apps/${a.name}`, manifest: a.manifest })),
       network,
       httpRpc: flags["http-rpc"] ? { authToken: httpRpcToken!, appName: httpRpcAppName } : undefined,
+      ...(Object.keys(env).length > 0 ? { env } : {}),
       docker,
     });
 

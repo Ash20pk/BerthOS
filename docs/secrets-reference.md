@@ -13,7 +13,12 @@ secrets:
   - GITHUB_TOKEN
 ```
 
-Pass the values in the `env` you boot the sandbox with: the `env` option of `startContainer()` from `@berthos/docker-orchestrator`, or `Computer.boot({ apps, env })` in the experimental agent framework. For example `env: { GITHUB_TOKEN: process.env.GITHUB_TOKEN }`. Inside the app, read it as usual: `process.env.GITHUB_TOKEN`.
+Pass the values when you boot the sandbox:
+
+- **`berth os up`**: `--env GITHUB_TOKEN` takes the value from your shell, so it stays out of shell history. Use `--env NAME=value` to give it explicitly, or `--env-file .env` for a dotenv file. Values are never written to the instance's state file.
+- **From code**: the `env` option of `startContainer()` from `@berthos/docker-orchestrator`, or `Computer.boot({ apps, env })` in the experimental agent framework. For example `env: { GITHUB_TOKEN: process.env.GITHUB_TOKEN }`.
+
+Inside the app, read it as usual: `process.env.GITHUB_TOKEN`.
 
 - A declared name reaches only the apps that declared it. Two apps may declare the same name, and each gets it.
 - A declared name with no value at boot prints a warning naming it (never the value), and the app boots without it.

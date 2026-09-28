@@ -62,6 +62,8 @@ Builds a production image for the apps and starts a container that keeps running
 | `--apps=<dirs>` | Comma-separated app directories, relative to the current directory. |
 | `--config=<path>` | A YAML file listing the apps instead (see below). Pass `--apps` or `--config`, not both. |
 | `--network=<name>` | Join a Docker network (see `Crew.networked()`). Overrides the config file's `network:`. |
+| `--env=<NAME or NAME=value>` | A variable for the sandbox; repeatable. `NAME` alone takes the value from your shell. A name an app declares under `secrets:` reaches that app only ([secrets](./secrets-reference.md)). Never saved in the state file. |
+| `--env-file=<path>` | A dotenv file of variables, applied before `--env`. |
 | `--http-rpc` | Also expose the app's exports over HTTP on a host port, for a client with no Docker access, such as the [Python client](./agents-python-reference.md). The URL and a fresh bearer token are printed and saved in the state file. |
 | `--http-rpc-app=<name>` | Which loaded app serves the HTTP bridge. Defaults to the first. Needs `--http-rpc`. |
 
