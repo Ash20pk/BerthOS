@@ -56,8 +56,10 @@ def _sdk_read_paths(pythonpath: str | None = None, app_dir: str | None = None) -
     PYTHONPATH is the boot environment's, which entrypoint.sh only prepends
     to, so an entry is not taken on trust: each is resolved, and kept only if
     it is an existing directory at least two levels deep that doesn't contain
-    the app's own directory. That drops "/", "/workspace" or "/app" (which
-    would grant every other app's code) and anything that doesn't exist."""
+    the app's own directory and isn't another app's (see _is_app_content).
+    That drops "/", "/workspace" or "/app" (which would grant every other
+    app's code), /app/apps/other or /workspace/examples/..., and anything that
+    doesn't exist."""
     raw = os.environ.get("PYTHONPATH", "") if pythonpath is None else pythonpath
     app_real = os.path.realpath(app_dir if app_dir is not None else os.getcwd())
     out: list[str] = []
@@ -66,12 +68,41 @@ def _sdk_read_paths(pythonpath: str | None = None, app_dir: str | None = None) -
             continue
         real = os.path.realpath(entry)
         too_broad = len(Path(real).parts) < 3 or app_real == real or app_real.startswith(real.rstrip("/") + "/")
-        if too_broad or not os.path.isdir(real):
-            print(f"[berth:capability-policy] WARNING: not granting read access to PYTHONPATH entry {entry!r} — it is missing, not a directory, or too broad")
+        if too_broad or not os.path.isdir(real) or _is_app_content(real):
+            print(
+                f"[berth:capability-policy] WARNING: not granting read access to PYTHONPATH entry {entry!r} — it is missing, not a directory, too broad, or another app's directory"
+            )
             continue
         if real not in out:
             out.append(real)
     return out
+
+
+# How far below a PYTHONPATH entry to look for a berth.yml. The SDK's own
+# directory holds none at any depth; a directory of apps (examples/,
+# examples/resident-apps/) holds one within a level or two.
+_APP_SCAN_DEPTH = 3
+_APP_SCAN_SKIP = {"node_modules", "__pycache__"}
+
+
+def _is_app_content(real: str) -> bool:
+    """True if `real` is part of an app, or holds one: it is under an apps/
+    directory, it or a directory above it has a berth.yml, or one of the
+    directories within _APP_SCAN_DEPTH levels below it does. The SDK lives
+    in packages/sdk-python or /opt/berth/sdk-python, none of which match."""
+    path = Path(real)
+    if "apps" in path.parts:
+        return True
+    if any((d / "berth.yml").is_file() for d in (path, *path.parents)):
+        return True
+    for current, dirs, files in os.walk(real):
+        if "berth.yml" in files:
+            return True
+        depth = len(Path(current).relative_to(path).parts)
+        # Pruned in place, so os.walk doesn't descend: not past the depth
+        # limit, and not into dependency or hidden directories.
+        dirs[:] = [] if depth + 1 >= _APP_SCAN_DEPTH else [d for d in dirs if d not in _APP_SCAN_SKIP and not d.startswith(".")]
+    return False
 
 
 def _strip_trailing_glob(scope: str) -> str:
