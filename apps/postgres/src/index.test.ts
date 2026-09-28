@@ -6,7 +6,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pg from "pg";
-import { allowsPrivileged, cell, Collector, modeFrom, privilegeProblem, routeFor, shapeRows, targetOf, types } from "./index.js";
+import { allowsPrivileged, cell, Collector, modeFrom, privilegeProblem, routeFor, shapeRows, targetOf, types, usesTls } from "./index.js";
 import { ProxyTunnel } from "./tunnel.js";
 
 // --- pure: no database needed ------------------------------------------------
@@ -29,6 +29,14 @@ test("routeFor goes through the proxy for a declared public host, direct for a d
   const priv = targetOf("postgres://u:p@10.0.3.7:5432/x");
   assert.equal(routeFor(priv, ["network:connect:5432"], "http://127.0.0.1:8090").kind, "direct", "an internal address never goes through the proxy");
   assert.throws(() => routeFor(priv, ["network:host:10.0.3.7:5432"], "http://127.0.0.1:8090"), /internal address.*network:connect:5432/s);
+});
+
+test("usesTls reads DATABASE_URL the way node-postgres does", () => {
+  assert.equal(usesTls("postgres://u:p@db.example.com/x"), false);
+  assert.equal(usesTls("postgres://u:p@db.example.com/x?sslmode=disable"), false);
+  assert.equal(usesTls("postgres://u:p@db.example.com/x?sslmode=require"), true);
+  assert.equal(usesTls("postgres://u:p@db.example.com/x?sslmode=verify-full"), true);
+  assert.equal(usesTls("postgres://u:p@db.example.com/x?ssl=true"), true);
 });
 
 test("the mode is read-only unless POSTGRES_MODE says read-write", () => {

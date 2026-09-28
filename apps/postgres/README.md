@@ -24,6 +24,16 @@ Edit `capabilities:` in `berth.yml`. There are two ways, and the difference matt
 
 The egress proxy never connects to an internal address, which is why a private database needs the second form. The host itself still comes only from `DATABASE_URL`, which the agent can't change, but the sandbox no longer enforces it. If you pick the wrong form, the error says which line to add. Restart the app after editing.
 
+## Encrypt the connection
+
+node-postgres doesn't use TLS unless `DATABASE_URL` asks for it, so by default the password and every row cross the network in the clear. For any database that isn't on the same machine or a private network you trust, add `sslmode` to the URL:
+
+```
+postgres://reader:...@db.example.com:5432/sales?sslmode=verify-full
+```
+
+`verify-full` checks the server's certificate against the system's trusted CAs and its name against the host. (node-postgres treats `prefer`, `require` and `verify-ca` the same way; add `&uselibpqcompat=true` for libpq's weaker meanings of them.) For a server with a private CA, add `sslrootcert=/path/to/ca.pem`. Through the egress proxy TLS still runs end to end: the proxy only carries the bytes. The connector writes a warning to stderr when it connects to a host that isn't a local or private address without TLS.
+
 ## Read-only, and how far that goes
 
 - **Default: read-only.** Every statement runs inside `BEGIN READ ONLY … ROLLBACK`, so `INSERT`, `UPDATE`, `DELETE` and DDL are refused. Set `POSTGRES_MODE=read-write` in the sandbox's environment to allow changes.

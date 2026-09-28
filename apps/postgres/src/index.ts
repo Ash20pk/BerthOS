@@ -36,6 +36,19 @@ export function targetOf(connectionString: string): Target {
   return { host: url.hostname, port: Number(url.port) || 5432, database: decodeURIComponent(url.pathname.slice(1)) || "postgres", user: decodeURIComponent(url.username) };
 }
 
+/**
+ * Whether DATABASE_URL asks for TLS, the way node-postgres reads it: `ssl=true`
+ * or any `sslmode` but `disable`. Without one of those it doesn't use TLS at
+ * all, so the password and every row cross the network in the clear.
+ */
+export function usesTls(connectionString: string): boolean {
+  const params = new URL(connectionString).searchParams;
+  const ssl = params.get("ssl");
+  const mode = params.get("sslmode");
+  if (mode === "disable") return false;
+  return ssl === "true" || ssl === "1" || mode !== null || params.has("sslcert") || params.has("sslkey") || params.has("sslrootcert");
+}
+
 /** Addresses the egress proxy never tunnels to, whatever berth.yml says. */
 export function isInternal(host: string): boolean {
   if (host === "localhost" || host === "host.docker.internal") return true;
@@ -189,6 +202,9 @@ async function open(): Promise<Connection> {
   const manifest = await loadManifest(process.env.BERTH_MANIFEST_PATH ?? "berth.yml");
   const route = routeFor(target, manifest.capabilities, process.env.BERTH_EGRESS_PROXY_URL);
   const mode = modeFrom(process.env);
+  if (!isInternal(target.host) && !usesTls(connectionString)) {
+    console.error(`[postgres] DATABASE_URL points at ${target.host}, not a local address, without TLS: the password and every row cross the network unencrypted. Add ?sslmode=verify-full to DATABASE_URL.`);
+  }
   const pool = new pg.Pool({
     connectionString,
     max: 2,
