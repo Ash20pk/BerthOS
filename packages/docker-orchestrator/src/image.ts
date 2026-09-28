@@ -118,6 +118,25 @@ function excludedFromBuildContext(appDir: string, src: string): boolean {
 }
 
 /**
+ * `pnpm deploy --legacy` rewrites the workspace's pnpm-lock.yaml (workspace
+ * links become injected `file:` dependencies), so every image build from a
+ * clone left the tracked lockfile modified. The deploy needs that only for
+ * itself; put the file back as it was.
+ */
+async function withLockfileRestored<T>(workspaceRoot: string, run: () => Promise<T>): Promise<T> {
+  const lockfile = join(workspaceRoot, "pnpm-lock.yaml");
+  const before = existsSync(lockfile) ? await readFile(lockfile) : undefined;
+  try {
+    return await run();
+  } finally {
+    if (before) {
+      const after = await readFile(lockfile).catch(() => undefined);
+      if (!after || !after.equals(before)) await writeFile(lockfile, before);
+    }
+  }
+}
+
+/**
  * Makes a deployed tree identical from one build to the next, and correct
  * inside the image. `pnpm deploy` writes its own (random, temporary) target
  * path into the `.bin` shims' NODE_PATH and into `.modules.yaml`, so the
@@ -181,9 +200,11 @@ async function stageProductionSource(appDir: string, stagingDir: string, contain
 
   if (workspaceRoot) {
     const pkgJson = JSON.parse(await readFile(join(appDir, "package.json"), "utf-8")) as { name: string };
-    await execFileAsync("pnpm", ["--filter", pkgJson.name, "deploy", "--prod", "--legacy", stagingDir], {
-      cwd: workspaceRoot,
-    });
+    await withLockfileRestored(workspaceRoot, () =>
+      execFileAsync("pnpm", ["--filter", pkgJson.name, "deploy", "--prod", "--legacy", stagingDir], {
+        cwd: workspaceRoot,
+      }),
+    );
     await makeDeployReproducible(stagingDir, containerAppRoot);
     return;
   }
