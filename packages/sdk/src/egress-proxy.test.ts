@@ -15,6 +15,21 @@ import { configureEgressProxy } from "./egress-proxy.js";
 
 const execFileAsync = promisify(execFile);
 
+// configureEgressProxy() swaps these globals for undici's; each test that
+// calls it puts them back, so no later test runs against a replaced fetch().
+const nativeGlobals = {
+  fetch: globalThis.fetch,
+  Headers: globalThis.Headers,
+  Request: globalThis.Request,
+  Response: globalThis.Response,
+  FormData: globalThis.FormData,
+};
+function restoreGlobals(dispatcher: ReturnType<typeof getGlobalDispatcher>): void {
+  delete process.env.BERTH_EGRESS_PROXY_URL;
+  setGlobalDispatcher(dispatcher);
+  Object.assign(globalThis, nativeGlobals);
+}
+
 test("configureEgressProxy() is a no-op when BERTH_EGRESS_PROXY_URL is unset", () => {
   delete process.env.BERTH_EGRESS_PROXY_URL;
   const before = getGlobalDispatcher();
@@ -54,8 +69,49 @@ test("configureEgressProxy() routes global fetch() through the configured proxy"
     assert.equal(receivedRequests.length, 1);
     assert.equal(receivedRequests[0], "http://target.invalid/some/path?x=1");
   } finally {
-    delete process.env.BERTH_EGRESS_PROXY_URL;
-    setGlobalDispatcher(originalDispatcher);
+    restoreGlobals(originalDispatcher);
+    await new Promise<void>((resolve) => fakeProxy.close(() => resolve()));
+  }
+});
+
+// A Request built from Node's built-in class before the swap (or by a library
+// that kept a reference to it) is not one undici's fetch() recognises; it used
+// to fail with "Failed to parse URL from [object Request]".
+test("configureEgressProxy() still accepts a Request built from the built-in class", async () => {
+  const received: { url: string; method: string; header: string | undefined; body: string }[] = [];
+  const fakeProxy = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (chunk: Buffer) => (body += chunk.toString()));
+    req.on("end", () => {
+      received.push({ url: req.url ?? "", method: req.method ?? "", header: req.headers["x-berth-test"] as string | undefined, body });
+      res.writeHead(200, { "content-type": "text/plain" }).end("ok");
+    });
+  });
+  await new Promise<void>((resolve) => fakeProxy.listen(0, "127.0.0.1", resolve));
+  const { port } = fakeProxy.address() as { port: number };
+
+  const originalDispatcher = getGlobalDispatcher();
+  const early = new nativeGlobals.Request("http://target.invalid/early", {
+    method: "POST",
+    headers: { "x-berth-test": "kept" },
+    body: "payload",
+  });
+  process.env.BERTH_EGRESS_PROXY_URL = `http://127.0.0.1:${port}`;
+  configureEgressProxy();
+
+  try {
+    assert.notEqual(globalThis.Request, nativeGlobals.Request, "the swap should have happened");
+    const res = await fetch(early);
+    assert.equal(res.status, 200);
+    assert.equal(await res.text(), "ok");
+    assert.deepEqual(received, [{ url: "http://target.invalid/early", method: "POST", header: "kept", body: "payload" }]);
+
+    const bodiless = await fetch(new nativeGlobals.Request("http://target.invalid/get"));
+    assert.equal(bodiless.status, 200);
+    await bodiless.text();
+    assert.equal(received[1]?.method, "GET");
+  } finally {
+    restoreGlobals(originalDispatcher);
     await new Promise<void>((resolve) => fakeProxy.close(() => resolve()));
   }
 });
