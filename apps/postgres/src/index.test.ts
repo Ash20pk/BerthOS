@@ -66,6 +66,12 @@ test("results are capped by row count and size, and values are JSON-safe", () =>
   assert.equal((cell("x".repeat(20_000)) as string).length, 10_001);
 });
 
+test("binary, big integers and dates nested in arrays and JSON are made JSON-safe too", () => {
+  assert.deepEqual(cell([Buffer.from([0xde, 0xad]), null]), ["\\xdead", null]);
+  assert.deepEqual(cell({ id: BigInt(7), at: new Date("2026-01-04T00:00:00Z"), blobs: [Buffer.from([1])] }), { id: "7", at: "2026-01-04T00:00:00.000Z", blobs: ["\\x01"] });
+  assert.equal(typeof cell([Buffer.alloc(20_000)]), "string", "still capped once serialized");
+});
+
 test("the collector stops taking rows once it's full, by count or by size", () => {
   const byCount = new Collector(3);
   assert.deepEqual([1, 2, 3, 4, 5].map((id) => byCount.add({ id })), [true, true, true, false, false]);
