@@ -19,7 +19,7 @@ process.env.BERTH_MANIFEST_PATH = join(dir, "berth.yml");
 // sandbox, where the egress proxy's address is set and would refuse loopback.
 delete process.env.BERTH_EGRESS_PROXY_URL;
 resetAllowedPatterns();
-const { default: app } = await import("./index.js");
+const { default: app, setTimeoutMs } = await import("./index.js");
 const call = (name: string, input: unknown = {}) => app._exports.get(name)!.handler(input) as Promise<any>;
 
 // `berth test` runs this file inside the sandbox, under web-fetch's own
@@ -54,6 +54,21 @@ const server = http.createServer((req, res) => {
       );
     } else if (req.url === "/forbidden") {
       res.writeHead(403, { "content-type": "text/plain" }).end("Forbidden: 403");
+    } else if (req.url?.startsWith("/slow-hop/")) {
+      // Each hop answers in 150 ms: well inside any one deadline, not four.
+      const n = Number(req.url.slice("/slow-hop/".length));
+      setTimeout(() => {
+        if (n > 0) res.writeHead(302, { location: `/slow-hop/${n - 1}` }).end();
+        else res.writeHead(200, { "content-type": "text/plain" }).end("arrived");
+      }, 150);
+    } else if (req.url === "/slow-body") {
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.write("start ");
+      setTimeout(() => res.end("end"), 1_000);
+    } else if (req.url === "/broken-body") {
+      res.writeHead(200, { "content-type": "text/plain", "content-length": "100" });
+      res.write("only part of it");
+      setTimeout(() => res.destroy(), 50);
     } else if (req.url === "/big") {
       res.writeHead(200, { "content-type": "text/plain" }).end("x".repeat(150_000));
     } else if (req.url === "/image") {
@@ -183,6 +198,21 @@ serverTest("a 403 from the site itself is returned as a response, not reported a
   const res = await call("get", { url: `${base}/forbidden` });
   assert.equal(res.status, 403);
   assert.equal(res.body, "Forbidden: 403");
+});
+
+serverTest("the time limit covers the whole request, across redirects and reading the body", async () => {
+  setTimeoutMs(400);
+  try {
+    assert.equal((await call("get", { url: `${base}/slow-hop/1` })).body, "arrived");
+    await assert.rejects(call("get", { url: `${base}/slow-hop/4` }), /slow-hop\/4 didn't finish within 0\.4 s \(the limit covers every redirect and reading the body\)/);
+    await assert.rejects(call("get", { url: `${base}/slow-body` }), /slow-body didn't finish within 0\.4 s/);
+  } finally {
+    setTimeoutMs(30_000);
+  }
+});
+
+serverTest("a connection lost while reading the body is reported like a failed request", async () => {
+  await assert.rejects(call("get", { url: `${base}/broken-body` }), /^Error: reading the response from http:\/\/127\.0\.0\.1:\d+\/broken-body failed: /);
 });
 
 serverTest("non-http URLs and unsupported methods are refused", async () => {

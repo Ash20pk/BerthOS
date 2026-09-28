@@ -48,7 +48,13 @@ function proxyRefusal(url: URL, detail: string): Error {
 const MAX_BYTES = 5 * 1024 * 1024;
 const MAX_CHARS = 100_000;
 const MAX_REDIRECTS = 5;
-const TIMEOUT_MS = 30_000;
+/** One deadline for the whole request: every redirect, and reading the body. */
+let timeoutMs = 30_000;
+
+/** For tests: a shorter deadline. */
+export function setTimeoutMs(ms: number): void {
+  timeoutMs = ms;
+}
 
 interface Fetched {
   url: string;
@@ -198,6 +204,9 @@ async function send(method: string, rawUrl: string, body: string | undefined, co
   let url = parseUrl(rawUrl);
   let currentMethod = method.toUpperCase();
   let currentBody = body;
+  const limit = timeoutMs;
+  const deadline = AbortSignal.timeout(limit);
+  const timedOut = () => new Error(`${rawUrl} didn't finish within ${limit / 1000} s (the limit covers every redirect and reading the body)`);
   for (let hop = 0; ; hop++) {
     if (!isAllowed(patterns, url.hostname, portOf(url))) throw refusal(url, patterns);
     const dispatcher = proxy();
@@ -211,10 +220,11 @@ async function send(method: string, rawUrl: string, body: string | undefined, co
         },
         ...(currentBody !== undefined && currentMethod !== "GET" && currentMethod !== "HEAD" ? { body: currentBody } : {}),
         redirect: "manual",
-        signal: AbortSignal.timeout(TIMEOUT_MS),
+        signal: deadline,
         ...(dispatcher ? { dispatcher } : {}),
       });
     } catch (err) {
+      if (deadline.aborted) throw timedOut();
       const cause = rootCause(err);
       if (dispatcher && TUNNEL_REFUSED.test(cause)) throw proxyRefusal(url, cause);
       throw new Error(`request to ${url.toString()} failed: ${cause}`);
@@ -234,7 +244,14 @@ async function send(method: string, rawUrl: string, body: string | undefined, co
     }
 
     const content_type = res.headers.get("content-type") ?? "";
-    const { bytes, truncated: byteCapped } = await readCapped(res);
+    let read: Awaited<ReturnType<typeof readCapped>>;
+    try {
+      read = await readCapped(res);
+    } catch (err) {
+      if (deadline.aborted) throw timedOut();
+      throw new Error(`reading the response from ${url.toString()} failed: ${rootCause(err)}`);
+    }
+    const { bytes, truncated: byteCapped } = read;
     if (!isText(content_type)) {
       return { url: url.toString(), status: res.status, content_type, body: `[${content_type} body, ${bytes.length} bytes${byteCapped ? "+" : ""}, not shown]`, truncated: byteCapped };
     }
