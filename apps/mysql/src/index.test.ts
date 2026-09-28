@@ -107,7 +107,7 @@ async function appWith(env: Record<string, string | undefined>, capabilities: st
   Object.assign(process.env, { BERTH_MANIFEST_PATH: join(dir, "berth.yml") }, Object.fromEntries(Object.entries(env).filter(([, v]) => v !== undefined)));
   // A fresh module per configuration: the pool is created once per process.
   const mod = await import(`./index.js?case=${Math.random()}`);
-  after(() => mod.closeForTests?.());
+  after(() => mod.closeForTests());
   const call = (name: string, input: unknown = {}) => mod.default._exports.get(name)!.handler(input) as Promise<any>;
   return call;
 }
@@ -153,6 +153,14 @@ live("read-write mode can change data, one statement at a time", async () => {
   assert.equal(inserted.row_count, 1);
   await call("query", { sql: "DELETE FROM customers WHERE name = ?", params: ["Temp"] });
   await assert.rejects(call("query", { sql: "SELECT 1; SELECT 2", params: [] }), /one statement per query/);
+});
+
+live("concurrent first calls share one pool", async () => {
+  const port = new URL(TEST_URL!).port;
+  const call = await appWith({ DATABASE_URL: urlAs("app") }, [`network:connect:${port}`]);
+  const ids = await Promise.all(Array.from({ length: 6 }, () => call("query", { sql: "SELECT CONNECTION_ID() AS id", params: [] })));
+  // connectionLimit: 2 per pool. Six pools would have opened up to six connections.
+  assert.ok(new Set(ids.map((r) => String(r.rows[0].id))).size <= 2);
 });
 
 live("through a CONNECT proxy, as the egress proxy would carry it", async () => {

@@ -88,18 +88,34 @@ export function shapeRows(rows: Record<string, unknown>[]): { rows: Record<strin
   return { rows: out, truncated: rows.length > MAX_ROWS };
 }
 
-let pool: mysql.Pool | undefined;
-let poolInfo: { target: Target; route: Route; mode: Mode } | undefined;
+interface Connection {
+  pool: mysql.Pool;
+  target: Target;
+  route: Route;
+  mode: Mode;
+}
 
-async function connection(): Promise<{ pool: mysql.Pool; target: Target; route: Route; mode: Mode }> {
-  if (pool && poolInfo) return { pool, ...poolInfo };
+// The promise, not the pool: two first calls at once would otherwise each
+// build a pool, and one would leak. A failed attempt is forgotten, so the next
+// call tries again.
+let opened: Promise<Connection> | undefined;
+
+function connection(): Promise<Connection> {
+  opened ??= open().catch((err) => {
+    opened = undefined;
+    throw err;
+  });
+  return opened;
+}
+
+async function open(): Promise<Connection> {
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) throw new Error("DATABASE_URL isn't set: pass it when you boot the sandbox (berth os up --env DATABASE_URL, or Computer.boot({ env }))");
   const target = targetOf(connectionString);
   const manifest = await loadManifest(process.env.BERTH_MANIFEST_PATH ?? "berth.yml");
   const route = routeFor(target, manifest.capabilities, process.env.BERTH_EGRESS_PROXY_URL);
   const mode = modeFrom(process.env);
-  pool = mysql.createPool({
+  const pool = mysql.createPool({
     uri: connectionString,
     connectionLimit: 2,
     connectTimeout: 15_000,
@@ -111,8 +127,7 @@ async function connection(): Promise<{ pool: mysql.Pool; target: Target; route: 
       ? { stream: () => new ProxyTunnel(route.proxy).connect(target.port, target.host) as unknown as import("node:net").Socket }
       : {}),
   });
-  poolInfo = { target, route, mode };
-  return { pool, ...poolInfo };
+  return { pool, target, route, mode };
 }
 
 /**
@@ -155,9 +170,9 @@ async function run(sql: string, params: unknown[]): Promise<{ rows: Record<strin
 
 /** For tests: close the pool, whose idle connections would keep the process alive. */
 export async function closeForTests(): Promise<void> {
-  await pool?.end().catch(() => {});
-  pool = undefined;
-  poolInfo = undefined;
+  const current = opened;
+  opened = undefined;
+  await (await current?.catch(() => undefined))?.pool.end().catch(() => {});
 }
 
 export default defineApp((app) => {
