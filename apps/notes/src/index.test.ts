@@ -176,3 +176,23 @@ test("add_note breaks a stale lock left by a dead process", async () => {
     assert.deepEqual(await readdir(process.env.BERTH_WORKSPACE_ROOT!), ["notes.json"]);
   });
 });
+
+// list_notes shares readNotes() with the writers: a file that doesn't parse is
+// reported as an error, not shown to the agent as "no notes", and is left as-is.
+test("list_notes fails on a notes.json it cannot parse instead of returning none", async () => {
+  await withTempWorkspace(async () => {
+    const listNotes = app._exports.get("list_notes")!;
+    const path = join(process.env.BERTH_WORKSPACE_ROOT!, "notes.json");
+    await writeFile(path, "", "utf-8");
+
+    await assert.rejects(async () => listNotes.handler(undefined), SyntaxError);
+    assert.equal(await readFile(path, "utf-8"), "");
+  });
+});
+
+test("list_notes returns an empty list when there is no notes.json yet", async () => {
+  await withTempWorkspace(async () => {
+    const listNotes = app._exports.get("list_notes")!;
+    assert.deepEqual(await listNotes.handler(undefined), { notes: [] });
+  });
+});
