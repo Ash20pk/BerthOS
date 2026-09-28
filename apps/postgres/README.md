@@ -29,7 +29,13 @@ The egress proxy never connects to an internal address, which is why a private d
 - **Default: read-only.** Every statement runs inside `BEGIN READ ONLY … ROLLBACK`, so `INSERT`, `UPDATE`, `DELETE` and DDL are refused. Set `POSTGRES_MODE=read-write` in the sandbox's environment to allow changes.
 - **One statement per call, in both modes.** Queries use PostgreSQL's extended protocol, which refuses a string holding several statements, so `SELECT 1; DROP TABLE x` doesn't run.
 - **Each call starts from a clean session.** After every call the connection is rolled back and reset (`DISCARD ALL`) before it's reused, so a `SET` (say, `SET statement_timeout = 0`), an advisory lock, a temporary table or a transaction left open doesn't carry over to the next call. A `BEGIN` in one call and a `COMMIT` in the next is therefore not a transaction: in read-write mode each statement commits on its own.
-- **This is a guard in the connector, not in the database.** A read-only transaction still allows reading anything the role can see, and functions with side effects. For a real guarantee, give `DATABASE_URL` a role that can only `SELECT` what the agent should see: the database then refuses everything else, whatever the mode.
+- **A superuser is refused in read-only mode.** A read-only transaction doesn't stop what a superuser can do outside the data: `COPY … TO PROGRAM` runs a shell command on the database server, and `pg_reload_conf()`, `pg_terminate_backend()` and the like take effect whether or not the transaction rolls back. So in read-only mode the connector checks the role when it connects and refuses to serve (every export returns the error) if the role is a superuser, can `SET ROLE` to one, or is a member of `pg_execute_server_program` or `pg_write_server_files`. Set `POSTGRES_ALLOW_PRIVILEGED=true` to accept such a role anyway. Read-write mode doesn't check: it's asking for a role that can change things.
+- **This is a guard in the connector, not in the database.** What a read-only transaction still allows, for a role that isn't refused above:
+  - reading anything the role can see;
+  - functions that act outside the transaction: `pg_cancel_backend()` and `pg_terminate_backend()` on the role's own other sessions (or on any non-superuser's, for a member of `pg_signal_backend`), and anything an extension such as `dblink` does over its own connection;
+  - holding its connection, locks and CPU for up to the 30 s timeout (`pg_sleep`, a heavy query, a lock another session waits for).
+
+  For a real guarantee, give `DATABASE_URL` a role that can only `SELECT` what the agent should see: the database then refuses everything else, whatever the mode.
 
 ## Exports
 

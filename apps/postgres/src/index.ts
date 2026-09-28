@@ -74,6 +74,36 @@ export function modeFrom(env: NodeJS.ProcessEnv): Mode {
   return env.POSTGRES_MODE === "read-write" ? "read-write" : "read-only";
 }
 
+/** POSTGRES_ALLOW_PRIVILEGED=true: serve a privileged role in read-only mode anyway. */
+export function allowsPrivileged(env: NodeJS.ProcessEnv): boolean {
+  return env.POSTGRES_ALLOW_PRIVILEGED === "true";
+}
+
+/**
+ * What a read-only transaction can't stop the role doing, if anything. A
+ * superuser (or a role that can SET ROLE to one) can still run COPY … TO
+ * PROGRAM, a shell command on the database host, and pg_reload_conf(),
+ * pg_terminate_backend() and the like, none of which a transaction rolls
+ * back; pg_execute_server_program and pg_write_server_files give the first
+ * of those on their own.
+ */
+const PRIVILEGE_CHECK = `
+  SELECT EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolsuper AND pg_has_role(current_user, r.oid, 'MEMBER')) AS superuser,
+         COALESCE(pg_has_role(current_user, to_regrole('pg_execute_server_program'), 'MEMBER'), false) AS execute_server_program,
+         COALESCE(pg_has_role(current_user, to_regrole('pg_write_server_files'), 'MEMBER'), false) AS write_server_files`;
+
+export function privilegeProblem(user: string, row: { superuser: boolean; execute_server_program: boolean; write_server_files: boolean }): string | undefined {
+  const what = row.superuser
+    ? "is a superuser (or can become one with SET ROLE)"
+    : row.execute_server_program
+      ? "is a member of pg_execute_server_program"
+      : row.write_server_files
+        ? "is a member of pg_write_server_files"
+        : undefined;
+  if (!what) return undefined;
+  return `DATABASE_URL's role ${user} ${what}, and read-only mode can't hold such a role back: it can still run COPY … TO PROGRAM (a shell command on the database server) or write files there, reload the server's configuration and end other sessions, none of which a read-only transaction stops. Give DATABASE_URL a role that can only read what the agent should see, or, to accept that, set POSTGRES_ALLOW_PRIVILEGED=true and restart the app.`;
+}
+
 /** A value made safe to hand back as JSON, and small enough to read. */
 export function cell(value: unknown): unknown {
   if (value === null || typeof value === "number" || typeof value === "boolean") return value;
@@ -151,6 +181,16 @@ async function open(): Promise<Connection> {
     // An idle client dropped (the server restarted, the network blipped): the
     // pool replaces it on next use. Without a listener this would crash the app.
   });
+  if (mode === "read-only" && !allowsPrivileged(process.env)) {
+    try {
+      const { rows } = await pool.query(PRIVILEGE_CHECK);
+      const problem = privilegeProblem(target.user, rows[0]);
+      if (problem) throw new Error(problem);
+    } catch (err) {
+      await pool.end().catch(() => {});
+      throw err;
+    }
+  }
   return { pool, target, route, mode };
 }
 

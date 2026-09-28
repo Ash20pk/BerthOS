@@ -6,7 +6,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pg from "pg";
-import { cell, Collector, modeFrom, routeFor, shapeRows, targetOf } from "./index.js";
+import { allowsPrivileged, cell, Collector, modeFrom, privilegeProblem, routeFor, shapeRows, targetOf } from "./index.js";
 import { ProxyTunnel } from "./tunnel.js";
 
 // --- pure: no database needed ------------------------------------------------
@@ -35,6 +35,15 @@ test("the mode is read-only unless POSTGRES_MODE says read-write", () => {
   assert.equal(modeFrom({}), "read-only");
   assert.equal(modeFrom({ POSTGRES_MODE: "yes" }), "read-only");
   assert.equal(modeFrom({ POSTGRES_MODE: "read-write" }), "read-write");
+});
+
+test("a privileged role is named, with what it could still do and how to opt in", () => {
+  const none = { superuser: false, execute_server_program: false, write_server_files: false };
+  assert.equal(privilegeProblem("app", none), undefined);
+  assert.match(privilegeProblem("postgres", { ...none, superuser: true })!, /postgres is a superuser.*COPY … TO PROGRAM.*POSTGRES_ALLOW_PRIVILEGED=true/s);
+  assert.match(privilegeProblem("ops", { ...none, execute_server_program: true })!, /pg_execute_server_program/);
+  assert.equal(allowsPrivileged({}), false);
+  assert.equal(allowsPrivileged({ POSTGRES_ALLOW_PRIVILEGED: "true" }), true);
 });
 
 test("results are capped by row count and size, and values are JSON-safe", () => {
@@ -119,7 +128,7 @@ before(async () => {
 async function appWith(env: Record<string, string | undefined>, capabilities: string[]) {
   const dir = await mkdtemp(join(tmpdir(), "postgres-app-test-"));
   await writeFile(join(dir, "berth.yml"), `name: postgres\nversion: 0.1.0\ncapabilities:\n${capabilities.map((c) => `  - ${c}`).join("\n")}\nexports: []\n`);
-  for (const k of ["DATABASE_URL", "POSTGRES_MODE", "BERTH_EGRESS_PROXY_URL"]) delete process.env[k];
+  for (const k of ["DATABASE_URL", "POSTGRES_MODE", "POSTGRES_ALLOW_PRIVILEGED", "BERTH_EGRESS_PROXY_URL"]) delete process.env[k];
   Object.assign(process.env, { BERTH_MANIFEST_PATH: join(dir, "berth.yml") }, Object.fromEntries(Object.entries(env).filter(([, v]) => v !== undefined)));
   // A fresh module per configuration: the pool is created once per process.
   const mod = await import(`./index.js?case=${Math.random()}`);
@@ -198,6 +207,27 @@ live("a call's session settings and locks don't carry over to the next one", asy
   await ro("query", { sql: "SELECT pg_advisory_lock(4242)", params: [] });
   const held = await admin((db) => db.query("SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND objid = 4242"));
   assert.equal(held.rows[0].n, 0, "the advisory lock was released before the connection went back to the pool");
+});
+
+live("read-only mode refuses a superuser, which could still run COPY … TO PROGRAM, unless told to allow it", async () => {
+  const port = new URL(PG_TEST_URL!).port;
+  const call = await appWith({ DATABASE_URL: PG_TEST_URL }, [`network:connect:${port}`]);
+  await assert.rejects(call("query", { sql: "COPY (SELECT 1) TO PROGRAM 'true'", params: [] }), /postgres is a superuser.*POSTGRES_ALLOW_PRIVILEGED=true/s);
+  await assert.rejects(call("connection_info"), /is a superuser/, "every export is refused, not only query");
+
+  // A role that can SET ROLE to a superuser is refused the same way.
+  await admin(async (db) => {
+    await db.query("DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sneaky') THEN CREATE ROLE sneaky LOGIN PASSWORD 'sneaky'; END IF; END $$");
+    await db.query("GRANT postgres TO sneaky");
+  });
+  const sneaky = await appWith({ DATABASE_URL: urlAs("sneaky") }, [`network:connect:${port}`]);
+  await assert.rejects(sneaky("query", { sql: "SELECT 1", params: [] }), /sneaky is a superuser \(or can become one/);
+
+  const allowed = await appWith({ DATABASE_URL: PG_TEST_URL, POSTGRES_ALLOW_PRIVILEGED: "true" }, [`network:connect:${port}`]);
+  assert.equal((await allowed("query", { sql: "SELECT count(*)::int AS n FROM customers", params: [] })).rows[0].n, 3);
+  // Read-write mode is asking for a role that can change things: no check.
+  const rw = await appWith({ DATABASE_URL: PG_TEST_URL, POSTGRES_MODE: "read-write" }, [`network:connect:${port}`]);
+  assert.equal((await rw("connection_info")).mode, "read-write");
 });
 
 live("concurrent first calls share one pool", async () => {
