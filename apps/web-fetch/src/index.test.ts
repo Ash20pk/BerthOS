@@ -69,6 +69,12 @@ const server = http.createServer((req, res) => {
       res.writeHead(200, { "content-type": "text/plain", "content-length": "100" });
       res.write("only part of it");
       setTimeout(() => res.destroy(), 50);
+    } else if (req.url === "/loop") {
+      res.writeHead(302, { location: "/loop" }).end();
+    } else if (req.url === "/307" || req.url === "/308") {
+      res.writeHead(Number(req.url.slice(1)), { location: "/echo" }).end();
+    } else if (req.url === "/302-post") {
+      res.writeHead(302, { location: "/echo" }).end();
     } else if (req.url === "/big") {
       res.writeHead(200, { "content-type": "text/plain" }).end("x".repeat(150_000));
     } else if (req.url === "/image") {
@@ -138,6 +144,21 @@ serverTest("a redirect to an undeclared host is refused; one to a declared host 
   const followed = await call("read_page", { url: `${base}/to-page` });
   assert.equal(followed.url, `${base}/page`);
   assert.equal(followed.title, "Q4 & plans");
+});
+
+serverTest("redirects stop after five", async () => {
+  hits = [];
+  await assert.rejects(call("get", { url: `${base}/loop` }), /more than 5 redirects, stopping at http:\/\/127\.0\.0\.1:\d+\/loop/);
+  assert.equal(hits.length, 6);
+});
+
+serverTest("307 and 308 keep the method, body and content type; 302 after a POST becomes a GET", async () => {
+  for (const code of ["307", "308"]) {
+    const res = await call("request", { method: "POST", url: `${base}/${code}`, body: '{"a":1}', content_type: "application/json" });
+    assert.deepEqual(JSON.parse(res.body), { method: "POST", type: "application/json", body: '{"a":1}' }, code);
+  }
+  const res = await call("request", { method: "POST", url: `${base}/302-post`, body: '{"a":1}', content_type: "application/json" });
+  assert.deepEqual(JSON.parse(res.body), { method: "GET", body: "" });
 });
 
 serverTest("large and binary bodies are capped, not dropped or dumped", async () => {
