@@ -1,15 +1,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import http from "node:http";
 import http2 from "node:http2";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { brotliCompressSync, gzipSync } from "node:zlib";
 import { generateSelfSignedCerts } from "@berthos/tls";
 import { getGlobalDispatcher, setGlobalDispatcher } from "undici";
 import { configureEgressProxy } from "./egress-proxy.js";
+
+const execFileAsync = promisify(execFile);
 
 test("configureEgressProxy() is a no-op when BERTH_EGRESS_PROXY_URL is unset", () => {
   delete process.env.BERTH_EGRESS_PROXY_URL;
@@ -71,7 +75,7 @@ for (const [encoding, compress] of [
   test(`configureEgressProxy() decodes ${encoding} responses through an HTTPS tunnel`, async () => {
     const body = "<html>decoded through the tunnel</html>";
     const dir = mkdtempSync(join(tmpdir(), "berth-egress-proxy-tls-"));
-    const { certPath, keyPath } = generateSelfSignedCerts({ dir, hosts: ["localhost", "127.0.0.1"] });
+    const { caCertPath, certPath, keyPath } = generateSelfSignedCerts({ dir, hosts: ["localhost", "127.0.0.1"] });
     // HTTP/2 with HTTP/1.1 fallback, as real origins offer: the header loss
     // only happened when the tunnelled connection negotiated h2.
     const origin = http2.createSecureServer({ cert: readFileSync(certPath), key: readFileSync(keyPath), allowHTTP1: true }, (_req, res) => {
@@ -90,32 +94,27 @@ for (const [encoding, compress] of [
     await new Promise<void>((resolve) => origin.listen(0, "127.0.0.1", resolve));
     await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
 
-    const originals = {
-      fetch: globalThis.fetch,
-      Headers: globalThis.Headers,
-      Request: globalThis.Request,
-      Response: globalThis.Response,
-      FormData: globalThis.FormData,
-      dispatcher: getGlobalDispatcher(),
-      rejectUnauthorized: process.env.NODE_TLS_REJECT_UNAUTHORIZED,
-    };
-    // The origin's certificate is self-signed; this test is about decoding,
-    // not about trust, which the broker handles for real traffic.
-    process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-    process.env.BERTH_EGRESS_PROXY_URL = `http://127.0.0.1:${(proxy.address() as { port: number }).port}`;
-    configureEgressProxy();
-
+    // In a child process, so the origin's self-signed CA can be trusted the
+    // way a real deployment would add one (NODE_EXTRA_CA_CERTS, read at
+    // startup), without turning certificate checks off.
+    const child = `
+      const { configureEgressProxy } = await import(${JSON.stringify(new URL("./egress-proxy.js", import.meta.url).href)});
+      configureEgressProxy();
+      const res = await fetch("https://localhost:${(origin.address() as { port: number }).port}/");
+      console.log(JSON.stringify({ encoding: res.headers.get("content-encoding"), body: await res.text() }));
+    `;
     try {
-      const res = await fetch(`https://localhost:${(origin.address() as { port: number }).port}/`);
-      assert.equal(res.headers.get("content-encoding"), encoding);
-      assert.equal(await res.text(), body);
+      const { stdout } = await execFileAsync(process.execPath, ["--input-type=module", "-e", child], {
+        env: {
+          ...process.env,
+          BERTH_EGRESS_PROXY_URL: `http://127.0.0.1:${(proxy.address() as { port: number }).port}`,
+          NODE_EXTRA_CA_CERTS: caCertPath,
+        },
+      });
+      const res = JSON.parse(stdout) as { encoding: string | null; body: string };
+      assert.equal(res.encoding, encoding);
+      assert.equal(res.body, body);
     } finally {
-      delete process.env.BERTH_EGRESS_PROXY_URL;
-      if (originals.rejectUnauthorized === undefined) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-      else process.env.NODE_TLS_REJECT_UNAUTHORIZED = originals.rejectUnauthorized;
-      const { dispatcher, rejectUnauthorized: _, ...globals } = originals;
-      Object.assign(globalThis, globals);
-      setGlobalDispatcher(dispatcher);
       await new Promise<void>((resolve) => proxy.close(() => resolve()));
       await new Promise<void>((resolve) => origin.close(() => resolve()));
       rmSync(dir, { recursive: true, force: true });
