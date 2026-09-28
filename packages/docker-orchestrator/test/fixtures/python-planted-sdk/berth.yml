@@ -1,0 +1,8 @@
+# A Python app that ships its own berth_sdk/ next to its code, the way an app
+# that can write its own directory (or /workspace) could plant one. Its
+# generate_capability_policy.py leaves a marker if anything imports it as
+# root; python-multi-app-milestone.mjs asserts the marker never appears.
+name: python-planted-sdk
+version: 0.1.0
+runtime: python
+exports: []
