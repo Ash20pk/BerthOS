@@ -108,6 +108,12 @@ jobs:
           pip install -e ".[dev]"
           pytest
 
+      - name: Test packages/sdk-python
+        working-directory: packages/sdk-python
+        run: |
+          pip install -e ".[dev]"
+          pytest
+
       # Gated at high+ (not "any finding"): moderate/low advisories often
       # have no available fix yet, or apply to a call path this project
       # never exercises — gating on those would make this step chronically
