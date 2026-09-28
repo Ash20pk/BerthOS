@@ -10,14 +10,18 @@
 //     target's peers/<caller>/rpc.sock;
 //   - each app's runtime comes from /etc/berth/runtime, written at build time;
 //   - an app shipping its own berth_sdk/ never gets it run as root: the
-//     policy compiler runs from the image's copy, not the app's directory.
+//     policy compiler runs from the image's copy, not the app's directory;
+//   - the same for a Node app: a shadow @berthos/manifest-schema planted
+//     where the SDK's dist/ would resolve it from is not run as root when
+//     the container restarts, since the Node tools run from the image's
+//     bundled /opt/berth/sdk-node.
 //
 // No bind mount, so it runs wherever Docker does.
 import Docker from "dockerode";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { loadManifest } from "@berthos/manifest-schema";
-import { buildImage, startContainer, stopContainer, invokeAppExport } from "../dist/index.js";
+import { buildImage, startContainer, stopContainer, restartContainer, invokeAppExport } from "../dist/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");
@@ -30,8 +34,8 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-async function exec(container, command) {
-  const run = await container.exec({ Cmd: ["sh", "-c", command], AttachStdout: true, AttachStderr: true });
+async function exec(container, command, user) {
+  const run = await container.exec({ Cmd: ["sh", "-c", command], AttachStdout: true, AttachStderr: true, ...(user ? { User: user } : {}) });
   const stream = await run.start({ hijack: true, stdin: false });
   const stdout = [];
   const stderr = [];
@@ -126,6 +130,55 @@ async function main() {
     console.log(modes.trim());
     assert(/^600 \/run\/berth\/python-worker\/rpc\.sock$/m.test(modes), `expected the relay socket at 0600, got ${modes}`);
     assert(/^660 \/run\/berth\/python-target\/peers\/python-worker\/rpc\.sock$/m.test(modes), `expected the peer socket at 0660, got ${modes}`);
+
+    // The Node app's turn. @berthos/sdk's dist/ imports
+    // @berthos/manifest-schema by bare name, which node looks up first in
+    // dist/node_modules. No image has one, and an app used to be able to
+    // declare filesystem:write: for it and have precreate_declared_paths
+    // create it and hand it over. The manifest schema now refuses that
+    // declaration, so the handing-over is done here, as root, the way
+    // precreate_declared_paths did it; the app then plants the module itself.
+    const notesUid = (await exec(container, "id -u berth-notes")).trim();
+    assert(/^\d+$/.test(notesUid) && notesUid !== "0", `expected notes to run as its own uid, got ${notesUid}`);
+    const shadowRoot = "/app/apps/notes/node_modules/@berthos/sdk/dist/node_modules";
+    await exec(container, `mkdir -p ${shadowRoot} && chown ${notesUid}:${notesUid} ${shadowRoot}`);
+    const plant = [
+      `mkdir -p ${shadowRoot}/@berthos/manifest-schema`,
+      `cd ${shadowRoot}/@berthos/manifest-schema`,
+      `printf '%s' '{"name":"@berthos/manifest-schema","type":"module","main":"index.js"}' > package.json`,
+      // Every name the compiler imports, so the import links and the module body runs.
+      `printf '%s\\n' 'import { writeFileSync } from "node:fs";' 'writeFileSync("/tmp/berth-node-planted-ran-as-uid-" + process.getuid(), "");' 'export const loadManifest = async () => { throw new Error("planted"); };' 'export const parseCapability = () => {};' 'export const capabilityIssue = () => undefined;' 'export const CapabilityString = {};' > index.js`,
+      "echo planted",
+    ].join(" && ");
+    const planting = await exec(container, plant, notesUid);
+    assert(/planted/.test(planting), `the notes app couldn't plant its module: ${planting}`);
+
+    // Control: the old command, run as the app (so nothing escalates here),
+    // does load the planted module. Without this the check after the restart
+    // could pass because the module was never reachable at all.
+    await exec(container, `cd /app/apps/notes && BERTH_CAPABILITY_POLICY=/tmp/berth-control-policy.json node node_modules/@berthos/sdk/dist/generate-capability-policy.js`, notesUid);
+    const control = await exec(container, "ls /tmp/berth-node-planted-ran-as-uid-* 2>/dev/null || echo none");
+    assert(control.trim() === `/tmp/berth-node-planted-ran-as-uid-${notesUid}`, `expected the old compiler command to load the planted module, got ${control}`);
+    await exec(container, "rm -f /tmp/berth-node-planted-ran-as-uid-* /tmp/berth-control-policy.json");
+
+    const policyBefore = (await exec(container, "stat -c %Y /app/apps/notes/.berth/capability-policy.json")).trim();
+    console.log("--- Restarting with the planted module in place ---");
+    await new Promise((r) => setTimeout(r, 1100));
+    await restartContainer(container);
+    let again;
+    for (let attempt = 0; attempt < 60; attempt++) {
+      again = await call("python-worker", "ok").catch((err) => ({ error: String(err) }));
+      if (!again.error) break;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    assert(again.result?.ran === "ok", `expected the sandbox to come back after the restart, got ${JSON.stringify(again)}`);
+    const rootRan = await exec(container, "ls /tmp/berth-node-planted-ran-as-uid-0 2>/dev/null || echo none");
+    assert(rootRan.trim() === "none", `the planted @berthos/manifest-schema ran as root: ${rootRan}`);
+    const policyAfter = (await exec(container, "stat -c %Y /app/apps/notes/.berth/capability-policy.json")).trim();
+    const notesPolicy = await exec(container, "cat /app/apps/notes/.berth/capability-policy.json");
+    assert(Number(policyAfter) > Number(policyBefore), `expected the compiler to rewrite notes' policy on the restart (${policyBefore} -> ${policyAfter})`);
+    assert(/"appName": "notes"/.test(notesPolicy), `expected the real compiler to have written notes' policy, got ${notesPolicy}`);
+    console.log(`planted module as root after restart -> ${rootRan.trim()}; notes' policy rewritten by /opt/berth/sdk-node`);
 
     console.log("\nPYTHON MULTI-APP MILESTONE VERIFIED");
   } finally {
