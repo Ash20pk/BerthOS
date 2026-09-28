@@ -1,4 +1,4 @@
-import { ProxyAgent, setGlobalDispatcher } from "undici";
+import { FormData, Headers, ProxyAgent, Request, Response, fetch, setGlobalDispatcher } from "undici";
 
 /**
  * The one line any resident app needing outbound network access wires in
@@ -23,4 +23,12 @@ export function configureEgressProxy(): void {
   const proxyUrl = process.env.BERTH_EGRESS_PROXY_URL;
   if (!proxyUrl) return;
   setGlobalDispatcher(new ProxyAgent(proxyUrl));
+  // Node's built-in fetch() is a bundled copy of an older undici, and it reads
+  // the same global dispatcher slot. Driving it with this package's ProxyAgent,
+  // which negotiates HTTP/2, loses the headers of HTTP/2 responses across the
+  // version gap: content-encoding disappears and a compressed body comes back
+  // as raw bytes. So fetch() and its classes are replaced with the ones from
+  // the undici that owns the dispatcher — the whole family, so a Request or
+  // Headers built by the app is one fetch() accepts.
+  Object.assign(globalThis, { fetch, Headers, Request, Response, FormData });
 }

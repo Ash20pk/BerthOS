@@ -164,7 +164,7 @@ import { configureEgressProxy } from "@berthos/sdk";
 configureEgressProxy(); // once, at module load
 ```
 
-Routes your process's `fetch()` traffic through the sandbox's egress proxy, which allows only the hosts your `network:host:` or `browser:navigate:` capabilities name. Does nothing when your app declares neither, so it's safe to call unconditionally. You also need `network:connect:8090` for the proxy's port. See the [egress proxy reference](./egress-broker-reference.md).
+Routes your process's `fetch()` traffic through the sandbox's egress proxy, which allows only the hosts your `network:host:` or `browser:navigate:` capabilities name. Does nothing when your app declares neither, so it's safe to call unconditionally. When it does act, it also replaces the global `fetch`, `Headers`, `Request`, `Response` and `FormData` with undici's, so that `fetch()` and the proxy run on the same HTTP client. You also need `network:connect:8090` for the proxy's port. See the [egress proxy reference](./egress-broker-reference.md).
 
 ## `defineConnectorApp(config)`: a resident app from a declarative REST API description
 

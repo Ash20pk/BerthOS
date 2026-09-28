@@ -1,6 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import http from "node:http";
+import http2 from "node:http2";
+import net from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { brotliCompressSync, gzipSync } from "node:zlib";
+import { generateSelfSignedCerts } from "@berthos/tls";
 import { getGlobalDispatcher, setGlobalDispatcher } from "undici";
 import { configureEgressProxy } from "./egress-proxy.js";
 
@@ -48,3 +55,70 @@ test("configureEgressProxy() routes global fetch() through the configured proxy"
     await new Promise<void>((resolve) => fakeProxy.close(() => resolve()));
   }
 });
+
+// What egress-broker.cjs actually does for HTTPS: a CONNECT tunnel to the
+// origin, which speaks HTTP/2 and answers compressed, as nearly every real
+// site does. Before the fix, configureEgressProxy() drove Node's built-in
+// fetch() (a bundled, older undici) with this package's ProxyAgent; across
+// that version gap the headers of an HTTP/2 response were lost, so fetch()
+// never saw content-encoding, never decompressed, and apps got raw brotli/gzip
+// bytes. HTTP/1.1 responses were unaffected, which is why the test above never
+// caught it.
+for (const [encoding, compress] of [
+  ["gzip", gzipSync],
+  ["br", brotliCompressSync],
+] as const) {
+  test(`configureEgressProxy() decodes ${encoding} responses through an HTTPS tunnel`, async () => {
+    const body = "<html>decoded through the tunnel</html>";
+    const dir = mkdtempSync(join(tmpdir(), "berth-egress-proxy-tls-"));
+    const { certPath, keyPath } = generateSelfSignedCerts({ dir, hosts: ["localhost", "127.0.0.1"] });
+    // HTTP/2 with HTTP/1.1 fallback, as real origins offer: the header loss
+    // only happened when the tunnelled connection negotiated h2.
+    const origin = http2.createSecureServer({ cert: readFileSync(certPath), key: readFileSync(keyPath), allowHTTP1: true }, (_req, res) => {
+      res.writeHead(200, { "content-type": "text/html", "content-encoding": encoding }).end(compress(Buffer.from(body)));
+    });
+    const proxy = http.createServer();
+    proxy.on("connect", (req, socket, head) => {
+      const [host, port] = (req.url ?? "").split(":");
+      const upstream = net.connect(Number(port), host, () => {
+        socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+        upstream.write(head);
+        upstream.pipe(socket).pipe(upstream);
+      });
+      upstream.on("error", () => socket.destroy());
+    });
+    await new Promise<void>((resolve) => origin.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+
+    const originals = {
+      fetch: globalThis.fetch,
+      Headers: globalThis.Headers,
+      Request: globalThis.Request,
+      Response: globalThis.Response,
+      FormData: globalThis.FormData,
+      dispatcher: getGlobalDispatcher(),
+      rejectUnauthorized: process.env.NODE_TLS_REJECT_UNAUTHORIZED,
+    };
+    // The origin's certificate is self-signed; this test is about decoding,
+    // not about trust, which the broker handles for real traffic.
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+    process.env.BERTH_EGRESS_PROXY_URL = `http://127.0.0.1:${(proxy.address() as { port: number }).port}`;
+    configureEgressProxy();
+
+    try {
+      const res = await fetch(`https://localhost:${(origin.address() as { port: number }).port}/`);
+      assert.equal(res.headers.get("content-encoding"), encoding);
+      assert.equal(await res.text(), body);
+    } finally {
+      delete process.env.BERTH_EGRESS_PROXY_URL;
+      if (originals.rejectUnauthorized === undefined) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+      else process.env.NODE_TLS_REJECT_UNAUTHORIZED = originals.rejectUnauthorized;
+      const { dispatcher, rejectUnauthorized: _, ...globals } = originals;
+      Object.assign(globalThis, globals);
+      setGlobalDispatcher(dispatcher);
+      await new Promise<void>((resolve) => proxy.close(() => resolve()));
+      await new Promise<void>((resolve) => origin.close(() => resolve()));
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
