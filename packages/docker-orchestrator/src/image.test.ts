@@ -69,6 +69,24 @@ test("two deploys of the same app end up byte-identical", async () => {
   }
 });
 
+test("a link that escapes through another link inside the tree is removed too", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "berth-deploy-"));
+  const outside = mkdtempSync(join(tmpdir(), "berth-outside-"));
+  try {
+    mkdirSync(join(dir, "node_modules"), { recursive: true });
+    // `hop` is inside the tree and points out of it; `via-hop` only looks
+    // like it stays inside until `hop` is resolved.
+    symlinkSync(outside, join(dir, "node_modules", "hop"));
+    symlinkSync("hop", join(dir, "node_modules", "via-hop"));
+    await makeDeployReproducible(dir, "/app");
+    assert.throws(() => lstatSync(join(dir, "node_modules", "hop")), /ENOENT/);
+    assert.throws(() => lstatSync(join(dir, "node_modules", "via-hop")), /ENOENT/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
 /** Every path in a tree, with its content hash or link target — what a `COPY` layer's cache key is made of. */
 function treeDigest(root: string): string[] {
   const out: string[] = [];

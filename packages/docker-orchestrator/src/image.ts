@@ -151,10 +151,11 @@ async function withLockfileRestored<T>(workspaceRoot: string, run: () => Promise
  *    is what made a `pnpm install` run from `on_install` in /app refuse to
  *    proceed without a TTY (ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY);
  *    without it pnpm simply reinstalls;
- *  - symlinks that point outside the staged tree go. They were relative
- *    links back into the builder's checkout (the app's own workspace entry,
- *    a pnpm override's target), dangling in the image and naming the
- *    builder's home directory.
+ *  - symlinks that resolve outside the staged tree go, including ones that
+ *    only get out through another link. They were relative links back into
+ *    the builder's checkout (the app's own workspace entry, a pnpm
+ *    override's target), dangling in the image and naming the builder's
+ *    home directory.
  */
 export async function makeDeployReproducible(stagingDir: string, containerAppRoot: string): Promise<void> {
   const root = await realpath(stagingDir);
@@ -162,12 +163,19 @@ export async function makeDeployReproducible(stagingDir: string, containerAppRoo
   // given (/tmp/…) on macOS, and replacing the shorter one first leaves
   // "/private" behind.
   const spellings = [...new Set([stagingDir, root])].sort((x, y) => y.length - x.length);
+  const escaping: string[] = [];
   const walk = async (dir: string): Promise<void> => {
     for (const entry of await readdir(dir, { withFileTypes: true })) {
       const path = join(dir, entry.name);
       if (entry.isSymbolicLink()) {
-        const target = resolvePath(dirname(path), await readlink(path));
-        if (target !== root && !target.startsWith(root + sep)) await rm(path);
+        // Compared as real paths on both sides: a link can stay inside the
+        // tree by name and still leave it through another link, and a
+        // dangling one (no real path) is judged by where it points. Removed
+        // only after the walk, so no link's verdict depends on whether a
+        // link it goes through was already removed.
+        const named = resolvePath(dirname(path), await readlink(path));
+        const target = await realpath(named).catch(() => named);
+        if (target !== root && !target.startsWith(root + sep)) escaping.push(path);
         continue;
       }
       if (entry.isDirectory()) {
@@ -187,6 +195,7 @@ export async function makeDeployReproducible(stagingDir: string, containerAppRoo
     }
   };
   await walk(root);
+  for (const path of escaping) await rm(path);
 }
 
 /**
