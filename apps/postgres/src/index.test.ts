@@ -1,10 +1,11 @@
-import { test, after } from "node:test";
+import { test, after, before } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import net from "node:net";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import pg from "pg";
 import { cell, modeFrom, routeFor, shapeRows, targetOf } from "./index.js";
 import { ProxyTunnel } from "./tunnel.js";
 
@@ -58,13 +59,46 @@ test("the tunnel has every socket method pg and pg-pool call", () => {
 });
 
 // --- against a real database, when PG_TEST_URL is set -------------------------
-// e.g. docker run -d -e POSTGRES_PASSWORD=test -p 127.0.0.1:55432:5432 postgres:16-alpine
-// PG_TEST_URL=postgres://postgres:test@127.0.0.1:55432/postgres, with a
-// customers table (id, name, signed_up, plan) holding three rows, and a role
-// reader/reader that can only SELECT it.
+// e.g. docker run -d -e POSTGRES_PASSWORD=test -p 127.0.0.1:55432:5432 postgres:16
+// PG_TEST_URL=postgres://postgres:test@127.0.0.1:55432/postgres, a superuser:
+// the suite creates what it needs itself (a customers table holding three
+// rows, owned by a role app/app, and a role reader/reader that can only
+// SELECT it), and connects as those roles, not as the superuser.
 
 const PG_TEST_URL = process.env.PG_TEST_URL;
 const live = (name: string, fn: () => Promise<void>) => test(name, { skip: !PG_TEST_URL && "set PG_TEST_URL to run against a real database" }, fn);
+
+/** PG_TEST_URL, as another role. */
+function urlAs(user: string): string {
+  const url = new URL(PG_TEST_URL!);
+  url.username = user;
+  url.password = user;
+  return url.toString();
+}
+
+async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
+  const client = new pg.Client({ connectionString: PG_TEST_URL });
+  await client.connect();
+  try {
+    return await fn(client);
+  } finally {
+    await client.end();
+  }
+}
+
+before(async () => {
+  if (!PG_TEST_URL) return;
+  await admin(async (db) => {
+    for (const role of ["app", "reader"]) {
+      await db.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${role}') THEN CREATE ROLE ${role} LOGIN PASSWORD '${role}'; END IF; END $$`);
+    }
+    await db.query("DROP TABLE IF EXISTS customers");
+    await db.query("CREATE TABLE customers (id serial PRIMARY KEY, name text NOT NULL, signed_up date NOT NULL DEFAULT current_date, plan text NOT NULL DEFAULT 'free')");
+    await db.query("INSERT INTO customers (name, signed_up, plan) VALUES ('Ada', '2026-01-04', 'pro'), ('Grace', '2026-02-11', 'free'), ('Linus', '2026-03-20', 'pro')");
+    await db.query("ALTER TABLE customers OWNER TO app");
+    await db.query("GRANT SELECT ON customers TO reader");
+  });
+});
 
 async function appWith(env: Record<string, string | undefined>, capabilities: string[]) {
   const dir = await mkdtemp(join(tmpdir(), "postgres-app-test-"));
@@ -79,19 +113,19 @@ async function appWith(env: Record<string, string | undefined>, capabilities: st
 
 live("query, list_tables and describe_table against a real database", async () => {
   const port = new URL(PG_TEST_URL!).port;
-  const call = await appWith({ DATABASE_URL: PG_TEST_URL }, [`network:connect:${port}`]);
+  const call = await appWith({ DATABASE_URL: urlAs("app") }, [`network:connect:${port}`]);
   const res = await call("query", { sql: "SELECT name, plan FROM customers WHERE plan = $1 ORDER BY id", params: ["pro"] });
   assert.deepEqual(res.columns, ["name", "plan"]);
   assert.deepEqual(res.rows, [{ name: "Ada", plan: "pro" }, { name: "Linus", plan: "pro" }]);
   assert.ok((await call("list_tables", { schema: "" })).tables.some((t: any) => t.name === "customers"));
   assert.deepEqual((await call("describe_table", { table: "customers" })).columns.map((c: any) => c.name), ["id", "name", "signed_up", "plan"]);
   const info = await call("connection_info");
-  assert.deepEqual({ mode: info.mode, route: info.route, user: info.user }, { mode: "read-only", route: "direct", user: "postgres" });
+  assert.deepEqual({ mode: info.mode, route: info.route, user: info.user }, { mode: "read-only", route: "direct", user: "app" });
 });
 
 live("read-only mode refuses writes, even ones that try to switch the transaction", async () => {
   const port = new URL(PG_TEST_URL!).port;
-  const call = await appWith({ DATABASE_URL: PG_TEST_URL }, [`network:connect:${port}`]);
+  const call = await appWith({ DATABASE_URL: urlAs("app") }, [`network:connect:${port}`]);
   await assert.rejects(call("query", { sql: "INSERT INTO customers (name) VALUES ('Mallory')", params: [] }), /read-only/);
   await assert.rejects(call("query", { sql: "SET TRANSACTION READ WRITE", params: [] }).then(() => call("query", { sql: "DELETE FROM customers", params: [] })), /read-only/);
   await assert.rejects(call("query", { sql: "SELECT 1; DELETE FROM customers", params: [] }), /one statement per query/);
@@ -100,7 +134,7 @@ live("read-only mode refuses writes, even ones that try to switch the transactio
 
 live("read-write mode can change data, one statement at a time", async () => {
   const port = new URL(PG_TEST_URL!).port;
-  const call = await appWith({ DATABASE_URL: PG_TEST_URL, POSTGRES_MODE: "read-write" }, [`network:connect:${port}`]);
+  const call = await appWith({ DATABASE_URL: urlAs("app"), POSTGRES_MODE: "read-write" }, [`network:connect:${port}`]);
   const inserted = await call("query", { sql: "INSERT INTO customers (name, plan) VALUES ($1, $2) RETURNING id", params: ["Temp", "free"] });
   assert.equal(inserted.row_count, 1);
   await call("query", { sql: "DELETE FROM customers WHERE id = $1", params: [inserted.rows[0].id] });
@@ -125,7 +159,7 @@ live("through a CONNECT proxy, as the egress proxy would carry it", async () => 
   await new Promise<void>((r) => proxy.listen(0, "127.0.0.1", r));
   after(() => proxy.close());
   const proxyUrl = `http://127.0.0.1:${(proxy.address() as { port: number }).port}`;
-  const viaName = `postgres://${target.username}:${target.password}@db.test.example:${target.port}${target.pathname}`;
+  const viaName = `postgres://app:app@db.test.example:${target.port}${target.pathname}`;
   const call = await appWith({ DATABASE_URL: viaName, BERTH_EGRESS_PROXY_URL: proxyUrl }, [`network:host:db.test.example:${target.port}`, "network:connect:8090"]);
   assert.equal((await call("connection_info")).route, "through the egress proxy");
   assert.equal((await call("query", { sql: "SELECT count(*)::int AS n FROM customers", params: [] })).rows[0].n, 3);
@@ -136,7 +170,6 @@ live("through a CONNECT proxy, as the egress proxy would carry it", async () => 
 
 live("a role that can only read is refused writes by the database itself, in either mode", async () => {
   const target = new URL(PG_TEST_URL!);
-  const readerUrl = `postgres://reader:reader@${target.host}${target.pathname}`;
-  const call = await appWith({ DATABASE_URL: readerUrl, POSTGRES_MODE: "read-write" }, [`network:connect:${target.port}`]);
+  const call = await appWith({ DATABASE_URL: urlAs("reader"), POSTGRES_MODE: "read-write" }, [`network:connect:${target.port}`]);
   await assert.rejects(call("query", { sql: "DELETE FROM customers", params: [] }), /permission denied/);
 });
