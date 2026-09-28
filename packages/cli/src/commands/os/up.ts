@@ -26,7 +26,7 @@ export default class OsUp extends Command {
 
   static override examples = [
     "<%= config.bin %> os up demo --apps=apps/filesystem,apps/notes",
-    "GITHUB_TOKEN=... <%= config.bin %> os up gh --apps=apps/github-assistant --env GITHUB_TOKEN --env GITHUB_REPO=owner/name",
+    "<%= config.bin %> os up gh --apps=apps/github-assistant --env GITHUB_TOKEN --env GITHUB_REPO=owner/name",
     "<%= config.bin %> os up gh --apps=apps/github-assistant --env-file .env",
   ];
 
@@ -41,7 +41,7 @@ export default class OsUp extends Command {
     env: Flags.string({
       multiple: true,
       description:
-        "a variable for the sandbox: NAME (value taken from this shell, so it stays out of shell history) or NAME=value. Repeatable. A name an app declares under secrets: is delivered to that app alone; any other name reaches every app in the sandbox, with a warning. Values are never saved in the instance's state file.",
+        "a variable for the sandbox: NAME (value taken from this shell's environment, so it stays out of shell history and ps) or NAME=value (visible in both, so not for a secret). Repeatable. A name an app declares under secrets: is delivered to that app alone; any other name reaches every app in the sandbox, with a warning. Values are never saved in the instance's state file.",
     }),
     "env-file": Flags.string({ description: "dotenv file (NAME=value lines) of variables for the sandbox, applied before --env" }),
     "http-rpc-app": Flags.string({

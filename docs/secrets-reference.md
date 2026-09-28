@@ -15,7 +15,7 @@ secrets:
 
 Pass the values when you boot the sandbox:
 
-- **`berth os up`**: `--env GITHUB_TOKEN` takes the value from your shell, so it stays out of shell history. Use `--env NAME=value` to give it explicitly, or `--env-file .env` for a dotenv file. Values are never written to the instance's state file.
+- **`berth os up`**: `--env GITHUB_TOKEN` takes the value from your shell's environment (exported earlier, or loaded by a tool such as direnv), so it stays out of shell history and `ps`. `--env-file .env` reads a dotenv file, which suits a secret too; keep the file out of version control. `--env NAME=value` gives a value inline, where it is visible in shell history and `ps`, so use it only for values that aren't secret. Values are never written to the instance's state file, and a parse error names only the line and, at most, the variable name. If the instance is already up, `berth os up` changes nothing and warns that the values weren't applied; run `berth os down` first.
 - **From code**: the `env` option of `startContainer()` from `@berthos/docker-orchestrator`, or `Computer.boot({ apps, env })` in the experimental agent framework. For example `env: { GITHUB_TOKEN: process.env.GITHUB_TOKEN }`.
 
 Inside the app, read it as usual: `process.env.GITHUB_TOKEN`.
