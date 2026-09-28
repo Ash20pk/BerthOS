@@ -95,6 +95,24 @@ test("recordedBootEvidence takes the latest boot and ignores malformed ones", as
   assert.equal(recordedBootEvidence(sink.records)?.bootId, "boot-2");
 });
 
+// A call the app never answered used to leave no record at all.
+test("a call with no answer is recorded as allowed, failed, and of unknown outcome", async () => {
+  const { sink, run } = audit();
+  await run.toolCall({ export: "write_file", input: {}, durationMs: 30_000, unanswered: { reason: "timed out after 30s waiting for RPC response" } });
+  await run.toolCall({ export: "write_file", input: {}, durationMs: 5, unanswered: { reason: "the session ended", interrupted: true } });
+
+  const [timedOut, interrupted] = sink.records;
+  assert.equal(timedOut!.decision, "allowed");
+  assert.match(timedOut!.reason!, /^no answer from the app: timed out after 30s .* — the call may have run$/);
+  assert.deepEqual(
+    { failed: (timedOut!.meta as Record<string, unknown>).failed, outcome: (timedOut!.meta as Record<string, unknown>).outcome },
+    { failed: true, outcome: "unknown" },
+  );
+  assert.equal(timedOut!.output, undefined);
+  assert.match(interrupted!.reason!, /session ended before the app answered/);
+  assert.equal((interrupted!.meta as { interrupted?: boolean }).interrupted, true);
+});
+
 // The app's raw error is written even though inputs and outputs are not, and
 // it can carry both: a stack, the payload it choked on, file contents.
 test("an app error's reason is its first line, capped", async () => {

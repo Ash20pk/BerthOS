@@ -50,6 +50,12 @@ export interface ToolCallOutcome {
   error?: string;
   /** True when the error is a sandbox refusal (see capability-errors.ts), not an app bug. */
   denied?: boolean;
+  /**
+   * The app never answered: the RPC timed out, the write to the sandbox
+   * failed, the caller gave up, or the session ended first. The request may
+   * already have reached the app, so the call may have run.
+   */
+  unanswered?: { reason: string; interrupted?: boolean };
 }
 
 /** Longest reason written to a record. The app's raw error can echo its input or file contents. */
@@ -82,7 +88,15 @@ export function createRunAudit(options: RunAuditOptions): RunAudit {
     async toolCall(outcome) {
       // Same convention as @berthos/agents' tracer: "denied" is only for the
       // sandbox refusing something. A call that ran and failed is an allowed
-      // attempt with a reason.
+      // attempt with a reason, and so is one that got no answer: it was let
+      // through, and whether it ran is unknown (meta.outcome says so).
+      const unanswered = outcome.unanswered;
+      const reason = unanswered
+        ? `${unanswered.interrupted ? "the session ended before the app answered" : `no answer from the app: ${auditReason(unanswered.reason)}`} — the call may have run`
+        : outcome.error !== undefined
+          ? auditReason(outcome.error)
+          : undefined;
+      const failed = unanswered !== undefined || (outcome.error !== undefined && !outcome.denied);
       await sink
         .record({
           ts: new Date().toISOString(),
@@ -91,11 +105,14 @@ export function createRunAudit(options: RunAuditOptions): RunAudit {
           action: TOOL_CALL_ACTION,
           target: `${app}.${outcome.export}`,
           decision: outcome.denied ? "denied" : "allowed",
-          ...(outcome.error !== undefined ? { reason: auditReason(outcome.error) } : {}),
+          ...(reason !== undefined ? { reason } : {}),
           input: outcome.input,
-          ...(outcome.error === undefined ? { output: outcome.result } : {}),
+          ...(outcome.error === undefined && !unanswered ? { output: outcome.result } : {}),
           durationMs: outcome.durationMs,
-          meta: meta(outcome.error !== undefined && !outcome.denied ? { failed: true } : {}),
+          meta: meta({
+            ...(failed ? { failed: true } : {}),
+            ...(unanswered ? { outcome: "unknown", ...(unanswered.interrupted ? { interrupted: true } : {}) } : {}),
+          }),
         })
         .catch(() => {});
     },

@@ -12,6 +12,7 @@ import { bootDevContainer } from "../util/dev-boot.js";
 import { resolveApps } from "../util/multi-app.js";
 import { explainAppError, enforcementFromContainerLogs, type EnforcementStatus } from "../util/capability-errors.js";
 import { createRunAudit, newRunId, type RunAudit } from "../util/run-audit.js";
+import { createInFlightCalls, createShutdown, handleToolCall } from "../util/mcp-call.js";
 
 /**
  * Bridges one resident app's already-declared exports to MCP tools, so an
@@ -90,6 +91,11 @@ export default class Mcp extends Command {
     "boot-timeout": Flags.integer({
       default: 120,
       description: "seconds to wait for a freshly booted app's runtime to report ready",
+    }),
+    "call-timeout": Flags.integer({
+      default: 30,
+      description:
+        "seconds to wait for the app to answer a tool call. A call whose input has a `timeout_ms` (code-interpreter's run_code) waits that long plus 15s if it is longer.",
     }),
   };
 
@@ -193,63 +199,46 @@ export default class Mcp extends Command {
     // awaited before a sandbox this command booted is stopped, since the
     // evidence can only be read from a running one.
     let bootEvidence: Promise<void> = Promise.resolve();
+    const inFlight = createInFlightCalls();
 
     // The container outlives this process only if it already existed. One that
     // this command booted is torn down with it, so an MCP client that stops
-    // the server doesn't leave a sandbox running with no owner.
-    if (bootedHere) {
-      let stopping = false;
-      const shutdown = () => {
-        if (stopping) return;
-        stopping = true;
-        void withTimeout(bootEvidence, 60_000)
-          .then(() => stopContainer(container))
-          .catch(() => {})
-          .then(() => process.exit(0));
-      };
-      process.on("SIGINT", shutdown);
-      process.on("SIGTERM", shutdown);
-      // Not just signals: a client that closes the pipe instead of signalling
-      // (and `berth mcp < /dev/null`) ends stdin, and the transport's onclose
-      // is the only notice this process gets. Without it the sandbox outlives
-      // the bridge that owns it, with nothing left to stop it.
-      transport.onclose = shutdown;
-      process.stdin.on("end", shutdown);
-    }
+    // the server doesn't leave a sandbox running with no owner. Either way,
+    // calls still in flight are recorded as interrupted before exiting.
+    const shutdown = createShutdown({
+      pending: () => bootEvidence,
+      pendingTimeoutMs: 60_000,
+      interrupt: () => inFlight.interruptAll(runAudit),
+      ...(bootedHere ? { stop: () => stopContainer(container) } : {}),
+      exit: () => process.exit(0),
+    });
+    process.on("SIGINT", () => void shutdown());
+    process.on("SIGTERM", () => void shutdown());
+    // Not just signals: a client that closes the pipe instead of signalling
+    // (and `berth mcp < /dev/null`) ends stdin, and the transport's onclose
+    // is the only notice this process gets. Without it the sandbox outlives
+    // the bridge that owns it, with nothing left to stop it.
+    transport.onclose = () => void shutdown();
+    process.stdin.on("end", () => void shutdown());
 
     const allowed = only ? new Set(only.names) : undefined;
+    const explain = (error: string) =>
+      explainAppError(error, { appName: manifest.name, manifest, manifestPath: `${appDir}/berth.yml`, enforcement });
 
     for (const tool of mcpToolsFor(manifest)) {
       if (allowed && !allowed.has(tool.name)) continue;
-      server.registerTool(
-        tool.name,
-        { description: tool.description, inputSchema: tool.inputShape },
-        async (args: Record<string, unknown>) => {
-          const startedAt = Date.now();
-          const response = await rpc.call({
-            id: `mcp-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      server.registerTool(tool.name, { description: tool.description, inputSchema: tool.inputShape }, (args: Record<string, unknown>) =>
+        handleToolCall(
+          {
             export: tool.name,
-            input: args,
-          });
-          if (response.error) {
-            const explained = explainAppError(response.error, {
-              appName: manifest.name,
-              manifest,
-              manifestPath: `${appDir}/berth.yml`,
-              enforcement,
-            });
-            await runAudit?.toolCall({
-              export: tool.name,
-              input: args,
-              durationMs: Date.now() - startedAt,
-              error: response.error,
-              denied: explained.startsWith("BERTH CAPABILITY DENIAL"),
-            });
-            return { isError: true, content: [{ type: "text", text: explained }] };
-          }
-          await runAudit?.toolCall({ export: tool.name, input: args, durationMs: Date.now() - startedAt, result: response.result });
-          return { content: [{ type: "text", text: JSON.stringify(response.result ?? null) }] };
-        },
+            call: (request, options) => rpc.call(request, options),
+            explain,
+            runAudit,
+            callTimeoutMs: flags["call-timeout"] * 1000,
+            inFlight,
+          },
+          args,
+        ),
       );
     }
 
@@ -320,10 +309,6 @@ export default class Mcp extends Command {
   private async readEnforcement(container: Docker.Container): Promise<EnforcementStatus> {
     return enforcementFromContainerLogs(await this.readLogs(container));
   }
-}
-
-function withTimeout(promise: Promise<void>, ms: number): Promise<void> {
-  return Promise.race([promise, new Promise<void>((resolve) => setTimeout(resolve, ms).unref())]);
 }
 
 /** The tail of a container's own output, for an error message a human will read. */
