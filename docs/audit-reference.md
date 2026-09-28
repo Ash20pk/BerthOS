@@ -72,7 +72,7 @@ One JSON object per line, in a file with mode 0600:
 | `decision` | `allowed`, `denied` or `unavailable`. |
 | `reason` | Why. Always set for `denied` and `unavailable`. |
 | `input`, `output` | Only with payload capture on (below), always redacted. |
-| `meta` | Extras, redacted. `berth mcp` records and agent steps carry `meta.runId`, which is what `berth attest` looks up. A `sandbox.boot` record carries the boot evidence in `meta.evidence`. A tool call the app failed carries `meta.failed`; one the app never answered (timed out, the write to the sandbox failed, or the session ended first) also carries `meta.outcome: "unknown"`, since it may have run. |
+| `meta` | Extras, redacted. `berth mcp` records and agent steps carry `meta.runId`, which is what `berth attest` looks up. Each `berth mcp` record also carries `meta.bridge`, an id for the session that wrote it. A `sandbox.boot` record carries the boot evidence in `meta.evidence`. A tool call the app failed carries `meta.failed`; one the app never answered (timed out, the write to the sandbox failed, or the session ended first) also carries `meta.outcome: "unknown"`, since it may have run. |
 | `prevHash`, `hash` | The chain. |
 
 ### How much to trust `actor`

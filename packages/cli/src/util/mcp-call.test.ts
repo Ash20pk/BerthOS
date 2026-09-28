@@ -9,7 +9,7 @@ const actor: Actor = { kind: "agent", id: "test-client", verifiedBy: "self-asser
 
 function context(call: ToolCallContext["call"]) {
   const sink = createMemoryAuditSink();
-  const runAudit = createRunAudit({ sink, runId: "run-1", app: "filesystem", containerName: "berth-dev-filesystem", via: "mcp", actor: () => actor, operator: actor });
+  const runAudit = createRunAudit({ sink, runId: "run-1", sessionId: "bridge-a", app: "filesystem", containerName: "berth-dev-filesystem", via: "mcp", actor: () => actor, operator: actor });
   const inFlight = createInFlightCalls();
   const ctx: ToolCallContext = {
     export: "write_file",

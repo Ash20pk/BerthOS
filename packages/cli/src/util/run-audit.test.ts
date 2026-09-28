@@ -20,8 +20,8 @@ const evidence: BootEvidence = {
   doctorProbe: { status: "enforcing" },
 };
 
-function runAuditFor(sink: AuditSink) {
-  return createRunAudit({ sink, runId: "run-1", app: "filesystem", containerName: "berth-dev-filesystem", via: "mcp", actor: () => actor, operator });
+function runAuditFor(sink: AuditSink, sessionId = "bridge-a") {
+  return createRunAudit({ sink, runId: "run-1", sessionId, app: "filesystem", containerName: "berth-dev-filesystem", via: "mcp", actor: () => actor, operator });
 }
 
 function audit() {
@@ -45,7 +45,7 @@ test("a successful call is recorded as allowed, tagged with the run id", async (
   assert.equal(record!.target, "filesystem.read_file");
   assert.equal(record!.decision, "allowed");
   assert.equal(record!.reason, undefined);
-  assert.deepEqual(record!.meta, { runId: "run-1", via: "mcp", container: "berth-dev-filesystem" });
+  assert.deepEqual(record!.meta, { runId: "run-1", bridge: "bridge-a", via: "mcp", container: "berth-dev-filesystem" });
   assert.deepEqual(record!.actor, actor);
 });
 
@@ -78,21 +78,74 @@ test("through the file sink, payloads are dropped and the boot evidence reads ba
     assert.deepEqual(records[0]!.actor, operator);
     assert.equal(records[1]!.input, undefined);
     assert.equal(records[1]!.output, undefined);
-    assert.deepEqual(recordedBootEvidence(records), evidence);
+    assert.deepEqual(recordedBootEvidence(records), { evidence });
+    // The sink redacts meta keys that look like secrets ("session" is one);
+    // the bridge id has to survive it to bind calls to their boot.
+    assert.equal((records[1]!.meta as { bridge?: string }).bridge, "bridge-a");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("recordedBootEvidence takes the latest boot and ignores malformed ones", async () => {
+test("recordedBootEvidence takes a session's latest boot and ignores malformed ones", async () => {
   const { sink, run } = audit();
   assert.equal(recordedBootEvidence(sink.records), undefined);
 
+  await run.sandboxBoot({ ...evidence, doctorProbe: { status: "unknown" } });
   await run.sandboxBoot(evidence);
-  await run.sandboxBoot({ ...evidence, bootId: "boot-2" });
-  await sink.record({ ts: "", seq: 0, actor, action: SANDBOX_BOOT_ACTION, decision: "allowed", meta: { runId: "run-1", evidence: { bootId: "x" } } });
+  await sink.record({ ts: "", seq: 0, actor, action: SANDBOX_BOOT_ACTION, decision: "allowed", meta: { runId: "run-1", bridge: "bridge-a", evidence: { bootId: "x" } } });
 
-  assert.equal(recordedBootEvidence(sink.records)?.bootId, "boot-2");
+  assert.deepEqual(recordedBootEvidence(sink.records), { evidence });
+});
+
+// A reused --run-id used to be attested against whichever boot came last,
+// including for calls that ran in an earlier, different boot.
+test("a run reused across sessions in different boots is refused, not attested against the latest", async () => {
+  const sink = createMemoryAuditSink();
+  const first = runAuditFor(sink, "bridge-a");
+  const second = runAuditFor(sink, "bridge-b");
+  await first.sandboxBoot(evidence);
+  await first.toolCall({ export: "read_file", input: {}, durationMs: 1, result: {} });
+  await second.sandboxBoot({ ...evidence, bootId: "boot-2" });
+  await second.toolCall({ export: "read_file", input: {}, durationMs: 1, result: {} });
+
+  const recorded = recordedBootEvidence(sink.records);
+  assert.ok(recorded && "problem" in recorded);
+  assert.match(recorded.problem, /spans 2 boots \(boot-1, boot-2\)/);
+});
+
+test("sessions that attached to the same boot attest together", async () => {
+  const sink = createMemoryAuditSink();
+  const first = runAuditFor(sink, "bridge-a");
+  const second = runAuditFor(sink, "bridge-b");
+  await first.sandboxBoot(evidence);
+  await first.toolCall({ export: "read_file", input: {}, durationMs: 1, result: {} });
+  await second.sandboxBoot({ ...evidence, doctorProbe: { status: "enforcing", detail: "re-probed" } as BootEvidence["doctorProbe"] });
+  await second.toolCall({ export: "read_file", input: {}, durationMs: 1, result: {} });
+
+  const recorded = recordedBootEvidence(sink.records);
+  assert.ok(recorded && "evidence" in recorded);
+  assert.equal(recorded.evidence.bootId, "boot-1");
+});
+
+test("a session whose calls have no recorded boot is not covered by another session's", async () => {
+  const sink = createMemoryAuditSink();
+  const first = runAuditFor(sink, "bridge-a");
+  const second = runAuditFor(sink, "bridge-b");
+  await first.sandboxBoot(evidence);
+  await second.toolCall({ export: "read_file", input: {}, durationMs: 1, result: {} });
+
+  const recorded = recordedBootEvidence(sink.records);
+  assert.ok(recorded && "problem" in recorded);
+  assert.match(recorded.problem, /session\(s\) bridge-b have no recorded boot evidence/);
+});
+
+test("a boot record naming a different container than its session's calls is refused", async () => {
+  const { sink, run } = audit();
+  await run.sandboxBoot({ ...evidence, containerName: "berth-dev-other" });
+  const recorded = recordedBootEvidence(sink.records);
+  assert.ok(recorded && "problem" in recorded);
+  assert.match(recorded.problem, /"berth-dev-other" but its calls went to "berth-dev-filesystem"/);
 });
 
 // A call the app never answered used to leave no record at all.
