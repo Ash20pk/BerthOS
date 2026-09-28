@@ -91,12 +91,19 @@ export default class OsUp extends Command {
 
     const name = args.name ?? configName ?? apps[0]!.name;
 
+    let fromFile: Record<string, string> = {};
+    if (flags["env-file"]) {
+      try {
+        fromFile = parseEnvFile(await readFile(flags["env-file"], "utf-8"));
+      } catch (err) {
+        this.error(`--env-file ${flags["env-file"]}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
     let env: Record<string, string> = {};
     try {
-      const fromFile = flags["env-file"] ? parseEnvFile(await readFile(flags["env-file"], "utf-8")) : {};
       env = resolveEnvFlags(flags.env ?? [], fromFile, process.env);
     } catch (err) {
-      this.error(`${flags["env-file"] && !(flags.env ?? []).length ? `--env-file ${flags["env-file"]}: ` : ""}${err instanceof Error ? err.message : String(err)}`);
+      this.error(err instanceof Error ? err.message : String(err));
     }
 
     const docker = new Docker();
@@ -105,6 +112,11 @@ export default class OsUp extends Command {
     if (existing) {
       if (await isContainerRunning(docker, existing.containerName)) {
         this.log(`"${name}" is already up (container ${existing.containerName}). Run \`berth os down ${name}\` first to rebuild it.`);
+        if (Object.keys(env).length > 0) {
+          this.warn(
+            `--env/--env-file values were not applied: "${name}" keeps the environment it was booted with. To apply them, run \`berth os down ${name}\` and then \`berth os up\` again with the same flags.`,
+          );
+        }
         return;
       }
       // Not running, but still holding the name (crashed, OOM-killed, or
