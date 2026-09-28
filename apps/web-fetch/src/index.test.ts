@@ -52,6 +52,8 @@ const server = http.createServer((req, res) => {
       res.writeHead(200, { "content-type": "text/html" }).end(
         `<html><head><title>Heavy</title><script>${"var x = 1;".repeat(20_000)}</script></head><body><p>The article.</p>${"<p>more</p>".repeat(20_000)}</body></html>`,
       );
+    } else if (req.url === "/forbidden") {
+      res.writeHead(403, { "content-type": "text/plain" }).end("Forbidden: 403");
     } else if (req.url === "/big") {
       res.writeHead(200, { "content-type": "text/plain" }).end("x".repeat(150_000));
     } else if (req.url === "/image") {
@@ -157,6 +159,30 @@ test("WEB_FETCH_HEADERS are only sent over https, so a redirect down to http dro
   } finally {
     delete process.env.WEB_FETCH_HEADERS;
   }
+});
+
+serverTest("the egress proxy's refusals are explained, for https and for plain http", async () => {
+  // A stand-in for the sandbox's egress proxy that refuses everything, the
+  // way it refuses a declared name that resolves to an internal address.
+  const proxy = http.createServer((_req, res) => {
+    res.writeHead(403, { "content-type": "text/plain" }).end('egress denied: "127.0.0.1" resolves to 127.0.0.1, which is loopback, private, link-local, or otherwise internal');
+  });
+  proxy.on("connect", (_req, socket) => socket.end("HTTP/1.1 403 Forbidden\r\n\r\n"));
+  await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+  process.env.BERTH_EGRESS_PROXY_URL = `http://127.0.0.1:${(proxy.address() as { port: number }).port}`;
+  try {
+    await assert.rejects(call("get", { url: `https://127.0.0.1:${port}/echo` }), /egress proxy refused 127\.0\.0\.1, although berth\.yml allows it.*Proxy response \(403\)/);
+    await assert.rejects(call("get", { url: `${base}/echo` }), /egress proxy refused 127\.0\.0\.1, although berth\.yml allows it.*egress denied: .*internal/);
+  } finally {
+    delete process.env.BERTH_EGRESS_PROXY_URL;
+    proxy.close();
+  }
+});
+
+serverTest("a 403 from the site itself is returned as a response, not reported as the proxy's refusal", async () => {
+  const res = await call("get", { url: `${base}/forbidden` });
+  assert.equal(res.status, 403);
+  assert.equal(res.body, "Forbidden: 403");
 });
 
 serverTest("non-http URLs and unsupported methods are refused", async () => {

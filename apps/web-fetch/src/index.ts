@@ -9,11 +9,40 @@ import { pageFromHtml } from "./page.js";
 // and it refuses any host berth.yml doesn't name. undici's own fetch with an
 // explicit dispatcher, rather than the global fetch: Node's built-in fetch is
 // a different undici, and mixing the two loses response headers.
+//
+// Read per request (and the agent kept while the address stays the same), so
+// a test can put a stand-in proxy in front of a request.
+let proxyAgent: { url: string; agent: Dispatcher } | undefined;
 function proxy(): Dispatcher | undefined {
   const url = process.env.BERTH_EGRESS_PROXY_URL;
-  return url ? new ProxyAgent(url) : undefined;
+  if (!url) return undefined;
+  if (proxyAgent?.url !== url) proxyAgent = { url, agent: new ProxyAgent(url) };
+  return proxyAgent.agent;
 }
-const dispatcher = proxy();
+
+/**
+ * How the egress proxy's refusals arrive. An https request is a CONNECT, which
+ * the proxy answers with a bare 403, and undici fails the request with exactly
+ * this message. A plain-http request is forwarded, and a refused one comes
+ * back as an ordinary 403 response whose text/plain body starts with
+ * "egress denied:". Matched on those, not on "403" anywhere in an error, which
+ * also caught unrelated failures.
+ */
+const TUNNEL_REFUSED = /^Proxy response \(403\) !== 200 when HTTP Tunneling$/;
+const FORWARD_REFUSED = /^egress denied: /;
+
+/** The innermost message of an error's cause chain: fetch's own is only "fetch failed". */
+function rootCause(err: unknown): string {
+  let current = err as { message?: string; cause?: unknown } | undefined;
+  for (let depth = 0; current?.cause && depth < 5; depth++) current = current.cause as typeof current;
+  return current?.message ?? String(current);
+}
+
+function proxyRefusal(url: URL, detail: string): Error {
+  return new Error(
+    `the sandbox's egress proxy refused ${url.hostname}, although berth.yml allows it: the name resolves to an internal address (loopback, a private range, the cloud metadata address), which is never reachable whatever berth.yml says, or it is a host a dedicated broker in the sandbox serves instead (${detail})`,
+  );
+}
 
 const MAX_BYTES = 5 * 1024 * 1024;
 const MAX_CHARS = 100_000;
@@ -134,6 +163,7 @@ async function send(method: string, rawUrl: string, body: string | undefined, co
   let currentBody = body;
   for (let hop = 0; ; hop++) {
     if (!isAllowed(patterns, url.hostname, portOf(url))) throw refusal(url, patterns);
+    const dispatcher = proxy();
     let res: Awaited<ReturnType<typeof fetch>>;
     try {
       res = await fetch(url, {
@@ -148,10 +178,8 @@ async function send(method: string, rawUrl: string, body: string | undefined, co
         ...(dispatcher ? { dispatcher } : {}),
       });
     } catch (err) {
-      const cause = (err as { cause?: { message?: string } }).cause?.message ?? (err as Error).message;
-      if (/403|Forbidden/i.test(cause)) {
-        throw new Error(`the sandbox's egress proxy refused ${url.hostname}: internal addresses (loopback, private ranges, the cloud metadata address) are never reachable, whatever berth.yml says (${cause})`);
-      }
+      const cause = rootCause(err);
+      if (dispatcher && TUNNEL_REFUSED.test(cause)) throw proxyRefusal(url, cause);
       throw new Error(`request to ${url.toString()} failed: ${cause}`);
     }
 
@@ -174,6 +202,7 @@ async function send(method: string, rawUrl: string, body: string | undefined, co
       return { url: url.toString(), status: res.status, content_type, body: `[${content_type} body, ${bytes.length} bytes${byteCapped ? "+" : ""}, not shown]`, truncated: byteCapped };
     }
     const text = bytes.toString("utf-8");
+    if (dispatcher && res.status === 403 && /^text\/plain/i.test(content_type) && FORWARD_REFUSED.test(text)) throw proxyRefusal(url, text.trim());
     const truncated = byteCapped || text.length > maxChars;
     return { url: url.toString(), status: res.status, content_type, body: text.length > maxChars ? text.slice(0, maxChars) : text, truncated };
   }
