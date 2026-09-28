@@ -3,7 +3,7 @@ import tarFs from "tar-fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdtemp, cp, rm, readFile, writeFile, mkdir, chmod, readdir, readlink, realpath } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname, basename, resolve as resolvePath, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -118,21 +118,96 @@ function excludedFromBuildContext(appDir: string, src: string): boolean {
 }
 
 /**
- * `pnpm deploy --legacy` rewrites the workspace's pnpm-lock.yaml (workspace
- * links become injected `file:` dependencies), so every image build from a
- * clone left the tracked lockfile modified. The deploy needs that only for
- * itself; put the file back as it was.
+ * Runs `pnpm deploy --legacy` for a workspace member without leaving the
+ * workspace's pnpm-lock.yaml modified.
+ *
+ * A deploy can rewrite the lockfile (workspace links become injected `file:`
+ * dependencies), so image builds from a clone used to leave the tracked file
+ * changed. The first attempt is `--frozen-lockfile`, where pnpm never writes
+ * the lockfile at all: nothing to put back, and nothing to race with. Only
+ * when that fails (a lockfile the deploy has to change) does it deploy
+ * normally, under withLockfileRestored().
  */
-async function withLockfileRestored<T>(workspaceRoot: string, run: () => Promise<T>): Promise<T> {
+async function deployWorkspaceMember(workspaceRoot: string, name: string, stagingDir: string): Promise<void> {
+  const deploy = (extra: string[]) =>
+    execFileAsync("pnpm", ["--filter", name, "deploy", "--prod", "--legacy", ...extra, stagingDir], { cwd: workspaceRoot });
+  try {
+    await deploy(["--frozen-lockfile"]);
+    return;
+  } catch {
+    await rm(stagingDir, { recursive: true, force: true });
+  }
+  await withLockfileRestored(workspaceRoot, () => deploy([]));
+}
+
+/** One lockfile-rewriting deploy at a time per workspace, so no deploy snapshots another's rewrite as "before". */
+const lockfileDeploys = new Map<string, Promise<unknown>>();
+
+/**
+ * Puts the workspace lockfile back after `run` changes it, without undoing
+ * anyone else's edit.
+ *
+ * - The original goes back the moment the deploy exits, and only if the
+ *   file changed, by rename, so nothing ever reads a half-written lockfile.
+ * - Deploys in this process are serialized per workspace. Two overlapping
+ *   ones otherwise saw each other's rewrite as the original, and the later
+ *   restore left the lockfile modified.
+ * - SIGINT/SIGTERM mid-deploy restores it too, synchronously, before the
+ *   signal takes its usual course. An edit made *during* the deploy can't
+ *   be told apart from the deploy's own and is replaced; that window is the
+ *   deploy itself, and the frozen-lockfile attempt in
+ *   deployWorkspaceMember() means it is only open when the lockfile had to
+ *   change anyway.
+ */
+export async function withLockfileRestored<T>(workspaceRoot: string, run: () => Promise<T>): Promise<T> {
+  const previous = lockfileDeploys.get(workspaceRoot) ?? Promise.resolve();
+  const mine = previous.catch(() => {}).then(() => restoringLockfile(workspaceRoot, run));
+  lockfileDeploys.set(workspaceRoot, mine);
+  try {
+    return await mine;
+  } finally {
+    if (lockfileDeploys.get(workspaceRoot) === mine) lockfileDeploys.delete(workspaceRoot);
+  }
+}
+
+async function restoringLockfile<T>(workspaceRoot: string, run: () => Promise<T>): Promise<T> {
   const lockfile = join(workspaceRoot, "pnpm-lock.yaml");
-  const before = existsSync(lockfile) ? await readFile(lockfile) : undefined;
+  if (!existsSync(lockfile)) return run();
+  const before = readFileSync(lockfile);
+  const current = () => {
+    try {
+      return readFileSync(lockfile);
+    } catch {
+      return undefined;
+    }
+  };
+  const putBack = () => {
+    const temp = `${lockfile}.berth-restore-${process.pid}`;
+    writeFileSync(temp, before);
+    renameSync(temp, lockfile);
+  };
+
+  const signals = ["SIGINT", "SIGTERM"] as const;
+  const onSignal = (signal: NodeJS.Signals) => {
+    const after = current();
+    if (!after || !after.equals(before)) putBack();
+    // Only stand in for the default handler when nobody else is listening;
+    // otherwise whoever registered first decides what the signal means.
+    const alone = process.listenerCount(signal) === 1;
+    removeHandlers();
+    if (alone) process.kill(process.pid, signal);
+  };
+  const removeHandlers = () => {
+    for (const signal of signals) process.off(signal, onSignal);
+  };
+  for (const signal of signals) process.on(signal, onSignal);
+
   try {
     return await run();
   } finally {
-    if (before) {
-      const after = await readFile(lockfile).catch(() => undefined);
-      if (!after || !after.equals(before)) await writeFile(lockfile, before);
-    }
+    removeHandlers();
+    const after = current();
+    if (!after || !after.equals(before)) putBack();
   }
 }
 
@@ -222,11 +297,7 @@ export async function stageProductionSource(appDir: string, stagingDir: string, 
 
   if (workspaceRoot) {
     const pkgJson = JSON.parse(await readFile(join(appDir, "package.json"), "utf-8")) as { name: string };
-    await withLockfileRestored(workspaceRoot, () =>
-      execFileAsync("pnpm", ["--filter", pkgJson.name, "deploy", "--prod", "--legacy", stagingDir], {
-        cwd: workspaceRoot,
-      }),
-    );
+    await deployWorkspaceMember(workspaceRoot, pkgJson.name, stagingDir);
     await makeDeployReproducible(stagingDir, containerAppRoot);
     return;
   }

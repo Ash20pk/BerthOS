@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   existsSync,
@@ -16,7 +16,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
-import { makeDeployReproducible, stageProductionSource } from "./image.js";
+import { pathToFileURL } from "node:url";
+import { makeDeployReproducible, stageProductionSource, withLockfileRestored } from "./image.js";
 
 // A tree shaped like `pnpm deploy --legacy` output, with each thing that made
 // two builds of the same app differ, or dangle inside the image.
@@ -145,5 +146,83 @@ test("two stagings of the same standalone app are identical", { skip: !hasPnpm()
     for (const line of treeDigest(join(a, "app"))) assert.ok(!line.includes(a), line);
   } finally {
     for (const dir of [app, a, b]) rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+function workspaceWithLockfile(): { root: string; lockfile: string } {
+  const root = mkdtempSync(join(tmpdir(), "berth-ws-"));
+  const lockfile = join(root, "pnpm-lock.yaml");
+  writeFileSync(lockfile, "lockfileVersion: '9.0'\n# original\n");
+  return { root, lockfile };
+}
+
+test("a deploy's lockfile rewrite is put back", async () => {
+  const { root, lockfile } = workspaceWithLockfile();
+  try {
+    await withLockfileRestored(root, async () => writeFileSync(lockfile, "rewritten by deploy\n"));
+    assert.equal(readFileSync(lockfile, "utf-8"), "lockfileVersion: '9.0'\n# original\n");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a lockfile the deploy didn't change isn't written at all", async () => {
+  const { root, lockfile } = workspaceWithLockfile();
+  try {
+    const inode = lstatSync(lockfile).ino;
+    await withLockfileRestored(root, async () => {});
+    assert.equal(lstatSync(lockfile).ino, inode);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("overlapping deploys don't take each other's rewrite for the original", async () => {
+  const { root, lockfile } = workspaceWithLockfile();
+  try {
+    // Unserialized, the second snapshot is the first deploy's rewrite, and
+    // the second restore puts *that* back last.
+    const first = withLockfileRestored(root, async () => {
+      writeFileSync(lockfile, "first deploy\n");
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    const second = withLockfileRestored(root, async () => {
+      writeFileSync(lockfile, "second deploy\n");
+      await new Promise((r) => setTimeout(r, 60));
+    });
+    await Promise.all([first, second]);
+    assert.equal(readFileSync(lockfile, "utf-8"), "lockfileVersion: '9.0'\n# original\n");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Ctrl-C in the middle of a deploy still puts the lockfile back", async () => {
+  const { root, lockfile } = workspaceWithLockfile();
+  try {
+    const imageModule = pathToFileURL(join(import.meta.dirname, "image.js")).href;
+    const child = spawn(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `const { withLockfileRestored } = await import(${JSON.stringify(imageModule)});
+         const { writeFileSync } = await import("node:fs");
+         await withLockfileRestored(${JSON.stringify(root)}, async () => {
+           writeFileSync(${JSON.stringify(lockfile)}, "half-way through a deploy\\n");
+           console.log("deploying");
+           await new Promise(() => setInterval(() => {}, 1000));
+         });`,
+      ],
+      { stdio: ["ignore", "pipe", "inherit"] },
+    );
+    await new Promise<void>((resolve) => child.stdout.once("data", () => resolve()));
+    const exited = new Promise<NodeJS.Signals | null>((resolve) => child.once("exit", (_code, signal) => resolve(signal)));
+    child.kill("SIGINT");
+    // Still dies of the signal, as it would have without the handler.
+    assert.equal(await exited, "SIGINT");
+    assert.equal(readFileSync(lockfile, "utf-8"), "lockfileVersion: '9.0'\n# original\n");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
