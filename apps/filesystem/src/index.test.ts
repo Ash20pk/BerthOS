@@ -11,6 +11,7 @@ const context = await mkdtemp(join(tmpdir(), "filesystem-test-ctx-"));
 process.env.BERTH_WORKSPACE_ROOT = workspace;
 process.env.BERTH_CONTEXT_MOUNT = context;
 const { default: app } = await import("./index.js");
+const { relativeUnder } = await import("./paths.js");
 
 test("write_file creates the directories a path names", async () => {
   await app._exports.get("write_file")!.handler({ path: "reports/2026/q4.md", content: "plan" });
@@ -51,4 +52,26 @@ test("a path outside the workspace fails saying where it resolved, and how paths
   });
   // Inside the workspace, the error is left alone.
   await assert.rejects(app._exports.get("read_file")!.handler({ path: "no-such-file.txt" }) as Promise<unknown>, (err: Error) => !/outside/.test(err.message));
+});
+
+test("a context path has one spelling for tagging, however it was written", async () => {
+  // semantic-fs keys its index by the path relative to /context, which is
+  // what a write through the mount records.
+  for (const spelling of ["findings/churn.txt", "./findings/churn.txt", "/context/findings/churn.txt", "/context//findings/../findings/churn.txt"]) {
+    assert.equal(relativeUnder("/context", spelling), "findings/churn.txt", spelling);
+  }
+  assert.throws(() => relativeUnder("/context", "/workspace/a.txt"), /outside \/context/);
+  assert.throws(() => relativeUnder("/context", "../a.txt"), /outside \/context/);
+});
+
+test("tag_context_file tags the path semantic-fs indexes the file under", async () => {
+  const tagged: string[] = [];
+  // onAgentReady is where the app picks up its semantic-fs client.
+  const ctx = {
+    contextBus: { register: async () => {}, publish: async () => {} },
+    semanticFs: { register: async () => {}, tag: async (path: string) => void tagged.push(path), query: async () => [] },
+  };
+  for (const hook of app._onAgentReadyHooks) await hook(ctx as unknown as Parameters<typeof hook>[0]);
+  await app._exports.get("tag_context_file")!.handler({ path: `${context}/findings/churn.txt`, task: "t", relatedApps: [] });
+  assert.deepEqual(tagged, ["findings/churn.txt"]);
 });

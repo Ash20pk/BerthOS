@@ -1,7 +1,7 @@
 import { defineApp, type ContextBusClient, type SemanticFsClient } from "@berthos/sdk";
 import { z } from "zod";
 import { mkdir, readdir } from "node:fs/promises";
-import { readFileUnder, writeFileUnder } from "./paths.js";
+import { readFileUnder, relativeUnder, writeFileUnder } from "./paths.js";
 
 const WORKSPACE_ROOT = process.env.BERTH_WORKSPACE_ROOT ?? "/workspace";
 const CONTEXT_ROOT = process.env.BERTH_CONTEXT_MOUNT ?? "/context";
@@ -63,7 +63,10 @@ export default defineApp((app) => {
     name: "tag_context_file",
     input: z.object({ path: z.string(), task: z.string(), relatedApps: z.array(z.string()) }),
     handler: async ({ path: relativePath, task, relatedApps }) => {
-      await semanticFs?.tag(relativePath, { task, relatedApps });
+      // The key semantic-fs indexes the file under, whichever way the path
+      // was spelled, so "/context/a.txt" tags the file write_context_file
+      // wrote rather than a second entry beside it.
+      await semanticFs?.tag(relativeUnder(CONTEXT_ROOT, relativePath), { task, relatedApps });
     },
   });
 
