@@ -11,6 +11,14 @@ export interface StdioRpcCallOptions {
 
 export const DEFAULT_STDIO_RPC_TIMEOUT_MS = 30_000;
 
+/**
+ * A call given up on before its request was written: the app never saw it,
+ * so unlike every other failure of call() it certainly did not run.
+ */
+export class RpcNotSentError extends Error {
+  override name = "RpcNotSentError";
+}
+
 export interface StdioRpcClient {
   call(request: RpcRequest, options?: StdioRpcCallOptions): Promise<RpcResponse>;
   close(): void;
@@ -57,7 +65,12 @@ export async function createStdioRpcClient(container: Docker.Container, docker: 
   return {
     async call(request: RpcRequest, options: StdioRpcCallOptions = {}): Promise<RpcResponse> {
       const { timeoutMs = DEFAULT_STDIO_RPC_TIMEOUT_MS, signal } = options;
-      const notSent = () => new Error(`not sent: the caller gave up on ${request.export} before it was written`);
+      // Errors name the export and the request id, never the request itself:
+      // callers record these messages (berth mcp's audit `reason`), and the
+      // request's input is the agent's arguments — file contents, code,
+      // secrets.
+      const which = `${request.export} (request ${request.id})`;
+      const notSent = () => new RpcNotSentError(`not sent: the caller gave up on ${which} before it was written`);
       if (signal?.aborted) throw notSent();
       const target = await liveStream();
       // Checked again: reattaching above can take long enough to be given up on.
@@ -70,11 +83,11 @@ export async function createStdioRpcClient(container: Docker.Container, docker: 
         };
         const onAbort = () => {
           settle();
-          reject(new Error(`the caller gave up waiting for the response to ${request.export}`));
+          reject(new Error(`the caller gave up waiting for the response to ${which}`));
         };
         const timer = setTimeout(() => {
           settle();
-          reject(new Error(`timed out after ${Math.round(timeoutMs / 1000)}s waiting for RPC response to ${JSON.stringify(request)}`));
+          reject(new Error(`timed out after ${Math.round(timeoutMs / 1000)}s waiting for the response to ${which}`));
         }, timeoutMs);
         signal?.addEventListener("abort", onAbort, { once: true });
         pending.set(request.id, (response) => {
@@ -86,7 +99,7 @@ export async function createStdioRpcClient(container: Docker.Container, docker: 
         // answered.
         if (!target.write(JSON.stringify(request) + "\n")) {
           settle();
-          reject(new Error(`could not write ${JSON.stringify(request)} to the container's stdin — the attach stream is not accepting writes`));
+          reject(new Error(`could not write ${which} to the container's stdin — the attach stream is not accepting writes`));
         }
       });
     },
