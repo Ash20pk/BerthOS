@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@berthos/sdk": "workspace:*",
+    "filesystem": "workspace:*",
     "zod": "^4.6.5"
   },
   "devDependencies": {

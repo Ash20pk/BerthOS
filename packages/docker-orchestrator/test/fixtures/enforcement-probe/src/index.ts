@@ -1,10 +1,12 @@
 import { defineApp } from "@berthos/sdk";
 import { z } from "zod";
-import { mkdir, readFile, writeFile, truncate } from "node:fs/promises";
+import { truncate } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { createSocket } from "node:dgram";
 import { execFile } from "node:child_process";
-import { join } from "node:path";
+// apps/filesystem's own path handling, not a copy of it: the traversal,
+// absolute-path and symlink checks then test what the shipped app does.
+import { readFileUnder, resolveUnder, writeFileUnder } from "filesystem/dist/paths.js";
 
 /**
  * The diagnostics capability-enforcement.mjs runs from inside a sandbox, each
@@ -19,17 +21,12 @@ import { join } from "node:path";
 
 const WORKSPACE_ROOT = process.env.BERTH_WORKSPACE_ROOT ?? "/workspace";
 
-function resolveInWorkspace(relativePath: string): string {
-  return join(WORKSPACE_ROOT, relativePath);
-}
-
 export default defineApp((app) => {
   app.export({
     name: "write_file",
     input: z.object({ path: z.string(), content: z.string() }),
-    handler: async ({ path: relativePath, content }) => {
-      await mkdir(WORKSPACE_ROOT, { recursive: true });
-      await writeFile(resolveInWorkspace(relativePath), content, "utf-8");
+    handler: async ({ path, content }) => {
+      await writeFileUnder(WORKSPACE_ROOT, path, content);
     },
   });
 
@@ -37,8 +34,8 @@ export default defineApp((app) => {
     name: "read_file",
     input: z.object({ path: z.string() }),
     output: z.object({ content: z.string() }),
-    handler: async ({ path: relativePath }) => ({
-      content: await readFile(resolveInWorkspace(relativePath), "utf-8"),
+    handler: async ({ path }) => ({
+      content: await readFileUnder(WORKSPACE_ROOT, path),
     }),
   });
 
@@ -52,7 +49,7 @@ export default defineApp((app) => {
     name: "truncate_file",
     input: z.object({ path: z.string(), size: z.number() }),
     handler: async ({ path: relativePath, size }) => {
-      await truncate(resolveInWorkspace(relativePath), size);
+      await truncate(resolveUnder(WORKSPACE_ROOT, relativePath), size);
     },
   });
 
