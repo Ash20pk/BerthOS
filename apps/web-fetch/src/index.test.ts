@@ -166,11 +166,16 @@ test("page text decodes entities and keeps block structure", () => {
 
 test("nested and unclosed markup can't leave a script behind, and only http(s) links are kept", () => {
   const page = pageFromHtml(
-    `<p>before</p><scr<script>x()</script>ipt>alert(1)</script><p>after <script</p>` +
-      `<a href="javascript:alert(1)">a</a><a href="data:text/html,x">b</a><a href="vbscript:x">c</a><a href="mailto:x@y.z">d</a><a href="/ok">ok</a>`,
+    `<a href="javascript:alert(1)">a</a><a href="data:text/html,x">b</a><a href="vbscript:x">c</a><a href="mailto:x@y.z">d</a><a href="/ok">ok</a>` +
+      `<p>before</p><scr<script>x()</script>ipt>alert(1)</script><p>after</p><!-- <script>y()</script> --><p>end <script>unclosed`,
     "https://x.test/",
   );
-  assert.ok(!/<script|<scr/i.test(page.text), page.text);
-  assert.ok(page.text.includes("before") && page.text.includes("after"));
+  // No markup survives, and nothing inside a real script element does
+  // (y() sits in a comment, "unclosed" after an unclosed <script>). The
+  // "<scr<script>" junk is an unknown element to a browser too, so what
+  // follows it is plain text, as it is here.
+  assert.ok(!/<[a-z!\/]/i.test(page.text), page.text);
+  assert.ok(!/y\(\)|unclosed/.test(page.text), page.text);
+  assert.ok(page.text.includes("before") && page.text.includes("after") && page.text.includes("end"));
   assert.deepEqual(page.links, [{ text: "ok", href: "https://x.test/ok" }]);
 });
