@@ -160,3 +160,21 @@ test("findDenials caps what it keeps: ten paths, each line cut short", () => {
   assert.equal(found.length, 10);
   assert.ok(found.every((d) => d.line.length <= 200));
 });
+
+// A plain prefix match counted these as inside the workspace, and dropped them.
+test("findDenials resolves a path before deciding it is inside the workspace", () => {
+  const found = findDenials(
+    [
+      "PermissionError: [Errno 13] Permission denied: '/workspace/../etc/x'",
+      "touch: /workspace/./../../opt/y: Permission denied",
+      "touch: /workspace-other/z: Permission denied",
+      "touch: /workspace/sub/../still-inside: Permission denied",
+      "touch: /workspace//double: Permission denied",
+    ],
+    "/workspace/",
+  );
+  assert.deepEqual(
+    found.map((d) => d.path),
+    ["/workspace/../etc/x", "/workspace/./../../opt/y", "/workspace-other/z"],
+  );
+});

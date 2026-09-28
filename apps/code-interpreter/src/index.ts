@@ -1,6 +1,7 @@
 import { defineApp } from "@berthos/sdk";
 import { z } from "zod";
 import { execFile, type ExecFileException } from "node:child_process";
+import { posix } from "node:path";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_TIMEOUT_MS = 60_000;
@@ -76,7 +77,13 @@ const MAX_LINE_CHARS = 200;
  */
 export function findDenials(outputs: string[], workspace: string = workspaceRoot()): PossibleDenial[] {
   const found: PossibleDenial[] = [];
-  const inWorkspace = (path: string) => path === workspace || path.startsWith(`${workspace.replace(/\/$/, "")}/`);
+  // Resolved first: as plain text, `/workspace/../etc/x` starts with the
+  // workspace and would be dropped as inside it.
+  const root = posix.resolve(workspace);
+  const inWorkspace = (path: string) => {
+    const resolved = posix.resolve(root, path);
+    return resolved === root || resolved.startsWith(`${root === "/" ? "" : root}/`);
+  };
   for (const output of outputs) {
     for (const raw of output.split("\n")) {
       const line = raw.trim();
