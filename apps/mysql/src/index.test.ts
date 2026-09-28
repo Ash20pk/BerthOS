@@ -6,7 +6,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import mysql from "mysql2/promise";
-import { cell, Collector, configOf, modeFrom, routeFor, shapeRows, targetOf } from "./index.js";
+import { allowsPrivileged, cell, Collector, configOf, modeFrom, privilegeProblem, riskyPrivileges, routeFor, shapeRows, targetOf } from "./index.js";
 import { ProxyTunnel } from "./tunnel.js";
 
 // --- pure: no database needed ------------------------------------------------
@@ -48,6 +48,23 @@ test("the mode is read-only unless MYSQL_MODE says read-write", () => {
   assert.equal(modeFrom({}), "read-only");
   assert.equal(modeFrom({ MYSQL_MODE: "yes" }), "read-only");
   assert.equal(modeFrom({ MYSQL_MODE: "read-write" }), "read-write");
+});
+
+test("the risky global privileges are picked out of SHOW GRANTS, with what they allow and how to opt in", () => {
+  const root = [
+    "GRANT SELECT, INSERT, RELOAD, SHUTDOWN, PROCESS, FILE, SUPER, CREATE ROLE ON *.* TO `root`@`%` WITH GRANT OPTION",
+    "GRANT APPLICATION_PASSWORD_ADMIN,BINLOG_ADMIN,FLUSH_PRIVILEGES,SHOW_ROUTINE,SYSTEM_VARIABLES_ADMIN ON *.* TO `root`@`%` WITH GRANT OPTION",
+    "GRANT PROXY ON ``@`` TO `root`@`%` WITH GRANT OPTION",
+  ];
+  assert.deepEqual(riskyPrivileges(root), ["RELOAD", "SHUTDOWN", "FILE", "SUPER", "APPLICATION_PASSWORD_ADMIN", "BINLOG_ADMIN", "FLUSH_PRIVILEGES", "SYSTEM_VARIABLES_ADMIN"]);
+  assert.deepEqual(riskyPrivileges(["GRANT ALL PRIVILEGES ON *.* TO `admin`@`%`"]), ["ALL PRIVILEGES"]);
+  assert.deepEqual(riskyPrivileges(["GRANT BINLOG ADMIN ON *.* TO `m`@`%`"]), ["BINLOG ADMIN"], "MariaDB spells them with spaces");
+  // Everything on one database, and nothing global but USAGE: fine.
+  assert.deepEqual(riskyPrivileges(["GRANT USAGE ON *.* TO `app`@`%`", "GRANT ALL PRIVILEGES ON `shop`.* TO `app`@`%`", "GRANT `analyst`@`%` TO `app`@`%`"]), []);
+  assert.equal(privilegeProblem("app", []), undefined);
+  assert.match(privilegeProblem("root", ["FILE", "SUPER"])!, /root has global privileges \(FILE, SUPER\).*INTO OUTFILE.*MYSQL_ALLOW_PRIVILEGED=true/s);
+  assert.equal(allowsPrivileged({}), false);
+  assert.equal(allowsPrivileged({ MYSQL_ALLOW_PRIVILEGED: "true" }), true);
 });
 
 test("results are capped by row count and size, and values are JSON-safe", () => {
@@ -136,7 +153,7 @@ before(async () => {
 async function appWith(env: Record<string, string | undefined>, capabilities: string[]) {
   const dir = await mkdtemp(join(tmpdir(), "mysql-app-test-"));
   await writeFile(join(dir, "berth.yml"), `name: mysql\nversion: 0.1.0\ncapabilities:\n${capabilities.map((c) => `  - ${c}`).join("\n")}\nexports: []\n`);
-  for (const k of ["DATABASE_URL", "MYSQL_MODE", "BERTH_EGRESS_PROXY_URL"]) delete process.env[k];
+  for (const k of ["DATABASE_URL", "MYSQL_MODE", "MYSQL_ALLOW_PRIVILEGED", "BERTH_EGRESS_PROXY_URL"]) delete process.env[k];
   Object.assign(process.env, { BERTH_MANIFEST_PATH: join(dir, "berth.yml") }, Object.fromEntries(Object.entries(env).filter(([, v]) => v !== undefined)));
   // A fresh module per configuration: the pool is created once per process.
   const mod = await import(`./index.js?case=${Math.random()}`);
@@ -260,6 +277,36 @@ live("a call's session settings and locks don't carry over to the next one", asy
   assert.equal((rows as { holder: unknown }[])[0]!.holder, null, "the lock was released before the connection went back to the pool");
   // The read-only flag is set again after the reset.
   await assert.rejects(ro("query", { sql: "DROP TABLE customers", params: [] }), /read-only/);
+});
+
+live("read-only mode refuses an administrator, which could still write files or change the server, unless told to allow it", async () => {
+  const port = new URL(TEST_URL!).port;
+  const call = await appWith({ DATABASE_URL: TEST_URL }, [`network:connect:${port}`]);
+  await assert.rejects(call("query", { sql: "SET GLOBAL max_connections = 152", params: [] }), /root has global privileges.*SUPER.*MYSQL_ALLOW_PRIVILEGED=true/s);
+  await assert.rejects(call("connection_info"), /global privileges/, "every export is refused, not only query");
+
+  // A user with just FILE, and one whose only risky privilege comes from a role.
+  await admin(async (db) => {
+    await db.query("CREATE USER IF NOT EXISTS 'filer'@'%' IDENTIFIED BY 'filer'");
+    await db.query("GRANT FILE ON *.* TO 'filer'@'%'");
+    await db.query("GRANT SELECT ON customers TO 'filer'@'%'");
+    await db.query("CREATE ROLE IF NOT EXISTS 'tuner'");
+    await db.query("GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'tuner'");
+    await db.query("CREATE USER IF NOT EXISTS 'sneaky'@'%' IDENTIFIED BY 'sneaky'");
+    await db.query("GRANT SELECT ON customers TO 'sneaky'@'%'");
+    await db.query("GRANT 'tuner' TO 'sneaky'@'%'");
+    await db.query("SET DEFAULT ROLE ALL TO 'sneaky'@'%'");
+  });
+  const filer = await appWith({ DATABASE_URL: urlAs("filer") }, [`network:connect:${port}`]);
+  await assert.rejects(filer("query", { sql: "SELECT 1", params: [] }), /filer has global privileges \(FILE\)/);
+  const sneaky = await appWith({ DATABASE_URL: urlAs("sneaky") }, [`network:connect:${port}`]);
+  await assert.rejects(sneaky("query", { sql: "SELECT 1", params: [] }), /sneaky has global privileges \(SYSTEM_VARIABLES_ADMIN\)/);
+
+  const allowed = await appWith({ DATABASE_URL: TEST_URL, MYSQL_ALLOW_PRIVILEGED: "true" }, [`network:connect:${port}`]);
+  assert.equal(Number((await allowed("query", { sql: "SELECT count(*) AS n FROM customers", params: [] })).rows[0].n), 3);
+  // Read-write mode is asking for a user that can change things: no check.
+  const rw = await appWith({ DATABASE_URL: TEST_URL, MYSQL_MODE: "read-write" }, [`network:connect:${port}`]);
+  assert.equal((await rw("connection_info")).mode, "read-write");
 });
 
 live("concurrent first calls share one pool", async () => {

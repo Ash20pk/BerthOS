@@ -110,6 +110,57 @@ export function modeFrom(env: NodeJS.ProcessEnv): Mode {
   return env.MYSQL_MODE === "read-write" ? "read-write" : "read-only";
 }
 
+/** MYSQL_ALLOW_PRIVILEGED=true: serve a privileged user in read-only mode anyway. */
+export function allowsPrivileged(env: NodeJS.ProcessEnv): boolean {
+  return env.MYSQL_ALLOW_PRIVILEGED === "true";
+}
+
+// Global privileges whose statements act outside the data, where a
+// read-only transaction doesn't reach: SELECT … INTO OUTFILE (FILE), SET
+// GLOBAL and SET PERSIST (SUPER, SYSTEM_VARIABLES_ADMIN), FLUSH (RELOAD,
+// FLUSH_*), KILL of other users' sessions (CONNECTION_ADMIN), PURGE BINARY
+// LOGS (BINLOG_ADMIN), SHUTDOWN, and the rest of the *_ADMIN family.
+const RISKY = new Set(["ALL", "ALL PRIVILEGES", "SUPER", "FILE", "RELOAD", "SHUTDOWN"]);
+
+/** The risky global privileges among SHOW GRANTS lines. */
+export function riskyPrivileges(grants: string[]): string[] {
+  const found = new Set<string>();
+  for (const line of grants) {
+    const m = /^GRANT (.+?) ON \*\.\* TO /i.exec(line);
+    if (!m) continue;
+    for (const raw of m[1]!.split(",")) {
+      const privilege = raw.trim().toUpperCase().replace(/\s+/g, " ");
+      const joined = privilege.replace(/ /g, "_");
+      if (RISKY.has(privilege) || /_ADMIN$/.test(joined) || /^FLUSH_/.test(joined)) found.add(privilege);
+    }
+  }
+  return [...found];
+}
+
+export function privilegeProblem(user: string, risky: string[]): string | undefined {
+  if (risky.length === 0) return undefined;
+  const shown = risky.length > 6 ? `${risky.slice(0, 6).join(", ")} and ${risky.length - 6} more` : risky.join(", ");
+  return `DATABASE_URL's user ${user} has global privileges (${shown}) that read-only mode can't hold back: it can still write files on the database server with SELECT … INTO OUTFILE, change server settings with SET GLOBAL or SET PERSIST, FLUSH, KILL other sessions or purge the binary logs, none of which a read-only transaction stops. Give DATABASE_URL a user that can only read what the agent should see, or, to accept that, set MYSQL_ALLOW_PRIVILEGED=true and restart the app.`;
+}
+
+/**
+ * The user's grants, and those of the roles granted to it, which in MySQL 8
+ * SHOW GRANTS names but doesn't expand.
+ */
+async function grantsOf(conn: mysql.PoolConnection): Promise<string[]> {
+  const lines = async (sql: string) => ((await conn.query(sql))[0] as Record<string, unknown>[]).map((r) => String(Object.values(r)[0]));
+  const own = await lines("SHOW GRANTS");
+  const roles = own.flatMap((l) => /^GRANT ((?:`[^`]*`(?:@`[^`]*`)?)(?:\s*,\s*`[^`]*`(?:@`[^`]*`)?)*) TO /.exec(l)?.[1] ?? []);
+  if (roles.length === 0) return own;
+  try {
+    return [...own, ...(await lines(`SHOW GRANTS FOR CURRENT_USER() USING ${roles.join(", ")}`))];
+  } catch {
+    // MariaDB has no USING: ask for each role's grants instead.
+    const each = await Promise.all(roles.flatMap((r) => r.split(/\s*,\s*/)).map((r) => lines(`SHOW GRANTS FOR ${r}`).catch(() => [])));
+    return [...own, ...each.flat()];
+  }
+}
+
 export function cell(value: unknown): unknown {
   if (value === null || typeof value === "number" || typeof value === "boolean") return value;
   if (typeof value === "bigint") return value.toString();
@@ -192,6 +243,21 @@ async function open(): Promise<Connection> {
       ? { stream: () => new ProxyTunnel(route.proxy).connect(target.port, target.host) as unknown as import("node:net").Socket }
       : {}),
   });
+  if (mode === "read-only" && !allowsPrivileged(process.env)) {
+    try {
+      const conn = await pool.getConnection();
+      let problem: string | undefined;
+      try {
+        problem = privilegeProblem(target.user, riskyPrivileges(await grantsOf(conn)));
+      } finally {
+        conn.release();
+      }
+      if (problem) throw new Error(problem);
+    } catch (err) {
+      await pool.end().catch(() => {});
+      throw err;
+    }
+  }
   return { pool, target, route, mode };
 }
 

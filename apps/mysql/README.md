@@ -37,9 +37,17 @@ That verifies the server's certificate against the system's trusted CAs, and its
 ## Read-only, and how far that goes
 
 - **Default: read-only.** Every statement runs with the session set read-only and inside `START TRANSACTION READ ONLY … ROLLBACK`, so `INSERT`, `UPDATE`, `DELETE` and DDL (`CREATE`, `DROP`, `ALTER`) are all refused. Both are needed: MySQL commits DDL implicitly, outside any transaction, so the transaction alone doesn't stop a `DROP TABLE`. The session setting is reapplied on every call, so a statement that turns it off doesn't carry over. Set `MYSQL_MODE=read-write` in the sandbox's environment to allow changes.
-- **One statement per call, in both modes.** Multi-statement support is off, so the server refuses `SELECT 1; DROP TABLE x`. The connection settings are built from `DATABASE_URL`'s host, port, user, password and database, not handed to the driver whole, so an option in the URL such as `?multipleStatements=true` can't turn it back on: the only options read are `ssl` and `sslmode` (below), and any others are ignored, with a warning on stderr.
+- **One statement per call, in both modes.** Multi-statement support is off, so the server refuses `SELECT 1; DROP TABLE x`. The connection settings are built from `DATABASE_URL`'s host, port, user, password and database, not handed to the driver whole, so an option in the URL such as `?multipleStatements=true` can't turn it back on: the only options read are `ssl` and `sslmode` (above), and any others are ignored, with a warning on stderr.
 - **Each call starts from a clean session.** After every call the connection is reset (`COM_RESET_CONNECTION`) before it's reused, so a `SET SESSION` (say, of `sql_mode`), a user variable, a `GET_LOCK()` lock, a temporary table or a transaction left open doesn't carry over to the next call. A `START TRANSACTION` in one call and a `COMMIT` in the next is therefore not a transaction: in read-write mode each statement commits on its own.
-- **This is a guard in the connector, not in the database.** For a real guarantee, give `DATABASE_URL` a user with only `SELECT` on what the agent should see: the database then refuses everything else, whatever the mode.
+- **An administrator is refused in read-only mode.** The read-only session and transaction stop changes to data and schema, not what a privileged user can do to the server: as `root`, `SELECT … INTO OUTFILE` writes a file on the database server, `SET GLOBAL` and `SET PERSIST` change its settings, and `FLUSH PRIVILEGES`, `KILL` of other users' sessions and `PURGE BINARY LOGS` all run. So in read-only mode the connector reads the user's grants (and its roles') when it connects, and refuses to serve (every export returns the error) if it holds a global `ALL PRIVILEGES`, `SUPER`, `FILE`, `RELOAD`, `SHUTDOWN`, `FLUSH_*` or `*_ADMIN` privilege. Set `MYSQL_ALLOW_PRIVILEGED=true` to accept such a user anyway. Read-write mode doesn't check: it's asking for a user that can change things.
+- **This is a guard in the connector, not in the database.** What read-only mode still allows, for a user that isn't refused above:
+  - reading anything the user can see;
+  - `GET_LOCK()` and `LOCK TABLES … READ`, which make other sessions wait until the call ends;
+  - `KILL` of the same user's other sessions;
+  - `COMMIT`, which ends the read-only transaction early but leaves the session read-only, and nothing else runs in that call;
+  - holding its connection, locks and CPU for up to the 30 s timeout (`SLEEP()`, a heavy query).
+
+  For a real guarantee, give `DATABASE_URL` a user with only `SELECT` on what the agent should see: the database then refuses everything else, whatever the mode.
 
 ## Exports
 
