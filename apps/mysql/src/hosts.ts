@@ -1,5 +1,3 @@
-import { loadManifest } from "@berthos/manifest-schema";
-
 /**
  * The hosts this app may reach, from its own berth.yml. The egress proxy is
  * what enforces them; this copy exists so a refused host comes back to the
@@ -41,16 +39,4 @@ export function patternsFrom(capabilities: string[]): HostPattern[] {
   return capabilities
     .filter((c) => c.startsWith("network:host:"))
     .map((c) => parseHostScope(c.slice("network:host:".length)));
-}
-
-let cached: Promise<HostPattern[]> | undefined;
-/** This app's own patterns. Read at call time, so a test can point BERTH_MANIFEST_PATH elsewhere first. */
-export function allowedPatterns(): Promise<HostPattern[]> {
-  cached ??= loadManifest(process.env.BERTH_MANIFEST_PATH ?? "berth.yml").then((m) => patternsFrom(m.capabilities));
-  return cached;
-}
-
-/** For tests: forget the cached manifest. */
-export function resetAllowedPatterns(): void {
-  cached = undefined;
 }
