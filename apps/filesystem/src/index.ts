@@ -4,17 +4,22 @@ import { mkdir, readFile, writeFile, readdir, truncate } from "node:fs/promises"
 import { createConnection } from "node:net";
 import { createSocket } from "node:dgram";
 import { execFile } from "node:child_process";
-import { dirname, join } from "node:path";
+import { dirname, resolve } from "node:path";
 
 const WORKSPACE_ROOT = process.env.BERTH_WORKSPACE_ROOT ?? "/workspace";
 const CONTEXT_ROOT = process.env.BERTH_CONTEXT_MOUNT ?? "/context";
 
+// resolve(), not join(): a relative path lands under the root, and an
+// absolute one is taken as written. join() turned "/workspace/calc.txt" into
+// /workspace/workspace/calc.txt, which an agent passing the full path it was
+// told about never meant. Either way the kernel decides whether the result is
+// inside the declared scope.
 function resolveInWorkspace(relativePath: string): string {
-  return join(WORKSPACE_ROOT, relativePath);
+  return resolve(WORKSPACE_ROOT, relativePath);
 }
 
 function resolveInContext(relativePath: string): string {
-  return join(CONTEXT_ROOT, relativePath);
+  return resolve(CONTEXT_ROOT, relativePath);
 }
 
 export default defineApp((app) => {

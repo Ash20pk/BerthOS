@@ -29,3 +29,11 @@ test("list_files shows a directory write_file created", async () => {
   const { files } = (await app._exports.get("list_files")!.handler(undefined)) as { files: string[] };
   assert.ok(files.includes("docs"), `expected docs in ${files.join(", ")}`);
 });
+
+test("an absolute path inside the workspace is used as written, not nested", async () => {
+  const absolute = join(workspace, "calc.txt");
+  await app._exports.get("write_file")!.handler({ path: absolute, content: "338350" });
+  assert.equal(await readFile(absolute, "utf-8"), "338350");
+  const { content } = (await app._exports.get("read_file")!.handler({ path: absolute })) as { content: string };
+  assert.equal(content, "338350");
+});

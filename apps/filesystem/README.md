@@ -37,6 +37,8 @@ No `network:*` capability is declared, so the app can't open any outbound connec
 | `query_context` | `{ text }` | `{ results: [] }` | Searches `/context` by tag text and returns metadata for each match |
 | `publish_context_event` | `{ topic, payload }` | | Publishes any event on the context bus |
 
+Paths are relative to `/workspace`, or to `/context` for the context exports. An absolute path is used as written, and a file's folders are created as needed. Anything outside the app's declared scope is refused by the kernel.
+
 Five more exports are diagnostics that the enforcement tests use to check the sandbox from outside, and each is expected to be refused: `probe_network_connect` (`{ host, port }` → `{ connected }`), `probe_network_udp` (`{ host, port }` → `{ sent }`), `probe_raw_socket` (`{ host }` → `{ opened }`), `probe_user_namespace` (→ `{ created, regainedCaps }`) and `truncate_file` (`{ path, size }`).
 
 ## Working with other apps
