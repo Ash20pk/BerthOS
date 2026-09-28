@@ -122,6 +122,13 @@ before(async () => {
     await db.query("INSERT INTO customers (name, signed_up, plan) VALUES ('Ada', '2026-01-04', 'pro'), ('Grace', '2026-02-11', 'free'), ('Linus', '2026-03-20', 'pro')");
     await db.query("ALTER TABLE customers OWNER TO app");
     await db.query("GRANT SELECT ON customers TO reader");
+    // Another schema with a table of the same name, and one only there.
+    await db.query("DROP SCHEMA IF EXISTS berth_other CASCADE");
+    await db.query("CREATE SCHEMA berth_other AUTHORIZATION app");
+    await db.query("CREATE TABLE berth_other.customers (id int, email text)");
+    await db.query("CREATE TABLE berth_other.invoices (id int, total numeric)");
+    await db.query("ALTER TABLE berth_other.customers OWNER TO app");
+    await db.query("ALTER TABLE berth_other.invoices OWNER TO app");
   });
 });
 
@@ -147,6 +154,18 @@ live("query, list_tables and describe_table against a real database", async () =
   assert.deepEqual((await call("describe_table", { table: "customers" })).columns.map((c: any) => c.name), ["id", "name", "signed_up", "plan"]);
   const info = await call("connection_info");
   assert.deepEqual({ mode: info.mode, route: info.route, user: info.user }, { mode: "read-only", route: "direct", user: "app" });
+});
+
+live("describe_table resolves an unqualified name through the search path, as PostgreSQL does", async () => {
+  const port = new URL(PG_TEST_URL!).port;
+  const call = await appWith({ DATABASE_URL: urlAs("app") }, [`network:connect:${port}`]);
+  const names = async (table: string) => (await call("describe_table", { table })).columns.map((c: any) => c.name);
+  assert.deepEqual(await names("customers"), ["id", "name", "signed_up", "plan"], "public.customers only, not mixed with berth_other.customers");
+  assert.deepEqual(await names("berth_other.customers"), ["id", "email"]);
+  assert.deepEqual(await names("public.customers"), ["id", "name", "signed_up", "plan"]);
+  await assert.rejects(call("describe_table", { table: "invoices" }), /no table called invoices on the search path.*berth_other\.invoices/s);
+  await assert.rejects(call("describe_table", { table: "nope" }), /no table called nope/);
+  await assert.rejects(call("describe_table", { table: "a.b.c" }), /table or schema\.table/);
 });
 
 live("read-only mode refuses writes, even ones that try to switch the transaction", async () => {

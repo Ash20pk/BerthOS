@@ -290,6 +290,26 @@ async function putBack(client: pg.PoolClient): Promise<void> {
   }
 }
 
+/**
+ * The schema an unqualified table name means: the first on the search path
+ * that has one, as PostgreSQL itself resolves it. Matching the name in every
+ * schema instead mixed the columns of public.users and auth.users together.
+ */
+async function schemaOf(name: string): Promise<string> {
+  const { rows } = await run(
+    `SELECT t.table_schema AS schema, p.position
+       FROM information_schema.tables t
+       LEFT JOIN unnest(current_schemas(false)) WITH ORDINALITY AS p(schema, position) ON p.schema = t.table_schema
+      WHERE t.table_name = $1
+      ORDER BY p.position NULLS LAST, 1`,
+    [name],
+  );
+  if (rows.length === 0) throw new Error(`no table called ${name} (list_tables shows what there is)`);
+  if (rows[0]!.position !== null) return String(rows[0]!.schema);
+  const schemas = rows.map((r) => String(r.schema));
+  throw new Error(`no table called ${name} on the search path; there's one in ${schemas.join(", ")}: name it as ${schemas[0]}.${name}`);
+}
+
 export default defineApp((app) => {
   app.export({
     name: "query",
@@ -325,11 +345,13 @@ export default defineApp((app) => {
     input: z.object({ table: z.string() }),
     output: z.object({ columns: z.array(z.object({ name: z.string(), type: z.string(), nullable: z.boolean(), default: z.string().nullable() })) }),
     handler: async ({ table }) => {
-      const [schema, name] = table.includes(".") ? (table.split(".", 2) as [string, string]) : ["", table];
+      const parts = table.split(".");
+      if (parts.length > 2 || parts.some((p) => !p)) throw new Error(`${table}: name a table as table or schema.table`);
+      const [schema, name] = parts.length === 2 ? (parts as [string, string]) : [await schemaOf(parts[0]!), parts[0]!];
       const result = await run(
         `SELECT column_name AS name, data_type AS type, is_nullable = 'YES' AS nullable, column_default AS default
            FROM information_schema.columns
-          WHERE table_name = $2 AND ($1 = '' OR table_schema = $1)
+          WHERE table_schema = $1 AND table_name = $2
           ORDER BY ordinal_position`,
         [schema, name],
       );

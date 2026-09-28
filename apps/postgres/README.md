@@ -43,7 +43,7 @@ The egress proxy never connects to an internal address, which is why a private d
 |---|---|---|
 | `query` | `{ sql, params }` | `{ columns, rows, row_count, truncated }`. `params` fills `$1`, `$2`…; pass `[]` for none |
 | `list_tables` | `{ schema }` | `{ tables: [{ schema, name, type }] }`. `""` lists every non-system schema |
-| `describe_table` | `{ table }` | `{ columns: [{ name, type, nullable, default }] }`. `table` or `schema.table` |
+| `describe_table` | `{ table }` | `{ columns: [{ name, type, nullable, default }] }`. `table` or `schema.table`; a bare `table` is the one on the search path, as in a query |
 | `connection_info` | | `{ host, port, database, user, mode, route }`, never the password |
 
 Results are capped at 500 rows and 200,000 characters, and each value at 10,000 characters; `truncated` says when either cut in. Rows are fetched from the server through a cursor, a batch at a time, and the fetch stops at the cap, so a `SELECT` over millions of rows costs no more memory than one over a thousand. `row_count` is the rows returned for a statement that returns rows (so, when truncated, what came back rather than what matched), and the rows changed for one that doesn't. Dates come back as ISO strings, big integers as strings, and binary as `\x…` hex. Queries time out after 30 s.
