@@ -114,29 +114,35 @@ let inFlight: Promise<void> | null = null;
  *
  * The fallback is deliberately *not* "start without a credential": running
  * `apps/terminal` some other way (a bare `docker run`, a test harness) would
- * then quietly produce an unauthenticated writable root shell, which is the
- * exact failure this closes. It generates one and logs it instead, which is
- * worse than being handed one but strictly better than none.
+ * then quietly produce an unauthenticated writable shell, which is the exact
+ * failure this closes. It generates one and logs it instead, which is
+ * worse than being handed one but strictly better than none. Generated once
+ * per boot, so a restarted ttyd keeps the credential already logged.
  */
+let generatedCredential: string | undefined;
+
 function credential(): string {
   const provided = process.env.BERTH_TERMINAL_CREDENTIAL;
   if (provided) return provided;
-  const generated = `berth:${randomUUID()}`;
-  console.warn(`[terminal] no BERTH_TERMINAL_CREDENTIAL was passed in; generated one for this boot: ${generated}`);
-  return generated;
+  if (!generatedCredential) {
+    generatedCredential = `berth:${randomUUID()}`;
+    console.warn(`[terminal] no BERTH_TERMINAL_CREDENTIAL was passed in; generated one for this boot: ${generatedCredential}`);
+  }
+  return generatedCredential;
 }
 
 /**
- * Lazily creates the shared tmux session (first call only) and starts ttyd
- * attached to it, both spawned as children of this already-Landlocked
+ * Lazily creates the shared tmux session (again, if it has ended) and starts
+ * ttyd attached to it, both spawned as children of this already-Landlocked
  * process (see berth.yml) rather than by entrypoint.sh — unlike Xvfb for
  * browser:*, a pty needs no pre-existing display server, so there's no
  * ordering dependency forcing this earlier. That also means the shell
  * inherits whatever filesystem/network capabilities this app declared,
  * exactly like Chromium inherits apps/browser-native's.
  *
- * ttyd is started once and left running for the container's lifetime — any
- * number of browser tabs can attach to it concurrently, and (being plain
+ * ttyd is started once and left running (and started again on the next call
+ * if it exits) — any number of browser tabs can attach to it concurrently,
+ * and (being plain
  * `tmux attach`) they all see the exact same session run_command/send_keys
  * drive, not a fresh shell per connection.
  */
@@ -187,8 +193,8 @@ async function startSession(): Promise<void> {
   // from the host — -i takes an interface *name* (e.g. "eth0") or a
   // Unix socket path, not an IP address, so there's no "0.0.0.0" form
   // of it to pass explicitly. Which is exactly why --credential is not
-  // optional here: this is a *writable* shell running as root, and the
-  // only reason it isn't reachable from the LAN is that container.ts
+  // optional here: this is a *writable* shell, with every permission the
+  // app's own sandbox grants it, and the only reason it isn't reachable from the LAN is that container.ts
   // binds the published port to loopback. Defence in depth, because
   // that binding is one `--publish-host` away from being widened.
   //
@@ -205,6 +211,14 @@ async function startSession(): Promise<void> {
   // be able to crash run_command/read_screen/send_keys.
   ttyd.on("error", (err) => {
     console.error(`[terminal] ttyd failed to start (the shared shell itself is unaffected): ${err}`);
+  });
+  // A ttyd that exits (killed, crashed) is started again on the next call
+  // rather than leaving the web view dead for the rest of the container's
+  // life. A spawn that failed outright emits 'error' without 'exit', so a
+  // missing ttyd binary is not retried on every call.
+  ttyd.on("exit", (code, signal) => {
+    console.error(`[terminal] ttyd exited (${signal ?? code}); it is restarted on the next call`);
+    ttydStarted = false;
   });
   ttyd.unref();
 }

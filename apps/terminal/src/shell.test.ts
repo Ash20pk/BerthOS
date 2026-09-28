@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { promisify } from "node:util";
 
@@ -23,6 +23,14 @@ process.env.BERTH_TERMINAL_CREDENTIAL = "berth:test";
 // declared secret's value, a provider key.
 process.env.BERTH_HTTP_RPC_TOKEN = "rpc-token-must-not-leak";
 process.env.OPENAI_API_KEY = "api-key-must-not-leak";
+// A stand-in ttyd that records each start and the environment it got, then
+// exits at once, as a crashed ttyd would.
+const fakeBin = mkdtempSync("/tmp/bterm-bin-");
+const ttydLog = `${fakeBin}/starts.log`;
+writeFileSync(ttydLog, "");
+writeFileSync(`${fakeBin}/ttyd`, `#!/bin/sh\nenv >> "${ttydLog}"\necho --- >> "${ttydLog}"\n`);
+chmodSync(`${fakeBin}/ttyd`, 0o755);
+process.env.PATH = `${fakeBin}:${process.env.PATH}`;
 const { runCommand, readScreen, shellEnv, isLoginShell } = await import("./tmux-controller.js");
 
 test("the shell starts when the app user's login shell refuses logins", async () => {
@@ -82,6 +90,19 @@ test("only a shell listed in /etc/shells counts as a login shell", () => {
   assert.equal(isLoginShell("/bin/sh", null), true);
   assert.equal(isLoginShell("/usr/bin/true", null), false);
   assert.equal(isLoginShell("/does/not/exist/bash", null), false);
+});
+
+test("ttyd is started again after it exits, without the app's secrets", async () => {
+  const starts = () => readFileSync(ttydLog, "utf8").split("---").length - 1;
+  // Each call after the fake has exited should start it again; polled, since
+  // when the exit is seen depends on the scheduler.
+  for (let i = 0; i < 20 && starts() < 2; i++) {
+    await runCommand("true");
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  assert.ok(starts() >= 2, `ttyd started ${starts()} time(s)`);
+  const log = readFileSync(ttydLog, "utf8");
+  assert.doesNotMatch(log, /must-not-leak|berth:test/);
 });
 
 test.after(async () => {
