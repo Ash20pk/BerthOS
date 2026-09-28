@@ -59,6 +59,12 @@ function sessionShell(): string {
  * The egress variables are passed through so a terminal that declares
  * network access can reach the broker it was given; they hold addresses and
  * certificate paths, not credentials.
+ *
+ * This keeps the secrets out of the shell's own environment only. The shell
+ * runs as this app's uid, in the same Landlock domain, with /proc readable,
+ * so it can still read this process's environment from /proc/<pid>/environ.
+ * Nothing here can close that: PR_SET_DUMPABLE, which would make environ
+ * root-owned, is reset by execve, and Node has no prctl to set it after.
  */
 const SHELL_ENV_ALLOWLIST = [
   "PATH",
@@ -200,6 +206,11 @@ async function startSession(): Promise<void> {
   //
   // `tmux attach` per connection, so a session recreated above is the one
   // a newly opened tab attaches to.
+  //
+  // ttyd takes the credential only as an argument (it has no file or
+  // environment form), so it is in /proc/<pid>/cmdline, readable by the
+  // shell and by any process in the container that can see /proc. It keeps
+  // other hosts out of the web terminal, not processes already inside.
   const ttyd = spawn("ttyd", ["--credential", credential(), "--writable", "-p", TTYD_PORT, "tmux", "attach", "-t", SESSION_NAME], {
     stdio: "ignore",
     env: shellEnv(),
