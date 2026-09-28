@@ -23,7 +23,7 @@ process.env.BERTH_TERMINAL_CREDENTIAL = "berth:test";
 // declared secret's value, a provider key.
 process.env.BERTH_HTTP_RPC_TOKEN = "rpc-token-must-not-leak";
 process.env.OPENAI_API_KEY = "api-key-must-not-leak";
-const { runCommand, readScreen, shellEnv } = await import("./tmux-controller.js");
+const { runCommand, readScreen, shellEnv, isLoginShell } = await import("./tmux-controller.js");
 
 test("the shell starts when the app user's login shell refuses logins", async () => {
   assert.equal((await runCommand("echo alive")).trim(), "alive");
@@ -70,6 +70,18 @@ test("shellEnv keeps what a terminal needs and drops everything else", () => {
     ANTHROPIC_API_KEY: "sk-x",
   });
   assert.deepEqual(Object.keys(env).sort(), ["HOME", "HTTPS_PROXY", "LANG", "LC_ALL", "PATH", "SHELL", "TMUX_TMPDIR"]);
+});
+
+test("only a shell listed in /etc/shells counts as a login shell", () => {
+  const etcShells = "# comment\n/bin/sh\n/bin/bash\n";
+  assert.equal(isLoginShell("/bin/sh", etcShells), true);
+  for (const notAShell of ["/usr/bin/false", "/usr/bin/true", "/bin/sync", "/sbin/nologin"]) {
+    assert.equal(isLoginShell(notAShell, etcShells), false, notAShell);
+  }
+  // No /etc/shells: known shells only.
+  assert.equal(isLoginShell("/bin/sh", null), true);
+  assert.equal(isLoginShell("/usr/bin/true", null), false);
+  assert.equal(isLoginShell("/does/not/exist/bash", null), false);
 });
 
 test.after(async () => {

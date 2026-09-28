@@ -1,7 +1,8 @@
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { basename } from "node:path";
 
 const execFileAsync = promisify(execFile);
 
@@ -17,13 +18,34 @@ function workspaceRoot(): string {
  * login shell, and each app runs as its own system user whose login shell is
  * /sbin/nologin. That shell exits the moment tmux starts it, the session
  * closes with it, and the tmux server exits with its last session: every
- * call after the first then failed with "no server running". So a shell that
- * refuses logins is never used.
+ * call after the first then failed with "no server running". So $SHELL is
+ * used only when it is a real login shell, and /bin/sh otherwise.
+ *
+ * "Real" means listed in /etc/shells, the system's own list of valid login
+ * shells, which leaves out nologin, false, true, sync and anything else that
+ * isn't one. A host without /etc/shells falls back to a list of known shells.
  */
+const KNOWN_SHELLS = new Set(["sh", "bash", "dash", "ash", "zsh", "ksh", "mksh", "fish", "csh", "tcsh"]);
+
+export function isLoginShell(shell: string, etcShells: string | null = readEtcShells()): boolean {
+  if (!shell.startsWith("/") || !existsSync(shell)) return false;
+  if (etcShells !== null) {
+    return etcShells.split("\n").some((line) => line.trim() === shell);
+  }
+  return KNOWN_SHELLS.has(basename(shell));
+}
+
+function readEtcShells(): string | null {
+  try {
+    return readFileSync("/etc/shells", "utf8");
+  } catch {
+    return null;
+  }
+}
+
 function sessionShell(): string {
   const shell = process.env.SHELL;
-  if (shell && !/\/(nologin|false)$/.test(shell) && existsSync(shell)) return shell;
-  return "/bin/sh";
+  return shell && isLoginShell(shell) ? shell : "/bin/sh";
 }
 
 /**
