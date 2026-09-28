@@ -14,7 +14,7 @@ import {
   assertAtMostOneEgressBrokerApp,
 } from "../../util/os-config.js";
 import { isContainerRunning, removeStaleContainer } from "../../util/os-docker.js";
-import { parseEnvFile, resolveEnvFlags, undeclaredEnvNames } from "../../util/env-args.js";
+import { describeEnvNames, parseEnvFile, resolveEnvFlags, undeclaredEnvNames } from "../../util/env-args.js";
 
 export default class OsUp extends Command {
   static override description =
@@ -130,7 +130,7 @@ export default class OsUp extends Command {
     const undeclared = undeclaredEnvNames(env, apps);
     if (undeclared.length > 0) {
       this.warn(
-        `no loaded app declares ${undeclared.join(", ")} under secrets:, so every app in this sandbox can read ${undeclared.length === 1 ? "it" : "them"} (a credential-looking name through the shared secrets file, any other name in the container's plain environment, visible in docker inspect). Declare a secret in the berth.yml of the app that needs it to deliver it to that app alone — see docs/secrets-reference.md.`,
+        `no loaded app declares ${describeEnvNames(undeclared)} under secrets:, so every app in this sandbox can read ${undeclared.length === 1 ? "it" : "them"} (a credential-looking name through the shared secrets file, any other name in the container's plain environment, visible in docker inspect). Declare a secret in the berth.yml of the app that needs it to deliver it to that app alone — see docs/secrets-reference.md.`,
       );
     }
 

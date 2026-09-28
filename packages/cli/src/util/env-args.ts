@@ -114,3 +114,15 @@ export function undeclaredEnvNames(env: Record<string, string>, apps: readonly {
   const declared = new Set(apps.flatMap((a) => a.manifest.secrets ?? []));
   return Object.keys(env).filter((name) => !declared.has(name));
 }
+
+/**
+ * Names for a message: the conventional-looking ones listed, any others only
+ * counted, since a name read from an env file or --env may be a pasted token.
+ */
+export function describeEnvNames(names: readonly string[]): string {
+  const shown = names.filter(isConventionalEnvName);
+  const hidden = names.length - shown.length;
+  if (hidden === 0) return shown.join(", ");
+  const counted = `${hidden} ${shown.length > 0 ? "other " : ""}name${hidden === 1 ? "" : "s"} (not shown: not uppercase)`;
+  return shown.length > 0 ? `${shown.join(", ")} and ${counted}` : counted;
+}

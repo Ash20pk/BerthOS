@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseEnvFile, resolveEnvFlags, undeclaredEnvNames } from "./env-args.js";
+import { describeEnvNames, parseEnvFile, resolveEnvFlags, undeclaredEnvNames } from "./env-args.js";
 
 test("parseEnvFile reads dotenv lines", () => {
   assert.deepEqual(
@@ -79,4 +79,12 @@ test("undeclaredEnvNames lists the names no loaded app declares under secrets:",
   const apps = [{ manifest: { secrets: ["GITHUB_TOKEN"] } }, { manifest: { secrets: [] } }, { manifest: {} }];
   assert.deepEqual(undeclaredEnvNames({ GITHUB_TOKEN: "x", GITHUB_REPO: "o/n", OPENAI_API_KEY: "y" }, apps), ["GITHUB_REPO", "OPENAI_API_KEY"]);
   assert.deepEqual(undeclaredEnvNames({}, apps), []);
+});
+
+test("describeEnvNames lists conventional names and only counts the rest", () => {
+  assert.equal(describeEnvNames(["GITHUB_REPO", "OPENAI_API_KEY"]), "GITHUB_REPO, OPENAI_API_KEY");
+  assert.equal(describeEnvNames(["GITHUB_REPO", "ghp_S3CRETvalue123"]), "GITHUB_REPO and 1 other name (not shown: not uppercase)");
+  const hidden = describeEnvNames(["ghp_S3CRETvalue123", "sk_live_abc"]);
+  assert.equal(hidden, "2 names (not shown: not uppercase)");
+  assert.ok(!hidden.includes("S3CRET"), hidden);
 });
