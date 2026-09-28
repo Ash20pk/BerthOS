@@ -1,5 +1,5 @@
 """Mirrors @berthos/sdk's generate-capability-policy.ts exactly (same policy
-shape, same deny-by-default network/opt-in read-path rules, same
+shape, same deny-by-default network and read-path rules, same
 per-app baseline write/read paths) — agent-init (Rust) reads whichever
 one ran, TypeScript or Python, without caring which wrote it. Invoked as
 `python3 -m berth_sdk.generate_capability_policy`.
@@ -42,7 +42,17 @@ GITHUB_BROKER_CERT_DIR = "/run/berth/github-api-broker"
 # are not what 1.4 was about, and statting a daemon control socket before
 # connecting to it needs them.
 def _baseline_read_paths(app_name: str) -> list[str]:
-    return ["/usr", "/lib", "/etc", "/proc", "/dev", "/tmp", f"/run/berth/{app_name}", str(Path.cwd())]
+    # /bin and /sbin are real directories on Alpine, not links into /usr, so
+    # without them an app can't exec sh or anything busybox provides.
+    return ["/usr", "/bin", "/sbin", "/lib", "/etc", "/proc", "/dev", "/tmp", f"/run/berth/{app_name}", str(Path.cwd())]
+
+
+def _sdk_read_paths() -> list[str]:
+    """Where berth_sdk itself is loaded from (entrypoint.sh's PYTHONPATH):
+    the image's /opt/berth/sdk-python, or the checkout's packages/sdk-python
+    when the repo is bind-mounted. The runtime can't start without it once
+    reads are scoped."""
+    return [p for p in os.environ.get("PYTHONPATH", "").split(":") if p]
 
 
 def _strip_trailing_glob(scope: str) -> str:
@@ -86,10 +96,19 @@ def main() -> None:
         elif parsed.namespace == "github":
             needs_github_broker_ca = True
 
-    baseline_reads = set(_baseline_read_paths(manifest.name))
+    # Always scoped, as in generate-capability-policy.ts: an app reads the
+    # baseline, its own directory, the SDK, what it may write, and what it
+    # declares. Reads used to be opt-in, which let an app with no read scope
+    # read every other app's code and config in the sandbox.
+    # Write paths the baseline already covers are left out: /dev/null and the
+    # pty devices are files, and a read rule on a file leaves the ruleset
+    # PartiallyEnforced.
+    baseline = _baseline_read_paths(manifest.name)
+    uncovered_writes = {p for p in write_paths if not any(p == b or p.startswith(b + "/") for b in baseline)}
+    baseline_reads = set(baseline) | set(_sdk_read_paths()) | uncovered_writes
     if needs_github_broker_ca:
         baseline_reads.add(GITHUB_BROKER_CERT_DIR)
-    read_paths = sorted(baseline_reads | declared_read_paths) if declared_read_paths else []
+    read_paths = sorted(baseline_reads | declared_read_paths)
 
     policy = {
         "appName": manifest.name,

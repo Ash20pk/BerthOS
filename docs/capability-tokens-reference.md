@@ -58,7 +58,7 @@ Written to `.berth/capability-policy.json` in the app's directory (override with
 | `appName` | The manifest's `name` |
 | `declaredCapabilities` | Every valid capability from `berth.yml`; invalid ones are dropped with a warning |
 | `writePaths` | Declared `filesystem:write:` paths (a trailing `/*` is stripped), plus `/dev/null`, `/tmp/<app>` and `/run/berth/<app>`; plus `/dev/pts` and `/dev/ptmx` for `terminal:*` |
-| `readPaths` | Empty (reads unrestricted) unless the app declared a `filesystem:read:` path; then the declared paths plus `/usr`, `/bin`, `/sbin`, `/lib`, `/etc`, `/proc`, `/dev`, `/tmp`, `/run/berth/<app>` and the working directory |
+| `readPaths` | Always set. `/usr`, `/bin`, `/sbin`, `/lib`, `/etc`, `/proc`, `/dev`, `/tmp`, `/run/berth/<app>`, the working directory, the app's own write paths, the real locations of its dependencies (under `berth dev`, the checkout's `packages/` and `node_modules/.pnpm`; for a Python app, its SDK), and any declared `filesystem:read:` paths |
 | `networkPorts` | Declared `network:connect:<port>` ports; plus the mesh coordinator's port (`BERTH_MESH_COORDINATOR_PORT`, default `4875`) for any `network:peer:` |
 | `networkUnrestricted` | `true` if the app declared `network:connect:*` |
 | `bindPorts` | Declared `network:bind:<port>` ports; plus the HTTP RPC bridge's port (`BERTH_HTTP_RPC_PORT`) for the app named by `BERTH_HTTP_RPC_APP`, or every app if that's unset; plus `7681` (ttyd) for `terminal:*` |

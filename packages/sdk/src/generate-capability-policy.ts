@@ -6,11 +6,13 @@
 // @berthos/manifest-schema, already a dependency) is the single place that
 // understands the capability-string grammar.
 //
-// Phase 3 scope: filesystem:write:<path> always translates into real kernel
-// enforcement (Landlock write-access restriction). filesystem:read:<path> is
-// opt-in — only enforced when at least one is declared, because enumerating
-// every path Node/Alpine need to read to run at all is fragile; an app that
-// declares none keeps today's fully-open read behavior.
+// filesystem:write:<path> always translates into real kernel enforcement
+// (Landlock write-access restriction), and so, now, do reads. An app reads
+// the system baseline (below), its own directory, what it may write, the
+// real locations of its dependencies, and whatever filesystem:read:<path> it
+// declares. Reads used to be opt-in: an app that declared no read scope could
+// read everything, including every other app's code and config in the same
+// sandbox (browser-native through file://, terminal's shell with cat).
 //
 // network:connect:<port> is deny-by-default (not opt-in): an app that
 // declares no network:connect capability gets zero outbound TCP, full stop.
@@ -31,7 +33,7 @@
 // existing networkPorts allow-list, so an app that never opted into the mesh
 // can't reach the coordinator's registration API at all.
 import { writeFile, mkdir } from "node:fs/promises";
-import { realpathSync } from "node:fs";
+import { lstatSync, readdirSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { loadManifest, parseCapability, capabilityIssue, CapabilityString, type ParsedCapability } from "@berthos/manifest-schema";
 
@@ -146,6 +148,70 @@ const GITHUB_BROKER_CERT_DIR = "/run/berth/github-api-broker";
 
 function baselineReadPaths(appName: string): string[] {
   return ["/usr", "/bin", "/sbin", "/lib", "/etc", "/proc", "/dev", "/tmp", appRunDir(appName), process.cwd()];
+}
+
+/**
+ * Where an app's dependencies really live, when that is outside its own
+ * directory. A production image has a real node_modules under the app, so
+ * this is empty there. Under `berth dev` the checkout is bind-mounted and pnpm
+ * links each dependency into the workspace: node_modules/@berthos/sdk is
+ * /workspace/packages/sdk, and every third-party package sits in
+ * /workspace/node_modules/.pnpm. Without these an app can't load its own
+ * runtime once reads are scoped (the boundary fixtures used to declare
+ * filesystem:read:/workspace/packages and /workspace/node_modules by hand for
+ * exactly this). Reads only: this is library code, not another app's data.
+ */
+export function dependencyReadPaths(appDir: string): string[] {
+  const out = new Set<string>();
+  const appReal = safeRealpath(appDir) ?? appDir;
+  const visited = new Set<string>();
+  const scan = (packageDir: string) => {
+    const modules = join(packageDir, "node_modules");
+    if (visited.has(modules)) return;
+    visited.add(modules);
+    for (const entry of safeReaddir(modules)) {
+      if (entry.startsWith(".")) continue;
+      const names = entry.startsWith("@") ? safeReaddir(join(modules, entry)).map((n) => join(entry, n)) : [entry];
+      for (const name of names) {
+        const linkPath = join(modules, name);
+        if (!isSymlink(linkPath)) continue;
+        const target = safeRealpath(linkPath);
+        if (!target || target === appReal || target.startsWith(appReal + "/")) continue;
+        const store = target.indexOf("/node_modules/.pnpm/");
+        if (store !== -1) {
+          out.add(target.slice(0, store + "/node_modules/.pnpm".length));
+        } else {
+          // A workspace package: its own node_modules links into the store too.
+          out.add(target);
+          scan(target);
+        }
+      }
+    }
+  };
+  scan(appDir);
+  return [...out];
+}
+
+function safeRealpath(path: string): string | undefined {
+  try {
+    return realpathSync(path);
+  } catch {
+    return undefined;
+  }
+}
+function safeReaddir(path: string): string[] {
+  try {
+    return readdirSync(path);
+  } catch {
+    return [];
+  }
+}
+function isSymlink(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
 }
 
 export interface CapabilityPolicy {
@@ -278,13 +344,23 @@ export function compileCapabilityPolicy(appName: string, rawCapabilities: string
     }
   }
 
-  // Opt-in: only restrict reads at all if the app declared at least one
-  // filesystem:read:<path> capability — otherwise leave readPaths empty,
-  // which agent-init treats as "don't touch read access."
-  const readPaths =
-    declaredReadPaths.size > 0
-      ? [...new Set([...baselineReadPaths(appName), ...(needsGithubBrokerCa ? [GITHUB_BROKER_CERT_DIR] : []), ...declaredReadPaths])]
-      : [];
+  // Always scoped (see this file's header). What an app may write it may
+  // also read, since Landlock's write rights don't include reading, except
+  // what the baseline already covers. That exception matters: /dev/null and
+  // the pty devices are files, and a read rule on a file can't carry the
+  // directory-reading right, which leaves the whole ruleset PartiallyEnforced
+  // (and BERTH_REQUIRE_ENFORCEMENT refuses to boot).
+  const baseline = baselineReadPaths(appName);
+  const covered = (path: string) => baseline.some((b) => path === b || path.startsWith(b + "/"));
+  const readPaths = [
+    ...new Set([
+      ...baseline,
+      ...dependencyReadPaths(process.cwd()),
+      ...[...writePaths].filter((path) => !covered(path)),
+      ...(needsGithubBrokerCa ? [GITHUB_BROKER_CERT_DIR] : []),
+      ...declaredReadPaths,
+    ]),
+  ];
 
   return {
     appName,
