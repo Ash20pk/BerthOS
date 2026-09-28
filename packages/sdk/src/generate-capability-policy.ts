@@ -510,6 +510,8 @@ export function computeBindPorts(
  * wrote) that runtime.ts reads after agent-init has enforced, so with reads
  * scoped they'd fail with EACCES unless granted. The directory is granted,
  * not the file: a read rule on a file leaves the ruleset PartiallyEnforced.
+ * That makes the whole directory readable (a cert at /app/cert.pem grants
+ * /app), which is why docs/tls-reference.md asks for a dedicated one.
  * Both the path as given and its real location count, since a Kubernetes
  * secret mount reaches its files through a symlink. "/" and relative paths
  * are never granted.
