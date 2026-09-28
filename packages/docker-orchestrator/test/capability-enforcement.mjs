@@ -154,6 +154,51 @@ async function main() {
       );
     }
 
+    console.log("\n--- Test 2b: paths as apps/filesystem takes them — nested, absolute, and a mkdir outside the scope ---");
+    // The probe's write_file is apps/filesystem's (its paths.ts): a path is
+    // resolved against the root, an absolute one used as written, and the
+    // directories a path names are created before the write. So the mkdir is
+    // now the first thing to touch a path outside the scope, and it is what
+    // Landlock has to refuse, without leaving a directory behind.
+    const nested = await rpc.call({ id: "2b-nested", export: "write_file", input: { path: "nested/a/b/file.txt", content: "nested" } });
+    console.log("nested response:", nested);
+    assert(!nested.error, `expected a write that creates directories inside /workspace to succeed, got error: ${nested.error}`);
+    const nestedAbsolute = await rpc.call({ id: "2b-absolute-inside", export: "read_file", input: { path: `${DEV_WORKSPACE}/nested/a/b/file.txt` } });
+    assert(
+      !nestedAbsolute.error && nestedAbsolute.result?.content === "nested",
+      `expected an absolute path inside /workspace to read the file as written, got: ${JSON.stringify(nestedAbsolute)}`,
+    );
+
+    const absoluteOutside = await rpc.call({
+      id: "2b-absolute-outside",
+      export: "write_file",
+      input: { path: "/etc/berth-absolute-should-not-exist.txt", content: "if you can read this, enforcement failed" },
+    });
+    console.log("absolute-outside response:", absoluteOutside);
+    const mkdirOutside = await rpc.call({
+      id: "2b-mkdir-outside",
+      export: "write_file",
+      input: { path: "../../../berth-mkdir-escape/x/y/z.txt", content: "if you can read this, enforcement failed" },
+    });
+    console.log("mkdir-outside response:", mkdirOutside);
+    const leftBehind = (
+      await execInContainer(running.container, [
+        "sh",
+        "-c",
+        "for p in /etc/berth-absolute-should-not-exist.txt /berth-mkdir-escape; do [ -e $p ] && echo $p; done; true",
+      ])
+    ).trim();
+    console.log("left outside the scope:", leftBehind || "(nothing)");
+    const deniedWithReason = (r) => r.error && /EACCES|EPERM|permission/i.test(r.error) && /which is outside /.test(r.error);
+    if (landlockActive) {
+      assert(deniedWithReason(absoluteOutside), `Landlock is active but an absolute path outside /workspace was NOT denied (or the error doesn't say where it resolved): ${JSON.stringify(absoluteOutside)}`);
+      assert(deniedWithReason(mkdirOutside), `Landlock is active but a write creating directories outside /workspace was NOT denied (or the error doesn't say where it resolved): ${JSON.stringify(mkdirOutside)}`);
+      assert(leftBehind === "", `Landlock is active but writes outside /workspace left something behind: ${leftBehind}`);
+      console.log("\nPASS — nested and absolute writes inside /workspace work; an absolute path and a mkdir outside it were refused by the kernel, and left nothing behind.");
+    } else {
+      console.log("\nNOT VERIFIED (expected in this environment) — Landlock isn't enforced here.");
+    }
+
     console.log("\n--- Test 3: read INSIDE the declared+baseline path (should always succeed) ---");
     // enforcement-probe's berth.yml (apps/filesystem's capabilities) declares
     // filesystem:read:/workspace and filesystem:read:/context — read scoping (opt-in per
@@ -300,6 +345,30 @@ async function main() {
         `Landlock is active but a read through a symlink pointing outside the declared read paths was NOT denied — real regression: ${JSON.stringify(symlinkRead)}`,
       );
       console.log("\nPASS — the kernel resolved both symlinks to their real target and denied access outside the declared paths.");
+    } else {
+      console.log("\nNOT VERIFIED (expected in this environment) — Landlock isn't enforced here.");
+    }
+
+    console.log("\n--- Test 6b: a write whose missing parent directories sit behind a symlink pointing OUTSIDE ---");
+    // Test 6's write goes to an existing directory through the link. This
+    // one names directories that don't exist yet, so write_file's mkdir
+    // (recursive, from apps/filesystem) is what reaches through the link
+    // first, and it has to be refused before it creates anything under /opt.
+    await execInContainer(running.container, ["sh", "-c", `ln -sfn /opt ${DEV_WORKSPACE}/escape-parent-link`]);
+    const symlinkParent = await rpc.call({
+      id: "6b",
+      export: "write_file",
+      input: { path: "escape-parent-link/berth-created-via-symlink/deeper/file.txt", content: "if this exists, the mkdir escaped" },
+    });
+    console.log("write response:", symlinkParent);
+    const createdViaLink = (await execInContainer(running.container, ["sh", "-c", "[ -e /opt/berth-created-via-symlink ] && echo yes; true"])).trim();
+    if (landlockActive) {
+      assert(
+        symlinkParent.error && /EACCES|EPERM|permission/i.test(symlinkParent.error),
+        `Landlock is active but a write creating directories through a symlink pointing outside /workspace was NOT denied — real regression: ${JSON.stringify(symlinkParent)}`,
+      );
+      assert(createdViaLink === "", "Landlock is active but the mkdir through the symlink created /opt/berth-created-via-symlink");
+      console.log("\nPASS — the mkdir through the symlink was refused, and nothing was created outside /workspace.");
     } else {
       console.log("\nNOT VERIFIED (expected in this environment) — Landlock isn't enforced here.");
     }
