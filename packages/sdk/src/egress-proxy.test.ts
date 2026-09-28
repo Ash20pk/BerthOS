@@ -116,6 +116,92 @@ test("configureEgressProxy() still accepts a Request built from the built-in cla
   }
 });
 
+// A built-in Request with a string body has to reach the server as the
+// built-in fetch() would send it: with content-length rather than chunked, and
+// resent when a 307 asks for the same body again. The same server plays the
+// origin for a direct native fetch() and the proxy for a proxied one (a
+// plain-HTTP forward proxy is handed the absolute URI), so each outcome is
+// checked against what native fetch() does with the same Request.
+test("configureEgressProxy() sends a built-in Request's body the way native fetch() does", async () => {
+  const seen: { path: string; length: string | undefined; chunked: boolean; body: string }[] = [];
+  const server = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (chunk: Buffer) => (body += chunk.toString()));
+    req.on("end", () => {
+      const path = new URL(req.url ?? "/", "http://placeholder").pathname;
+      seen.push({ path, length: req.headers["content-length"], chunked: req.headers["transfer-encoding"] === "chunked", body });
+      if (req.headers["content-length"] === undefined) {
+        res.writeHead(411).end();
+      } else if (path === "/moved") {
+        res.writeHead(307, { location: "/landed" }).end();
+      } else {
+        res.writeHead(200, { "content-type": "text/plain" }).end(`got ${body}`);
+      }
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as { port: number };
+  const base = `http://127.0.0.1:${port}`;
+  const makeRequests = () => ({
+    plain: new nativeGlobals.Request(`${base}/plain`, { method: "POST", body: "payload" }),
+    redirected: new nativeGlobals.Request(`${base}/moved`, { method: "POST", body: "payload" }),
+  });
+
+  const outcome = async (res: Promise<Response | globalThis.Response>) => {
+    const r = await res;
+    return { status: r.status, text: await r.text() };
+  };
+
+  const originalDispatcher = getGlobalDispatcher();
+  try {
+    const native = makeRequests();
+    const nativePlain = await outcome(nativeGlobals.fetch(native.plain));
+    const nativeRedirected = await outcome(nativeGlobals.fetch(native.redirected));
+    const nativeSeen = seen.splice(0);
+    assert.deepEqual(nativePlain, { status: 200, text: "got payload" });
+    assert.deepEqual(nativeRedirected, { status: 200, text: "got payload" });
+
+    const early = makeRequests();
+    process.env.BERTH_EGRESS_PROXY_URL = base;
+    configureEgressProxy();
+    assert.deepEqual(await outcome(fetch(early.plain)), nativePlain);
+    assert.deepEqual(await outcome(fetch(early.redirected)), nativeRedirected);
+    assert.deepEqual(seen, nativeSeen);
+    assert.deepEqual(
+      seen.map((s) => s.path),
+      ["/plain", "/moved", "/landed"],
+    );
+    assert.ok(seen.every((s) => s.length === "7" && !s.chunked && s.body === "payload"));
+  } finally {
+    restoreGlobals(originalDispatcher);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+// fetch() reports every failure, a Request whose body was already read
+// included, as a rejected promise; code that attaches .catch() relies on it.
+test("configureEgressProxy() rejects, rather than throws, for a built-in Request whose body was used", async () => {
+  const used = new nativeGlobals.Request("http://target.invalid/used", { method: "POST", body: "payload" });
+  await used.text();
+  const nativeResult = nativeGlobals.fetch(used);
+  assert.ok(nativeResult instanceof Promise);
+  await assert.rejects(nativeResult, TypeError);
+
+  const originalDispatcher = getGlobalDispatcher();
+  process.env.BERTH_EGRESS_PROXY_URL = "http://127.0.0.1:9";
+  configureEgressProxy();
+  try {
+    let result: unknown;
+    assert.doesNotThrow(() => {
+      result = fetch(used);
+    });
+    assert.ok(result instanceof Promise);
+    await assert.rejects(result as Promise<unknown>, TypeError);
+  } finally {
+    restoreGlobals(originalDispatcher);
+  }
+});
+
 // What egress-broker.cjs actually does for HTTPS: a CONNECT tunnel to the
 // origin, which speaks HTTP/2 and answers compressed, as nearly every real
 // site does. Before the fix, configureEgressProxy() drove Node's built-in

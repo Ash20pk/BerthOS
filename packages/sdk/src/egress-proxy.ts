@@ -8,10 +8,17 @@ import type { RequestInfo, RequestInit } from "undici";
  * object, and it fails with "Failed to parse URL from [object Request]". So
  * such a Request is rebuilt as an undici one, carrying over everything a
  * caller can set on it, before it is handed on.
+ *
+ * Its body is read into memory rather than passed on as a stream. The
+ * built-in fetch() knows a string or buffer body's length and so sends
+ * content-length, and can resend it when a 307/308 redirect asks for the
+ * same method and body; a bare stream loses both, going out chunked (a server
+ * that requires a length answers 411) and failing on the redirect because a
+ * stream can't be replayed. Buffered, it behaves as it would have natively.
  */
-function toUndiciRequest(input: object): Request {
+async function toUndiciRequest(input: object): Promise<Request> {
   const foreign = input as globalThis.Request;
-  const init: RequestInit & { duplex?: "half" } = {
+  const init: RequestInit = {
     method: foreign.method,
     headers: [...foreign.headers],
     signal: foreign.signal,
@@ -24,10 +31,7 @@ function toUndiciRequest(input: object): Request {
     referrerPolicy: foreign.referrerPolicy,
     mode: foreign.mode === "navigate" ? "same-origin" : foreign.mode,
   };
-  if (foreign.body !== null) {
-    init.body = foreign.body as RequestInit["body"];
-    init.duplex = "half";
-  }
+  if (foreign.body !== null) init.body = await foreign.arrayBuffer();
   return new Request(foreign.url, init);
 }
 
@@ -37,8 +41,10 @@ function isForeignRequest(input: unknown): input is object {
   return typeof candidate.url === "string" && typeof candidate.method === "string" && typeof candidate.headers === "object";
 }
 
-function proxiedFetch(input: RequestInfo, init?: RequestInit): ReturnType<typeof fetch> {
-  return fetch(isForeignRequest(input) ? toUndiciRequest(input) : input, init);
+// async so that everything, a Request whose body was already read included,
+// fails the way fetch() does: as a rejected promise, never a synchronous throw.
+async function proxiedFetch(input: RequestInfo, init?: RequestInit): ReturnType<typeof fetch> {
+  return fetch(isForeignRequest(input) ? await toUndiciRequest(input) : input, init);
 }
 
 /**
