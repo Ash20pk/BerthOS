@@ -9,18 +9,10 @@ import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 import { loadManifest } from "@berthos/manifest-schema";
 import type { BerthApp } from "./app.js";
-import { stubValue } from "./stub-value.js";
+import { checkExport, type ExportResult } from "./export-check.js";
 
 const MANIFEST_PATH = process.env.BERTH_MANIFEST_PATH ?? join(process.cwd(), "berth.yml");
 const APP_ENTRY = process.env.BERTH_APP_ENTRY ?? join(process.cwd(), "dist", "index.js");
-
-interface ExportResult {
-  export: string;
-  ok: boolean;
-  error?: string;
-  /** Set when the handler threw on the stub input: not a contract failure, just not exercised. */
-  unexercised?: string;
-}
 
 async function main(): Promise<void> {
   const manifest = await loadManifest(MANIFEST_PATH);
@@ -47,25 +39,7 @@ async function main(): Promise<void> {
 
   const results: ExportResult[] = [];
   for (const name of codeExports) {
-    const def = app._exports.get(name)!;
-    // The contract is the declared shape: the export exists on both sides
-    // (checked above) and, when it returns, what it returns matches its
-    // output schema. A handler that throws on a made-up input hasn't broken
-    // it: git's status has no repository called "berth-test-stub", and a
-    // database connector has no database. Failing those made berth test
-    // impossible to pass for any app whose exports need state or a service.
-    // They're reported as not exercised instead.
-    const input = def.input ? stubValue(def.input) : undefined;
-    let result: unknown;
-    try {
-      result = await def.handler(input);
-    } catch (err) {
-      results.push({ export: name, ok: true, unexercised: err instanceof Error ? err.message : String(err) });
-      continue;
-    }
-    const parsed = def.output ? def.output.safeParse(result) : { success: true as const };
-    if (parsed.success) results.push({ export: name, ok: true });
-    else results.push({ export: name, ok: false, error: `returned output that doesn't match its declared schema: ${parsed.error.message}` });
+    results.push(await checkExport(name, app._exports.get(name)!));
   }
 
   const ok = results.every((r) => r.ok);
