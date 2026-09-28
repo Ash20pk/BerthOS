@@ -272,3 +272,50 @@ test("push never forces: a remote that has moved on is left alone", async () => 
   sh(join(workspace, "repo"), "config", "--unset-all", "remote.origin.push");
   assert.equal(execFileSync("git", ["--git-dir", remote, "rev-parse", "main"], { encoding: "utf-8" }), theirs);
 });
+
+// git pushes to every remote.origin.url, but get-url shows only the first, so
+// a second one planted in the config would get the push (and the token)
+// without ever being checked. A remote section named after the checked URL
+// would be applied by git to a command given that URL, so those go too.
+test("a remote with a second url, or named like a URL, is refused and nothing is pushed there", async () => {
+  const repo = join(workspace, "repo");
+  const other = join(workspace, "other.git");
+  execFileSync("git", ["init", "-q", "--bare", "-b", "main", other]);
+  sh(repo, "pull", "-q", "--rebase", "origin", "main");
+  sh(repo, "config", "--local", "--add", "remote.origin.url", `file://${other}`);
+  try {
+    for (const [name, input] of [
+      ["push", { repo: "repo", branch: "main" }],
+      ["pull", { repo: "repo" }],
+      ["status", { repo: "repo" }],
+    ] as const) {
+      await assert.rejects(call(name, input), /gives remote\.origin\.url more than one value/, name);
+    }
+  } finally {
+    sh(repo, "config", "--local", "--unset-all", "remote.origin.url");
+    sh(repo, "config", "--local", "remote.origin.url", remote);
+  }
+  for (const section of [remote, `file://${remote}`]) {
+    sh(repo, "config", "--local", `remote.${section}.url`, `file://${other}`);
+    await assert.rejects(call("push", { repo: "repo", branch: "main" }), /sets remote\..*\.url, which this app won't run git with/, section);
+    sh(repo, "config", "--local", "--remove-section", `remote.${section}`);
+  }
+  assert.equal(execFileSync("git", ["--git-dir", other, "for-each-ref"], { encoding: "utf-8" }), "", "nothing reached the other repository");
+
+  // With the config back to one url, the push reaches origin, and the upstream is set as --set-upstream would.
+  await call("push", { repo: "repo", branch: "main" });
+  assert.equal(execFileSync("git", ["--git-dir", remote, "rev-parse", "main"], { encoding: "utf-8" }), sh(repo, "rev-parse", "main"));
+  assert.equal(sh(repo, "rev-parse", "origin/main"), sh(repo, "rev-parse", "main"));
+  assert.equal(sh(repo, "rev-parse", "--abbrev-ref", "main@{upstream}").trim(), "origin/main");
+});
+
+test("a fetch refspec in the config doesn't add refs of its own to a pull", async () => {
+  const repo = join(workspace, "repo");
+  sh(repo, "config", "--local", "--add", "remote.origin.fetch", "+refs/heads/*:refs/tags/planted/*");
+  try {
+    await call("pull", { repo: "repo" });
+    assert.equal(sh(repo, "for-each-ref", "refs/tags/planted"), "");
+  } finally {
+    sh(repo, "config", "--local", "--unset", "remote.origin.fetch", "planted");
+  }
+});

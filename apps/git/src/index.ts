@@ -277,6 +277,23 @@ async function checkedRepo(repo: string): Promise<string> {
   const { stdout } = await git(dir, ["config", "--local", "--list", "-z"]);
   const keys = stdout.split("\0").filter(Boolean).map((entry) => entry.split("\n")[0]!);
   const refused = [...new Set(keys.filter((key) => !ALLOWED_CONFIG.some((allowed) => allowed.test(key))))];
+  // A remote whose name isn't a plain one (a URL, say) is refused: git
+  // applies remote.<name>.* to a command given a URL whenever <name> is that
+  // URL, so a section named after the checked URL could send the push
+  // elsewhere. A second url on a remote is refused too, since git pushes to
+  // every one of them and only the first is what get-url shows.
+  for (const key of new Set(keys)) {
+    const name = /^remote\.(.+)\.[^.]+$/i.exec(key)?.[1];
+    if (name !== undefined && !/^[A-Za-z0-9_-][A-Za-z0-9._-]*$/.test(name)) refused.push(key);
+  }
+  const urls = keys.filter((key) => /^remote\..+\.url$/i.test(key));
+  const repeated = [...new Set(urls.filter((key, i) => urls.indexOf(key) !== i))];
+  if (repeated.length > 0) {
+    throw new Error(
+      `${repo}'s .git/config gives ${repeated.join(", ")} more than one value, which this app won't run git with: git would push to every one of them. ` +
+        `Keep one (git config --local --replace-all <key> <url>) and try again.`,
+    );
+  }
   if (refused.length > 0) {
     throw new Error(
       `${repo}'s .git/config sets ${refused.join(", ")}, which this app won't run git with: settings like these can make git run a command, ` +
@@ -287,12 +304,20 @@ async function checkedRepo(repo: string): Promise<string> {
   return dir;
 }
 
-/** The URL `origin` points at, checked like a clone URL. */
-async function origin(dir: string, push: boolean): Promise<Remote> {
-  const { stdout } = await git(dir, ["remote", "get-url", ...(push ? ["--push"] : []), "origin"]).catch(() => {
+/**
+ * The URL `origin` points at, checked like a clone URL, and what git is then
+ * given in place of the remote's name: a fetch or push names this URL, so
+ * nothing else in the config decides where it goes. (checkedRepo has already
+ * refused a remote with more than one url, or a pushurl.)
+ */
+async function origin(dir: string): Promise<{ remote: Remote; target: string }> {
+  const { stdout } = await git(dir, ["remote", "get-url", "--all", "--push", "origin"]).catch(() => {
     throw new Error("the repository has no remote called origin");
   });
-  return checkRemote(stdout.trim(), dir);
+  const urls = stdout.split("\n").filter(Boolean);
+  if (urls.length !== 1) throw new Error("origin has more than one URL, which this app won't push to");
+  const remote = await checkRemote(urls[0]!, dir);
+  return { remote, target: remote.kind === "local" ? remote.path : urls[0]! };
 }
 
 const BRANCH = /^(?![-+./])[A-Za-z0-9._/-]{1,200}$/;
@@ -421,7 +446,10 @@ export default defineApp((app) => {
   // Never forced: the refspec is spelled out, refs/heads/<branch> to the
   // same name with no "+", so neither a refspec-like branch name nor a
   // remote.origin.push in the config (which checkedRepo refuses anyway) can
-  // rewrite a remote's history or push to a different branch.
+  // rewrite a remote's history or push to a different branch. It goes to
+  // origin's checked URL rather than to "origin", so it reaches that URL and
+  // no other; the upstream and origin/<branch> that --set-upstream would
+  // have written are then set here.
   app.export({
     name: "push",
     input: z.object({ repo: z.string(), branch: z.string() }),
@@ -429,8 +457,14 @@ export default defineApp((app) => {
     handler: async ({ repo, branch }) => {
       const dir = await checkedRepo(repo);
       const name = branchName(branch);
-      const remote = await origin(dir, true);
-      const { stdout, stderr } = await git(dir, ["push", "--set-upstream", "origin", `refs/heads/${name}:refs/heads/${name}`], { remote });
+      const { remote, target } = await origin(dir);
+      const sha = (await git(dir, ["rev-parse", "--verify", "-q", `refs/heads/${name}`]).catch(() => {
+        throw new Error(`there's no branch called ${name}`);
+      })).stdout.trim();
+      const { stdout, stderr } = await git(dir, ["push", "--", target, `refs/heads/${name}:refs/heads/${name}`], { remote });
+      await git(dir, ["update-ref", `refs/remotes/origin/${name}`, sha]);
+      await git(dir, ["config", "--local", `branch.${name}.remote`, "origin"]);
+      await git(dir, ["config", "--local", `branch.${name}.merge`, `refs/heads/${name}`]);
       return { output: `${stdout}${stderr}`.trim() };
     },
   });
@@ -444,8 +478,10 @@ export default defineApp((app) => {
     output: z.object({ output: z.string(), head: z.string() }),
     handler: async ({ repo }) => {
       const dir = await checkedRepo(repo);
-      const remote = await origin(dir, false);
-      const fetched = await git(dir, ["fetch", "origin", "+refs/heads/*:refs/remotes/origin/*"], { remote });
+      const { remote, target } = await origin(dir);
+      // To the checked URL, like push, and with --refmap= so no
+      // remote.*.fetch in the config adds refs of its own to what's written.
+      const fetched = await git(dir, ["fetch", "--refmap=", "--", target, "+refs/heads/*:refs/remotes/origin/*"], { remote });
       const merged = await git(await checkedRepo(repo), ["merge", "--ff-only", "@{upstream}"]);
       return { output: `${fetched.stdout}${fetched.stderr}${merged.stdout}${merged.stderr}`.trim(), head: await head(dir) };
     },
