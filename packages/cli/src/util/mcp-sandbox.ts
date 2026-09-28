@@ -21,11 +21,24 @@
  *    container or sidecar, or an RPC attach that failed after the boot.
  *  - A tool call waits for the sandbox for a bounded time, and not at all
  *    once its client has cancelled it.
+ *  - Two sessions that find no container at once don't both boot it. Each
+ *    boot starts a semantic-fs sidecar named after the container, and
+ *    starting one removes any sidecar already there by that name, so the
+ *    session that lost the name race used to take the winner's /context down
+ *    with it. The name is claimed (claimBoot) before anything is created; a
+ *    session that can't claim it waits for the other's container to appear
+ *    and attaches to it, or boots itself if the other gives up.
  */
 
 export interface SandboxSteps<C, S> {
   /** The session's container if one is already running under its name. */
   find(): Promise<C | undefined>;
+  /**
+   * Claims the container's name for this session's boot, until the returned
+   * release is called: the claim of a session that died lapses with it.
+   * Undefined when another live session is booting it.
+   */
+  claimBoot(): (() => void) | undefined;
   /** Builds the image and starts the container. `signal` aborts when the session ends. */
   boot(signal: AbortSignal): Promise<C>;
   /** Resolves once the app's runtime reports ready. */
@@ -43,6 +56,8 @@ export interface BackgroundSandboxOptions {
   noBootMessage: string;
   /** After stopping by name mid-boot, how long to wait for the boot to settle before stopping by name once more. */
   settleMs?: number;
+  /** While another session is booting the container, how often to look for it. */
+  claimPollMs?: number;
 }
 
 export type SandboxState = "starting" | "ready" | "failed" | "stopped";
@@ -71,6 +86,7 @@ function isNameConflict(err: unknown): boolean {
 
 export function startBackgroundSandbox<C, S>(steps: SandboxSteps<C, S>, options: BackgroundSandboxOptions): BackgroundSandbox<S> {
   const settleMs = options.settleMs ?? 3_000;
+  const claimPollMs = options.claimPollMs ?? 500;
   const abort = new AbortController();
   let owns = false;
   let state: SandboxState = "starting";
@@ -79,11 +95,38 @@ export function startBackgroundSandbox<C, S>(steps: SandboxSteps<C, S>, options:
     if (abort.signal.aborted) throw new SandboxNotReadyError("the session ended before the sandbox finished starting");
   };
 
-  const ready = (async () => {
-    const found = await steps.find();
+  const attach = async (container: C, stillBooting: boolean) => {
+    // A container that appeared while another session held the claim may
+    // not be ready yet.
+    if (stillBooting) await steps.waitReady(container, abort.signal);
     stopped();
-    if (found) return { ...(await steps.connect(found, false)), bootedHere: false };
-    if (!options.allowBoot) throw new Error(options.noBootMessage);
+    return { ...(await steps.connect(container, false)), bootedHere: false };
+  };
+
+  const ready = (async () => {
+    let release: (() => void) | undefined;
+    let waited = false;
+    for (;;) {
+      const found = await steps.find();
+      stopped();
+      if (found) return attach(found, waited);
+      if (!options.allowBoot) throw new Error(options.noBootMessage);
+      release = steps.claimBoot();
+      if (release) {
+        // Another session may have finished its boot, and let go of the
+        // claim, between the look above and this claim: its container is up.
+        const booted = await steps.find().catch((err: unknown) => {
+          release?.();
+          throw err;
+        });
+        if (!booted) break;
+        release();
+        return attach(booted, false);
+      }
+      waited = true;
+      await new Promise((resolve) => setTimeout(resolve, claimPollMs));
+      stopped();
+    }
 
     owns = true;
     try {
@@ -98,6 +141,10 @@ export function startBackgroundSandbox<C, S>(steps: SandboxSteps<C, S>, options:
       if (isNameConflict(err)) owns = false;
       else await steps.stopByName();
       throw err;
+    } finally {
+      // Once the container exists (or has been cleaned up), anyone else
+      // looking finds it (or boots their own).
+      release?.();
     }
   })();
   ready.then(

@@ -1,11 +1,12 @@
 import { Command, Flags } from "@oclif/core";
 import Docker from "dockerode";
+import { mkdirSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { loadManifest } from "@berthos/manifest-schema";
-import { createFileAuditSink, defaultAuditPath } from "@berthos/audit";
+import { createFileAuditSink, defaultAuditPath, tryAcquireFileLock } from "@berthos/audit";
 import {
   createStdioRpcClient,
   gatherBootEvidence,
@@ -280,12 +281,24 @@ export default class Mcp extends Command {
     flags: { "boot-timeout": number },
     options: { attachRpc: boolean },
   ): SandboxSteps<Docker.Container, { container: Docker.Container; enforcement: EnforcementStatus; rpc?: StdioRpcClient }> {
+    let toldWaiting = false;
     return {
       find: async () => {
         const existing = docker.getContainer(containerName);
         if (!(await existing.inspect().then(() => true, () => false))) return undefined;
         this.logStderr(`attached to the running container "${containerName}"`);
         return existing;
+      },
+      // A file, not Docker: the sidecar is created before the container, so
+      // the container's name can't serve as the claim. The lock names this
+      // process, and lapses with it.
+      claimBoot: () => {
+        const dir = join(homedir(), ".berth", "run");
+        mkdirSync(dir, { recursive: true, mode: 0o700 });
+        const claim = tryAcquireFileLock(join(dir, `${containerName}.boot.lock`));
+        if (!claim && !toldWaiting) this.logStderr(`another berth session is booting "${containerName}" — waiting for it`);
+        toldWaiting ||= !claim;
+        return claim && (() => claim.release());
       },
       boot: async () => {
         this.logStderr(`no container named "${containerName}" — booting the sandbox for "${manifest.name}" (this builds an image on first run)`);
