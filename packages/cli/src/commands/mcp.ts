@@ -150,8 +150,7 @@ export default class Mcp extends Command {
         noBootMessage,
       });
       const stopWarm = () => void sandbox.stop().finally(() => process.exit(1));
-      process.on("SIGINT", stopWarm);
-      process.on("SIGTERM", stopWarm);
+      for (const signal of SHUTDOWN_SIGNALS) process.on(signal, stopWarm);
       const { bootedHere } = await sandbox.ready.catch((err: unknown) => this.error(errorMessage(err)));
       if (bootedHere) await sandbox.stop();
       this.logStderr(`warm: image built and "${manifest.name}" reached ready — an MCP client can now start this server inside its timeout`);
@@ -215,8 +214,7 @@ export default class Mcp extends Command {
       stop: () => sandbox.stop(),
       exit: () => process.exit(0),
     });
-    process.on("SIGINT", () => void shutdown({ urgent: true }));
-    process.on("SIGTERM", () => void shutdown({ urgent: true }));
+    for (const signal of SHUTDOWN_SIGNALS) process.on(signal, () => void shutdown({ urgent: true }));
     // Not just signals: a client that closes the pipe instead of signalling
     // (and `berth mcp < /dev/null`) ends stdin, and the transport's onclose
     // is the only notice this process gets. Without it the sandbox outlives
@@ -377,6 +375,13 @@ export default class Mcp extends Command {
     return enforcementFromContainerLogs(await this.readLogs(container));
   }
 }
+
+/**
+ * SIGHUP too: it is what a client's terminal or process group sends when it
+ * goes away, and left unhandled it kills the process on the spot, leaving a
+ * sandbox this session booted running with no owner.
+ */
+const SHUTDOWN_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
