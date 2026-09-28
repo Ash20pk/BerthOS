@@ -85,8 +85,10 @@ export async function checkRemote(url: string, base: string): Promise<Remote> {
       throw new Error(`${url} isn't a URL`);
     }
     if (parsed.username || parsed.password) throw new Error("put the credentials in the GIT_TOKEN secret, not the URL");
+    // Git parses the URL itself, so it has to be one nobody could read two
+    // ways: a plain host, no backslashes, spaces or control characters.
+    if (!/^https:\/\/[A-Za-z0-9.-]+(:[0-9]+)?(\/[^\s\\]*)?$/i.test(url)) throw new Error(`${url} isn't a URL this app will use (https://host/path, a plain host name)`);
     const host = parsed.host.toLowerCase();
-    if (!/^[a-z0-9.-]+(:[0-9]+)?$/.test(host)) throw new Error(`${parsed.host} isn't a host name this app will use`);
     const { granted } = await requestCapability(APP_NAME, `network:host:${parsed.hostname.toLowerCase()}`);
     if (!granted) throw new Error(`${parsed.hostname} isn't one of this app's network:host: entries in berth.yml, so git won't use it. Add it there and restart the app.`);
     return { kind: "https", host };

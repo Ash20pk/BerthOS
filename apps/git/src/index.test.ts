@@ -154,6 +154,9 @@ test("remotes: https to declared hosts only, and no ssh, http or credentials in 
   assert.deepEqual(await checkRemote("https://github.com/owner/repo.git", workspace), { kind: "https", host: "github.com" });
   await assert.rejects(checkRemote("https://evil.example.com/owner/repo.git", workspace), /isn't one of this app's network:host: entries/);
   await assert.rejects(checkRemote("https://user:pass@github.com/owner/repo.git", workspace), /GIT_TOKEN secret, not the URL/);
+  for (const url of ["https://github.com\\@evil.example.com/x.git", "https://github.com/x y", "https://%67ithub.com/x.git"]) {
+    await assert.rejects(checkRemote(url, workspace), /isn't a URL this app will use/, url);
+  }
   for (const url of ["http://github.com/owner/repo.git", "ssh://git@github.com/owner/repo.git", "git@github.com:owner/repo.git", "git://github.com/owner/repo.git"]) {
     await assert.rejects(checkRemote(url, workspace), /only uses HTTPS/, url);
   }
