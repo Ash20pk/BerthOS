@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseEnvFile, resolveEnvFlags } from "./env-args.js";
+import { parseEnvFile, resolveEnvFlags, undeclaredEnvNames } from "./env-args.js";
 
 test("parseEnvFile reads dotenv lines", () => {
   assert.deepEqual(
@@ -63,4 +63,10 @@ test("--env NAME that isn't set, or isn't a name, is an error that never echoes 
       return true;
     },
   );
+});
+
+test("undeclaredEnvNames lists the names no loaded app declares under secrets:", () => {
+  const apps = [{ manifest: { secrets: ["GITHUB_TOKEN"] } }, { manifest: { secrets: [] } }, { manifest: {} }];
+  assert.deepEqual(undeclaredEnvNames({ GITHUB_TOKEN: "x", GITHUB_REPO: "o/n", OPENAI_API_KEY: "y" }, apps), ["GITHUB_REPO", "OPENAI_API_KEY"]);
+  assert.deepEqual(undeclaredEnvNames({}, apps), []);
 });

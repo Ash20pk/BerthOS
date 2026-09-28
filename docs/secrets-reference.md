@@ -22,6 +22,7 @@ Inside the app, read it as usual: `process.env.GITHUB_TOKEN`.
 
 - A declared name reaches only the apps that declared it. Two apps may declare the same name, and each gets it.
 - A declared name with no value at boot prints a warning naming it (never the value), and the app boots without it.
+- A name you pass that no app declares isn't scoped to one app: it goes to the shared file if it looks like a credential (see below) and into `Env` otherwise, and every app can read it. `berth os up` passes it through, since ordinary configuration such as `GITHUB_REPO` travels this way, but warns naming it. To keep a secret to one app, declare it in that app's `berth.yml`.
 - A `secrets:` entry must be a valid environment variable name.
 
 ## How it works

@@ -88,3 +88,13 @@ export function resolveEnvFlags(entries: string[], fromFile: Record<string, stri
   return out;
 }
 
+/**
+ * Names in `env` that no app declares under `secrets:`. Those are not scoped
+ * to one app: a credential-looking name goes to the container's shared
+ * secrets file and any other name into its plain environment, and every app
+ * in the sandbox can read either.
+ */
+export function undeclaredEnvNames(env: Record<string, string>, apps: readonly { manifest: { secrets?: readonly string[] } }[]): string[] {
+  const declared = new Set(apps.flatMap((a) => a.manifest.secrets ?? []));
+  return Object.keys(env).filter((name) => !declared.has(name));
+}
