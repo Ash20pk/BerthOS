@@ -39,8 +39,6 @@ No `network:*` capability is declared, so the app can't open any outbound connec
 
 Paths are relative to `/workspace`, or to `/context` for the context exports. An absolute path is used as written, and a file's folders are created as needed. Anything outside the app's declared scope is refused by the kernel.
 
-Five more exports are diagnostics that the enforcement tests use to check the sandbox from outside, and each is expected to be refused: `probe_network_connect` (`{ host, port }` → `{ connected }`), `probe_network_udp` (`{ host, port }` → `{ sent }`), `probe_raw_socket` (`{ host }` → `{ opened }`), `probe_user_namespace` (→ `{ created, regainedCaps }`) and `truncate_file` (`{ path, size }`).
-
 ## Working with other apps
 
 - **Context bus.** After every `write_file`, the app publishes `fs.file_created` with `{ path, createdBy: "filesystem" }`. [`code-editor`](../code-editor) and [`activity-feed`](../activity-feed) subscribe to it. See [Talking to other apps](../../docs/resident-apps.md#talking-to-other-apps).

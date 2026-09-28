@@ -1,0 +1,42 @@
+name: enforcement-probe
+version: 0.1.0
+description: "capability-enforcement.mjs's probe app. It declares exactly apps/filesystem's capabilities, so it gets the same Landlock and seccomp profile, and its exports each try something that profile must refuse. Test-only: it lives here rather than in apps/filesystem so that no agent is ever handed these tools."
+
+capabilities:
+  - filesystem:read:/workspace
+  - filesystem:write:/workspace
+  - filesystem:read:/context
+  - filesystem:write:/context
+
+exports:
+  # Paths are relative to BERTH_WORKSPACE_ROOT, like apps/filesystem's, so a
+  # "../../../etc/x" path is a genuine attempt outside the declared scope.
+  - name: write_file
+    input: { path: string, content: string }
+  - name: read_file
+    input: { path: string }
+    output: { content: string }
+  # truncate(2) is a write-ish right Landlock only enforces when it's in the
+  # handled set, so this exercises it directly rather than through open().
+  - name: truncate_file
+    input: { path: string, size: number }
+  # No network:connect capability is declared, so this should never reach out.
+  - name: probe_network_connect
+    input: { host: string, port: number }
+    output: { connected: boolean }
+  # The UDP and raw-socket halves of the same check. Landlock has no access
+  # right for either, so these exercise agent-init's seccomp filter and its
+  # CAP_NET_RAW drop rather than the Landlock ruleset.
+  - name: probe_network_udp
+    input: { host: string, port: number }
+    output: { sent: boolean }
+  - name: probe_raw_socket
+    input: { host: string }
+    output: { opened: boolean }
+  # Creating a user namespace would hand back every capability agent-init just
+  # dropped, so this exercises the seccomp filter that refuses it.
+  - name: probe_user_namespace
+    output: { created: boolean, regainedCaps: boolean }
+
+on_install: []
+on_agent_ready: []
