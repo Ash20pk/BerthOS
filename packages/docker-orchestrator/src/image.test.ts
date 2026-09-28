@@ -137,6 +137,8 @@ function standaloneApp(): string {
     JSON.stringify({ name: "standalone-probe", version: "0.1.0", type: "module", dependencies: { "probe-tool": "file:./vendor/probe-tool" } }),
   );
   writeFileSync(join(dir, "index.js"), "export {};\n");
+  // Every app has one, and staging reads it (e.g. for the app's runtime).
+  writeFileSync(join(dir, "berth.yml"), "name: standalone-probe\nversion: 0.1.0\n");
   return dir;
 }
 
