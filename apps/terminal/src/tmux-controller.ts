@@ -26,8 +26,58 @@ function sessionShell(): string {
   return "/bin/sh";
 }
 
+/**
+ * The environment tmux, the shell and ttyd get: what a terminal needs to
+ * work, and nothing else. Not this process's own environment, which carries
+ * the app's secrets (BERTH_TERMINAL_CREDENTIAL, BERTH_HTTP_RPC_TOKEN, the
+ * values of any declared secrets, provider API keys): the tmux server copies
+ * the environment it starts with into every shell it runs, where `env` would
+ * print all of it for anyone typing into the session, human or agent.
+ *
+ * The egress variables are passed through so a terminal that declares
+ * network access can reach the broker it was given; they hold addresses and
+ * certificate paths, not credentials.
+ */
+const SHELL_ENV_ALLOWLIST = [
+  "PATH",
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "TMPDIR",
+  "TMUX_TMPDIR",
+  "XDG_CONFIG_HOME",
+  "XDG_CACHE_HOME",
+  "LANG",
+  "LANGUAGE",
+  "TERM",
+  "COLORTERM",
+  "TZ",
+  "BERTH_EGRESS_PROXY_URL",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "NO_PROXY",
+  "ALL_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "no_proxy",
+  "all_proxy",
+  "NODE_EXTRA_CA_CERTS",
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
+];
+
+export function shellEnv(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (value === undefined) continue;
+    if (SHELL_ENV_ALLOWLIST.includes(key) || key.startsWith("LC_")) env[key] = value;
+  }
+  env.SHELL = sessionShell();
+  return env;
+}
+
 async function tmux(...args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync("tmux", args, { env: { ...process.env, SHELL: sessionShell() } });
+  const { stdout } = await execFileAsync("tmux", args, { env: shellEnv() });
   return stdout;
 }
 
@@ -124,7 +174,7 @@ async function startSession(): Promise<void> {
   // a newly opened tab attaches to.
   const ttyd = spawn("ttyd", ["--credential", credential(), "--writable", "-p", TTYD_PORT, "tmux", "attach", "-t", SESSION_NAME], {
     stdio: "ignore",
-    env: { ...process.env, SHELL: sessionShell() },
+    env: shellEnv(),
   });
   // Without this, a failed spawn (e.g. ttyd missing) fires an unhandled
   // 'error' event on the ChildProcess, which Node treats as an uncaught

@@ -19,7 +19,11 @@ process.env.TMUX_TMPDIR = mkdtempSync("/tmp/bterm-");
 process.env.SHELL = "/usr/bin/false";
 process.env.BERTH_WORKSPACE_ROOT = tmpdir();
 process.env.BERTH_TERMINAL_CREDENTIAL = "berth:test";
-const { runCommand, readScreen } = await import("./tmux-controller.js");
+// Stand-ins for what a real app process carries: the host's RPC token, a
+// declared secret's value, a provider key.
+process.env.BERTH_HTTP_RPC_TOKEN = "rpc-token-must-not-leak";
+process.env.OPENAI_API_KEY = "api-key-must-not-leak";
+const { runCommand, readScreen, shellEnv } = await import("./tmux-controller.js");
 
 test("the shell starts when the app user's login shell refuses logins", async () => {
   assert.equal((await runCommand("echo alive")).trim(), "alive");
@@ -43,6 +47,29 @@ test("concurrent first calls share one session instead of racing to create it", 
   );
   const { stdout } = await execFileAsync("tmux", ["list-sessions", "-F", "#{session_name}"]);
   assert.deepEqual(stdout.trim().split("\n"), ["berth-terminal"]);
+});
+
+test("the shell doesn't see the app's secrets", async () => {
+  const seen = await runCommand('echo "[${BERTH_HTTP_RPC_TOKEN-}${OPENAI_API_KEY-}${BERTH_TERMINAL_CREDENTIAL-}]"');
+  assert.equal(seen.trim(), "[]");
+  // Still a working environment, not an empty one.
+  assert.equal((await runCommand('test -n "$PATH" && test -n "$HOME" && echo ok')).trim(), "ok");
+});
+
+test("shellEnv keeps what a terminal needs and drops everything else", () => {
+  const env = shellEnv({
+    PATH: "/usr/bin:/bin",
+    HOME: "/tmp/app",
+    TMUX_TMPDIR: "/tmp/app",
+    LANG: "C.UTF-8",
+    LC_ALL: "C.UTF-8",
+    HTTPS_PROXY: "http://127.0.0.1:8090",
+    BERTH_TERMINAL_CREDENTIAL: "berth:secret",
+    BERTH_HTTP_RPC_TOKEN: "token",
+    GITHUB_TOKEN: "ghp_x",
+    ANTHROPIC_API_KEY: "sk-x",
+  });
+  assert.deepEqual(Object.keys(env).sort(), ["HOME", "HTTPS_PROXY", "LANG", "LC_ALL", "PATH", "SHELL", "TMUX_TMPDIR"]);
 });
 
 test.after(async () => {
