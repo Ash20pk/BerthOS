@@ -90,6 +90,7 @@ This is not an identity system: there's no user directory, tenancy or roles.
 - `denied`: the governor refused the call.
 - `unavailable`: the governor didn't answer (error or timeout). Under `mode: "fail-open"` the call then ran with no policy check, so this is the record to look for. See [governance](./governance-reference.md).
 - An agent step that threw is `allowed` with a `reason`. Nothing refused it; it ran and failed.
+- `reason` holds the first line of the app's error, capped at 300 characters. It is written even with payload capture off, so the rest (often a stack, or the input the app choked on) is left out.
 
 ## Payload capture
 

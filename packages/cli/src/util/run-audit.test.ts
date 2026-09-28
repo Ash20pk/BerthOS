@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFileAuditSink, createMemoryAuditSink, readAuditFile, verifyAuditChain, type Actor, type AuditSink } from "@berthos/audit";
 import type { BootEvidence } from "@berthos/docker-orchestrator";
-import { createRunAudit, newRunId, recordedBootEvidence, SANDBOX_BOOT_ACTION, TOOL_CALL_ACTION } from "./run-audit.js";
+import { auditReason, createRunAudit, MAX_REASON_CHARS, newRunId, recordedBootEvidence, SANDBOX_BOOT_ACTION, TOOL_CALL_ACTION } from "./run-audit.js";
 
 const actor: Actor = { kind: "agent", id: "test-client", verifiedBy: "self-asserted" };
 const operator: Actor = { kind: "operator", id: "alice", verifiedBy: "self-asserted" };
@@ -93,4 +93,20 @@ test("recordedBootEvidence takes the latest boot and ignores malformed ones", as
   await sink.record({ ts: "", seq: 0, actor, action: SANDBOX_BOOT_ACTION, decision: "allowed", meta: { runId: "run-1", evidence: { bootId: "x" } } });
 
   assert.equal(recordedBootEvidence(sink.records)?.bootId, "boot-2");
+});
+
+// The app's raw error is written even though inputs and outputs are not, and
+// it can carry both: a stack, the payload it choked on, file contents.
+test("an app error's reason is its first line, capped", async () => {
+  const { sink, run } = audit();
+  const long = `Error: bad input ${"x".repeat(1000)}`;
+  await run.toolCall({ export: "write_file", input: {}, durationMs: 2, error: `${long}\n    at handler (/app/index.js:1:1)\ncontents: s3cr3t` });
+
+  const reason = sink.records[0]!.reason!;
+  assert.ok(reason.startsWith("Error: bad input xxx"));
+  assert.ok(!reason.includes("s3cr3t") && !reason.includes("at handler"));
+  assert.match(reason, /… \(\d+ more chars not recorded\)$/);
+  assert.ok(reason.length < MAX_REASON_CHARS + 50);
+  assert.equal(auditReason("EACCES: permission denied, open '/etc/x'"), "EACCES: permission denied, open '/etc/x'");
+  assert.equal(auditReason("a\u001b[31mb"), "a [31mb");
 });

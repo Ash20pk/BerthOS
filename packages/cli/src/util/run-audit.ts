@@ -52,6 +52,22 @@ export interface ToolCallOutcome {
   denied?: boolean;
 }
 
+/** Longest reason written to a record. The app's raw error can echo its input or file contents. */
+export const MAX_REASON_CHARS = 300;
+
+/**
+ * An app's error as it goes into `reason`: its first line only, control
+ * characters removed, capped at MAX_REASON_CHARS. The rest of an error is
+ * usually a stack or the payload it choked on, and `reason` is written even
+ * when inputs and outputs are not (capturePayloads is off by default).
+ */
+export function auditReason(raw: string): string {
+  const firstLine = raw.split(/\r?\n/, 1)[0] ?? "";
+  const clean = firstLine.replace(/[\u0000-\u001f\u007f]/g, " ").trim();
+  if (clean.length <= MAX_REASON_CHARS) return clean;
+  return `${clean.slice(0, MAX_REASON_CHARS)}… (${clean.length - MAX_REASON_CHARS} more chars not recorded)`;
+}
+
 export interface RunAudit {
   runId: string;
   toolCall(outcome: ToolCallOutcome): Promise<void>;
@@ -75,7 +91,7 @@ export function createRunAudit(options: RunAuditOptions): RunAudit {
           action: TOOL_CALL_ACTION,
           target: `${app}.${outcome.export}`,
           decision: outcome.denied ? "denied" : "allowed",
-          ...(outcome.error !== undefined ? { reason: outcome.error } : {}),
+          ...(outcome.error !== undefined ? { reason: auditReason(outcome.error) } : {}),
           input: outcome.input,
           ...(outcome.error === undefined ? { output: outcome.result } : {}),
           durationMs: outcome.durationMs,
