@@ -519,15 +519,41 @@ app_runtime() {
   fi
 }
 
-# Where berth_sdk (packages/sdk-python) is importable from: the checkout's own
-# copy when the repo is bind-mounted (live edits in dev), otherwise the copy
-# every image carries.
+# The copy of berth_sdk every image carries: root-owned, written at build
+# time, and nothing an app can write.
+BERTH_IMAGE_PYTHON_SDK=/opt/berth/sdk-python
+
+# Where a Python app's own process imports berth_sdk from. The checkout's copy
+# only when container.ts says the source tree is bind-mounted there
+# (BERTH_DEV_SOURCE_MOUNT, set for `berth dev` and nothing else) *and* that
+# path really is a mount point — live SDK edits in dev, no rebuild. Anything
+# short of both is the image's copy.
+#
+# Existence alone is not enough, and that was the bug: in production
+# /workspace is a directory in the image that precreate_declared_paths hands
+# to an app declaring filesystem:write:/workspace, so a berth_sdk/ there is
+# something an app can plant.
 python_sdk_path() {
-  if [ -f /workspace/packages/sdk-python/berth_sdk/__init__.py ]; then
-    echo /workspace/packages/sdk-python
+  local mount="${BERTH_DEV_SOURCE_MOUNT:-}"
+  if [ -n "$mount" ] \
+      && awk -v p="$mount" '$5 == p { found = 1 } END { exit !found }' /proc/self/mountinfo 2>/dev/null \
+      && [ -f "$mount/packages/sdk-python/berth_sdk/__init__.py" ]; then
+    echo "$mount/packages/sdk-python"
   else
-    echo /opt/berth/sdk-python
+    echo "$BERTH_IMAGE_PYTHON_SDK"
   fi
+}
+
+# Runs one berth_sdk module as a tool of this script — as root, before
+# agent-init has applied anything — which is what the policy compiler and the
+# lifecycle flags are. Always from the image's root-owned copy, never the dev
+# mount, and with -I: no PYTHONPATH, no user site-packages, and no current
+# directory on sys.path. The current directory is the app's own, so a plain
+# `python3 -m berth_sdk...` there imports an app-supplied berth_sdk/ first,
+# and runs it as root.
+run_python_sdk_tool() {
+  python3 -I -c 'import runpy, sys; sys.path.insert(0, sys.argv[1]); runpy.run_module(sys.argv[2], run_name="__main__", alter_sys=True)' \
+    "$BERTH_IMAGE_PYTHON_SDK" "berth_sdk.$1"
 }
 
 if [ -z "${BERTH_APPS:-}" ]; then
@@ -542,12 +568,7 @@ if [ -z "${BERTH_APPS:-}" ]; then
   fi
 
   # The manifest's `runtime:` decides, and BERTH_APP_RUNTIME overrides it.
-  # PYTHONPATH plays the role for a Python app that node_modules/@berthos/sdk
-  # plays for a TypeScript one — no pip install needed.
   APP_RUNTIME="${BERTH_APP_RUNTIME:-$(app_runtime "$MANIFEST_PATH")}"
-  if [ "$APP_RUNTIME" = "python" ]; then
-    export PYTHONPATH="$(python_sdk_path)${PYTHONPATH:+:$PYTHONPATH}"
-  fi
 
   # Reports two independent flags: whether a browser:* capability is declared
   # (needs Xvfb/a display) and whether a browser:navigate:*/network:host:*
@@ -562,7 +583,7 @@ if [ -z "${BERTH_APPS:-}" ]; then
   # before that is its own on_install command output (already streamed to
   # stderr/stdout by execSync's inherited stdio).
   if [ "$APP_RUNTIME" = "python" ]; then
-    LIFECYCLE_FLAGS="$(python3 -m berth_sdk.run_lifecycle | tail -n1)"
+    LIFECYCLE_FLAGS="$(run_python_sdk_tool run_lifecycle | tail -n1)"
   else
     LIFECYCLE_FLAGS="$(node "$PWD/node_modules/@berthos/sdk/dist/run-lifecycle.js" | tail -n1)"
   fi
@@ -624,7 +645,7 @@ if [ -z "${BERTH_APPS:-}" ]; then
   # exactly in Python for BERTH_APP_RUNTIME=python (same policy JSON shape;
   # agent-init doesn't care which one wrote it).
   if [ "$APP_RUNTIME" = "python" ]; then
-    python3 -m berth_sdk.generate_capability_policy
+    run_python_sdk_tool generate_capability_policy
   else
     node "$PWD/node_modules/@berthos/sdk/dist/generate-capability-policy.js"
   fi
@@ -717,6 +738,10 @@ if [ -z "${BERTH_APPS:-}" ]; then
 
   echo "[berth:entrypoint] handing off to agent-init for kernel-level capability enforcement" >&2
   if [ "$APP_RUNTIME" = "python" ]; then
+    # PYTHONPATH plays the role for a Python app that node_modules/@berthos/sdk
+    # plays for a TypeScript one — no pip install needed. Set only here, for
+    # the app's own process under agent-init, not for the root tools above.
+    export PYTHONPATH="$(python_sdk_path)${PYTHONPATH:+:$PYTHONPATH}"
     exec /usr/local/bin/agent-init python3 -m berth_sdk.runtime
   else
     exec /usr/local/bin/agent-init "$@"
@@ -861,9 +886,9 @@ run_app() {
   # container), so once on_install moved to build time,
   # the only thing this invocation still did was cost a Node startup per app.
   if [ "$(app_runtime "$app_dir/berth.yml")" = "python" ]; then
-    export PYTHONPATH="$(python_sdk_path)${PYTHONPATH:+:$PYTHONPATH}"
-    python3 -m berth_sdk.generate_capability_policy
+    run_python_sdk_tool generate_capability_policy
     secure_capability_policy "$BERTH_CAPABILITY_POLICY"
+    export PYTHONPATH="$(python_sdk_path)${PYTHONPATH:+:$PYTHONPATH}"
     exec /usr/local/bin/agent-init python3 -m berth_sdk.runtime
   fi
   node "node_modules/@berthos/sdk/dist/generate-capability-policy.js"
@@ -917,7 +942,7 @@ precreate_declared_paths() {
     ( cd "$dir" \
         && export BERTH_MANIFEST_PATH="$dir/berth.yml" BERTH_CAPABILITY_POLICY="$dir/.berth/capability-policy.json" \
         && if [ "$(app_runtime "$dir/berth.yml")" = "python" ]; then
-             PYTHONPATH="$(python_sdk_path)" python3 -m berth_sdk.generate_capability_policy >/dev/null
+             run_python_sdk_tool generate_capability_policy >/dev/null
            else
              node "node_modules/@berthos/sdk/dist/generate-capability-policy.js" >/dev/null
            fi ) \
