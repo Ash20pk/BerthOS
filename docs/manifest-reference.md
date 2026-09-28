@@ -37,6 +37,7 @@ on_install:
 | [`version`](#version-required) | string, `x.y.z` | required | App version and image tag |
 | [`schema_version`](#schema_version-default-current) | non-negative integer | current (`1`) | Which shape of `berth.yml` this file is written in |
 | [`description`](#description-default-) | string | `""` | Summary shown by the app registry |
+| [`runtime`](#runtime-default-node) | `node` or `python` | `node` | The language the app is written in |
 | [`capabilities`](#capabilities-default-) | list of `namespace:action:scope` | `[]` | What the app may touch |
 | [`secrets`](#secrets-default-) | list of env var names | `[]` | Credentials delivered only to this app |
 | [`exports`](#exports-default-) | list of export specs | `[]` | The functions the app exposes as tools |
@@ -62,6 +63,10 @@ The version of the `berth.yml` format itself, not of your app. Leave it out. Omi
 ### `description` (default: `""`)
 
 A one-line summary. The [app registry](./app-registry-reference.md) shows it in listings and matches search terms against it.
+
+### `runtime` (default: `node`)
+
+The language the app's code is written in: `node` (the [TypeScript SDK](./sdk-reference.md)) or `python` (the [Python SDK](./sdk-python-reference.md)). Every way of running an app reads it, and apps with different runtimes can share one sandbox.
 
 ### `capabilities` (default: `[]`)
 

@@ -50,29 +50,17 @@ The runtime loads `src/app.py` and looks for a module-level variable named `app`
 
 ## Running a Python app
 
-The sandbox runs a Python app when the container has `BERTH_APP_RUNTIME=python`. The `berth` CLI doesn't set this, so `berth dev`, `berth test`, `berth mcp` and `berth deploy` start apps as TypeScript. Boot a Python app with `@berthos/docker-orchestrator` instead:
+Declare the runtime in `berth.yml`:
 
-```ts
-import Docker from "dockerode";
-import { loadManifest } from "@berthos/manifest-schema";
-import { buildImage, startContainer } from "@berthos/docker-orchestrator";
-
-const docker = new Docker();
-const manifest = await loadManifest("apps/hello-world-py/berth.yml");
-
-await buildImage({ appDir: "apps/hello-world-py", tag: "berth/hello-world-py:dev", target: "dev", docker });
-const running = await startContainer({
-  image: "berth/hello-world-py:dev",
-  name: "hello-world-py",
-  manifest,
-  bindMount: { hostPath: process.cwd(), containerPath: "/workspace" },   // the repo root
-  workingDir: "/workspace/apps/hello-world-py",
-  env: { BERTH_APP_RUNTIME: "python" },
-  docker,
-});
+```yaml
+name: my-app
+version: 0.1.0
+runtime: python
 ```
 
-Inside the sandbox the SDK is loaded from `packages/sdk-python` in the mounted repo, and the image already has `pydantic`, `pyyaml` and `protobuf`. Your capabilities are compiled into the same kernel policy a TypeScript app gets. Put your own dependencies in `on_install` (`pip install -r requirements.txt`).
+Then run it like any other app: `berth dev`, `berth mcp`, `berth os up`, or `Computer.boot()`. A Python app can share a sandbox with TypeScript apps; each is started with its own runtime, and they talk over the same context bus.
+
+Every sandbox image carries the SDK at `/opt/berth/sdk-python`, and already has `pydantic`, `pyyaml` and `protobuf`. When the repo is bind-mounted (`berth dev` in a clone), the repo's own `packages/sdk-python` is used instead, so SDK edits need no rebuild. Your capabilities are compiled into the same kernel policy a TypeScript app gets. Put your own dependencies in `on_install` (`pip install -r requirements.txt`).
 
 ## How an app boots
 
@@ -138,7 +126,7 @@ Exports are served as line-delimited JSON on stdio, and also on a Unix socket wh
 
 | Variable | Default |
 |---|---|
-| `BERTH_APP_RUNTIME` | `node`; set to `python` to run a Python app |
+| `BERTH_APP_RUNTIME` | Overrides the manifest's `runtime` for a single-app sandbox. Leave it unset. |
 | `BERTH_MANIFEST_PATH` | `./berth.yml` |
 | `BERTH_APP_ENTRY` | `./src/app.py` |
 | `BERTH_RPC_SOCKET` | unset (stdio only) |

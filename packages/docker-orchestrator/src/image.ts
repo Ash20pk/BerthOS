@@ -34,6 +34,13 @@ const AGENT_INIT_DIR = daemonSourceDir("agent-init");
 const SEMANTIC_FS_DAEMON_DIR = daemonSourceDir("semantic-fs-daemon");
 const MESH_DAEMON_DIR = daemonSourceDir("mesh-daemon");
 
+/** The Python SDK (berth_sdk): the checkout's packages/sdk-python, or the copy bundled into this package. */
+export function pythonSdkSourceDir(pkgRoot = join(__dirname, "..")): string {
+  const sibling = join(pkgRoot, "..", "sdk-python");
+  return existsSync(join(sibling, "berth_sdk", "__init__.py")) ? sibling : join(pkgRoot, "daemons", "sdk-python");
+}
+const PYTHON_SDK_DIR = pythonSdkSourceDir();
+
 export type BuildTarget = "dev" | "production";
 
 export interface BuildImageOptions {
@@ -129,6 +136,13 @@ function excludedFromBuildContext(appDir: string, src: string): boolean {
  * directory. Standalone (non-workspace) apps just get a normal prod install.
  */
 async function stageProductionSource(appDir: string, stagingDir: string): Promise<void> {
+  // A Python app has no node_modules to materialize: its SDK is in the image
+  // (/opt/berth/sdk-python), so its own directory is the whole of it.
+  if ((await loadManifest(join(appDir, "berth.yml"))).runtime === "python") {
+    await cp(appDir, stagingDir, { recursive: true, filter: (src) => !excludedFromBuildContext(appDir, src) });
+    return;
+  }
+
   const workspaceRoot = workspaceRootAbove(appDir);
 
   if (workspaceRoot) {
@@ -334,6 +348,10 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
       filter: (src) => !src.includes(join(AGENT_INIT_DIR, "target")),
     });
     await cp(SEMANTIC_FS_DAEMON_DIR, join(stagingDir, "semantic-fs-daemon"), { recursive: true });
+    await cp(join(PYTHON_SDK_DIR, "berth_sdk"), join(stagingDir, "sdk-python", "berth_sdk"), {
+      recursive: true,
+      filter: (src) => !src.includes("__pycache__"),
+    });
     await cp(MESH_DAEMON_DIR, join(stagingDir, "mesh-daemon"), {
       recursive: true,
       filter: (src) => !src.includes(join(MESH_DAEMON_DIR, "target")),

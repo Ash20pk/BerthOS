@@ -507,6 +507,29 @@ EOF
   fi
 }
 
+# The runtime an app's code needs, from its own berth.yml (`runtime: python`,
+# default node). BERTH_APP_RUNTIME, when set, overrides it for single-app
+# mode: the Python milestones set it directly.
+app_runtime() {
+  local manifest="$1"
+  if grep -qE "^runtime:[[:space:]]*[\"']?python[\"']?[[:space:]]*(#.*)?$" "$manifest" 2>/dev/null; then
+    echo python
+  else
+    echo node
+  fi
+}
+
+# Where berth_sdk (packages/sdk-python) is importable from: the checkout's own
+# copy when the repo is bind-mounted (live edits in dev), otherwise the copy
+# every image carries.
+python_sdk_path() {
+  if [ -f /workspace/packages/sdk-python/berth_sdk/__init__.py ]; then
+    echo /workspace/packages/sdk-python
+  else
+    echo /opt/berth/sdk-python
+  fi
+}
+
 if [ -z "${BERTH_APPS:-}" ]; then
   # --- Single-app mode. ---
   # BERTH_APPS is only ever set by container.ts when more than one app
@@ -518,13 +541,12 @@ if [ -z "${BERTH_APPS:-}" ]; then
     exit 1
   fi
 
-  # Additive, defaults to "node" (today's exact behavior, byte-for-byte,
-  # when unset) — a Python resident app sets BERTH_APP_RUNTIME=python.
-  # PYTHONPATH points straight at the bind-mounted packages/sdk-python
-  # source, the same role a pre-existing node_modules symlink plays for a
-  # TS app's @berthos/sdk — no pip install needed for dev mode.
-  if [ "${BERTH_APP_RUNTIME:-node}" = "python" ]; then
-    export PYTHONPATH="/workspace/packages/sdk-python${PYTHONPATH:+:$PYTHONPATH}"
+  # The manifest's `runtime:` decides, and BERTH_APP_RUNTIME overrides it.
+  # PYTHONPATH plays the role for a Python app that node_modules/@berthos/sdk
+  # plays for a TypeScript one — no pip install needed.
+  APP_RUNTIME="${BERTH_APP_RUNTIME:-$(app_runtime "$MANIFEST_PATH")}"
+  if [ "$APP_RUNTIME" = "python" ]; then
+    export PYTHONPATH="$(python_sdk_path)${PYTHONPATH:+:$PYTHONPATH}"
   fi
 
   # Reports two independent flags: whether a browser:* capability is declared
@@ -539,7 +561,7 @@ if [ -z "${BERTH_APPS:-}" ]; then
   # The lifecycle script's last stdout line is "<0|1>,<0|1>" — everything
   # before that is its own on_install command output (already streamed to
   # stderr/stdout by execSync's inherited stdio).
-  if [ "${BERTH_APP_RUNTIME:-node}" = "python" ]; then
+  if [ "$APP_RUNTIME" = "python" ]; then
     LIFECYCLE_FLAGS="$(python3 -m berth_sdk.run_lifecycle | tail -n1)"
   else
     LIFECYCLE_FLAGS="$(node "$PWD/node_modules/@berthos/sdk/dist/run-lifecycle.js" | tail -n1)"
@@ -601,7 +623,7 @@ if [ -z "${BERTH_APPS:-}" ]; then
   # Node/TypeScript rather than being parsed from YAML in Rust) — mirrored
   # exactly in Python for BERTH_APP_RUNTIME=python (same policy JSON shape;
   # agent-init doesn't care which one wrote it).
-  if [ "${BERTH_APP_RUNTIME:-node}" = "python" ]; then
+  if [ "$APP_RUNTIME" = "python" ]; then
     python3 -m berth_sdk.generate_capability_policy
   else
     node "$PWD/node_modules/@berthos/sdk/dist/generate-capability-policy.js"
@@ -694,7 +716,7 @@ if [ -z "${BERTH_APPS:-}" ]; then
   # unverifiable in principle, not just in practice.
 
   echo "[berth:entrypoint] handing off to agent-init for kernel-level capability enforcement" >&2
-  if [ "${BERTH_APP_RUNTIME:-node}" = "python" ]; then
+  if [ "$APP_RUNTIME" = "python" ]; then
     exec /usr/local/bin/agent-init python3 -m berth_sdk.runtime
   else
     exec /usr/local/bin/agent-init "$@"
@@ -838,6 +860,12 @@ run_app() {
   # browser/egress flags (the grep loop above decides those for the whole
   # container), so once on_install moved to build time,
   # the only thing this invocation still did was cost a Node startup per app.
+  if [ "$(app_runtime "$app_dir/berth.yml")" = "python" ]; then
+    export PYTHONPATH="$(python_sdk_path)${PYTHONPATH:+:$PYTHONPATH}"
+    python3 -m berth_sdk.generate_capability_policy
+    secure_capability_policy "$BERTH_CAPABILITY_POLICY"
+    exec /usr/local/bin/agent-init python3 -m berth_sdk.runtime
+  fi
   node "node_modules/@berthos/sdk/dist/generate-capability-policy.js"
   secure_capability_policy "$BERTH_CAPABILITY_POLICY"
 
@@ -887,9 +915,12 @@ precreate_declared_paths() {
     # Same command run_app runs; running it twice is idempotent and costs one
     # Node start per app, which buys a deterministic boot.
     ( cd "$dir" \
-        && BERTH_MANIFEST_PATH="$dir/berth.yml" \
-           BERTH_CAPABILITY_POLICY="$dir/.berth/capability-policy.json" \
-           node "node_modules/@berthos/sdk/dist/generate-capability-policy.js" >/dev/null ) \
+        && export BERTH_MANIFEST_PATH="$dir/berth.yml" BERTH_CAPABILITY_POLICY="$dir/.berth/capability-policy.json" \
+        && if [ "$(app_runtime "$dir/berth.yml")" = "python" ]; then
+             PYTHONPATH="$(python_sdk_path)" python3 -m berth_sdk.generate_capability_policy >/dev/null
+           else
+             node "node_modules/@berthos/sdk/dist/generate-capability-policy.js" >/dev/null
+           fi ) \
       || { echo "[berth:entrypoint] WARNING: could not pre-compile ${name}'s capability policy — its declared paths may not exist when a sibling binds a read grant on them" >&2; continue; }
 
     node -e '

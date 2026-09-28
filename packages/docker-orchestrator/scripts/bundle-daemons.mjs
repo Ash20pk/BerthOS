@@ -36,3 +36,19 @@ for (const daemon of DAEMONS) {
   }
   console.log(`bundle-daemons: ${daemon} (${tracked.length} files)`);
 }
+
+// berth_sdk, the Python resident-app SDK: every image carries it at
+// /opt/berth/sdk-python so a `runtime: python` app runs outside a checkout too.
+{
+  const srcDir = join(packagesDir, "sdk-python", "berth_sdk");
+  const tracked = execFileSync("git", ["ls-files", "-z", "--", "."], { cwd: srcDir, encoding: "utf8" })
+    .split("\0")
+    .filter((f) => f && f.endsWith(".py"));
+  if (tracked.length === 0) throw new Error("bundle-daemons: no tracked files under sdk-python/berth_sdk");
+  for (const file of tracked) {
+    const dest = join(outDir, "sdk-python", "berth_sdk", file);
+    mkdirSync(dirname(dest), { recursive: true });
+    cpSync(join(srcDir, file), dest);
+  }
+  console.log(`bundle-daemons: sdk-python (${tracked.length} files)`);
+}
