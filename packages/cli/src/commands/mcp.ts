@@ -24,7 +24,8 @@ import { createRunAudit, newRunId, type RunAudit } from "../util/run-audit.js";
  * Two things make this the *front door* rather than an extra integration
  * (launch plan 1.5):
  *
- *  - It boots the sandbox itself when one isn't already running. An MCP client
+ *  - It boots the sandbox itself when one isn't already running, in the
+ *    background, after answering `initialize`. An MCP client
  *    spawns exactly one command, so "run `berth dev` in another terminal
  *    first" is a setup step with nowhere to live. `--no-boot` keeps the old
  *    attach-only behavior for anyone already running `berth dev`.
@@ -75,7 +76,7 @@ export default class Mcp extends Command {
     warm: Flags.boolean({
       default: false,
       description:
-        "build the image, boot the sandbox, wait for the app to report ready, then stop it and exit 0 — without serving MCP. Run this once before wiring up a client: the first build takes minutes and an MCP client will kill a server that can't answer `initialize` inside its startup timeout.",
+        "build the image, boot the sandbox, wait for the app to report ready, then stop it and exit 0 — without serving MCP. The bridge answers `initialize` without waiting for a boot, but its first tool call waits for the image to build; this makes that call fast.",
     }),
     audit: Flags.boolean({
       allowNo: true,
@@ -123,43 +124,14 @@ export default class Mcp extends Command {
     }
 
     const docker = new Docker();
-    let container = docker.getContainer(containerName);
-    let bootedHere = false;
-    try {
-      await container.inspect();
-      this.logStderr(`attached to the running container "${containerName}"`);
-    } catch {
-      if (!flags.boot) {
-        this.error(
-          `no running container named "${containerName}" and --no-boot was passed — start it with \`berth dev\` in ${appDir}, or drop --no-boot to let this command boot it (pass --container if it runs under a different name)`,
-        );
-      }
-      this.logStderr(`no container named "${containerName}" — booting the sandbox for "${manifest.name}" (this builds an image on first run)`);
-      const apps = await resolveApps(appDir, undefined, manifest);
-      const running = await bootDevContainer({
-        appDir,
-        manifest,
-        apps,
-        docker,
-        containerName,
-        log: (message) => this.logStderr(message),
-      });
-      container = running.container;
-      bootedHere = true;
-      await this.waitForRuntime(container, manifest.name, flags["boot-timeout"] * 1000);
-    }
-
-    // agent-init's own statement about what the kernel did with the declared
-    // policy. Read once, here, so a denial can be attributed honestly rather
-    // than presented as kernel enforcement on a host where nothing was
-    // enforced (`berth doctor` is the host-level version of this check).
-    const enforcement = await this.readEnforcement(container);
-    this.logStderr(`kernel enforcement in this container: ${enforcement}${enforcement === "enforced" ? "" : " — run `berth doctor`"}`);
 
     if (flags.warm) {
       // Deliberately symmetric with the serving path's ownership rule: a
       // container this command booted is one it stops. An already-running
       // `berth dev` container is left exactly as it was found.
+      const { container, bootedHere } = await this.ensureSandbox(docker, containerName, manifest, appDir, flags);
+      const enforcement = await this.readEnforcement(container);
+      this.logStderr(`kernel enforcement in this container: ${enforcement}${enforcement === "enforced" ? "" : " — run `berth doctor`"}`);
       if (bootedHere) {
         this.logStderr(`stopping the sandbox this warm-up booted ("${containerName}")`);
         await stopContainer(container).catch(() => {});
@@ -168,7 +140,13 @@ export default class Mcp extends Command {
       return;
     }
 
-    const rpc = await createStdioRpcClient(container, docker);
+    // --no-boot with nothing to attach to is a setup error, reported before
+    // serving rather than on the first tool call.
+    if (!flags.boot && !(await docker.getContainer(containerName).inspect().then(() => true, () => false))) {
+      this.error(
+        `no running container named "${containerName}" and --no-boot was passed — start it with \`berth dev\` in ${appDir}, or drop --no-boot to let this command boot it (pass --container if it runs under a different name)`,
+      );
+    }
 
     const transport = new StdioServerTransport();
     const server = new McpServer({ name: `berth-${appName}`, version: manifest.version });
@@ -189,33 +167,52 @@ export default class Mcp extends Command {
       const fileFlag = flags["audit-file"] ? ` --file ${auditPath}` : "";
       this.logStderr(`recording tool calls in ${auditPath} as run ${runAudit.runId} — attest it with \`berth attest ${runAudit.runId}${fileFlag}\``);
     }
-    // Started once the server is connected, so it never delays `initialize`;
-    // awaited before a sandbox this command booted is stopped, since the
-    // evidence can only be read from a running one.
+
+    // The sandbox comes up in the background, after the server is connected:
+    // the tool list comes from berth.yml, so `initialize` and `tools/list`
+    // need nothing running. A first boot builds an image and can take
+    // minutes, longer than an MCP client waits for a server to answer
+    // `initialize` (about 60 s); tool calls wait for it instead.
+    let session: { container: Docker.Container; bootedHere: boolean } | undefined;
+    const ready: Promise<{ rpc: Awaited<ReturnType<typeof createStdioRpcClient>>; enforcement: EnforcementStatus }> = (async () => {
+      const sandbox = await this.ensureSandbox(docker, containerName, manifest, appDir, flags);
+      session = sandbox;
+      // agent-init's own statement about what the kernel did with the
+      // declared policy. Read once, here, so a denial can be attributed
+      // honestly rather than presented as kernel enforcement on a host where
+      // nothing was enforced (`berth doctor` is the host-level version).
+      const enforcement = await this.readEnforcement(sandbox.container);
+      this.logStderr(`kernel enforcement in this container: ${enforcement}${enforcement === "enforced" ? "" : " — run `berth doctor`"}`);
+      return { rpc: await createStdioRpcClient(sandbox.container, docker), enforcement };
+    })();
+    ready.catch((err: unknown) => this.logStderr(`the sandbox didn't start: ${errorMessage(err)}`));
+
+    // Recorded once the sandbox is up; awaited before a sandbox this command
+    // booted is stopped, since the evidence can only be read from a running one.
     let bootEvidence: Promise<void> = Promise.resolve();
 
     // The container outlives this process only if it already existed. One that
     // this command booted is torn down with it, so an MCP client that stops
-    // the server doesn't leave a sandbox running with no owner.
-    if (bootedHere) {
-      let stopping = false;
-      const shutdown = () => {
-        if (stopping) return;
-        stopping = true;
-        void withTimeout(bootEvidence, 60_000)
-          .then(() => stopContainer(container))
-          .catch(() => {})
-          .then(() => process.exit(0));
-      };
-      process.on("SIGINT", shutdown);
-      process.on("SIGTERM", shutdown);
-      // Not just signals: a client that closes the pipe instead of signalling
-      // (and `berth mcp < /dev/null`) ends stdin, and the transport's onclose
-      // is the only notice this process gets. Without it the sandbox outlives
-      // the bridge that owns it, with nothing left to stop it.
-      transport.onclose = shutdown;
-      process.stdin.on("end", shutdown);
-    }
+    // the server doesn't leave a sandbox running with no owner. Registered
+    // before the boot finishes, so a client that goes away mid-boot still
+    // gets it stopped.
+    let stopping = false;
+    const shutdown = () => {
+      if (stopping) return;
+      stopping = true;
+      void withTimeout(ready.then(() => bootEvidence, () => undefined), 60_000)
+        .then(() => (session?.bootedHere ? stopContainer(session.container) : undefined))
+        .catch(() => {})
+        .then(() => process.exit(0));
+    };
+    process.on("SIGINT", shutdown);
+    process.on("SIGTERM", shutdown);
+    // Not just signals: a client that closes the pipe instead of signalling
+    // (and `berth mcp < /dev/null`) ends stdin, and the transport's onclose
+    // is the only notice this process gets. Without it the sandbox outlives
+    // the bridge that owns it, with nothing left to stop it.
+    transport.onclose = shutdown;
+    process.stdin.on("end", shutdown);
 
     const allowed = only ? new Set(only.names) : undefined;
 
@@ -225,8 +222,14 @@ export default class Mcp extends Command {
         tool.name,
         { description: tool.description, inputSchema: tool.inputShape },
         async (args: Record<string, unknown>) => {
+          let sandbox: Awaited<typeof ready>;
+          try {
+            sandbox = await ready;
+          } catch (err) {
+            return { isError: true, content: [{ type: "text", text: `the "${manifest.name}" sandbox didn't start: ${errorMessage(err)}` }] };
+          }
           const startedAt = Date.now();
-          const response = await rpc.call({
+          const response = await sandbox.rpc.call({
             id: `mcp-${Date.now()}-${Math.random().toString(36).slice(2)}`,
             export: tool.name,
             input: args,
@@ -236,7 +239,7 @@ export default class Mcp extends Command {
               appName: manifest.name,
               manifest,
               manifestPath: `${appDir}/berth.yml`,
-              enforcement,
+              enforcement: sandbox.enforcement,
             });
             await runAudit?.toolCall({
               export: tool.name,
@@ -254,7 +257,54 @@ export default class Mcp extends Command {
     }
 
     await server.connect(transport);
-    if (runAudit) bootEvidence = this.recordBootEvidence(runAudit, docker, container, containerName);
+    if (runAudit) {
+      bootEvidence = ready.then(
+        () => this.recordBootEvidence(runAudit, docker, session!.container, containerName),
+        () => undefined,
+      );
+    }
+  }
+
+  /**
+   * Attaches to a running container, or boots one. A container this command
+   * booted that then fails to come up is stopped, along with its semantic-fs
+   * sidecar, before the error is reported: it used to be left running with
+   * nothing to stop it.
+   */
+  private async ensureSandbox(
+    docker: Docker,
+    containerName: string,
+    manifest: Awaited<ReturnType<typeof loadManifest>>,
+    appDir: string,
+    flags: { boot: boolean; "boot-timeout": number },
+  ): Promise<{ container: Docker.Container; bootedHere: boolean }> {
+    const existing = docker.getContainer(containerName);
+    if (await existing.inspect().then(() => true, () => false)) {
+      this.logStderr(`attached to the running container "${containerName}"`);
+      return { container: existing, bootedHere: false };
+    }
+    if (!flags.boot) {
+      this.error(
+        `no running container named "${containerName}" and --no-boot was passed — start it with \`berth dev\` in ${appDir}, or drop --no-boot to let this command boot it (pass --container if it runs under a different name)`,
+      );
+    }
+    this.logStderr(`no container named "${containerName}" — booting the sandbox for "${manifest.name}" (this builds an image on first run)`);
+    const apps = await resolveApps(appDir, undefined, manifest);
+    const running = await bootDevContainer({
+      appDir,
+      manifest,
+      apps,
+      docker,
+      containerName,
+      log: (message) => this.logStderr(message),
+    });
+    try {
+      await this.waitForRuntime(running.container, manifest.name, flags["boot-timeout"] * 1000);
+    } catch (err) {
+      await stopContainer(running.container).catch(() => {});
+      throw err;
+    }
+    return { container: running.container, bootedHere: true };
   }
 
   /**
@@ -324,6 +374,10 @@ export default class Mcp extends Command {
 
 function withTimeout(promise: Promise<void>, ms: number): Promise<void> {
   return Promise.race([promise, new Promise<void>((resolve) => setTimeout(resolve, ms).unref())]);
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 /** The tail of a container's own output, for an error message a human will read. */

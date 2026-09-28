@@ -21,7 +21,7 @@ berth mcp --app filesystem --app-dir apps/filesystem --run-id nightly-2026-09-28
 | `--container=<name>` | `berth-dev-<app>` | The container to attach to or boot |
 | `--only=<a>,<b>` | every export | Bridge only these exports. A name not in the manifest is an error |
 | `--no-boot` | boots | Attach to a running container only; fail if there isn't one |
-| `--warm` | off | Build the image, boot the sandbox, wait for the app to report ready, stop it, exit 0. Doesn't serve MCP |
+| `--warm` | off | Build the image, boot the sandbox, wait for the app to report ready, stop it, exit 0. Doesn't serve MCP. Makes the first tool call of the next session fast |
 | `--boot-timeout=<seconds>` | `120` | How long to wait for a freshly booted app to report ready |
 | `--no-audit` | audits | Don't write tool calls to the audit trail |
 | `--audit-file=<path>` | `~/.berth/audit/audit.jsonl` | Audit file to append to |
@@ -29,7 +29,7 @@ berth mcp --app filesystem --app-dir apps/filesystem --run-id nightly-2026-09-28
 
 ## How it works
 
-- **It boots the sandbox itself.** If no container named `berth-dev-<app>` is running, the bridge builds and boots one the same way `berth dev` does, waits for the app to report ready, then serves. An MCP client spawns one command, so the bridge can't rely on you running `berth dev` first.
+- **It boots the sandbox itself, in the background.** If no container named `berth-dev-<app>` is running, the bridge builds and boots one the same way `berth dev` does. It answers `initialize` and lists the tools straight away, since both come from `berth.yml`; tool calls wait for the boot. A first build takes minutes, longer than a client waits for `initialize`. If the boot fails, each tool call returns the reason, and the half-started sandbox is removed. An MCP client spawns one command, so the bridge can't rely on you running `berth dev` first.
 - **It cleans up what it started.** A container the bridge booted is stopped when the bridge exits, on SIGINT or SIGTERM or when the client closes stdin. A container that was already running is left alone.
 - **Each export becomes one tool.** The export's `input` fields in `berth.yml` become the tool's input schema, one field to one field. Nothing is inferred beyond what the manifest declares.
 - **Calls go straight to the app.** Each tool call is a request/response RPC over the container's stdio, on one connection held for the life of the bridge.
