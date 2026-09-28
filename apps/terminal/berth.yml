@@ -7,9 +7,10 @@ capabilities:
   # filesystem:read:<path> is declared, and none is needed: reads are always
   # scoped (see @berthos/sdk's generate-capability-policy.ts) to the system
   # baseline (/usr, /etc, /bin, ...), this app's own directory and what it may
-  # write, so the shell can `cat` system files and anything under /workspace
-  # but not another app's directory. Under `berth dev`, /workspace is the
-  # whole checkout (read-only), so there it can read every app in it.
+  # write, so the shell can `cat` system files and anything under /workspace.
+  # In a booted image that leaves other apps' directories unreadable; under
+  # `berth dev`, /workspace is the whole checkout (read-only), so there it can
+  # read every app in it.
   - filesystem:write:/workspace
   # Two jobs. It's the signal @berthos/docker-orchestrator's container.ts uses
   # to map the ttyd port and start it — and it's
