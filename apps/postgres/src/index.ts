@@ -92,18 +92,34 @@ export function shapeRows(rows: Record<string, unknown>[]): { rows: Record<strin
   return { rows: out, truncated: rows.length > MAX_ROWS };
 }
 
-let pool: pg.Pool | undefined;
-let poolInfo: { target: Target; route: Route; mode: Mode } | undefined;
+interface Connection {
+  pool: pg.Pool;
+  target: Target;
+  route: Route;
+  mode: Mode;
+}
 
-async function connection(): Promise<{ pool: pg.Pool; target: Target; route: Route; mode: Mode }> {
-  if (pool && poolInfo) return { pool, ...poolInfo };
+// The promise, not the pool: two first calls at once would otherwise each
+// build a pool, and one would leak. A failed attempt is forgotten, so the next
+// call tries again.
+let opened: Promise<Connection> | undefined;
+
+function connection(): Promise<Connection> {
+  opened ??= open().catch((err) => {
+    opened = undefined;
+    throw err;
+  });
+  return opened;
+}
+
+async function open(): Promise<Connection> {
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) throw new Error("DATABASE_URL isn't set: pass it when you boot the sandbox (berth os up --env DATABASE_URL, or Computer.boot({ env }))");
   const target = targetOf(connectionString);
   const manifest = await loadManifest(process.env.BERTH_MANIFEST_PATH ?? "berth.yml");
   const route = routeFor(target, manifest.capabilities, process.env.BERTH_EGRESS_PROXY_URL);
   const mode = modeFrom(process.env);
-  pool = new pg.Pool({
+  const pool = new pg.Pool({
     connectionString,
     max: 2,
     connectionTimeoutMillis: 15_000,
@@ -115,8 +131,14 @@ async function connection(): Promise<{ pool: pg.Pool; target: Target; route: Rou
     // An idle client dropped (the server restarted, the network blipped): the
     // pool replaces it on next use. Without a listener this would crash the app.
   });
-  poolInfo = { target, route, mode };
-  return { pool, ...poolInfo };
+  return { pool, target, route, mode };
+}
+
+/** For tests: close the pool, whose idle connections would keep the process alive. */
+export async function closeForTests(): Promise<void> {
+  const current = opened;
+  opened = undefined;
+  await (await current?.catch(() => undefined))?.pool.end().catch(() => {});
 }
 
 /**
