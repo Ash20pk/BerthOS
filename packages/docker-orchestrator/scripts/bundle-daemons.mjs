@@ -52,3 +52,46 @@ for (const daemon of DAEMONS) {
   }
   console.log(`bundle-daemons: sdk-python (${tracked.length} files)`);
 }
+
+// @berthos/sdk's root-run tools: the capability-policy compiler and the
+// lifecycle flags, which entrypoint.sh runs as uid 0 before agent-init has
+// applied anything. Each is one self-contained file, with
+// @berthos/manifest-schema, yaml and zod inlined, so that running it resolves
+// no bare import at all. Every image carries them at /opt/berth/sdk-node,
+// root-owned.
+//
+// They used to run from the app's own node_modules/@berthos/sdk, with the
+// app's directory as the current one. A bare import there is looked up in
+// node_modules/@berthos/sdk/dist/node_modules first, which no image has, and
+// which an app could declare filesystem:write: for, have created for it and
+// fill with a module of its own, for root to run on the next boot.
+{
+  const { build } = await import("esbuild");
+  const sdkSrc = join(packagesDir, "sdk", "src");
+  const dest = join(outDir, "sdk-node");
+  const result = await build({
+    entryPoints: {
+      "generate-capability-policy": join(sdkSrc, "generate-capability-policy.ts"),
+      "run-lifecycle": join(sdkSrc, "run-lifecycle.ts"),
+    },
+    outdir: dest,
+    outExtension: { ".js": ".mjs" },
+    bundle: true,
+    platform: "node",
+    target: "node22",
+    format: "esm",
+    // yaml's CJS internals call require(); an ESM bundle has none of its own.
+    banner: { js: 'import { createRequire as __berthCreateRequire } from "node:module"; const require = __berthCreateRequire(import.meta.url);' },
+    metafile: true,
+    logLevel: "warning",
+  });
+  // Anything esbuild left as an import is resolved at run time, from wherever
+  // the tool runs; only node's own modules may be.
+  const { builtinModules } = await import("node:module");
+  const builtin = (path) => path.startsWith("node:") || builtinModules.includes(path);
+  for (const [file, output] of Object.entries(result.metafile.outputs)) {
+    const bare = output.imports.filter((i) => i.external && !builtin(i.path));
+    if (bare.length > 0) throw new Error(`bundle-daemons: ${file} still imports ${bare.map((i) => i.path).join(", ")}`);
+  }
+  console.log(`bundle-daemons: sdk-node (${Object.keys(result.metafile.outputs).length} files)`);
+}
