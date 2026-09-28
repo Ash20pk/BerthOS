@@ -6,7 +6,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pg from "pg";
-import { allowsPrivileged, cell, Collector, modeFrom, privilegeProblem, routeFor, shapeRows, targetOf } from "./index.js";
+import { allowsPrivileged, cell, Collector, modeFrom, privilegeProblem, routeFor, shapeRows, targetOf, types } from "./index.js";
 import { ProxyTunnel } from "./tunnel.js";
 
 // --- pure: no database needed ------------------------------------------------
@@ -71,6 +71,16 @@ test("the collector stops taking rows once it's full, by count or by size", () =
   while (bySize.add({ text: "x".repeat(9_000) })) taken++;
   assert.equal(bySize.truncated, true);
   assert.ok(taken < 25, `took ${taken} rows of 9,000 characters under a 200,000-character cap`);
+});
+
+test("dates and timestamps are parsed as the text PostgreSQL sends, and only for this app", () => {
+  const parse = (oid: number, text: string) => (types.getTypeParser as (oid: number) => (v: string) => unknown)(oid)(text);
+  assert.equal(parse(1082, "2026-01-04"), "2026-01-04");
+  assert.equal(parse(1114, "2026-01-04 10:30:00"), "2026-01-04 10:30:00");
+  assert.equal(parse(1184, "2026-01-04 10:30:00+00"), "2026-01-04 10:30:00+00");
+  assert.deepEqual(parse(1182, "{2026-01-04,2026-02-11}"), ["2026-01-04", "2026-02-11"]);
+  assert.equal(parse(23, "42"), 42, "everything else parses as before");
+  assert.ok(pg.types.getTypeParser(1082)("2026-01-04") instanceof Date, "the global parsers are untouched");
 });
 
 // Every method pg and pg-pool call on their stream (grep for "stream." in
@@ -166,6 +176,21 @@ live("describe_table resolves an unqualified name through the search path, as Po
   await assert.rejects(call("describe_table", { table: "invoices" }), /no table called invoices on the search path.*berth_other\.invoices/s);
   await assert.rejects(call("describe_table", { table: "nope" }), /no table called nope/);
   await assert.rejects(call("describe_table", { table: "a.b.c" }), /table or schema\.table/);
+});
+
+live("a date comes back as the same date, whatever the app's time zone", async () => {
+  const port = new URL(PG_TEST_URL!).port;
+  const tz = process.env.TZ;
+  // East of UTC, a date read as local midnight turned into the day before.
+  process.env.TZ = "Asia/Tokyo";
+  try {
+    const call = await appWith({ DATABASE_URL: urlAs("app") }, [`network:connect:${port}`]);
+    const res = await call("query", { sql: "SELECT signed_up, TIMESTAMP '2026-01-04 00:30:00' AS ts, ARRAY[DATE '2026-01-04'] AS ds FROM customers WHERE name = $1", params: ["Ada"] });
+    assert.deepEqual(res.rows, [{ signed_up: "2026-01-04", ts: "2026-01-04 00:30:00", ds: ["2026-01-04"] }]);
+  } finally {
+    if (tz === undefined) delete process.env.TZ;
+    else process.env.TZ = tz;
+  }
 });
 
 live("read-only mode refuses writes, even ones that try to switch the transaction", async () => {

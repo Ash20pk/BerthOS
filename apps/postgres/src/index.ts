@@ -104,6 +104,26 @@ export function privilegeProblem(user: string, row: { superuser: boolean; execut
   return `DATABASE_URL's role ${user} ${what}, and read-only mode can't hold such a role back: it can still run COPY … TO PROGRAM (a shell command on the database server) or write files there, reload the server's configuration and end other sessions, none of which a read-only transaction stops. Give DATABASE_URL a role that can only read what the agent should see, or, to accept that, set POSTGRES_ALLOW_PRIVILEGED=true and restart the app.`;
 }
 
+// date, timestamp and timestamptz, and their arrays. node-postgres turns these
+// into a JavaScript Date in the app's local time zone: a date became local
+// midnight, which toISOString() then shifted to the day before east of UTC,
+// and a timestamp without a time zone was read as local time. They come back
+// as the text PostgreSQL sends instead.
+const AS_TEXT = new Set([1082, 1114, 1184]);
+const AS_TEXT_ARRAY = new Set([1182, 1115, 1185]);
+const TEXT_ARRAY = 1009;
+
+const builtin = pg.types.getTypeParser as (oid: number, format?: string) => (value: string) => unknown;
+
+/** Type parsers for this app's queries only; pg.types itself is left alone. */
+export const types = {
+  getTypeParser: (oid: number, format?: string) => {
+    if (AS_TEXT.has(oid)) return (value: string) => value;
+    if (AS_TEXT_ARRAY.has(oid)) return builtin(TEXT_ARRAY, format);
+    return builtin(oid, format);
+  },
+} as unknown as pg.CustomTypesConfig;
+
 /** A value made safe to hand back as JSON, and small enough to read. */
 export function cell(value: unknown): unknown {
   if (value === null || typeof value === "number" || typeof value === "boolean") return value;
@@ -175,6 +195,7 @@ async function open(): Promise<Connection> {
     connectionTimeoutMillis: 15_000,
     idleTimeoutMillis: 30_000,
     statement_timeout: STATEMENT_TIMEOUT_MS,
+    types,
     ...(route.kind === "proxy" ? { stream: () => new ProxyTunnel(route.proxy) as unknown as import("node:net").Socket } : {}),
   });
   pool.on("error", () => {
@@ -224,7 +245,7 @@ function readBatch(cursor: Cursor, n: number): Promise<{ rows: Record<string, un
  * query protocol, which refuses a string holding several statements.
  */
 async function collect(client: pg.PoolClient, sql: string, params: unknown[], max: number): Promise<Rows> {
-  const cursor = client.query(new Cursor(sql, params));
+  const cursor = client.query(new Cursor(sql, params, { types }));
   const out = new Collector(max);
   let result: pg.QueryResult | undefined;
   for (;;) {
