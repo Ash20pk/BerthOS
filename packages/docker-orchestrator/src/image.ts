@@ -335,7 +335,7 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
     await stageAppRuntimes(stagingDir, [{ name: primaryName, appDir: options.appDir }, ...(options.companions ?? [])]);
 
     await cp(DOCKER_ASSETS_DIR, join(stagingDir, "docker"), { recursive: true });
-    for (const dir of [CONTEXT_BUS_DAEMON_DIR, AGENT_INIT_DIR, SEMANTIC_FS_DAEMON_DIR, MESH_DAEMON_DIR]) {
+    for (const dir of [CONTEXT_BUS_DAEMON_DIR, AGENT_INIT_DIR, SEMANTIC_FS_DAEMON_DIR, MESH_DAEMON_DIR, PYTHON_SDK_DIR]) {
       if (!existsSync(dir)) {
         throw new Error(
           `daemon source not found at ${dir}: this @berthos/docker-orchestrator has neither the repository's packages/ nor a bundled daemons/ copy (run its build, which bundles them)`,
