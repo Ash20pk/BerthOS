@@ -208,6 +208,8 @@ A `filesystem:read:` or `filesystem:write:` scope must be:
 - `/workspace`, `/context`, `/tmp` or `/app`, or a path beneath one of them
 - free of `*`, except a trailing `/*`, which means the same as the directory itself
 
+A `filesystem:write:` scope also can't name a path inside a `node_modules` directory: that is an app's dependencies, and a directory created there for an app would let it put a module where Node looks before the real one. Reading there is fine.
+
 `filesystem:write:/` is refused. Berth creates each declared write path at boot, before enforcement starts, which is why the scope can't be an arbitrary string. Under `berth dev` your project folder is mounted read-only, so a declared path that doesn't exist there is skipped with a warning; declare paths that exist.
 
 ### Proxied network access

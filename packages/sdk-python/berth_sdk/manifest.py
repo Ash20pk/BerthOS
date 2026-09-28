@@ -141,6 +141,20 @@ def filesystem_scope_issue(scope: str) -> Optional[str]:
     return None
 
 
+def filesystem_write_scope_issue(scope: str) -> Optional[str]:
+    """filesystemWriteScopeIssue() in capability.ts: everything
+    filesystem_scope_issue() refuses, and any path with a node_modules
+    segment (an app's dependency tree, which a declared write path would have
+    created as root and handed to the app). Messages match the TypeScript ones."""
+    issue = filesystem_scope_issue(scope)
+    if issue is not None:
+        return issue
+    path = scope[:-2] if scope.endswith("/*") else scope
+    if "node_modules" in path.split("/"):
+        return f"filesystem:write: may not name a path inside node_modules (an app's dependencies, which the sandbox's own tools load), got {_quote(scope)}"
+    return None
+
+
 def capability_issue(capability: str) -> Optional[str]:
     """capabilityIssue() in capability.ts: a reason `capability` is not an
     acceptable declaration, or None. Assumes the grammar already holds."""
@@ -148,6 +162,8 @@ def capability_issue(capability: str) -> Optional[str]:
         parsed = parse_capability(capability)
     except ValueError as err:
         return str(err)
-    if parsed.namespace == "filesystem" and parsed.action in ("read", "write"):
+    if parsed.namespace == "filesystem" and parsed.action == "write":
+        return filesystem_write_scope_issue(parsed.scope)
+    if parsed.namespace == "filesystem" and parsed.action == "read":
         return filesystem_scope_issue(parsed.scope)
     return None

@@ -17,6 +17,23 @@ def test_capability_issue_matches_the_typescript_allowlist(capability):
     assert capability_issue(capability)
 
 
+@pytest.mark.parametrize(
+    "capability",
+    [
+        "filesystem:write:/app/apps/x/node_modules/@berthos/sdk/dist/node_modules",
+        "filesystem:write:/app/node_modules",
+        "filesystem:write:/workspace/node_modules/*",
+    ],
+)
+def test_a_write_grant_inside_node_modules_is_refused(capability):
+    assert "may not name a path inside node_modules" in (capability_issue(capability) or "")
+
+
+def test_a_read_grant_inside_node_modules_is_not():
+    assert capability_issue("filesystem:read:/app/node_modules") is None
+    assert capability_issue("filesystem:write:/workspace/node_modules_backup") is None
+
+
 def test_allowed_scopes_and_other_namespaces_have_no_issue():
     for capability in ["filesystem:write:/workspace", "filesystem:read:/context/*", "github:read:repos", "network:bind:*"]:
         assert capability_issue(capability) is None

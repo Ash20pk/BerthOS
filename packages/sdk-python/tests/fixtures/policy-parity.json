@@ -30,7 +30,17 @@
         42
       ]
     },
-    { "appName": "mixed", "capabilities": ["browser:navigate:*.github.com", "app:invoke:other", "network:host:api.example.com", "filesystem:write:/tmp/mixed"] }
+    { "appName": "mixed", "capabilities": ["browser:navigate:*.github.com", "app:invoke:other", "network:host:api.example.com", "filesystem:write:/tmp/mixed"] },
+    {
+      "appName": "dependencies",
+      "capabilities": [
+        "filesystem:write:/app/apps/dependencies/node_modules/@berthos/sdk/dist/node_modules",
+        "filesystem:write:/app/node_modules",
+        "filesystem:write:/workspace/node_modules/*",
+        "filesystem:read:/app/node_modules",
+        "filesystem:write:/workspace/node_modules_backup"
+      ]
+    }
   ],
   "bindPortCases": [
     { "appName": "a", "env": {}, "capabilities": [] },
