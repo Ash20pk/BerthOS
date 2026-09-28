@@ -16,8 +16,10 @@ const SHARP_STUB_URL = `data:text/javascript,${encodeURIComponent(SHARP_STUB_SOU
 
 /**
  * Module-resolution hook, registered with module.register() by embeddings.ts
- * just before it imports @xenova/transformers. It answers every
- * `import "sharp"` with the stub above.
+ * just before it imports @xenova/transformers. It answers `import "sharp"`
+ * with the stub above, but only when the importer lives inside the
+ * @xenova/transformers package: the hook applies to the whole thread, and a
+ * resident app that depends on the real sharp must keep getting it.
  *
  * Both are data: URLs rather than files next to this module, so they need
  * nothing on disk: the external build (scripts/build-external.mjs) bundles
@@ -27,7 +29,7 @@ const SHARP_STUB_URL = `data:text/javascript,${encodeURIComponent(SHARP_STUB_SOU
 const SHARP_HOOK_SOURCE = `
 const STUB_URL = ${JSON.stringify(SHARP_STUB_URL)};
 export async function resolve(specifier, context, nextResolve) {
-  if (specifier === "sharp") {
+  if (specifier === "sharp" && typeof context.parentURL === "string" && context.parentURL.includes("/@xenova/transformers/")) {
     return { url: STUB_URL, shortCircuit: true };
   }
   return nextResolve(specifier, context);

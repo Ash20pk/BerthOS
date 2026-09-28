@@ -28,7 +28,8 @@ let pipelinePromise: Promise<Pipeline> | undefined;
 /**
  * Points @xenova/transformers' `import "sharp"` at the SDK's own stub before
  * it loads (see sharp-hook.ts). Once per process; module.register() applies
- * to every later import on this thread.
+ * to every later import on this thread, which is why the hook only redirects
+ * imports made from inside @xenova/transformers.
  */
 let sharpStubRegistered = false;
 export function registerSharpStub(): void {
