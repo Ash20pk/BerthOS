@@ -1,10 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createMemoryAuditSink, type Actor } from "@berthos/audit";
+import { EventEmitter } from "node:events";
 import { Duplex } from "node:stream";
 import type Docker from "dockerode";
 import { createStdioRpcClient, RpcNotSentError, type RpcRequest, type RpcResponse, type StdioRpcCallOptions } from "@berthos/docker-orchestrator";
-import { createInFlightCalls, createShutdown, handleToolCall, rpcTimeoutFor, TIMEOUT_MS_GRACE, type ToolCallContext } from "./mcp-call.js";
+import { createInFlightCalls, createShutdown, handleToolCall, onClientPipesClosed, rpcTimeoutFor, TIMEOUT_MS_GRACE, type ToolCallContext } from "./mcp-call.js";
 import { createRunAudit } from "./run-audit.js";
 
 const actor: Actor = { kind: "agent", id: "test-client", verifiedBy: "self-asserted" };
@@ -215,4 +216,18 @@ test("a call its client already cancelled is not sent, and not recorded", async 
   assert.match(result.content[0]!.text, /cancelled by the client before it was sent/);
   assert.equal(sent, false);
   assert.equal(sink.records.length, 0);
+});
+
+// A client that closed its pipes makes the next stdout write fail with EPIPE,
+// which used to be an uncaught exception partway through stopping the sandbox.
+test("an EPIPE on stdout is the client leaving, and one on stderr is ignored", () => {
+  const stdout = new EventEmitter();
+  const stderr = new EventEmitter();
+  let left = 0;
+  onClientPipesClosed({ stdout, stderr }, () => void left++);
+  const epipe = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
+  assert.doesNotThrow(() => stdout.emit("error", epipe));
+  assert.doesNotThrow(() => stderr.emit("error", epipe));
+  assert.doesNotThrow(() => stdout.emit("error", epipe));
+  assert.equal(left, 2, "leaving is the caller's shutdown, which runs once however often it's asked");
 });

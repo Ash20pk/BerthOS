@@ -19,7 +19,7 @@ import { bootDevContainer } from "../util/dev-boot.js";
 import { resolveApps } from "../util/multi-app.js";
 import { explainAppError, enforcementFromContainerLogs, type EnforcementStatus } from "../util/capability-errors.js";
 import { createRunAudit, newRunId, type RunAudit } from "../util/run-audit.js";
-import { createInFlightCalls, createShutdown, handleToolCall } from "../util/mcp-call.js";
+import { createInFlightCalls, createShutdown, handleToolCall, onClientPipesClosed } from "../util/mcp-call.js";
 import { startBackgroundSandbox, type SandboxSteps } from "../util/mcp-sandbox.js";
 
 /**
@@ -151,6 +151,7 @@ export default class Mcp extends Command {
       });
       const stopWarm = () => void sandbox.stop().finally(() => process.exit(1));
       for (const signal of SHUTDOWN_SIGNALS) process.on(signal, stopWarm);
+      onClientPipesClosed(process, stopWarm);
       const { bootedHere } = await sandbox.ready.catch((err: unknown) => this.error(errorMessage(err)));
       if (bootedHere) await sandbox.stop();
       this.logStderr(`warm: image built and "${manifest.name}" reached ready — an MCP client can now start this server inside its timeout`);
@@ -221,6 +222,7 @@ export default class Mcp extends Command {
     // the bridge that owns it, with nothing left to stop it.
     transport.onclose = () => void shutdown();
     process.stdin.on("end", () => void shutdown());
+    onClientPipesClosed(process, () => void shutdown());
 
     const allowed = only ? new Set(only.names) : undefined;
     const explain = (error: string, enforcement: EnforcementStatus) =>

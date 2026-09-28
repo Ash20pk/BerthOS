@@ -1,4 +1,5 @@
 import { RpcNotSentError, type RpcRequest, type RpcResponse, type StdioRpcCallOptions } from "@berthos/docker-orchestrator";
+import type { EventEmitter } from "node:events";
 import type { RunAudit } from "./run-audit.js";
 
 /**
@@ -176,6 +177,19 @@ export function createShutdown(options: ShutdownOptions): (trigger?: { urgent?: 
     })();
     return running;
   };
+}
+
+/**
+ * Once the client has closed its end of the pipes, a write to stdout (an MCP
+ * response, a notification) fails with EPIPE, and the stream reports it as an
+ * 'error' event. Unhandled, that is an uncaught exception wherever the
+ * process happens to be, including partway through stopping the sandbox. It
+ * means the client has left, so it is treated as that. An error on stderr is
+ * a log line with nowhere to go, and is dropped.
+ */
+export function onClientPipesClosed(streams: { stdout: EventEmitter; stderr: EventEmitter }, leave: () => void): void {
+  streams.stdout.on("error", () => leave());
+  streams.stderr.on("error", () => {});
 }
 
 /**
