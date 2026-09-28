@@ -24,11 +24,11 @@ capabilities:
   - network:connect:8090
 ```
 
-HTTPS only: SSH doesn't go through the sandbox's egress proxy, so `git@…` URLs don't work. A host you didn't list is refused by the proxy, and the error says so. Restart the app after editing.
+HTTPS only: SSH doesn't go through the sandbox's egress proxy, so `git@…` URLs don't work. A host you didn't list is refused before git runs (and by the proxy, if it got that far), and the error says so. Restart the app after editing.
 
 ## Credentials and identity
 
-- **`GIT_TOKEN`** (secret): an access token for pushing, or for cloning private repositories. Git gets it from a credential helper whose shell reads it from the environment, so it never appears in a URL, a command line or a config file, and it only goes to hosts the proxy lets through. Pass it at boot: `berth os up --env GIT_TOKEN`, or `Computer.boot({ env })`. For GitHub, a fine-grained token scoped to the repositories you want pushed to.
+- **`GIT_TOKEN`** (secret): an access token for pushing, or for cloning private repositories. Git gets it from a credential helper whose shell reads it from the environment, so it never appears in a URL, a command line or a config file. The helper only answers for `https` and the host of the remote being used, and only clone, fetch and push have the token in their environment at all. Pass it at boot: `berth os up --env GIT_TOKEN`, or `Computer.boot({ env })`. For GitHub, a fine-grained token scoped to the repositories you want pushed to.
 - **`GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`**: who commits are made as. Default `Berth agent <agent@berth.invalid>`.
 
 ## Exports
@@ -45,12 +45,18 @@ HTTPS only: SSH doesn't go through the sandbox's egress proxy, so `git@…` URLs
 | `push` | `{ repo, branch }` | `{ output }`: to `origin`, setting upstream |
 | `pull` | `{ repo }` | `{ output, head }`: fast-forward only |
 
-`dir` and `repo` are paths under `/workspace`. Anything that resolves outside it is refused.
+`dir` and `repo` are paths under `/workspace`, with symlinks followed. Anything that resolves outside it is refused, and `repo` has to be the top of a repository, not a directory inside one. `url` is an `https://` URL on one of the hosts in `berth.yml`.
 
 ## What it won't do
 
-- **No force pushes.** `branch` must be a plain name, so no `+ref` or `src:dst` refspec can rewrite a remote's history or push somewhere else.
-- **No hooks.** Git runs with hooks disabled, so a hook planted by another app that can write `/workspace` never runs with this app's network access.
-- **No command transports.** Only `https`, `http` and `file` are allowed; `ext::`, which runs a command as a "transport", and `ssh`/`git://` are refused.
+Anything else that can write `/workspace`, such as the terminal or another agent's app, can also write a repository's `.git/config`, and git runs commands a config file names. So this app treats every repository as something it didn't set up:
+
+- **No repository settings beyond git's own.** Before each command it reads `.git/config` and refuses the repository if it sets anything other than what git writes itself on clone and `push --set-upstream` (`core.*` basics, `remote.<name>.url`/`fetch`, `branch.<name>.remote`/`merge`, `extensions.objectformat`/`refstorage`, `user.name`/`email`). That rules out filter drivers, `textconv`, `diff.external`, `core.fsmonitor`, `gpg.program`, `include.path`, `url.*.insteadOf`, `remote.*.pushurl` and `remote.*.push`, `credential.*` and `http.*`, among others. The error names the keys; remove them (`git config --local --unset-all <key>`) to go on. A repository that borrows objects from elsewhere (`objects/info/alternates`) is refused too.
+- **No hooks, pagers, editors, fsmonitor or signing.** These are switched off on git's command line, which outranks any config file, and `diff` runs with `--no-ext-diff --no-textconv`.
+- **No inherited environment.** Git gets `PATH`, a private `HOME`, your commit identity and nothing else from this app's environment; it reads no system or global config, so a `.gitconfig` planted in `/tmp` does nothing. `GIT_TOKEN` is only there for clone, fetch and push, which never touch the working tree: clone downloads and checks out as separate steps, and `pull` is a fetch followed by a fast-forward.
+- **No force pushes.** `push` sends `refs/heads/<branch>` to the same name with no `+`, and `branch` must be a plain name, so no refspec, from the input or from the config, can rewrite a remote's history or push somewhere else.
+- **HTTPS only, to the hosts you listed.** `http://`, `ssh`, `git://` and `ext::` (which runs a command as a "transport") are refused, as is a URL with credentials in it. Local paths and `file://` are refused as well: pushing to a repository on disk runs its hooks. The app's own tests turn them on with `BERTH_GIT_LOCAL_REMOTES=1`, and even then only for paths in the workspace.
 - **No prompts.** A command that would ask for input fails and says what's missing.
 - **No merges or rebases.** `pull` only fast-forwards; resolve anything else in the [terminal](../terminal).
+
+The checks run before each command, so a process rewriting `.git/config` at the same moment could still slip a setting in between the check and git starting. The command-line switches above hold even then, and the token is only in the environment of the steps that don't run filters.

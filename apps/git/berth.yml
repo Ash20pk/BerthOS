@@ -13,7 +13,8 @@ capabilities:
 
 # An access token for pushing, or for cloning private repositories. It's
 # given to git through a credential helper, never put in a URL or on a
-# command line, and only reaches the hosts listed above. Commits are made as
+# command line, and only offered over HTTPS to the host of the remote in use,
+# which has to be one listed above. Commits are made as
 # GIT_AUTHOR_NAME / GIT_AUTHOR_EMAIL when those are set, which git reads itself.
 secrets:
   - GIT_TOKEN
