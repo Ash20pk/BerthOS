@@ -12,11 +12,13 @@
     "@berthos/manifest-schema": "workspace:*",
     "@berthos/sdk": "workspace:*",
     "pg": "^8.23.0",
+    "pg-cursor": "^2.22.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/node": "^26.6.2",
     "@types/pg": "^8.23.1",
+    "@types/pg-cursor": "^2.7.2",
     "typescript": "^7.0.2"
   }
 }

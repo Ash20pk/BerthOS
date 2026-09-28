@@ -2,12 +2,16 @@ import { defineApp } from "@berthos/sdk";
 import { loadManifest } from "@berthos/manifest-schema";
 import { z } from "zod";
 import pg from "pg";
+import Cursor from "pg-cursor";
 import { isAllowed, patternsFrom, type HostPattern } from "./hosts.js";
 import { ProxyTunnel } from "./tunnel.js";
 
 const MAX_ROWS = 500;
 const MAX_RESULT_CHARS = 200_000;
 const MAX_CELL_CHARS = 10_000;
+// Rows fetched from the server at a time. The driver holds one batch in memory,
+// never the whole result.
+const FETCH_ROWS = 50;
 
 export type Mode = "read-only" | "read-write";
 export type Route = { kind: "proxy"; proxy: URL } | { kind: "direct" };
@@ -79,17 +83,32 @@ export function cell(value: unknown): unknown {
   return text.length > MAX_CELL_CHARS ? `${text.slice(0, MAX_CELL_CHARS)}…` : typeof value === "string" ? value : value;
 }
 
-/** Rows, capped by count and by total size, so one query can't flood the agent's context. */
-export function shapeRows(rows: Record<string, unknown>[]): { rows: Record<string, unknown>[]; truncated: boolean } {
-  const out: Record<string, unknown>[] = [];
-  let size = 0;
-  for (const row of rows.slice(0, MAX_ROWS)) {
+/**
+ * Rows, capped by count and by total size, so one query can't flood the
+ * agent's context. Fed a row at a time: add() says false once it's full.
+ */
+export class Collector {
+  readonly rows: Record<string, unknown>[] = [];
+  truncated = false;
+  private size = 0;
+
+  constructor(private readonly max = MAX_ROWS) {}
+
+  add(row: Record<string, unknown>): boolean {
+    if (this.truncated) return false;
+    if (this.rows.length >= this.max) return !(this.truncated = true);
     const shaped = Object.fromEntries(Object.entries(row).map(([k, v]) => [k, cell(v)]));
-    size += JSON.stringify(shaped).length;
-    if (size > MAX_RESULT_CHARS) return { rows: out, truncated: true };
-    out.push(shaped);
+    this.size += JSON.stringify(shaped).length;
+    if (this.size > MAX_RESULT_CHARS) return !(this.truncated = true);
+    this.rows.push(shaped);
+    return true;
   }
-  return { rows: out, truncated: rows.length > MAX_ROWS };
+}
+
+export function shapeRows(rows: Record<string, unknown>[], max = MAX_ROWS): { rows: Record<string, unknown>[]; truncated: boolean } {
+  const out = new Collector(max);
+  for (const row of rows) if (!out.add(row)) break;
+  return { rows: out.rows, truncated: out.truncated };
 }
 
 interface Connection {
@@ -141,6 +160,47 @@ export async function closeForTests(): Promise<void> {
   await (await current?.catch(() => undefined))?.pool.end().catch(() => {});
 }
 
+export interface Rows {
+  columns: string[];
+  rows: Record<string, unknown>[];
+  /** Rows returned, for a statement that returns rows; otherwise rows changed. */
+  rowCount: number;
+  truncated: boolean;
+}
+
+function readBatch(cursor: Cursor, n: number): Promise<{ rows: Record<string, unknown>[]; result: pg.QueryResult }> {
+  return new Promise((resolve, reject) => {
+    cursor.read(n, (err, rows, result) => (err ? reject(err) : resolve({ rows, result })));
+  });
+}
+
+/**
+ * The statement's rows, through a cursor: node-postgres would otherwise read
+ * every row of the result into memory before any cap applied, and a SELECT
+ * over a few million rows took the app down. This asks the server for a
+ * batch at a time and stops once the collector is full, so memory stays at
+ * one batch however large the result. A cursor is a portal in the extended
+ * query protocol, which refuses a string holding several statements.
+ */
+async function collect(client: pg.PoolClient, sql: string, params: unknown[], max: number): Promise<Rows> {
+  const cursor = client.query(new Cursor(sql, params));
+  const out = new Collector(max);
+  let result: pg.QueryResult | undefined;
+  for (;;) {
+    const want = Math.min(FETCH_ROWS, max + 1 - out.rows.length);
+    const batch = await readBatch(cursor, want);
+    result = batch.result;
+    if (!batch.rows.every((row) => out.add(row)) || batch.rows.length < want) break;
+  }
+  // A no-op when the portal ran to the end; otherwise it closes it, and the
+  // server stops producing rows.
+  await cursor.close();
+  const columns = (result?.fields ?? []).map((f) => f.name);
+  // For a statement that returns rows, the server's count covers only the
+  // last batch fetched, so count them here.
+  return { columns, rows: out.rows, rowCount: columns.length > 0 ? out.rows.length : (result?.rowCount ?? 0), truncated: out.truncated };
+}
+
 /**
  * One statement per call. Every query goes through the extended query
  * protocol, which refuses a string holding several statements, so
@@ -150,17 +210,14 @@ export async function closeForTests(): Promise<void> {
  * That's a guard in this app, not in the database: for a guarantee, give
  * DATABASE_URL a role that can only read.
  */
-async function run(sql: string, params: unknown[]): Promise<pg.QueryResult> {
+async function run(sql: string, params: unknown[], max = MAX_ROWS): Promise<Rows> {
   const { pool, mode } = await connection();
   const client = await pool.connect();
   try {
-    // queryMode "extended": node-postgres otherwise sends a query with no
-    // parameters by the simple protocol, which runs every statement in the
-    // string.
-    if (mode === "read-write") return await client.query({ text: sql, values: params, queryMode: "extended" } as pg.QueryConfig);
+    if (mode === "read-write") return await collect(client, sql, params, max);
     await client.query("BEGIN READ ONLY");
     try {
-      return await client.query({ text: sql, values: params, queryMode: "extended" } as pg.QueryConfig);
+      return await collect(client, sql, params, max);
     } finally {
       await client.query("ROLLBACK").catch(() => {});
     }
@@ -181,9 +238,8 @@ export default defineApp((app) => {
     output: z.object({ columns: z.array(z.string()), rows: z.array(z.record(z.string(), z.any())), row_count: z.number(), truncated: z.boolean() }),
     handler: async ({ sql, params }) => {
       if (!sql.trim()) throw new Error("sql is empty");
-      const result = await run(sql, params);
-      const { rows, truncated } = shapeRows(result.rows ?? []);
-      return { columns: (result.fields ?? []).map((f) => f.name), rows, row_count: result.rowCount ?? rows.length, truncated };
+      const { columns, rows, rowCount, truncated } = await run(sql, params);
+      return { columns, rows, row_count: rowCount, truncated };
     },
   });
 
@@ -199,6 +255,7 @@ export default defineApp((app) => {
              OR table_schema = $1
           ORDER BY 1, 2 LIMIT 1000`,
         [schema],
+        1000,
       );
       return { tables: result.rows as { schema: string; name: string; type: string }[] };
     },
