@@ -1,7 +1,7 @@
 import { defineApp, type ContextBusClient } from "@berthos/sdk";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
-import { mkdir, open, readFile, rename, unlink } from "node:fs/promises";
+import { mkdir, open, readFile, rename, stat, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 interface Note {
@@ -19,6 +19,10 @@ function workspaceRoot(): string {
 
 function notesPath(): string {
   return join(workspaceRoot(), "notes.json");
+}
+
+function lockPath(): string {
+  return `${notesPath()}.lock`;
 }
 
 // Only a missing file means "no notes yet". A file that fails to parse is
@@ -74,14 +78,67 @@ async function syncDir(dir: string): Promise<void> {
   }
 }
 
+// A lock older than this is taken to be left behind by a process that died
+// while holding it. An update holds the lock for one read and one small
+// write, so a live holder is never anywhere near this old.
+const STALE_LOCK_MS = 10_000;
+// How long to wait for another process's update before failing the call.
+const LOCK_TIMEOUT_MS = 15_000;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Cross-process lock on notes.json: a lock file created with O_EXCL beside it.
+// Under `berth dev` several containers can share one workspace directory
+// (packages/cli/src/util/workspace.ts), so an in-process queue alone doesn't
+// keep two instances of this app from interleaving their read-modify-write.
+// O_EXCL is atomic on a local filesystem and on the bind mount the containers
+// share. A lock whose mtime is older than STALE_LOCK_MS is broken, so a crash
+// mid-update can't wedge every later call; it's re-checked just before the
+// unlink so a lock another process has only just re-taken is left alone.
+async function withFileLock<T>(fn: () => Promise<T>): Promise<T> {
+  await mkdir(workspaceRoot(), { recursive: true });
+  const path = lockPath();
+  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+  let delay = 5;
+  for (;;) {
+    try {
+      const handle = await open(path, "wx");
+      await handle.writeFile(`${process.pid}\n`, "utf-8").finally(() => handle.close());
+      break;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+    }
+    const held = await stat(path).catch(() => undefined);
+    if (held && Date.now() - held.mtimeMs > STALE_LOCK_MS) {
+      const again = await stat(path).catch(() => undefined);
+      if (again && again.ino === held.ino && again.mtimeMs === held.mtimeMs) {
+        await unlink(path).catch(() => {});
+      }
+      continue;
+    }
+    if (Date.now() > deadline) {
+      throw new Error(`notes: timed out waiting for ${path}; another process is updating the notes`);
+    }
+    await sleep(delay + Math.random() * delay);
+    delay = Math.min(delay * 2, 100);
+  }
+  try {
+    return await fn();
+  } finally {
+    await unlink(path).catch(() => {});
+  }
+}
+
 // Agents call tools in parallel (LangChain runs a turn's tool calls
 // concurrently), and add_note/complete_note are read-modify-write. Without
-// this, two overlapping calls both read the same list and the second write
-// drops the first call's note, though both were acknowledged. The app is one
-// process, so a promise chain is enough to put the updates in line.
+// ordering, two overlapping calls both read the same list and the second write
+// drops the first call's note, though both were acknowledged. Updates from
+// this process are queued on a promise chain, and each one also takes the
+// lock file above so updates from other processes sharing the workspace are
+// put in line too.
 let updates: Promise<unknown> = Promise.resolve();
 function updateNotes<T>(fn: (notes: Note[]) => Promise<T> | T): Promise<T> {
-  const result = updates.then(async () => fn(await readNotes()));
+  const result = updates.then(() => withFileLock(async () => fn(await readNotes())));
   updates = result.catch(() => {});
   return result;
 }
