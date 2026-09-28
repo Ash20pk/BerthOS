@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync } from "node:fs";
+import { appendFileSync, chmodSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { acquireFileLock, type FileLockOptions, type HeldLock } from "./file-lock.js";
 import { redact, type RedactOptions } from "./redact.js";
 import type { AuditEvent, AuditRecord, AuditSink } from "./types.js";
 
@@ -41,37 +42,66 @@ export interface FileAuditSinkOptions {
   maxBytes?: number;
   /** How many rotated files to keep (`<path>.1` … `<path>.<n>`). Default 5. Older ones are deleted. */
   maxFiles?: number;
+  /** How long a write waits for, and when it breaks, another writer's lock on `<path>.lock`. */
+  lock?: FileLockOptions;
 }
 
 const DEFAULT_MAX_BYTES = 16 * 1024 * 1024;
 const DEFAULT_MAX_FILES = 5;
 
-/** Reads the last record's hash out of an existing file so a restart continues the chain instead of starting a new one. */
-function resumeChain(path: string): { hash: string; seq: number } {
-  if (!existsSync(path)) return { hash: CHAIN_GENESIS, seq: 0 };
+interface ChainHead {
+  hash: string;
+  seq: number;
+}
+
+/**
+ * The newest record's hash and next seq in one file, or undefined when it
+ * holds no record. Reads backwards from the end in growing windows rather
+ * than the whole file: this runs before every write, against a file allowed
+ * to reach 16MB.
+ *
+ * A process killed mid-write leaves a line with no terminating newline.
+ * Appending straight onto it would splice the next record into the tail of
+ * the torn one and lose *both*, so the line is closed first: the torn
+ * fragment stays on disk (it is evidence), and the next record starts clean.
+ */
+function readHead(path: string): ChainHead | undefined {
+  if (!existsSync(path)) return undefined;
+  const fd = openSync(path, "r");
+  let size: number;
+  let tail = "";
   try {
-    const contents = readFileSync(path, "utf-8");
-    // A process killed mid-write leaves a line with no terminating newline.
-    // Appending straight onto it would splice our first record into the tail
-    // of the torn one and lose *both*, so close the line first: the torn
-    // fragment stays on disk (it is evidence), and the next record starts
-    // clean.
-    if (contents.length > 0 && !contents.endsWith("\n")) {
-      appendFileSync(path, "\n");
-    }
-    const lines = contents.split("\n").filter(Boolean);
-    for (let i = lines.length - 1; i >= 0; i--) {
-      try {
-        const parsed = JSON.parse(lines[i]!) as AuditRecord;
-        if (typeof parsed.hash === "string") return { hash: parsed.hash, seq: (parsed.seq ?? 0) + 1 };
-      } catch {
-        // A torn final line (killed mid-write) — keep walking backwards.
+    size = fstatSync(fd).size;
+    if (size === 0) return undefined;
+    let window = 64 * 1024;
+    for (;;) {
+      const start = Math.max(0, size - window);
+      const buffer = Buffer.alloc(size - start);
+      readSync(fd, buffer, 0, buffer.length, start);
+      tail = buffer.toString("utf-8");
+      const lines = tail.split("\n");
+      // The first line of a window that doesn't start at 0 may be cut.
+      const complete = start === 0 ? lines : lines.slice(1);
+      for (let i = complete.length - 1; i >= 0; i--) {
+        if (!complete[i]) continue;
+        try {
+          const parsed = JSON.parse(complete[i]!) as AuditRecord;
+          if (typeof parsed.hash === "string") {
+            if (!tail.endsWith("\n")) appendFileSync(path, "\n");
+            return { hash: parsed.hash, seq: (parsed.seq ?? 0) + 1 };
+          }
+        } catch {
+          // A torn line (killed mid-write) — keep walking backwards.
+        }
       }
+      if (start === 0) break;
+      window *= 4;
     }
-  } catch (err) {
-    console.error(`[berth-audit] WARNING: could not read ${path} to resume the hash chain (${err}) — starting a new chain`);
+  } finally {
+    closeSync(fd);
   }
-  return { hash: CHAIN_GENESIS, seq: 0 };
+  if (!tail.endsWith("\n")) appendFileSync(path, "\n");
+  return undefined;
 }
 
 /**
@@ -88,14 +118,36 @@ function resumeChain(path: string): { hash: string; seq: number } {
  * tamper-*evident* against anything less than a full rewrite, and it survives
  * rotation because the first record of a new file carries the last hash of
  * the old one. Use verifyAuditChain() to check one.
+ *
+ * Several processes may write the same file (two `berth mcp` sessions share
+ * ~/.berth/audit/audit.jsonl by default). Each write takes a lock on
+ * `<path>.lock` and reads the chain's head from the file itself, not from
+ * memory, before appending and rotating, so concurrent writers produce one
+ * chain rather than two interleaved ones that fail verification.
  */
 export function createFileAuditSink(options: FileAuditSinkOptions): AuditSink {
   const { path, capturePayloads = false, maxBytes = DEFAULT_MAX_BYTES, maxFiles = DEFAULT_MAX_FILES } = options;
   mkdirSync(dirname(path), { recursive: true });
 
-  const resumed = resumeChain(path);
-  let prevHash = resumed.hash;
-  let seq = resumed.seq;
+  const lockPath = `${path}.lock`;
+  // The head as this sink last wrote it, and the file it wrote it to. Reused
+  // only while the file is still exactly as it was left: any other writer's
+  // append (or rotation) changes its size or inode, and the head is re-read.
+  let cached: { head: ChainHead; ino: number; size: number } | undefined;
+
+  function currentHead(): ChainHead {
+    if (cached) {
+      try {
+        const now = statSync(path);
+        if (now.ino === cached.ino && now.size === cached.size) return cached.head;
+      } catch {
+        // Gone: re-read below.
+      }
+    }
+    // An empty or missing file right after a rotation continues the chain
+    // from the segment it rotated into.
+    return readHead(path) ?? readHead(`${path}.1`) ?? { hash: CHAIN_GENESIS, seq: 0 };
+  }
 
   function rotateIfNeeded(): void {
     let size = 0;
@@ -118,8 +170,11 @@ export function createFileAuditSink(options: FileAuditSinkOptions): AuditSink {
 
   return {
     async record(event) {
+      let lock: HeldLock | undefined;
       try {
-        const payload: AuditEvent = { ...event, seq: seq++ };
+        lock = acquireFileLock(lockPath, options.lock);
+        const head = currentHead();
+        const payload: AuditEvent = { ...event, seq: head.seq };
         if (capturePayloads) {
           if (payload.input !== undefined) payload.input = redact(payload.input, options.redact);
           if (payload.output !== undefined) payload.output = redact(payload.output, options.redact);
@@ -129,8 +184,8 @@ export function createFileAuditSink(options: FileAuditSinkOptions): AuditSink {
         }
         if (payload.meta !== undefined) payload.meta = redact(payload.meta, options.redact) as Record<string, unknown>;
 
-        const hash = hashRecord(prevHash, payload);
-        const record: AuditRecord = { ...payload, prevHash, hash };
+        const hash = hashRecord(head.hash, payload);
+        const record: AuditRecord = { ...payload, prevHash: head.hash, hash };
         rotateIfNeeded();
         appendFileSync(path, `${JSON.stringify(record)}\n`, { mode: 0o600 });
         // appendFileSync's `mode` only applies when it creates the file, and
@@ -142,10 +197,14 @@ export function createFileAuditSink(options: FileAuditSinkOptions): AuditSink {
         } catch {
           // Best effort — a mode we couldn't tighten is not worth losing the record over.
         }
-        prevHash = hash;
+        const written = statSync(path);
+        cached = { head: { hash, seq: head.seq + 1 }, ino: written.ino, size: written.size };
       } catch (err) {
+        cached = undefined;
         // Never let auditing fail the thing being audited.
         console.error(`[berth-audit] WARNING: could not write audit record (${err})`);
+      } finally {
+        lock?.release();
       }
     },
   };

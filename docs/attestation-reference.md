@@ -21,6 +21,8 @@ Where the boot evidence comes from:
 | Neither, and the run recorded its boot (`berth mcp` does) | The evidence recorded with the run, from the boot the run actually happened in. |
 | Neither, and it didn't | Read now from the one `berth os up` instance. |
 
+Recorded evidence is bound to the session that recorded it. A run id reused with `--run-id` across sessions that ran in different boots can't be attested from its records, because an attestation names one boot: `berth attest` refuses it, as it does a run where some session's calls have no recorded boot. Sessions that attached to the same running sandbox share its boot and attest together.
+
 ```
 berth attest <runId> [--os <name>] [--container <name>] [--image <tag>]
                      [--file <audit.jsonl>] [--out <path>]
