@@ -2,10 +2,10 @@ import Docker from "dockerode";
 import tarFs from "tar-fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdtemp, cp, rm, readFile, writeFile, mkdir, chmod } from "node:fs/promises";
+import { mkdtemp, cp, rm, readFile, writeFile, mkdir, chmod, readdir, readlink, realpath } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
+import { join, dirname, basename, resolve as resolvePath, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadManifest } from "@berthos/manifest-schema";
 
@@ -118,6 +118,54 @@ function excludedFromBuildContext(appDir: string, src: string): boolean {
 }
 
 /**
+ * Makes a deployed tree identical from one build to the next, and correct
+ * inside the image. `pnpm deploy` writes its own (random, temporary) target
+ * path into the `.bin` shims' NODE_PATH and into `.modules.yaml`, so the
+ * staged app never matched the previous build's and its `COPY` layer missed
+ * the build cache every time: a new ~160 MB layer per boot of an unchanged
+ * app. Those paths don't exist inside the container either.
+ *
+ *  - the target path in `.bin` shims becomes the app's path in the image;
+ *  - `.modules.yaml` (pnpm's install bookkeeping, unread at runtime) goes;
+ *  - symlinks that point outside the staged tree go. They were relative
+ *    links back into the builder's checkout (the app's own workspace entry,
+ *    a pnpm override's target), dangling in the image and naming the
+ *    builder's home directory.
+ */
+export async function makeDeployReproducible(stagingDir: string, containerAppRoot: string): Promise<void> {
+  const root = await realpath(stagingDir);
+  // Longest first: the real path (/private/tmp/…) contains the one it was
+  // given (/tmp/…) on macOS, and replacing the shorter one first leaves
+  // "/private" behind.
+  const spellings = [...new Set([stagingDir, root])].sort((x, y) => y.length - x.length);
+  const walk = async (dir: string): Promise<void> => {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isSymbolicLink()) {
+        const target = resolvePath(dirname(path), await readlink(path));
+        if (target !== root && !target.startsWith(root + sep)) await rm(path);
+        continue;
+      }
+      if (entry.isDirectory()) {
+        await walk(path);
+        continue;
+      }
+      if (entry.name === ".modules.yaml" && dir.endsWith("node_modules")) {
+        await rm(path);
+        continue;
+      }
+      if (basename(dir) === ".bin") {
+        const text = await readFile(path, "utf-8");
+        let rewritten = text;
+        for (const spelling of spellings) rewritten = rewritten.split(spelling).join(containerAppRoot);
+        if (rewritten !== text) await writeFile(path, rewritten);
+      }
+    }
+  };
+  await walk(root);
+}
+
+/**
  * Materializes a real (non-symlinked-outside) node_modules for the
  * production image. A dev image relies on a bind mount plus the host's own
  * pnpm-managed node_modules, so it never needs this — but a production image
@@ -128,7 +176,7 @@ function excludedFromBuildContext(appDir: string, src: string): boolean {
  * member — every dependency copied for real, nothing outside the target
  * directory. Standalone (non-workspace) apps just get a normal prod install.
  */
-async function stageProductionSource(appDir: string, stagingDir: string): Promise<void> {
+async function stageProductionSource(appDir: string, stagingDir: string, containerAppRoot: string): Promise<void> {
   const workspaceRoot = workspaceRootAbove(appDir);
 
   if (workspaceRoot) {
@@ -136,6 +184,7 @@ async function stageProductionSource(appDir: string, stagingDir: string): Promis
     await execFileAsync("pnpm", ["--filter", pkgJson.name, "deploy", "--prod", "--legacy", stagingDir], {
       cwd: workspaceRoot,
     });
+    await makeDeployReproducible(stagingDir, containerAppRoot);
     return;
   }
 
@@ -273,6 +322,27 @@ async function stageDevOnInstallContext(options: BuildImageOptions, stagingDir: 
 }
 
 /**
+ * Removes a built image's tag without pruning its parent layers.
+ *
+ * A plain `docker rmi` also deletes every untagged parent the image had, and
+ * with the classic builder those parents are the build cache. Removing a
+ * Computer's image on stop() therefore threw away the cached base layers, so
+ * the next boot re-ran the base image's `apk add` (Chromium, Python, tmux…):
+ * every boot of an unchanged app took over a minute, failed whenever the
+ * Alpine mirror did, and left the multi-stage builder images behind as new
+ * dangling images each time. Keeping the parents costs nothing extra: the
+ * next build of the same apps reuses them instead of recreating them.
+ */
+export async function removeImageKeepingCache(docker: Docker, tag: string): Promise<void> {
+  await docker
+    .getImage(tag)
+    .remove({ noprune: true })
+    .catch(() => {
+      /* already gone, or never fully built */
+    });
+}
+
+/**
  * Builds the Alpine "OS stand-in" image for a resident app. The shared
  * base.Dockerfile (Chromium/Xvfb/x11vnc/tini) lives in this package, not the
  * app's own directory, so we stage a temp build context that combines the
@@ -294,14 +364,14 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
       // simply ignored there.
       if ((options.companions && options.companions.length > 0) || options.forceCompanionLayout) {
         if (!options.appName) throw new Error("buildImage: appName is required when companions is non-empty or forceCompanionLayout is set");
-        await stageProductionSource(options.appDir, join(stagingDir, "apps", options.appName));
+        await stageProductionSource(options.appDir, join(stagingDir, "apps", options.appName), `/app/apps/${options.appName}`);
         await stageOnInstallScript(options.appDir, join(stagingDir, "apps", options.appName));
         for (const companion of options.companions ?? []) {
-          await stageProductionSource(companion.appDir, join(stagingDir, "apps", companion.name));
+          await stageProductionSource(companion.appDir, join(stagingDir, "apps", companion.name), `/app/apps/${companion.name}`);
           await stageOnInstallScript(companion.appDir, join(stagingDir, "apps", companion.name));
         }
       } else {
-        await stageProductionSource(options.appDir, stagingDir);
+        await stageProductionSource(options.appDir, stagingDir, "/app");
         await stageOnInstallScript(options.appDir, stagingDir);
       }
       // Empty, but present: see ensureOnInstallContext()'s note on the
