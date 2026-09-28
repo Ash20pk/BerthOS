@@ -166,6 +166,12 @@ configureEgressProxy(); // once, at module load
 
 Routes your process's `fetch()` traffic through the sandbox's egress proxy, which allows only the hosts your `network:host:` or `browser:navigate:` capabilities name. Does nothing when your app declares neither, so it's safe to call unconditionally. When it does act, it also replaces the global `fetch`, `Headers`, `Request`, `Response` and `FormData` with undici's, so that `fetch()` and the proxy run on the same HTTP client. You also need `network:connect:8090` for the proxy's port. See the [egress proxy reference](./egress-broker-reference.md).
 
+A few consequences of that swap:
+
+- A `Request` built from the built-in class before the call (or by a library that kept a reference to it) is still accepted: `fetch()` rebuilds it as an undici `Request` with the same URL, method, headers, body and signal.
+- Compressed responses (`gzip`, `deflate`, `br`) are decoded for you, and `content-encoding` is kept on the response. `content-length`, when the server sends it, is the size of the compressed body as it came over the wire, not of what `res.text()` returns; don't use it to size a buffer.
+- Decoding has no size limit. A small compressed body can expand to far more memory than its `content-length` suggests, so when you fetch from a host you don't control, read the body as a stream (`res.body`) and stop past a limit of your own instead of calling `res.text()` or `res.arrayBuffer()`.
+
 ## `defineConnectorApp(config)`: a resident app from a declarative REST API description
 
 For an app that is only "call this REST endpoint with these parameters", describe the API instead of writing handlers. Each operation becomes an export.
