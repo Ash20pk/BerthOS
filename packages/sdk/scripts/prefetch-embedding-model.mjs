@@ -9,9 +9,31 @@
 // skipped, rather than silently reaching out to the Hub from inside a
 // sandbox).
 import { dirname, join } from "node:path";
+import { existsSync } from "node:fs";
+import { register } from "node:module";
 import { fileURLToPath } from "node:url";
 
 const MODEL_CACHE_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "models");
+
+// The published package already carries the model, so an npm install has
+// nothing to fetch.
+const MODEL_FILE = join(MODEL_CACHE_DIR, "Xenova", "all-MiniLM-L6-v2", "onnx", "model_quantized.onnx");
+if (existsSync(MODEL_FILE)) {
+  console.log(`[prefetch-embedding-model] model already present in ${MODEL_CACHE_DIR}`);
+  process.exit(0);
+}
+
+// @xenova/transformers won't load without sharp, whose native build isn't
+// available here. The SDK answers `import "sharp"` with a stub at runtime
+// (src/semantic-fs/sharp-hook.ts); this runs during install, before dist/
+// exists, so it registers the same hook inline.
+const SHARP_STUB = "data:text/javascript,export default function sharp() { throw new Error('sharp is stubbed out'); }";
+register(
+  "data:text/javascript," +
+    encodeURIComponent(
+      `export async function resolve(specifier, context, next) { return specifier === "sharp" ? { url: ${JSON.stringify(SHARP_STUB)}, shortCircuit: true } : next(specifier, context); }`,
+    ),
+);
 
 try {
   const { pipeline, env } = await import("@xenova/transformers");
