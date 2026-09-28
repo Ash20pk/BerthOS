@@ -6,7 +6,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import mysql from "mysql2/promise";
-import { cell, modeFrom, routeFor, shapeRows, targetOf } from "./index.js";
+import { cell, configOf, modeFrom, routeFor, shapeRows, targetOf } from "./index.js";
 import { ProxyTunnel } from "./tunnel.js";
 
 // --- pure: no database needed ------------------------------------------------
@@ -18,6 +18,19 @@ test("targetOf reads host, port, database and user, and never the password", () 
   assert.equal(targetOf("mysql://u@h/").port, 3306);
   assert.throws(() => targetOf("postgres://u@h/db"), /should start with mysql:\/\//);
   assert.throws(() => targetOf("not a url"), /isn't a valid URL/);
+});
+
+test("configOf builds the settings from the URL's parts, reading only its TLS options", () => {
+  const { config, ignored } = configOf("mysql://app%40corp:p%40ss@db.example.com:3307/sales?multipleStatements=true&ssl=true&flags=-FOUND_ROWS");
+  assert.deepEqual(config, { host: "db.example.com", port: 3307, user: "app@corp", password: "p@ss", database: "sales", ssl: { rejectUnauthorized: true } });
+  assert.ok(!("multipleStatements" in config));
+  assert.deepEqual(ignored, ["multipleStatements", "flags"]);
+  assert.equal(configOf("mysql://u:p@h/db").config.ssl, undefined, "no TLS unless asked");
+  assert.deepEqual(configOf("mysql://u:p@h/db?sslmode=REQUIRED").config.ssl, { rejectUnauthorized: true });
+  assert.equal(configOf("mysql://u:p@h/db?sslmode=disabled").config.ssl, undefined);
+  assert.deepEqual(configOf('mysql://u:p@h/db?ssl={"rejectUnauthorized":false}').config.ssl, { rejectUnauthorized: false });
+  assert.equal(configOf("mysql://u:p@h/").config.database, undefined);
+  assert.throws(() => configOf("mysql://u:p@h/db?ssl=maybe"), /ssl=maybe isn't understood/);
 });
 
 test("routeFor goes through the proxy for a declared public host, direct for a declared port, and refuses otherwise", () => {
@@ -143,6 +156,13 @@ live("read-only mode refuses DDL too, and can't be switched off by a statement",
   await assert.rejects(call("query", { sql: "DROP TABLE customers", params: [] }), /read-only/);
   await call("query", { sql: "SET SESSION transaction_read_only = OFF", params: [] });
   await assert.rejects(call("query", { sql: "DROP TABLE customers", params: [] }), /read-only/);
+  assert.equal(Number((await call("query", { sql: "SELECT count(*) AS n FROM customers", params: [] })).rows[0].n), 3);
+});
+
+live("multipleStatements=true in DATABASE_URL doesn't turn multi-statement strings back on", async () => {
+  const port = new URL(TEST_URL!).port;
+  const call = await appWith({ DATABASE_URL: `${urlAs("app")}?multipleStatements=true`, MYSQL_MODE: "read-write" }, [`network:connect:${port}`]);
+  await assert.rejects(call("query", { sql: "SELECT 1; DELETE FROM customers", params: [] }), /one statement per query/);
   assert.equal(Number((await call("query", { sql: "SELECT count(*) AS n FROM customers", params: [] })).rows[0].n), 3);
 });
 

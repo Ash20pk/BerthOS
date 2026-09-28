@@ -27,7 +27,7 @@ The egress proxy never connects to an internal address, which is why a private d
 ## Read-only, and how far that goes
 
 - **Default: read-only.** Every statement runs with the session set read-only and inside `START TRANSACTION READ ONLY … ROLLBACK`, so `INSERT`, `UPDATE`, `DELETE` and DDL (`CREATE`, `DROP`, `ALTER`) are all refused. Both are needed: MySQL commits DDL implicitly, outside any transaction, so the transaction alone doesn't stop a `DROP TABLE`. The session setting is reapplied on every call, so a statement that turns it off doesn't carry over. Set `MYSQL_MODE=read-write` in the sandbox's environment to allow changes.
-- **One statement per call, in both modes.** Multi-statement support is off, so the server refuses `SELECT 1; DROP TABLE x`.
+- **One statement per call, in both modes.** Multi-statement support is off, so the server refuses `SELECT 1; DROP TABLE x`. The connection settings are built from `DATABASE_URL`'s host, port, user, password and database, not handed to the driver whole, so an option in the URL such as `?multipleStatements=true` can't turn it back on: the only options read are `ssl` and `sslmode` (below), and any others are ignored, with a warning on stderr.
 - **This is a guard in the connector, not in the database.** For a real guarantee, give `DATABASE_URL` a user with only `SELECT` on what the agent should see: the database then refuses everything else, whatever the mode.
 
 ## Exports

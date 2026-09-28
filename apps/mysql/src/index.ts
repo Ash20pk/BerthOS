@@ -32,6 +32,50 @@ export function targetOf(connectionString: string): Target {
   return { host: url.hostname, port: Number(url.port) || 3306, database: decodeURIComponent(url.pathname.slice(1)), user: decodeURIComponent(url.username) };
 }
 
+export interface Config {
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+  database: string | undefined;
+  ssl: { rejectUnauthorized: boolean } | undefined;
+}
+
+/**
+ * The connection settings, built from DATABASE_URL's parts rather than handed
+ * to mysql2 as a uri: mysql2 applies every query option of the URL over the
+ * config, so `?multipleStatements=true` turned multi-statement strings back
+ * on. The only options read are the TLS ones; the rest are returned as
+ * ignored.
+ */
+export function configOf(connectionString: string): { config: Config; ignored: string[] } {
+  const target = targetOf(connectionString);
+  const url = new URL(connectionString);
+  let ssl: Config["ssl"];
+  const ignored: string[] = [];
+  for (const [key, value] of url.searchParams) {
+    if (key === "ssl") ssl = sslFrom(value);
+    else if (key === "sslmode" || key === "ssl-mode") ssl = /^disabled?$/i.test(value) ? undefined : { rejectUnauthorized: true };
+    else ignored.push(key);
+  }
+  return {
+    config: { host: target.host, port: target.port, user: target.user, password: decodeURIComponent(url.password), database: target.database || undefined, ssl },
+    ignored,
+  };
+}
+
+/** `ssl=true`, or mysql2's JSON form, of which only rejectUnauthorized is read. */
+function sslFrom(value: string): Config["ssl"] {
+  if (value === "true" || value === "1") return { rejectUnauthorized: true };
+  if (value === "false" || value === "0" || value === "") return undefined;
+  try {
+    const parsed = JSON.parse(value) as { rejectUnauthorized?: unknown };
+    return { rejectUnauthorized: parsed.rejectUnauthorized !== false };
+  } catch {
+    throw new Error(`DATABASE_URL's ssl=${value} isn't understood: use ssl=true (or sslmode=required), which verifies the server's certificate`);
+  }
+}
+
 /** Addresses the egress proxy never tunnels to, whatever berth.yml says. */
 export function isInternal(host: string): boolean {
   if (host === "localhost" || host === "host.docker.internal") return true;
@@ -115,8 +159,10 @@ async function open(): Promise<Connection> {
   const manifest = await loadManifest(process.env.BERTH_MANIFEST_PATH ?? "berth.yml");
   const route = routeFor(target, manifest.capabilities, process.env.BERTH_EGRESS_PROXY_URL);
   const mode = modeFrom(process.env);
+  const { config, ignored } = configOf(connectionString);
+  if (ignored.length > 0) console.error(`[mysql] DATABASE_URL options ignored: ${ignored.join(", ")} (only ssl and sslmode are read)`);
   const pool = mysql.createPool({
-    uri: connectionString,
+    ...config,
     connectionLimit: 2,
     connectTimeout: 15_000,
     // Off, so the server refuses a string holding more than one statement.
