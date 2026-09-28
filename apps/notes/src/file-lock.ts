@@ -20,12 +20,24 @@ export async function withFileLock<T>(path: string, fn: () => Promise<T>): Promi
   const deadline = Date.now() + LOCK_TIMEOUT_MS;
   let delay = 5;
   for (;;) {
+    let handle;
     try {
-      const handle = await open(path, "wx");
-      await handle.writeFile(`${process.pid}\n`, "utf-8").finally(() => handle.close());
-      break;
+      handle = await open(path, "wx");
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+    }
+    if (handle) {
+      try {
+        await handle.writeFile(`${process.pid}\n`, "utf-8");
+      } catch (err) {
+        // A lock nobody can tell the owner of (a full disk, say) would stall
+        // every later call until it aged out; this one is ours, so it goes now.
+        await handle.close().catch(() => {});
+        await unlink(path).catch(() => {});
+        throw err;
+      }
+      await handle.close();
+      break;
     }
     const held = await stat(path).catch(() => undefined);
     if (held && Date.now() - held.mtimeMs > STALE_LOCK_MS) {
