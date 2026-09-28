@@ -1,8 +1,8 @@
 import { defineApp, type ContextBusClient } from "@berthos/sdk";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, open, readFile, rename, unlink } from "node:fs/promises";
+import { dirname, join } from "node:path";
 
 interface Note {
   id: string;
@@ -36,12 +36,42 @@ async function readNotes(): Promise<Note[]> {
 }
 
 // Written to a temp file and renamed into place, so a reader never sees a
-// half-written notes.json.
+// half-written notes.json. The temp file is fsynced before the rename: without
+// that, a power loss can leave the rename on disk but not the data, i.e. an
+// empty notes.json, and readNotes() refuses to parse that rather than guess.
+// The directory is synced too so the rename itself is durable; that part is
+// best-effort, since not every filesystem lets a directory be fsynced.
 async function writeNotes(notes: Note[]): Promise<void> {
   await mkdir(workspaceRoot(), { recursive: true });
   const tmp = `${notesPath()}.${randomUUID()}.tmp`;
-  await writeFile(tmp, JSON.stringify(notes, null, 2), "utf-8");
-  await rename(tmp, notesPath());
+  try {
+    const file = await open(tmp, "wx");
+    try {
+      await file.writeFile(JSON.stringify(notes, null, 2), "utf-8");
+      await file.sync();
+    } finally {
+      await file.close();
+    }
+    await rename(tmp, notesPath());
+  } catch (err) {
+    // Don't leave a stray temp file behind for every failed write.
+    await unlink(tmp).catch(() => {});
+    throw err;
+  }
+  await syncDir(dirname(notesPath()));
+}
+
+async function syncDir(dir: string): Promise<void> {
+  try {
+    const handle = await open(dir, "r");
+    try {
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    // best-effort: some platforms/filesystems reject fsync on a directory
+  }
 }
 
 // Agents call tools in parallel (LangChain runs a turn's tool calls

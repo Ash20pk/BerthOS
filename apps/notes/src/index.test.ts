@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import app from "./index.js";
@@ -71,6 +71,8 @@ test("concurrent add_note calls keep every note", async () => {
 
     assert.equal(notes.length, 25);
     assert.deepEqual(new Set(notes.map((n) => n.id)), new Set(results.map((r) => r.id)));
+    // every write renamed its temp file into place; none are left lying around
+    assert.deepEqual(await readdir(process.env.BERTH_WORKSPACE_ROOT!), ["notes.json"]);
   });
 });
 
