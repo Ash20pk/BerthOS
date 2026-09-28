@@ -176,6 +176,7 @@ live("query, list_tables and describe_table against a real database", async () =
   assert.deepEqual(res.rows, [{ name: "Ada", plan: "pro" }, { name: "Linus", plan: "pro" }]);
   assert.ok((await call("list_tables", { schema: "" })).tables.some((t: any) => t.name === "customers"));
   assert.deepEqual((await call("describe_table", { table: "customers" })).columns.map((c: any) => c.name), ["id", "name", "signed_up", "plan"]);
+  await assert.rejects(call("describe_table", { table: "a.b.c" }), /table or database\.table/);
   const info = await call("connection_info");
   assert.deepEqual({ mode: info.mode, route: info.route, user: info.user }, { mode: "read-only", route: "direct", user: "app" });
 });

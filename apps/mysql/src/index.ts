@@ -492,7 +492,9 @@ export default defineApp((app) => {
     input: z.object({ table: z.string() }),
     output: z.object({ columns: z.array(z.object({ name: z.string(), type: z.string(), nullable: z.boolean(), default: z.string().nullable() })) }),
     handler: async ({ table }) => {
-      const [schema, name] = table.includes(".") ? (table.split(".", 2) as [string, string]) : ["", table];
+      const parts = table.split(".");
+      if (parts.length > 2 || parts.some((p) => !p)) throw new Error(`${table}: name a table as table or database.table`);
+      const [schema, name] = parts.length === 2 ? (parts as [string, string]) : ["", table];
       if (!schema) await requireDefaultDatabase(`describe_table of a bare ${table}`);
       const result = await run(
         `SELECT COLUMN_NAME AS name, COLUMN_TYPE AS type, IS_NULLABLE = 'YES' AS nullable, COLUMN_DEFAULT AS \`default\`
