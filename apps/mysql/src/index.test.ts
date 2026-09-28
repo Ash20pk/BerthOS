@@ -177,6 +177,8 @@ live("query, list_tables and describe_table against a real database", async () =
   assert.ok((await call("list_tables", { schema: "" })).tables.some((t: any) => t.name === "customers"));
   assert.deepEqual((await call("describe_table", { table: "customers" })).columns.map((c: any) => c.name), ["id", "name", "signed_up", "plan"]);
   await assert.rejects(call("describe_table", { table: "a.b.c" }), /table or database\.table/);
+  // Placeholders are filled by the driver: ?? is an identifier, and a ? in a string is left alone.
+  assert.deepEqual((await call("query", { sql: "SELECT '?' AS q, ?? AS n FROM customers WHERE id = ?", params: ["name", 1] })).rows, [{ q: "?", n: "Ada" }]);
   const info = await call("connection_info");
   assert.deepEqual({ mode: info.mode, route: info.route, user: info.user }, { mode: "read-only", route: "direct", user: "app" });
 });

@@ -53,7 +53,7 @@ That verifies the server's certificate against the system's trusted CAs, and its
 
 | Export | Input | Output |
 |---|---|---|
-| `query` | `{ sql, params }` | `{ columns, rows, row_count, truncated }`. `params` fills `?` placeholders in order; pass `[]` for none |
+| `query` | `{ sql, params }` | `{ columns, rows, row_count, truncated }`. `params` fills `?` placeholders in order; pass `[]` for none. The driver escapes each value and writes it into the SQL before sending it (client side, not a server-side prepared statement): a `?` is a value, `??` an identifier, an array becomes a comma-separated list, and a `?` inside a quoted string is left alone |
 | `list_tables` | `{ schema }` | `{ tables: [{ schema, name, type }] }`. `""` means the URL's database (an error if the URL names none) |
 | `describe_table` | `{ table }` | `{ columns: [{ name, type, nullable, default }] }`. `table` or `database.table` |
 | `connection_info` | | `{ host, port, database, user, mode, route }`, never the password |
