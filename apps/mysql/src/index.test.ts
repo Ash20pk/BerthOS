@@ -6,7 +6,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import mysql from "mysql2/promise";
-import { allowsPrivileged, cell, Collector, configOf, modeFrom, privilegeProblem, riskyPrivileges, routeFor, shapeRows, targetOf } from "./index.js";
+import { allowsPrivileged, cell, Collector, configOf, modeFrom, privilegeProblem, riskyPrivileges, rolesIn, routeFor, shapeRows, targetOf } from "./index.js";
 import { ProxyTunnel } from "./tunnel.js";
 
 // --- pure: no database needed ------------------------------------------------
@@ -61,6 +61,9 @@ test("the risky global privileges are picked out of SHOW GRANTS, with what they 
   assert.deepEqual(riskyPrivileges(["GRANT BINLOG ADMIN ON *.* TO `m`@`%`"]), ["BINLOG ADMIN"], "MariaDB spells them with spaces");
   // Everything on one database, and nothing global but USAGE: fine.
   assert.deepEqual(riskyPrivileges(["GRANT USAGE ON *.* TO `app`@`%`", "GRANT ALL PRIVILEGES ON `shop`.* TO `app`@`%`", "GRANT `analyst`@`%` TO `app`@`%`"]), []);
+  assert.deepEqual(rolesIn("GRANT `analyst`@`%`,`ops`@`%` TO `app`@`%`"), ["`analyst`@`%`", "`ops`@`%`"]);
+  assert.deepEqual(rolesIn("GRANT `inner_r` TO `outer_r`"), ["`inner_r`"], "MariaDB's roles have no host");
+  assert.deepEqual(rolesIn("GRANT SELECT ON `shop`.* TO `app`@`%`"), []);
   assert.equal(privilegeProblem("app", []), undefined);
   assert.match(privilegeProblem("root", ["FILE", "SUPER"])!, /root has global privileges \(FILE, SUPER\).*INTO OUTFILE.*MYSQL_ALLOW_PRIVILEGED=true/s);
   assert.equal(allowsPrivileged({}), false);
@@ -346,11 +349,25 @@ live("read-only mode refuses an administrator, which could still write files or 
     await db.query("GRANT SELECT ON customers TO 'sneaky'@'%'");
     await db.query("GRANT 'tuner' TO 'sneaky'@'%'");
     await db.query(maria ? "SET DEFAULT ROLE tuner FOR 'sneaky'@'%'" : "SET DEFAULT ROLE ALL TO 'sneaky'@'%'");
+    // Three roles deep, none of them a default: the privilege is on the last.
+    for (const role of ["deep_1", "deep_2", "deep_3"]) await db.query(`CREATE ROLE IF NOT EXISTS '${role}'`);
+    await db.query("GRANT RELOAD ON *.* TO 'deep_3'");
+    await db.query("GRANT 'deep_3' TO 'deep_2'");
+    await db.query("GRANT 'deep_2' TO 'deep_1'");
+    await db.query("CREATE USER IF NOT EXISTS 'nested'@'%' IDENTIFIED BY 'nested'");
+    await db.query("GRANT SELECT ON customers TO 'nested'@'%'");
+    await db.query("GRANT 'deep_1' TO 'nested'@'%'");
   });
   const filer = await appWith({ DATABASE_URL: urlAs("filer") }, [`network:connect:${port}`]);
   await assert.rejects(filer("query", { sql: "SELECT 1", params: [] }), /filer has global privileges \(FILE\)/);
   const sneaky = await appWith({ DATABASE_URL: urlAs("sneaky") }, [`network:connect:${port}`]);
   await assert.rejects(sneaky("query", { sql: "SELECT 1", params: [] }), new RegExp(`sneaky has global privileges \\(${tunerPrivilege}\\)`));
+  const nested = await appWith({ DATABASE_URL: urlAs("nested") }, [`network:connect:${port}`]);
+  await assert.rejects(nested("query", { sql: "SELECT 1", params: [] }), /nested has global privileges \(RELOAD\)/);
+  // The check set a role on the connection it used (MariaDB), and a reset
+  // doesn't undo that: a user allowed through gets a connection without it.
+  const nestedAllowed = await appWith({ DATABASE_URL: urlAs("nested"), MYSQL_ALLOW_PRIVILEGED: "true" }, [`network:connect:${port}`]);
+  assert.equal((await nestedAllowed("query", { sql: "SELECT CURRENT_ROLE() AS r", params: [] })).rows[0].r, maria ? null : "NONE");
 
   const allowed = await appWith({ DATABASE_URL: TEST_URL, MYSQL_ALLOW_PRIVILEGED: "true" }, [`network:connect:${port}`]);
   assert.equal(Number((await allowed("query", { sql: "SELECT count(*) AS n FROM customers", params: [] })).rows[0].n), 3);

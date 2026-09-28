@@ -143,21 +143,47 @@ export function privilegeProblem(user: string, risky: string[]): string | undefi
   return `DATABASE_URL's user ${user} has global privileges (${shown}) that read-only mode can't hold back: it can still write files on the database server with SELECT … INTO OUTFILE, change server settings with SET GLOBAL or SET PERSIST, FLUSH, KILL other sessions or purge the binary logs, none of which a read-only transaction stops. Give DATABASE_URL a user that can only read what the agent should see, or, to accept that, set MYSQL_ALLOW_PRIVILEGED=true and restart the app.`;
 }
 
+/** The roles a SHOW GRANTS line grants, as it quotes them: `r`, or `r`@`h` in MySQL. */
+export function rolesIn(line: string): string[] {
+  const m = /^GRANT ((?:`[^`]*`(?:@`[^`]*`)?)(?:\s*,\s*`[^`]*`(?:@`[^`]*`)?)*) TO /.exec(line);
+  return m ? m[1]!.split(/\s*,\s*/) : [];
+}
+
 /**
- * The user's grants, and those of the roles granted to it, which in MySQL 8
- * SHOW GRANTS names but doesn't expand.
+ * The user's grants, and those of every role it holds, however deeply
+ * nested. SHOW GRANTS names a user's roles but doesn't expand them.
+ *
+ * - MySQL: SHOW GRANTS … USING expands the named roles, and the roles
+ *   granted to them, all the way down.
+ * - MariaDB has no USING, and doesn't let a user SHOW GRANTS FOR a role it
+ *   holds unless that role is its current one: the per-role fallback this
+ *   replaced was refused for every role, and so found nothing. With a role
+ *   set, SHOW GRANTS lists that role's grants and its nested roles', so each
+ *   directly granted role is set in turn. That changes the connection's
+ *   current role, which a reset doesn't undo, so `setRole` says the caller
+ *   must close the connection rather than reuse it.
  */
-async function grantsOf(conn: mysql.PoolConnection): Promise<string[]> {
+async function grantsOf(conn: mysql.PoolConnection): Promise<{ grants: string[]; setRole: boolean }> {
   const lines = async (sql: string) => ((await conn.query(sql))[0] as Record<string, unknown>[]).map((r) => String(Object.values(r)[0]));
   const own = await lines("SHOW GRANTS");
-  const roles = own.flatMap((l) => /^GRANT ((?:`[^`]*`(?:@`[^`]*`)?)(?:\s*,\s*`[^`]*`(?:@`[^`]*`)?)*) TO /.exec(l)?.[1] ?? []);
-  if (roles.length === 0) return own;
+  const roles = [...new Set(own.flatMap(rolesIn))];
+  if (roles.length === 0) return { grants: own, setRole: false };
   try {
-    return [...own, ...(await lines(`SHOW GRANTS FOR CURRENT_USER() USING ${roles.join(", ")}`))];
+    return { grants: [...own, ...(await lines(`SHOW GRANTS FOR CURRENT_USER() USING ${roles.join(", ")}`))], setRole: false };
   } catch {
-    // MariaDB has no USING: ask for each role's grants instead.
-    const each = await Promise.all(roles.flatMap((r) => r.split(/\s*,\s*/)).map((r) => lines(`SHOW GRANTS FOR ${r}`).catch(() => [])));
-    return [...own, ...each.flat()];
+    // MariaDB. A server refuses a grant that would make a loop of roles, but
+    // each is still read once only.
+    const grants = [...own];
+    const seen = new Set<string>();
+    for (const role of roles) {
+      if (seen.has(role)) continue;
+      seen.add(role);
+      await conn.query(`SET ROLE ${role}`);
+      const expanded = await lines("SHOW GRANTS");
+      grants.push(...expanded);
+      for (const nested of expanded.flatMap(rolesIn)) seen.add(nested);
+    }
+    return { grants, setRole: true };
   }
 }
 
@@ -271,10 +297,14 @@ async function open(): Promise<Connection> {
     try {
       const conn = await pool.getConnection();
       let problem: string | undefined;
+      let reusable = false;
       try {
-        problem = privilegeProblem(target.user, riskyPrivileges(await grantsOf(conn)));
+        const { grants, setRole } = await grantsOf(conn);
+        problem = privilegeProblem(target.user, riskyPrivileges(grants));
+        reusable = !setRole;
       } finally {
-        conn.release();
+        if (reusable) conn.release();
+        else conn.destroy();
       }
       if (problem) throw new Error(problem);
     } catch (err) {
