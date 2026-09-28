@@ -1,6 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 
 const execFileAsync = promisify(execFile);
 
@@ -11,12 +12,26 @@ function workspaceRoot(): string {
   return process.env.BERTH_WORKSPACE_ROOT ?? "/workspace";
 }
 
+/**
+ * The shell the session runs. tmux takes $SHELL, and without it the user's
+ * login shell, and each app runs as its own system user whose login shell is
+ * /sbin/nologin. That shell exits the moment tmux starts it, the session
+ * closes with it, and the tmux server exits with its last session: every
+ * call after the first then failed with "no server running". So a shell that
+ * refuses logins is never used.
+ */
+function sessionShell(): string {
+  const shell = process.env.SHELL;
+  if (shell && !/\/(nologin|false)$/.test(shell) && existsSync(shell)) return shell;
+  return "/bin/sh";
+}
+
 async function tmux(...args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync("tmux", args);
+  const { stdout } = await execFileAsync("tmux", args, { env: { ...process.env, SHELL: sessionShell() } });
   return stdout;
 }
 
-let sessionReady: Promise<void> | undefined;
+let ttydStarted = false;
 
 /**
  * `user:password` for ttyd's HTTP basic auth. Normally generated per boot by
@@ -52,49 +67,53 @@ function credential(): string {
  * `tmux attach`) they all see the exact same session run_command/send_keys
  * drive, not a fresh shell per connection.
  */
-export function ensureSession(): Promise<void> {
-  if (!sessionReady) {
-    sessionReady = (async () => {
-      const hasSession = await tmux("has-session", "-t", SESSION_NAME)
-        .then(() => true)
-        .catch(() => false);
-      if (!hasSession) {
-        // -x/-y: wide and tall, not tmux's narrow ~80x24 default — run_command's
-        // marker-search (below) needs the command + sentinel it sends to
-        // survive as one unbroken line. A real terminal's own line-editor
-        // (readline/zle) wraps long input across the pty's column width as
-        // it's typed, same as any interactive shell would, and that wrap
-        // isn't something tmux capture-pane's -J (join-wrapped-lines) flag
-        // undoes — confirmed against a real tmux session, where even -J left
-        // a long sentinel split mid-line. Widening the pane itself (rather
-        // than shrinking the sentinel further) keeps room for genuinely long
-        // agent-issued commands too.
-        await execFileAsync("tmux", ["new-session", "-d", "-x", "500", "-y", "50", "-s", SESSION_NAME, "-c", workspaceRoot()]);
-      }
-      // No -i/--interface: ttyd's default (iface = NULL) binds all
-      // interfaces, which is what Docker's port mapping needs to reach it
-      // from the host — -i takes an interface *name* (e.g. "eth0") or a
-      // Unix socket path, not an IP address, so there's no "0.0.0.0" form
-      // of it to pass explicitly. Which is exactly why --credential is not
-      // optional here: this is a *writable* shell running as root, and the
-      // only reason it isn't reachable from the LAN is that container.ts
-      // binds the published port to loopback. Defence in depth, because
-      // that binding is one `--publish-host` away from being widened.
-      const ttyd = spawn("ttyd", ["--credential", credential(), "--writable", "-p", TTYD_PORT, "tmux", "attach", "-t", SESSION_NAME], {
-        stdio: "ignore",
-      });
-      // Without this, a failed spawn (e.g. ttyd missing) fires an unhandled
-      // 'error' event on the ChildProcess, which Node treats as an uncaught
-      // exception and takes the whole resident app process down with it —
-      // the human-facing web view is best-effort, not something that should
-      // be able to crash run_command/read_screen/send_keys.
-      ttyd.on("error", (err) => {
-        console.error(`[terminal] ttyd failed to start (the shared shell itself is unaffected): ${err}`);
-      });
-      ttyd.unref();
-    })();
+export async function ensureSession(): Promise<void> {
+  // Checked on every call, not once: a session that ended (someone typed
+  // `exit`, or the shell was killed) is recreated instead of leaving every
+  // later call failing for the rest of the container's life.
+  const hasSession = await tmux("has-session", "-t", SESSION_NAME)
+    .then(() => true)
+    .catch(() => false);
+  if (!hasSession) {
+    // -x/-y: wide and tall, not tmux's narrow ~80x24 default — run_command's
+    // marker-search (below) needs the command + sentinel it sends to
+    // survive as one unbroken line. A real terminal's own line-editor
+    // (readline/zle) wraps long input across the pty's column width as
+    // it's typed, same as any interactive shell would, and that wrap
+    // isn't something tmux capture-pane's -J (join-wrapped-lines) flag
+    // undoes — confirmed against a real tmux session, where even -J left
+    // a long sentinel split mid-line. Widening the pane itself (rather
+    // than shrinking the sentinel further) keeps room for genuinely long
+    // agent-issued commands too.
+    await tmux("new-session", "-d", "-x", "500", "-y", "50", "-s", SESSION_NAME, "-c", workspaceRoot(), sessionShell());
   }
-  return sessionReady;
+  if (ttydStarted) return;
+  ttydStarted = true;
+  // No -i/--interface: ttyd's default (iface = NULL) binds all
+  // interfaces, which is what Docker's port mapping needs to reach it
+  // from the host — -i takes an interface *name* (e.g. "eth0") or a
+  // Unix socket path, not an IP address, so there's no "0.0.0.0" form
+  // of it to pass explicitly. Which is exactly why --credential is not
+  // optional here: this is a *writable* shell running as root, and the
+  // only reason it isn't reachable from the LAN is that container.ts
+  // binds the published port to loopback. Defence in depth, because
+  // that binding is one `--publish-host` away from being widened.
+  //
+  // `tmux attach` per connection, so a session recreated above is the one
+  // a newly opened tab attaches to.
+  const ttyd = spawn("ttyd", ["--credential", credential(), "--writable", "-p", TTYD_PORT, "tmux", "attach", "-t", SESSION_NAME], {
+    stdio: "ignore",
+    env: { ...process.env, SHELL: sessionShell() },
+  });
+  // Without this, a failed spawn (e.g. ttyd missing) fires an unhandled
+  // 'error' event on the ChildProcess, which Node treats as an uncaught
+  // exception and takes the whole resident app process down with it —
+  // the human-facing web view is best-effort, not something that should
+  // be able to crash run_command/read_screen/send_keys.
+  ttyd.on("error", (err) => {
+    console.error(`[terminal] ttyd failed to start (the shared shell itself is unaffected): ${err}`);
+  });
+  ttyd.unref();
 }
 
 async function capturePane(fullHistory: boolean): Promise<string> {
@@ -118,7 +137,7 @@ export async function sendKeys(keys: string): Promise<void> {
   await ensureSession();
   const tokens = keys.split(/\s+/).filter(Boolean);
   if (tokens.length === 0) return;
-  await execFileAsync("tmux", ["send-keys", "-t", SESSION_NAME, ...tokens]);
+  await tmux("send-keys", "-t", SESSION_NAME, ...tokens);
 }
 
 /**
@@ -147,7 +166,7 @@ export async function runCommand(command: string, timeoutMs = 15000): Promise<st
   // still approach it.
   const sentinel = `bd${randomUUID().replace(/-/g, "").slice(0, 10)}`;
   const marker = `${command}; echo ${sentinel}`;
-  await execFileAsync("tmux", ["send-keys", "-t", SESSION_NAME, marker, "Enter"]);
+  await tmux("send-keys", "-t", SESSION_NAME, marker, "Enter");
 
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
