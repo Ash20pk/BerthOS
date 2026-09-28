@@ -81,13 +81,20 @@ def main() -> None:
     for hook in app.on_agent_ready_hooks:
         hook(ctx)
 
-    start_rpc_server(app, socket_path=os.environ.get("BERTH_RPC_SOCKET"))
+    socket_thread = start_rpc_server(app, socket_path=os.environ.get("BERTH_RPC_SOCKET"))
     print(f'[berth:runtime] "{manifest.name}" ready', file=sys.stderr)
 
-    # Blocks forever, reading stdio RPC requests — this is what keeps the
-    # process alive, same role Node's active readline listener plays in
-    # rpc.ts (its event loop just never empties).
+    # Reads stdio RPC requests until stdin closes.
     serve_stdio_forever(app)
+
+    # In a multi-app sandbox every app's stdin is /dev/null and it is reached
+    # only through its socket, so stdin ends at once. The socket server runs on
+    # a daemon thread, which died with the process: the app logged "ready",
+    # then exited, and every call to it was refused. Keep serving the socket,
+    # which is what the Node runtime does (its open server keeps the event
+    # loop alive).
+    if socket_thread is not None:
+        socket_thread.join()
 
 
 if __name__ == "__main__":

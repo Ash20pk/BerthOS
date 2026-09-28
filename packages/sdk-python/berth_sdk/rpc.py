@@ -75,7 +75,7 @@ class _RpcUnixStreamServer(socketserver.ThreadingUnixStreamServer):
     daemon_threads = True
 
 
-def start_socket_server(app: BerthApp, socket_path: str) -> None:
+def start_socket_server(app: BerthApp, socket_path: str) -> threading.Thread:
     try:
         os.unlink(socket_path)
     except FileNotFoundError:
@@ -86,17 +86,22 @@ def start_socket_server(app: BerthApp, socket_path: str) -> None:
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     print(f"[berth:runtime] RPC server also listening on {socket_path}", file=sys.stderr)
+    return thread
 
 
-def start_rpc_server(app: BerthApp, socket_path: Optional[str] = None) -> None:
+def start_rpc_server(app: BerthApp, socket_path: Optional[str] = None) -> Optional[threading.Thread]:
     """Starts the (optional) socket server and logs readiness — does NOT
     block. serve_stdio_forever() is the blocking call, run last in
     runtime.py's boot sequence so "ready" logs before it, matching rpc.ts's
     ordering (its own startRpcServer() is non-blocking; Node's event loop
-    is what keeps the process alive)."""
+    is what keeps the process alive).
+
+    Returns the socket server's thread, if one was started, so the runtime
+    can keep serving it after stdin closes."""
     print("[berth:runtime] RPC server listening on stdio", file=sys.stderr)
     if socket_path:
-        start_socket_server(app, socket_path)
+        return start_socket_server(app, socket_path)
+    return None
 
 
 def serve_stdio_forever(app: BerthApp) -> None:
