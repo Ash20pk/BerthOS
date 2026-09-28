@@ -8,10 +8,23 @@
  * Every error here names a line number or an entry's position, and at most a
  * variable name that is itself valid — never a value, and never text that
  * failed to parse as a name, since a malformed line in a secrets file is as
- * likely to be a fragment of a key as anything else.
+ * likely to be a fragment of a key as anything else. An `--env` entry's name
+ * is echoed only when it looks like a conventional variable name, since a
+ * token pasted as `--env ghp_...` is a valid name too.
  */
 
 const NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * The shape of a conventional environment variable name. A pasted token
+ * (`ghp_abc123`, say) is often a valid name too, so a name is only echoed
+ * back to the terminal when it also looks like one of these.
+ */
+const CONVENTIONAL_NAME = /^[A-Z_][A-Z0-9_]*$/;
+
+export function isConventionalEnvName(name: string): boolean {
+  return CONVENTIONAL_NAME.test(name);
+}
 
 /**
  * KEY=value lines, as dotenv reads them: blank lines and # comments skipped;
@@ -82,7 +95,10 @@ export function resolveEnvFlags(entries: string[], fromFile: Record<string, stri
       return;
     }
     const value = processEnv[name];
-    if (value === undefined) throw new Error(`--env ${name}: ${name} isn't set in this shell (export it first, or use --env-file)`);
+    if (value === undefined) {
+      const which = isConventionalEnvName(name) ? `${name} isn't set` : "that name isn't set";
+      throw new Error(`--env #${index + 1}: ${which} in this shell (export it first, or use --env-file)`);
+    }
     out[name] = value;
   });
   return out;

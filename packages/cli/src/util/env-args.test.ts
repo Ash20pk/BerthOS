@@ -54,7 +54,17 @@ test("--env NAME takes the value from this shell; --env NAME=value is explicit; 
 });
 
 test("--env NAME that isn't set, or isn't a name, is an error that never echoes a value", () => {
-  assert.throws(() => resolveEnvFlags(["MISSING"], {}, {}), /isn't set in this shell/);
+  assert.throws(() => resolveEnvFlags(["OK=1", "MISSING"], {}, {}), /--env #2: MISSING isn't set in this shell/);
+  // A pasted token is often a valid name; one that doesn't look like a
+  // conventional variable name is referred to by position only.
+  assert.throws(
+    () => resolveEnvFlags(["ghp_S3CRETvalue123"], {}, {}),
+    (err: Error) => {
+      assert.match(err.message, /^--env #1: that name isn't set in this shell/);
+      assert.ok(!err.message.includes("S3CRET"), err.message);
+      return true;
+    },
+  );
   assert.throws(
     () => resolveEnvFlags(["OK=1", "GH-TOKEN=ghp_SECRET"], {}, {}),
     (err: Error) => {
