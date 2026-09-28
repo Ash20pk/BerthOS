@@ -6,7 +6,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import mysql from "mysql2/promise";
-import { cell, configOf, modeFrom, routeFor, shapeRows, targetOf } from "./index.js";
+import { cell, Collector, configOf, modeFrom, routeFor, shapeRows, targetOf } from "./index.js";
 import { ProxyTunnel } from "./tunnel.js";
 
 // --- pure: no database needed ------------------------------------------------
@@ -61,6 +61,22 @@ test("results are capped by row count and size, and values are JSON-safe", () =>
   assert.equal((cell("x".repeat(20_000)) as string).length, 10_001);
 });
 
+test("the collector stops taking rows once it's full, by count or by size", () => {
+  const byCount = new Collector(3);
+  assert.deepEqual([1, 2, 3, 4, 5].map((id) => byCount.add({ id })), [true, true, true, false, false]);
+  assert.equal(byCount.rows.length, 3);
+  assert.equal(byCount.truncated, true);
+
+  const exact = shapeRows([{ id: 1 }, { id: 2 }], 2);
+  assert.deepEqual(exact, { rows: [{ id: 1 }, { id: 2 }], truncated: false }, "exactly the cap isn't truncated");
+
+  const bySize = new Collector();
+  let taken = 0;
+  while (bySize.add({ text: "x".repeat(9_000) })) taken++;
+  assert.equal(bySize.truncated, true);
+  assert.ok(taken < 25, `took ${taken} rows of 9,000 characters under a 200,000-character cap`);
+});
+
 // Every socket method a driver may call on its stream: a missing one is a
 // crash on the path that uses it (ref() was, for apps/postgres).
 test("the tunnel has every socket method a driver calls", () => {
@@ -110,6 +126,10 @@ before(async () => {
     await db.query("CREATE TABLE customers (id int AUTO_INCREMENT PRIMARY KEY, name varchar(100) NOT NULL, signed_up date NOT NULL DEFAULT (CURRENT_DATE), plan varchar(20) NOT NULL DEFAULT 'free')");
     await db.query("INSERT INTO customers (name, signed_up, plan) VALUES ('Ada', '2026-01-04', 'pro'), ('Grace', '2026-02-11', 'free'), ('Linus', '2026-03-20', 'pro')");
     await db.query("GRANT SELECT ON customers TO 'reader'@'%'");
+    await db.query("DROP PROCEDURE IF EXISTS customer_names");
+    await db.query("CREATE PROCEDURE customer_names(IN p varchar(20)) SELECT name FROM customers WHERE plan = p ORDER BY id");
+    await db.query("DROP PROCEDURE IF EXISTS two_sets");
+    await db.query("CREATE PROCEDURE two_sets() BEGIN SELECT 1 AS a; SELECT 2 AS b, 3 AS c; END");
   });
 });
 
@@ -182,8 +202,41 @@ live("read-write mode can change data, one statement at a time", async () => {
   const call = await appWith({ DATABASE_URL: urlAs("app"), MYSQL_MODE: "read-write" }, [`network:connect:${port}`]);
   const inserted = await call("query", { sql: "INSERT INTO customers (name, plan) VALUES (?, ?)", params: ["Temp", "free"] });
   assert.equal(inserted.row_count, 1);
+  assert.equal((await call("query", { sql: "UPDATE customers SET plan = 'pro' WHERE plan = ?", params: ["free"] })).row_count, 2);
+  await call("query", { sql: "UPDATE customers SET plan = 'free' WHERE name IN ('Grace', 'Temp')", params: [] });
   await call("query", { sql: "DELETE FROM customers WHERE name = ?", params: ["Temp"] });
   await assert.rejects(call("query", { sql: "SELECT 1; SELECT 2", params: [] }), /one statement per query/);
+});
+
+live("a huge result is read a row at a time, never all into memory", async () => {
+  const port = new URL(TEST_URL!).port;
+  const call = await appWith({ DATABASE_URL: urlAs("app") }, [`network:connect:${port}`]);
+  await call("query", { sql: "SELECT 1", params: [] });
+  const before = process.memoryUsage().rss;
+  const started = Date.now();
+  // 3,000,000 rows of ~500 bytes: ~1.5 GB if mysql2 buffered it, as it did.
+  const digits = "SELECT 0 AS n UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8 UNION ALL SELECT 9";
+  const sql = `WITH d AS (${digits}) SELECT a.n, REPEAT('x', 500) AS pad FROM d a, d b, d c, d e, d f, d g, (SELECT 0 AS n UNION ALL SELECT 1 UNION ALL SELECT 2) h`;
+  const res = await call("query", { sql, params: [] });
+  assert.equal(res.truncated, true);
+  assert.ok(res.rows.length <= 500);
+  assert.deepEqual(res.columns, ["n", "pad"]);
+  const grown = (process.memoryUsage().rss - before) / 1e6;
+  assert.ok(grown < 150, `rss grew ${grown.toFixed(0)} MB`);
+  assert.ok(Date.now() - started < 10_000, "stopped early rather than reading every row");
+  // The abandoned connection was closed, not handed out again mid-result.
+  for (let i = 0; i < 3; i++) assert.equal(Number((await call("query", { sql: "SELECT count(*) AS n FROM customers", params: [] })).rows[0].n), 3);
+  const exact = await call("query", { sql: `WITH d AS (${digits}) SELECT a.n FROM d a, d b, (SELECT 0 AS n UNION ALL SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4) c`, params: [] });
+  assert.deepEqual({ n: exact.rows.length, truncated: exact.truncated, row_count: exact.row_count }, { n: 500, truncated: false, row_count: 500 });
+});
+
+live("CALL returns the procedure's rows, not its result sets jumbled together", async () => {
+  const port = new URL(TEST_URL!).port;
+  const call = await appWith({ DATABASE_URL: urlAs("app") }, [`network:connect:${port}`]);
+  const res = await call("query", { sql: "CALL customer_names(?)", params: ["pro"] });
+  assert.deepEqual({ columns: res.columns, rows: res.rows, row_count: res.row_count }, { columns: ["name"], rows: [{ name: "Ada" }, { name: "Linus" }], row_count: 2 });
+  const two = await call("query", { sql: "CALL two_sets()", params: [] });
+  assert.deepEqual({ columns: two.columns, rows: two.rows }, { columns: ["a"], rows: [{ a: "1" }] }, "the first result set (a literal is a BIGINT, so a string)");
 });
 
 live("concurrent first calls share one pool", async () => {

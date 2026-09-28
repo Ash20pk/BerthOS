@@ -120,16 +120,32 @@ export function cell(value: unknown): unknown {
   return text.length > MAX_CELL_CHARS ? `${text.slice(0, MAX_CELL_CHARS)}…` : value;
 }
 
-export function shapeRows(rows: Record<string, unknown>[]): { rows: Record<string, unknown>[]; truncated: boolean } {
-  const out: Record<string, unknown>[] = [];
-  let size = 0;
-  for (const row of rows.slice(0, MAX_ROWS)) {
+/**
+ * Rows, capped by count and by total size, so one query can't flood the
+ * agent's context. Fed a row at a time: add() says false once it's full.
+ */
+export class Collector {
+  readonly rows: Record<string, unknown>[] = [];
+  truncated = false;
+  private size = 0;
+
+  constructor(private readonly max = MAX_ROWS) {}
+
+  add(row: Record<string, unknown>): boolean {
+    if (this.truncated) return false;
+    if (this.rows.length >= this.max) return !(this.truncated = true);
     const shaped = Object.fromEntries(Object.entries(row).map(([k, v]) => [k, cell(v)]));
-    size += JSON.stringify(shaped).length;
-    if (size > MAX_RESULT_CHARS) return { rows: out, truncated: true };
-    out.push(shaped);
+    this.size += JSON.stringify(shaped).length;
+    if (this.size > MAX_RESULT_CHARS) return !(this.truncated = true);
+    this.rows.push(shaped);
+    return true;
   }
-  return { rows: out, truncated: rows.length > MAX_ROWS };
+}
+
+export function shapeRows(rows: Record<string, unknown>[], max = MAX_ROWS): { rows: Record<string, unknown>[]; truncated: boolean } {
+  const out = new Collector(max);
+  for (const row of rows) if (!out.add(row)) break;
+  return { rows: out.rows, truncated: out.truncated };
 }
 
 interface Connection {
@@ -179,6 +195,87 @@ async function open(): Promise<Connection> {
   return { pool, target, route, mode };
 }
 
+export interface Rows {
+  columns: string[];
+  rows: Record<string, unknown>[];
+  /** Rows returned, for a statement that returns rows; otherwise rows changed. */
+  rowCount: number;
+  truncated: boolean;
+  /** The result was cut off before its end, so the connection is mid-result and can't be reused. */
+  abandoned: boolean;
+}
+
+interface CoreQuery {
+  on(event: "fields", listener: (fields: { name: string }[] | undefined) => void): this;
+  on(event: "result", listener: (row: Record<string, unknown>) => void): this;
+  on(event: "error", listener: (err: Error) => void): this;
+  on(event: "end", listener: () => void): this;
+}
+
+interface CoreConnection {
+  query(options: { sql: string; values: unknown[] }): CoreQuery;
+  pause(): void;
+  stream: { destroy(): void };
+}
+
+/**
+ * The statement's rows, a row at a time. mysql2's promise query read every
+ * row of the result into memory before any cap applied, and a SELECT over a
+ * few million rows took the app down; without a callback, the driver hands
+ * over each row as it's parsed and keeps none. Once the collector is full
+ * this stops reading: the result is abandoned mid-stream, and the caller
+ * closes the connection rather than read the rest.
+ *
+ * Of several result sets (a CALL returns its SELECT's rows, then a status),
+ * the rows are the first set's; a statement that returns none reports the
+ * rows it changed.
+ */
+function collect(conn: mysql.PoolConnection, sql: string, params: unknown[], max: number): Promise<Rows> {
+  const core = (conn as unknown as { connection: CoreConnection }).connection;
+  return new Promise((resolve, reject) => {
+    const out = new Collector(max);
+    let sets = 0;
+    let current: { name: string }[] | undefined;
+    // The result set the rows come from: the first that has columns.
+    let rowSet: { index: number; columns: string[] } | undefined;
+    let affected: number | undefined;
+    let settled = false;
+    // This app's own timer, not mysql2's timeout option: that one's timer
+    // outlives a result abandoned mid-stream, and kept the process alive.
+    const timer = setTimeout(() => fail(Object.assign(new Error(`the query took longer than ${QUERY_TIMEOUT_MS / 1000} s, and was abandoned`), { code: "QUERY_TIMEOUT" })), QUERY_TIMEOUT_MS);
+    const finish = (abandoned: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ columns: rowSet?.columns ?? [], rows: out.rows, rowCount: rowSet ? out.rows.length : (affected ?? 0), truncated: out.truncated, abandoned });
+    };
+    const fail = (err: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(err);
+    };
+    core
+      .query({ sql, values: params })
+      .on("fields", (fields) => {
+        sets++;
+        current = fields;
+        if (fields && !rowSet) rowSet = { index: sets, columns: fields.map((f) => f.name) };
+      })
+      .on("result", (row) => {
+        if (settled) return;
+        // A status, not a row: what an INSERT, UPDATE or DELETE changed.
+        if (!current) affected ??= Number((row as { affectedRows?: number }).affectedRows ?? 0);
+        else if (sets === rowSet?.index && !out.add(row)) {
+          core.pause();
+          finish(true);
+        }
+      })
+      .on("error", fail)
+      .on("end", () => finish(false));
+  });
+}
+
 /**
  * One statement per call; multipleStatements is off, so the server refuses
  * a second one. In read-only mode it runs with the session read-only and
@@ -186,9 +283,12 @@ async function open(): Promise<Connection> {
  * the schema. That's a guard in this app, not in the
  * database: for a guarantee, give DATABASE_URL a user that can only read.
  */
-async function run(sql: string, params: unknown[]): Promise<{ rows: Record<string, unknown>[]; fields: { name: string }[]; affected: number }> {
+async function run(sql: string, params: unknown[], max = MAX_ROWS): Promise<Rows> {
   const { pool, mode } = await connection();
   const conn = await pool.getConnection();
+  // Whether the connection can go back to the pool: not if a result was
+  // abandoned mid-stream, or the connection itself failed.
+  let reusable = true;
   try {
     // Both, on every call. START TRANSACTION READ ONLY stops INSERT, UPDATE
     // and DELETE, but MySQL commits DDL implicitly, outside the transaction:
@@ -200,21 +300,36 @@ async function run(sql: string, params: unknown[]): Promise<{ rows: Record<strin
       await conn.query("SET SESSION transaction_read_only = ON");
       await conn.query("START TRANSACTION READ ONLY");
     }
-    try {
-      const [result, fields] = await conn.query({ sql, values: params, timeout: QUERY_TIMEOUT_MS });
-      if (Array.isArray(result)) return { rows: result as Record<string, unknown>[], fields: (fields ?? []) as { name: string }[], affected: (result as unknown[]).length };
-      return { rows: [], fields: [], affected: (result as mysql.ResultSetHeader).affectedRows ?? 0 };
-    } finally {
-      if (mode === "read-only") await conn.query("ROLLBACK").catch(() => {});
-    }
+    const result = await collect(conn, sql, params, max);
+    if (result.abandoned) reusable = false;
+    return result;
   } catch (err) {
-    const e = err as { message?: string; errno?: number };
+    const e = err as { message?: string; errno?: number; fatal?: boolean; code?: string };
+    // After a timeout the query may still be running, and its rows arriving.
+    if (e.fatal || e.code === "QUERY_TIMEOUT") reusable = false;
     if (e.errno === 1792) throw new Error(`${e.message}: this connector is read-only (set MYSQL_MODE=read-write to allow changes)`);
     if (e.errno === 1064 && /;\s*\S/.test(sql)) throw new Error(`${e.message} (one statement per query: run them one at a time)`);
     throw err;
   } finally {
-    conn.release();
+    if (reusable) {
+      if (mode === "read-only") await conn.query("ROLLBACK").catch(() => {});
+      conn.release();
+    } else {
+      discard(conn);
+    }
   }
+}
+
+/**
+ * Closes a connection the pool mustn't hand out again. The socket is torn
+ * down, not ended: the server is still sending the rest of an abandoned
+ * result, and gives up on the query once it can't.
+ */
+function discard(conn: mysql.PoolConnection): void {
+  const core = (conn as unknown as { connection: CoreConnection & { on(event: "error", listener: () => void): void } }).connection;
+  core.on("error", () => {});
+  conn.destroy();
+  core.stream.destroy();
 }
 
 /** For tests: close the pool, whose idle connections would keep the process alive. */
@@ -231,9 +346,8 @@ export default defineApp((app) => {
     output: z.object({ columns: z.array(z.string()), rows: z.array(z.record(z.string(), z.any())), row_count: z.number(), truncated: z.boolean() }),
     handler: async ({ sql, params }) => {
       if (!sql.trim()) throw new Error("sql is empty");
-      const result = await run(sql, params);
-      const { rows, truncated } = shapeRows(result.rows);
-      return { columns: result.fields.map((f) => f.name), rows, row_count: result.affected, truncated };
+      const { columns, rows, rowCount, truncated } = await run(sql, params);
+      return { columns, rows, row_count: rowCount, truncated };
     },
   });
 
@@ -248,6 +362,7 @@ export default defineApp((app) => {
           WHERE TABLE_SCHEMA = IF(? = '', DATABASE(), ?)
           ORDER BY 1, 2 LIMIT 1000`,
         [schema, schema],
+        1000,
       );
       return { tables: result.rows as { schema: string; name: string; type: string }[] };
     },

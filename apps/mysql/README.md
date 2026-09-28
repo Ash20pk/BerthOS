@@ -49,7 +49,7 @@ That verifies the server's certificate against the system's trusted CAs, and its
 | `describe_table` | `{ table }` | `{ columns: [{ name, type, nullable, default }] }`. `table` or `database.table` |
 | `connection_info` | | `{ host, port, database, user, mode, route }`, never the password |
 
-Results are capped at 500 rows and 200,000 characters, and each value at 10,000 characters; `truncated` says when either cut in. Dates come back as ISO strings, `BIGINT` and `DECIMAL` as strings so no precision is lost, and binary as `0x…` hex. Queries time out after 30 s.
+Results are capped at 500 rows and 200,000 characters, and each value at 10,000 characters; `truncated` says when either cut in. Rows are read from the server one at a time and the read stops at the cap (the connection is then closed rather than drained), so a `SELECT` over millions of rows costs no more memory than one over a thousand. `row_count` is the rows returned for a statement that returns rows (so, when truncated, what came back rather than what matched), and the rows changed for one that doesn't. A `CALL` returns its procedure's first result set. Dates come back as ISO strings, `BIGINT` and `DECIMAL` as strings so no precision is lost, and binary as `0x…` hex. Queries time out after 30 s.
 
 ## Other databases
 
