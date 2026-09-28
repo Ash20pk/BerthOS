@@ -9,9 +9,43 @@ test("parseEnvFile reads dotenv lines", () => {
   );
 });
 
-test("parseEnvFile names the line it can't read, without echoing a value elsewhere", () => {
-  assert.throws(() => parseEnvFile("OK=1\nthis is not a pair\n"), /line 2/);
-  assert.throws(() => parseEnvFile("1BAD=x\n"), /line 1/);
+test("parseEnvFile drops a comment after a quoted value, and keeps the quotes out", () => {
+  assert.deepEqual(parseEnvFile(`API_KEY="abc" # prod key\nOTHER='x y'   # note\nBARE="v"\n`), { API_KEY: "abc", OTHER: "x y", BARE: "v" });
+});
+
+test("parseEnvFile reads a multi-line quoted value, such as a PEM key", () => {
+  const pem = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC==\n-----END PRIVATE KEY-----";
+  assert.deepEqual(parseEnvFile(`BEFORE=1\nTLS_KEY="${pem}"\nAFTER=2\n`), { BEFORE: "1", TLS_KEY: pem, AFTER: "2" });
+  assert.deepEqual(parseEnvFile(`K='line1\nline2'\n`), { K: "line1\nline2" });
+});
+
+test("parseEnvFile expands escapes in double quotes only", () => {
+  assert.deepEqual(parseEnvFile(`D="a\\nb \\"q\\" \\\\"\nS='a\\nb'\n`), { D: 'a\nb "q" \\', S: "a\\nb" });
+});
+
+test("parseEnvFile errors name the line and at most a valid name, never a value", () => {
+  const secret = "ghp_S3CRETvalue123";
+  const cases: [string, RegExp][] = [
+    [`OK=1\n${secret}\n`, /^line 2 /],
+    [`GITHUB-TOKEN=${secret}\n`, /^line 1:/],
+    [`1BAD=${secret}\n`, /^line 1:/],
+    // An unclosed quote: the lines after it, a PEM body say, are never echoed.
+    [`TLS_KEY="-----BEGIN\n${secret}==\n`, /^line 1: TLS_KEY's/],
+    [`API_KEY="${secret}" trailing\n`, /^line 1: API_KEY has text after/],
+    // A base64 fragment with a "=" in it must not be echoed as if it were a name.
+    [`${secret}+/x=\n`, /^line 1:/],
+  ];
+  for (const [text, expected] of cases) {
+    assert.throws(
+      () => parseEnvFile(text),
+      (err: Error) => {
+        assert.match(err.message, expected);
+        assert.ok(!err.message.includes(secret), `error echoed the value: ${err.message}`);
+        assert.ok(!err.message.includes("S3CRET"), `error echoed part of the value: ${err.message}`);
+        return true;
+      },
+    );
+  }
 });
 
 test("--env NAME takes the value from this shell; --env NAME=value is explicit; both beat the file", () => {
@@ -19,7 +53,14 @@ test("--env NAME takes the value from this shell; --env NAME=value is explicit; 
   assert.deepEqual(env, { TOKEN: "from-shell", REPO: "owner/name", OTHER: "kept" });
 });
 
-test("--env NAME that isn't set, or isn't a name, is an error", () => {
+test("--env NAME that isn't set, or isn't a name, is an error that never echoes a value", () => {
   assert.throws(() => resolveEnvFlags(["MISSING"], {}, {}), /isn't set in this shell/);
-  assert.throws(() => resolveEnvFlags(["bad-name=x"], {}, {}), /isn't a valid variable name/);
+  assert.throws(
+    () => resolveEnvFlags(["OK=1", "GH-TOKEN=ghp_SECRET"], {}, {}),
+    (err: Error) => {
+      assert.match(err.message, /^--env #2: .*isn't a valid variable name/);
+      assert.ok(!err.message.includes("ghp_SECRET"), err.message);
+      return true;
+    },
+  );
 });
