@@ -19,7 +19,7 @@ export function productionImageTag(manifest: BerthManifest): string {
  * Omitting them would silently skip a companion's setup step in `berth dev`
  * while it still ran in production.
  */
-export async function buildDevImage(appDir: string, manifest: BerthManifest, companions: AppSpec[] = []): Promise<string> {
+export async function buildDevImage(appDir: string, manifest: BerthManifest, companions: AppSpec[] = [], signal?: AbortSignal): Promise<string> {
   const tag = devImageTag(manifest);
   await buildImage({
     appDir,
@@ -27,6 +27,7 @@ export async function buildDevImage(appDir: string, manifest: BerthManifest, com
     target: "dev",
     appName: manifest.name,
     ...(companions.length > 0 ? { companions: companions.map((c) => ({ name: c.name, appDir: c.appDir })) } : {}),
+    ...(signal ? { signal } : {}),
   });
   return tag;
 }

@@ -300,10 +300,10 @@ export default class Mcp extends Command {
         toldWaiting ||= !claim;
         return claim && (() => claim.release());
       },
-      boot: async () => {
+      boot: async (signal) => {
         this.logStderr(`no container named "${containerName}" — booting the sandbox for "${manifest.name}" (this builds an image on first run)`);
         const apps = await resolveApps(appDir, undefined, manifest);
-        const running = await bootDevContainer({ appDir, manifest, apps, docker, containerName, log: (message) => this.logStderr(message) });
+        const running = await bootDevContainer({ appDir, manifest, apps, docker, containerName, log: (message) => this.logStderr(message), signal });
         return running.container;
       },
       waitReady: (container, signal) => this.waitForRuntime(container, manifest.name, flags["boot-timeout"] * 1000, signal),

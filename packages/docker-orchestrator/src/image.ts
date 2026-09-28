@@ -67,6 +67,13 @@ export interface BuildImageOptions {
    */
   forceCompanionLayout?: boolean;
   docker?: Docker;
+  /**
+   * Stops the build when this aborts: the request to the Docker daemon is
+   * cancelled, which ends the build there too, and buildImage rejects. A
+   * first build takes minutes, and a caller that has already given up (a
+   * `berth mcp` session whose client left) shouldn't leave it running.
+   */
+  signal?: AbortSignal;
 }
 
 function findWorkspaceRoot(startDir: string): string | undefined {
@@ -281,6 +288,8 @@ async function stageDevOnInstallContext(options: BuildImageOptions, stagingDir: 
  */
 export async function buildImage(options: BuildImageOptions): Promise<void> {
   const docker = options.docker ?? new Docker();
+  const { signal } = options;
+  signal?.throwIfAborted();
   const stagingDir = await mkdtemp(join(tmpdir(), "berth-build-"));
 
   try {
@@ -342,13 +351,21 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
     const dockerfileContents = await readFile(join(DOCKER_ASSETS_DIR, "base.Dockerfile"), "utf-8");
     await writeFile(join(stagingDir, "Dockerfile"), dockerfileContents);
 
+    signal?.throwIfAborted();
     const tarStream = tarFs.pack(stagingDir);
     const buildStream = await docker.buildImage(tarStream, {
       t: options.tag,
       target: options.target,
+      ...(signal ? { abortSignal: signal } : {}),
     });
 
     await new Promise<void>((resolve, reject) => {
+      const onAbort = () => {
+        (buildStream as NodeJS.ReadableStream & { destroy?: () => void }).destroy?.();
+        reject(new Error(`the build of ${options.tag} was cancelled`));
+      };
+      if (signal?.aborted) return onAbort();
+      signal?.addEventListener("abort", onAbort, { once: true });
       // A failed RUN step doesn't always surface through followProgress's
       // own completion callback as `err` — the daemon can report it as a
       // per-event `error` field mid-stream instead, with the stream then
@@ -359,6 +376,7 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
       docker.modem.followProgress(
         buildStream,
         (err: Error | null) => {
+          signal?.removeEventListener("abort", onAbort);
           if (err) reject(err);
           else if (buildError) reject(new Error(buildError));
           else resolve();

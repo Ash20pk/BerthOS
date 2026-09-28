@@ -20,6 +20,8 @@ export interface BootDevContainerOptions {
    * stray human-readable line there is a protocol framing error, not a log.
    */
   log: (message: string) => void;
+  /** Stops the boot: the image build is cancelled, and no container is started once it aborts. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -44,7 +46,7 @@ export async function bootDevContainer(options: BootDevContainerOptions): Promis
   const companions = apps.slice(1);
 
   log(`Building dev image for "${manifest.name}"...`);
-  await buildDevImage(appDir, manifest, companions);
+  await buildDevImage(appDir, manifest, companions, options.signal);
 
   const { bindMount, extraBinds, workingDir, workspaceRoot } = resolveDevBindMount(
     appDir,
@@ -63,6 +65,7 @@ export async function bootDevContainer(options: BootDevContainerOptions): Promis
     extraBinds.push(`${companionVolume}:${devStatePath("/workspace", companion.relPath)}`);
   }
 
+  options.signal?.throwIfAborted();
   return startContainer({
     image: devImageTag(manifest),
     name: options.containerName ?? `berth-dev-${manifest.name}`,
