@@ -157,6 +157,7 @@ The rest is in [Resident apps](./docs/resident-apps.md) and the [manifest refere
 | [`code-interpreter`](./apps/code-interpreter) | Run Python, JavaScript or shell | `filesystem:write:/workspace`, no network |
 | [`terminal`](./apps/terminal) | A real shell you can watch live in the browser | `filesystem:write:/workspace` |
 | [`browser-native`](./apps/browser-native) | Headless Chromium you can watch over VNC | `browser:navigate:*` |
+| [`git`](./apps/git) | Clone, branch, commit, diff, push and pull in the workspace, over HTTPS to the hosts you list | `filesystem:write:/workspace`, `network:host:github.com` |
 | [`github-assistant`](./apps/github-assistant) | Read repos, open issues | `github:read:repos`, `github:write:issues` |
 | [`notes`](./apps/notes) | Stateful notes, persisted to disk | `filesystem:write:/workspace` |
 
