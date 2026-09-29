@@ -19,7 +19,7 @@ The app reads two env vars:
 | `GITHUB_TOKEN` | Token for live API calls | `get_repo_summary` returns stub data (`"<repo> (stub — set GITHUB_TOKEN for live data)"`, `open_issues: 0`) and `create_issue` sends nothing |
 | `GITHUB_REPO` | `owner/name` that `create_issue` opens issues on | `create_issue` does nothing |
 
-`berth dev` doesn't pass your shell's environment into the sandbox, so there the app runs on stub data. To make live calls, pass the values when you boot it from code, for example `Computer.boot({ apps: ["apps/github-assistant"], env: { GITHUB_TOKEN, GITHUB_REPO } })`. The token reaches the app through a private file, not the container's environment.
+`berth dev` doesn't pass your shell's environment into the sandbox, so there the app runs on stub data. To make live calls, pass the values when you boot it: `berth os up gh --apps=apps/github-assistant --env GITHUB_TOKEN --env GITHUB_REPO`, which takes both from your shell, or `Computer.boot({ apps: ["apps/github-assistant"], env: { GITHUB_TOKEN, GITHUB_REPO } })` from code. The token reaches the app through the sandbox's secrets file, not the container's environment.
 
 ## Capabilities
 

@@ -1,7 +1,8 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   CHAIN_GENESIS,
@@ -303,4 +304,97 @@ test("treats no records at all as an intact empty chain", () => {
   assert.equal(result.truncatedStart, false);
   assert.equal(result.totalRecords, 0);
   assert.equal(result.head, CHAIN_GENESIS);
+});
+
+// Two `berth mcp` sessions share ~/.berth/audit/audit.jsonl. Each writer used
+// to keep the chain's head in memory from its own startup, so the second
+// writer's records forked the chain and the whole file failed verification.
+// Real processes, not two sinks in one: the lock and the head re-read are
+// what's under test, and one process can't interleave synchronous writes.
+function appendFromProcesses(path: string, writers: number, perWriter: number, sinkOptions: Record<string, unknown> = {}): Promise<void> {
+  const sinkModule = new URL("./sink.js", import.meta.url).href;
+  const script = `
+    const { createFileAuditSink } = await import(${JSON.stringify(sinkModule)});
+    const [path, id, count, options] = process.argv.slice(1);
+    const sink = createFileAuditSink({ path, ...JSON.parse(options) });
+    for (let i = 0; i < Number(count); i++) {
+      await sink.record({ ts: new Date().toISOString(), seq: 0, actor: { kind: "operator", id: "w" + id, verifiedBy: "self-asserted" }, action: "tool.call", target: "app.export" + i, decision: "allowed", meta: { writer: id } });
+    }
+  `;
+  return Promise.all(
+    Array.from({ length: writers }, (_, id) =>
+      new Promise<void>((resolve, reject) => {
+        const child = spawn(process.execPath, ["--input-type=module", "-e", script, path, String(id), String(perWriter), JSON.stringify(sinkOptions)], { stdio: ["ignore", "ignore", "pipe"] });
+        let stderr = "";
+        child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+        child.on("error", reject);
+        child.on("exit", (code) => (code === 0 && !stderr.includes("[berth-audit]") ? resolve() : reject(new Error(`writer ${id} exited ${code}: ${stderr}`))));
+      }),
+    ),
+  ).then(() => undefined);
+}
+
+test("concurrent writers in separate processes produce one valid chain", async () => {
+  const path = tmp();
+  await appendFromProcesses(path, 4, 50);
+
+  const records = readAuditFile(path);
+  assert.equal(records.length, 200);
+  assert.equal(verifyAuditChain(records).valid, true);
+  assert.deepEqual(records.map((r) => r.seq), records.map((_, i) => i));
+  const writers = new Set(records.map((r) => (r.meta as { writer: string }).writer));
+  assert.equal(writers.size, 4);
+  assert.equal(existsSync(`${path}.lock`), false, "the lock is released after the last write");
+});
+
+test("concurrent writers that rotate still leave one chain across the segments", async () => {
+  const path = tmp();
+  await appendFromProcesses(path, 3, 40, { maxBytes: 4096, maxFiles: 100 });
+
+  const segments: string[] = [];
+  for (let i = 100; i >= 1; i--) if (existsSync(`${path}.${i}`)) segments.push(`${path}.${i}`);
+  segments.push(path);
+  assert.ok(segments.length > 2, "expected several rotations");
+  const result = verifyAuditSegments(segments.map((segment) => ({ segment, records: readAuditFile(segment) })));
+  assert.equal(result.valid, true, result.failure?.reason ?? "");
+  assert.equal(result.truncatedStart, false);
+  assert.equal(result.totalRecords, 120);
+});
+
+test("a lock left behind by a dead writer is broken, not waited on forever", async () => {
+  const path = tmp();
+  // A pid that can't be running: the lock names a holder that died.
+  writeFileSync(`${path}.lock`, `2147483646 ${hostname()} deadbeef\n`);
+  const sink = createFileAuditSink({ path, lock: { waitMs: 2000 } });
+  await sink.record(denial());
+  assert.equal(readAuditFile(path).length, 1);
+  assert.equal(existsSync(`${path}.lock`), false);
+});
+
+test("a live writer's lock is waited on, and a write that can't get it is reported, not thrown", async () => {
+  const path = tmp();
+  writeFileSync(`${path}.lock`, `${process.pid} ${hostname()} held\n`);
+  const errors: string[] = [];
+  const original = console.error;
+  console.error = (msg: unknown) => void errors.push(String(msg));
+  try {
+    await createFileAuditSink({ path, lock: { waitMs: 50, staleMs: 60_000 } }).record(denial());
+  } finally {
+    console.error = original;
+  }
+  assert.equal(readAuditFile(path).length, 0);
+  assert.ok(errors.some((e) => e.includes("waiting for the lock")));
+  assert.equal(readFileSync(`${path}.lock`, "utf-8"), `${process.pid} ${hostname()} held\n`, "someone else's lock is left alone");
+});
+
+test("a sink picks up records another writer appended since its own last write", async () => {
+  const path = tmp();
+  const a = createFileAuditSink({ path });
+  const b = createFileAuditSink({ path });
+  await a.record(denial());
+  await b.record(denial());
+  await a.record(denial());
+  const records = readAuditFile(path);
+  assert.deepEqual(records.map((r) => r.seq), [0, 1, 2]);
+  assert.equal(verifyAuditChain(records).valid, true);
 });

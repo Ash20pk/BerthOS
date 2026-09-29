@@ -2,8 +2,25 @@ import Docker from "dockerode";
 import { PassThrough, type Duplex } from "node:stream";
 import type { RpcRequest, RpcResponse } from "./relay.js";
 
+export interface StdioRpcCallOptions {
+  /** How long to wait for the response. Default 30s. A call that runs longer than this on purpose (code with its own timeout) needs more. */
+  timeoutMs?: number;
+  /** Stop waiting when this aborts. The request has already been written, so the app may still run it. */
+  signal?: AbortSignal;
+}
+
+export const DEFAULT_STDIO_RPC_TIMEOUT_MS = 30_000;
+
+/**
+ * A call given up on before its request was written: the app never saw it,
+ * so unlike every other failure of call() it certainly did not run.
+ */
+export class RpcNotSentError extends Error {
+  override name = "RpcNotSentError";
+}
+
 export interface StdioRpcClient {
-  call(request: RpcRequest): Promise<RpcResponse>;
+  call(request: RpcRequest, options?: StdioRpcCallOptions): Promise<RpcResponse>;
   close(): void;
 }
 
@@ -46,24 +63,43 @@ export async function createStdioRpcClient(container: Docker.Container, docker: 
   }
 
   return {
-    async call(request: RpcRequest): Promise<RpcResponse> {
+    async call(request: RpcRequest, options: StdioRpcCallOptions = {}): Promise<RpcResponse> {
+      const { timeoutMs = DEFAULT_STDIO_RPC_TIMEOUT_MS, signal } = options;
+      // Errors name the export and the request id, never the request itself:
+      // callers record these messages (berth mcp's audit `reason`), and the
+      // request's input is the agent's arguments — file contents, code,
+      // secrets.
+      const which = `${request.export} (request ${request.id})`;
+      const notSent = () => new RpcNotSentError(`not sent: the caller gave up on ${which} before it was written`);
+      if (signal?.aborted) throw notSent();
       const target = await liveStream();
+      // Checked again: reattaching above can take long enough to be given up on.
+      if (signal?.aborted) throw notSent();
       return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => {
-          pending.delete(request.id);
-          reject(new Error(`timed out waiting for RPC response to ${JSON.stringify(request)}`));
-        }, 30000);
-        pending.set(request.id, (response) => {
+        const settle = () => {
           clearTimeout(timer);
+          signal?.removeEventListener("abort", onAbort);
+          pending.delete(request.id);
+        };
+        const onAbort = () => {
+          settle();
+          reject(new Error(`the caller gave up waiting for the response to ${which}`));
+        };
+        const timer = setTimeout(() => {
+          settle();
+          reject(new Error(`timed out after ${Math.round(timeoutMs / 1000)}s waiting for the response to ${which}`));
+        }, timeoutMs);
+        signal?.addEventListener("abort", onAbort, { once: true });
+        pending.set(request.id, (response) => {
+          settle();
           resolve(response);
         });
         // Reported rather than ignored: a false here means the write was
         // dropped, which used to be indistinguishable from an app that never
         // answered.
         if (!target.write(JSON.stringify(request) + "\n")) {
-          clearTimeout(timer);
-          pending.delete(request.id);
-          reject(new Error(`could not write ${JSON.stringify(request)} to the container's stdin — the attach stream is not accepting writes`));
+          settle();
+          reject(new Error(`could not write ${which} to the container's stdin — the attach stream is not accepting writes`));
         }
       });
     },

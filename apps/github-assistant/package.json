@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@berthos/sdk": "workspace:*",
-    "undici": "^8.11.0",
+    "undici": "^8.11.2",
     "zod": "^4.6.5"
   },
   "devDependencies": {

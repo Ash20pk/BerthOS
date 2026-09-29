@@ -3,11 +3,14 @@ version: 0.1.0
 description: "An interactive shared terminal: the agent drives a real shell via run_command/read_screen/send_keys, and a human can watch (and type into) that exact same session live over ttyd"
 
 capabilities:
-  # Write-restricted to /workspace, same default as apps/filesystem — but no
-  # filesystem:read:<path> is declared, so read access stays today's fully
-  # open default (see @berthos/sdk's generate-capability-policy.ts) rather than
-  # narrowing to just /workspace: a general-purpose shell that can't `cat`
-  # outside one directory isn't very useful as a terminal.
+  # Write-restricted to /workspace, same default as apps/filesystem. No
+  # filesystem:read:<path> is declared, and none is needed: reads are always
+  # scoped (see @berthos/sdk's generate-capability-policy.ts) to the system
+  # baseline (/usr, /etc, /bin, ...), this app's own directory and what it may
+  # write, so the shell can `cat` system files and anything under /workspace.
+  # In a booted image that leaves other apps' directories unreadable; under
+  # `berth dev`, /workspace is the whole checkout (read-only), so there it can
+  # read every app in it.
   - filesystem:write:/workspace
   # Two jobs. It's the signal @berthos/docker-orchestrator's container.ts uses
   # to map the ttyd port and start it — and it's
