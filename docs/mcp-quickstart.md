@@ -107,6 +107,25 @@ The reader is usually another agent, so the message is built to be acted on:
 
 - **Other failures stay what they are.** `EROFS` is the read-only workspace mount, and the message says so instead of pointing at `capabilities:`. Ordinary app errors and input validation errors pass through unchanged.
 
+## See what it did, and prove it
+
+Every session is recorded. The bridge prints its run id when it starts:
+
+```
+[berth:mcp] recording tool calls in ~/.berth/audit/audit.jsonl as run mcp-filesystem-20260928T101500Z-3fa2c1 — attest it with `berth attest mcp-filesystem-20260928T101500Z-3fa2c1`
+```
+
+Afterwards, even once the sandbox has stopped:
+
+```bash
+berth audit list --decision denied                     # what the sandbox refused
+berth audit verify                                     # the trail hasn't been edited
+berth attest mcp-filesystem-20260928T101500Z-3fa2c1 --out session.json
+node scripts/verify-attestation.mjs session.json       # anyone can check it, no Berth install
+```
+
+The record says which calls the session made, which policies were enforced, and whether the kernel was enforcing them (`ACTIVE`) or not (`NOT_ENFORCED`). Only which export was called, when and with what outcome is recorded, not inputs or outputs. Use `--run-id` to choose the id, `--no-audit` to turn it off. See [audit](./audit-reference.md) and [attestation](./attestation-reference.md).
+
 ## `berth dev` and `berth mcp` together
 
 `berth mcp` boots the app's sandbox when none is running and stops it when the bridge exits, on a signal or when the client closes the pipe. If `berth dev` is already running the same app, the bridge attaches to that container and leaves it running. That's the better loop while you edit the app: `berth dev` reloads on save and shows the logs. `--no-boot` makes the bridge attach only, and fail if nothing is running.

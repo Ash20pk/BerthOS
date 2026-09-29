@@ -11,6 +11,7 @@ berth mcp --app filesystem --app-dir apps/filesystem
 berth mcp --app filesystem --app-dir apps/filesystem --only write_file,read_file
 berth mcp --app filesystem --app-dir apps/filesystem --no-boot
 berth mcp --app filesystem --app-dir apps/filesystem --warm
+berth mcp --app filesystem --app-dir apps/filesystem --run-id nightly-2026-09-28
 ```
 
 | Flag | Default | What it does |
@@ -22,6 +23,10 @@ berth mcp --app filesystem --app-dir apps/filesystem --warm
 | `--no-boot` | boots | Attach to a running container only; fail if there isn't one |
 | `--warm` | off | Build the image, boot the sandbox, wait for the app to report ready, stop it, exit 0. Doesn't serve MCP |
 | `--boot-timeout=<seconds>` | `120` | How long to wait for a freshly booted app to report ready |
+| `--call-timeout=<seconds>` | `30` | How long to wait for the app to answer a tool call. A call whose input has a longer `timeout_ms` (code-interpreter's `run_code`) waits that plus 15 s |
+| `--no-audit` | audits | Don't write tool calls to the audit trail |
+| `--audit-file=<path>` | `~/.berth/audit/audit.jsonl` | Audit file to append to |
+| `--run-id=<id>` | a new one | The run id this session's records are tagged with. The default looks like `mcp-filesystem-20260928T101500Z-3fa2c1` and is printed on stderr at start |
 
 ## How it works
 
@@ -29,6 +34,7 @@ berth mcp --app filesystem --app-dir apps/filesystem --warm
 - **It cleans up what it started.** A container the bridge booted is stopped when the bridge exits, on SIGINT or SIGTERM or when the client closes stdin. A container that was already running is left alone.
 - **Each export becomes one tool.** The export's `input` fields in `berth.yml` become the tool's input schema, one field to one field. Nothing is inferred beyond what the manifest declares.
 - **Calls go straight to the app.** Each tool call is a request/response RPC over the container's stdio, on one connection held for the life of the bridge.
+- **Every call is audited.** Each tool call is written to the [audit trail](./audit-reference.md) as allowed, denied (the sandbox refused it) or failed (the app errored, or never answered, in which case the record says the call may have run), tagged with the session's run id. Calls still in flight when the session ends are recorded as interrupted. Once connected, the bridge also records the sandbox's boot evidence. That makes the session something [`berth attest`](./attestation-reference.md) can attest, even after the bridge has stopped the sandbox. Inputs and outputs aren't written.
 - **Stdout is the MCP transport.** Every human-readable line, including build progress and the container's enforcement status, goes to stderr.
 
 ## Denials as the API
@@ -49,4 +55,5 @@ The rules it follows:
 - **Only the container's primary app.** A companion app in a multi-app sandbox (`--apps`) isn't reachable through the bridge.
 - **Local Docker only.** No E2B, Daytona or Kubernetes instances.
 - **Stdio, request/response only.** No other transports, and no streaming or long-running tool calls.
-- **No caller authentication.** `--only` narrows what a bridge exposes, not who can use it. Anyone who can run `berth mcp` against a running container gets whatever that invocation exposes.
+- **No caller authentication.** `--only` narrows what a bridge exposes, not who can use it. Anyone who can run `berth mcp` against a running container gets whatever that invocation exposes. For the same reason, the audit trail's `actor` for a tool call is the name the MCP client gave itself, marked `self-asserted`.
+- **A denial is recorded only when the app reports one.** An app that catches a permission error and returns it as ordinary output (code-interpreter returns Python's `PermissionError` text) is recorded as an allowed call, because the bridge only sees a result.

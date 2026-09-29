@@ -1,14 +1,18 @@
 import { Command, Flags } from "@oclif/core";
 import Docker from "dockerode";
+import { homedir, userInfo } from "node:os";
 import { resolve } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { loadManifest } from "@berthos/manifest-schema";
-import { createStdioRpcClient, stopContainer } from "@berthos/docker-orchestrator";
+import { createFileAuditSink, defaultAuditPath } from "@berthos/audit";
+import { createStdioRpcClient, gatherBootEvidence, stopContainer } from "@berthos/docker-orchestrator";
 import { mcpToolsFor, parseOnlyExports } from "../util/mcp-tools.js";
 import { bootDevContainer } from "../util/dev-boot.js";
 import { resolveApps } from "../util/multi-app.js";
 import { explainAppError, enforcementFromContainerLogs, type EnforcementStatus } from "../util/capability-errors.js";
+import { createRunAudit, newRunId, type RunAudit } from "../util/run-audit.js";
+import { createInFlightCalls, createShutdown, handleToolCall } from "../util/mcp-call.js";
 
 /**
  * Bridges one resident app's already-declared exports to MCP tools, so an
@@ -30,6 +34,12 @@ import { explainAppError, enforcementFromContainerLogs, type EnforcementStatus }
  *    on the other end of this transport is usually another agent, and
  *    `EACCES: permission denied, open '/etc/x'` says nothing about berth.yml.
  *
+ * Every tool call is written to the audit trail (~/.berth/audit/audit.jsonl
+ * unless --audit-file says otherwise) under one run id per session, along
+ * with the sandbox's boot evidence, so the session can be checked with
+ * `berth audit verify` and attested with `berth attest <runId>` after the
+ * sandbox is gone. See util/run-audit.ts.
+ *
  * Note on output: stdout is the MCP transport. Every human-readable line this
  * command emits goes to stderr (this.warn / this.error / logStderr), and a
  * stray this.log() here would be a protocol framing error.
@@ -45,6 +55,7 @@ export default class Mcp extends Command {
     "Expose a resident app's declared exports as MCP tools over stdio, booting the app's sandbox if it isn't already running";
   static override examples = [
     "<%= config.bin %> mcp --app filesystem --app-dir apps/filesystem",
+    "<%= config.bin %> mcp --app filesystem --app-dir apps/filesystem --run-id nightly-2026-09-28",
     "<%= config.bin %> mcp --app filesystem --app-dir apps/filesystem --only write_file,read_file",
     "<%= config.bin %> mcp --app filesystem --app-dir apps/filesystem --no-boot",
   ];
@@ -67,9 +78,24 @@ export default class Mcp extends Command {
       description:
         "build the image, boot the sandbox, wait for the app to report ready, then stop it and exit 0 — without serving MCP. Run this once before wiring up a client: the first build takes minutes and an MCP client will kill a server that can't answer `initialize` inside its startup timeout.",
     }),
+    audit: Flags.boolean({
+      allowNo: true,
+      default: true,
+      description:
+        "record every tool call, and the sandbox's boot evidence, in the audit trail under this session's run id (default). Inputs and outputs are not recorded, only which export was called, when, and whether it was allowed, denied or failed.",
+    }),
+    "audit-file": Flags.string({ description: "audit file to append to (defaults to ~/.berth/audit/audit.jsonl)" }),
+    "run-id": Flags.string({
+      description: "run id to record this session under, for `berth attest <runId>` (defaults to a new one, printed on stderr at start)",
+    }),
     "boot-timeout": Flags.integer({
       default: 120,
       description: "seconds to wait for a freshly booted app's runtime to report ready",
+    }),
+    "call-timeout": Flags.integer({
+      default: 30,
+      description:
+        "seconds to wait for the app to answer a tool call. A call whose input has a `timeout_ms` (code-interpreter's run_code) waits that long plus 15s if it is longer.",
     }),
   };
 
@@ -151,65 +177,90 @@ export default class Mcp extends Command {
     const rpc = await createStdioRpcClient(container, docker);
 
     const transport = new StdioServerTransport();
+    const server = new McpServer({ name: `berth-${appName}`, version: manifest.version });
+
+    let runAudit: RunAudit | undefined;
+    if (flags.audit) {
+      const auditPath = flags["audit-file"] ?? defaultAuditPath(homedir());
+      runAudit = createRunAudit({
+        sink: createFileAuditSink({ path: auditPath }),
+        runId: flags["run-id"] ?? newRunId(manifest.name),
+        app: manifest.name,
+        containerName,
+        via: "mcp",
+        // The client names itself in `initialize`, and nothing checks it.
+        actor: () => ({ kind: "agent", id: server.server.getClientVersion()?.name ?? "mcp-client", verifiedBy: "self-asserted" }),
+        operator: { kind: "operator", id: userInfo().username, verifiedBy: "self-asserted" },
+      });
+      const fileFlag = flags["audit-file"] ? ` --file ${auditPath}` : "";
+      this.logStderr(`recording tool calls in ${auditPath} as run ${runAudit.runId} — attest it with \`berth attest ${runAudit.runId}${fileFlag}\``);
+    }
+    // Started once the server is connected, so it never delays `initialize`;
+    // awaited before a sandbox this command booted is stopped, since the
+    // evidence can only be read from a running one.
+    let bootEvidence: Promise<void> = Promise.resolve();
+    const inFlight = createInFlightCalls();
 
     // The container outlives this process only if it already existed. One that
     // this command booted is torn down with it, so an MCP client that stops
-    // the server doesn't leave a sandbox running with no owner.
-    if (bootedHere) {
-      let stopping = false;
-      const shutdown = () => {
-        if (stopping) return;
-        stopping = true;
-        void stopContainer(container)
-          .catch(() => {})
-          .then(() => process.exit(0));
-      };
-      process.on("SIGINT", shutdown);
-      process.on("SIGTERM", shutdown);
-      // Not just signals: a client that closes the pipe instead of signalling
-      // (and `berth mcp < /dev/null`) ends stdin, and the transport's onclose
-      // is the only notice this process gets. Without it the sandbox outlives
-      // the bridge that owns it, with nothing left to stop it.
-      transport.onclose = shutdown;
-      process.stdin.on("end", shutdown);
-    }
+    // the server doesn't leave a sandbox running with no owner. Either way,
+    // calls still in flight are recorded as interrupted before exiting.
+    const shutdown = createShutdown({
+      pending: () => bootEvidence,
+      pendingTimeoutMs: 60_000,
+      interrupt: () => inFlight.interruptAll(runAudit),
+      ...(bootedHere ? { stop: () => stopContainer(container) } : {}),
+      exit: () => process.exit(0),
+    });
+    process.on("SIGINT", () => void shutdown());
+    process.on("SIGTERM", () => void shutdown());
+    // Not just signals: a client that closes the pipe instead of signalling
+    // (and `berth mcp < /dev/null`) ends stdin, and the transport's onclose
+    // is the only notice this process gets. Without it the sandbox outlives
+    // the bridge that owns it, with nothing left to stop it.
+    transport.onclose = () => void shutdown();
+    process.stdin.on("end", () => void shutdown());
 
-    const server = new McpServer({ name: `berth-${appName}`, version: manifest.version });
     const allowed = only ? new Set(only.names) : undefined;
+    const explain = (error: string) =>
+      explainAppError(error, { appName: manifest.name, manifest, manifestPath: `${appDir}/berth.yml`, enforcement });
 
     for (const tool of mcpToolsFor(manifest)) {
       if (allowed && !allowed.has(tool.name)) continue;
-      server.registerTool(
-        tool.name,
-        { description: tool.description, inputSchema: tool.inputShape },
-        async (args: Record<string, unknown>) => {
-          const response = await rpc.call({
-            id: `mcp-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      server.registerTool(tool.name, { description: tool.description, inputSchema: tool.inputShape }, (args: Record<string, unknown>) =>
+        handleToolCall(
+          {
             export: tool.name,
-            input: args,
-          });
-          if (response.error) {
-            return {
-              isError: true,
-              content: [
-                {
-                  type: "text",
-                  text: explainAppError(response.error, {
-                    appName: manifest.name,
-                    manifest,
-                    manifestPath: `${appDir}/berth.yml`,
-                    enforcement,
-                  }),
-                },
-              ],
-            };
-          }
-          return { content: [{ type: "text", text: JSON.stringify(response.result ?? null) }] };
-        },
+            call: (request, options) => rpc.call(request, options),
+            explain,
+            runAudit,
+            callTimeoutMs: flags["call-timeout"] * 1000,
+            inFlight,
+          },
+          args,
+        ),
       );
     }
 
     await server.connect(transport);
+    if (runAudit) bootEvidence = this.recordBootEvidence(runAudit, docker, container, containerName);
+  }
+
+  /**
+   * The same evidence `berth attest` reads from a live container, captured
+   * while this session's sandbox is running and written into the run's audit
+   * trail. A failure is reported and the session carries on: an unattestable
+   * run is still a usable one.
+   */
+  private async recordBootEvidence(runAudit: RunAudit, docker: Docker, container: Docker.Container, containerName: string): Promise<void> {
+    try {
+      const image = (await container.inspect()).Config.Image;
+      const evidence = await gatherBootEvidence(docker, containerName, image);
+      await runAudit.sandboxBoot(evidence);
+      this.logStderr(`recorded boot evidence for run ${runAudit.runId} (boot ${evidence.bootId})`);
+    } catch (err) {
+      this.logStderr(`could not record boot evidence (${err instanceof Error ? err.message : String(err)}) — tool calls are still audited, but \`berth attest\` will need a running sandbox for this run`);
+    }
   }
 
   /**

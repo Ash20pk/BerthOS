@@ -1,8 +1,20 @@
 # Audit trail reference
 
-`@berthos/audit` writes a hash-chained log of what happened and who did it: every governance verdict and, if you turn it on, every step an agent takes. Use it when you need to answer "what did this agent do, and was it allowed?" after the fact.
+`@berthos/audit` writes a hash-chained log of what happened and who did it: every tool call made through `berth mcp`, every governance verdict and, if you turn it on, every step an agent takes. Use it when you need to answer "what did this agent do, and was it allowed?" after the fact.
 
 ## Turn it on
+
+### `berth mcp`: on by default
+
+Every tool call through [`berth mcp`](./mcp-bridge-reference.md) is recorded under the session's run id, which the bridge prints on stderr when it starts:
+
+```
+[berth:mcp] recording tool calls in ~/.berth/audit/audit.jsonl as run mcp-filesystem-20260928T101500Z-3fa2c1 — attest it with `berth attest mcp-filesystem-20260928T101500Z-3fa2c1`
+```
+
+This covers any agent that reaches Berth over MCP, including Claude Code, Cursor, and a LangChain or other loop using an MCP adapter. Pick the run id yourself with `--run-id`, write somewhere else with `--audit-file`, or turn it off with `--no-audit`. The bridge also records the sandbox's boot evidence once per session, so the run can be [attested](./attestation-reference.md) after the sandbox has stopped.
+
+### The agent framework
 
 ```ts
 import { createFileAuditSink, defaultAuditPath } from "@berthos/audit";
@@ -55,12 +67,12 @@ One JSON object per line, in a file with mode 0600:
 |---|---|
 | `ts`, `seq` | ISO-8601 time and a sequence number, so records with the same timestamp still order. |
 | `actor` | `{ kind, id, verifiedBy }`. `kind` is `operator`, `app`, `agent` or `anonymous`. |
-| `action` | What happened: `governance.evaluate`, or `agent.<step kind>` such as `agent.tool-call`. |
-| `target` | What it happened to: `app.export`, `tool:<name>` or `run:<runId>`. |
+| `action` | What happened: `tool.call` and `sandbox.boot` (from `berth mcp`), `governance.evaluate`, or `agent.<step kind>` such as `agent.tool-call`. |
+| `target` | What it happened to: `app.export`, `container:<name>`, `tool:<name>` or `run:<runId>`. |
 | `decision` | `allowed`, `denied` or `unavailable`. |
 | `reason` | Why. Always set for `denied` and `unavailable`. |
 | `input`, `output` | Only with payload capture on (below), always redacted. |
-| `meta` | Extras, redacted. Agent steps carry `meta.runId`, which is what `berth attest` looks up. |
+| `meta` | Extras, redacted. `berth mcp` records and agent steps carry `meta.runId`, which is what `berth attest` looks up. Each `berth mcp` record also carries `meta.bridge`, an id for the session that wrote it. A `sandbox.boot` record carries the boot evidence in `meta.evidence`. A tool call the app failed carries `meta.failed`; one the app never answered (timed out, the write to the sandbox failed, or the session ended first) also carries `meta.outcome: "unknown"`, since it may have run. One cancelled before it was sent carries `meta.outcome: "not-sent"`. |
 | `prevHash`, `hash` | The chain. |
 
 ### How much to trust `actor`
@@ -78,6 +90,8 @@ This is not an identity system: there's no user directory, tenancy or roles.
 - `denied`: the governor refused the call.
 - `unavailable`: the governor didn't answer (error or timeout). Under `mode: "fail-open"` the call then ran with no policy check, so this is the record to look for. See [governance](./governance-reference.md).
 - An agent step that threw is `allowed` with a `reason`. Nothing refused it; it ran and failed.
+- A `berth mcp` tool call with no answer from the app is `allowed` with `meta.outcome: "unknown"` and a `reason` saying the call may have run. A call still in flight when the session ended also has `meta.interrupted`. A call the client cancelled before it was sent to the app has `meta.outcome: "not-sent"` instead: it did not run.
+- `reason` holds the first line of the app's error, capped at 300 characters. It is written even with payload capture off, so the rest (often a stack, or the input the app choked on) is left out.
 
 ## Payload capture
 
@@ -90,7 +104,9 @@ When on, values pass through `redact()`. Keys that look secret (`password`, `tok
 
 ## How the chain works
 
-Each record's `hash` is sha256 over `prevHash` plus the record's canonical JSON. Editing, deleting or reordering a record breaks every hash after it, and `berth audit verify` reports where. The chain continues across restarts and across rotation.
+Each record's `hash` is sha256 over `prevHash` plus the record's canonical JSON. Editing, deleting or reordering a record breaks every hash after it, and `berth audit verify` reports where. The chain continues across restarts and across rotation. Several processes can write the same file at once (two `berth mcp` sessions share the default path): each write takes a lock on `<file>.lock` and reads the chain's head from the file before appending, so they extend one chain rather than forking it. A lock left by a writer that died is broken once its pid is gone. A live writer's lock is never broken, however slow the writer. A lock from another host (a shared home directory), or one with no readable owner, is broken after 10 s.
+
+Only writers that take the lock keep to one chain. berth 0.2.4 or earlier writing the same file at the same time takes no lock and appends from its own in-memory head, so the chain forks from its first record on. Run one version against a given audit file, or give the older one its own path.
 
 [`berth attest`](./attestation-reference.md) builds on this chain to produce a checkable record of one run.
 
