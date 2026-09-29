@@ -39,6 +39,11 @@ export function stubValue(zodType: any, fieldName?: string): unknown {
       return true;
     case "array":
       return [];
+    case "enum":
+      // Both majors expose the values as `.options`; the first is as valid as any.
+      return zodType.options?.[0] ?? null;
+    case "literal":
+      return zodType._def.values?.[0] ?? zodType._def.value ?? null;
     case "object": {
       const def = zodType._def;
       const shape = typeof def.shape === "function" ? def.shape() : def.shape;

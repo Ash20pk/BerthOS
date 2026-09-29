@@ -1,0 +1,55 @@
+name: git
+version: 0.1.0
+description: "Git inside the sandbox's workspace: clone, branch, commit, diff, push and pull, over HTTPS to the git hosts you list and nowhere else."
+
+capabilities:
+  # Repositories live here, and nowhere else is writable.
+  - filesystem:write:/workspace
+  # The git hosts this app may reach, over HTTPS: edit these. SSH isn't
+  # supported (port 22 doesn't go through the egress proxy).
+  - network:host:github.com
+  # The egress proxy's port: the only port the kernel lets this app connect to.
+  - network:connect:8090
+
+# An access token for pushing, or for cloning private repositories. It's
+# given to git through a credential helper, never put in a URL or on a
+# command line, and only offered over HTTPS to the host of the remote in use,
+# which has to be one listed above. Commits are made as
+# GIT_AUTHOR_NAME / GIT_AUTHOR_EMAIL when those are set, which git reads itself.
+secrets:
+  - GIT_TOKEN
+
+exports:
+  - name: clone
+    input: { url: string, dir: string }
+    output: { path: string, branch: string, head: string }
+  - name: status
+    input: { repo: string }
+    output: { branch: string, ahead: number, behind: number, changes: array }
+  - name: diff
+    input: { repo: string, staged: boolean }
+    output: { diff: string, truncated: boolean }
+  - name: log
+    input: { repo: string, limit: number }
+    output: { commits: array }
+  - name: branch
+    input: { repo: string, name: string, create: boolean }
+    output: { branch: string }
+  - name: add
+    input: { repo: string, paths: array }
+    output: { staged: array }
+  - name: commit
+    input: { repo: string, message: string }
+    output: { sha: string, summary: string }
+  - name: push
+    input: { repo: string, branch: string }
+    output: { output: string }
+  - name: pull
+    input: { repo: string }
+    output: { output: string, head: string }
+
+# The base image doesn't carry git; this runs at image build time, as a
+# layer, never at boot.
+on_install:
+  - "apk add --no-cache git"
+on_agent_ready: []

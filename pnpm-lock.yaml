@@ -110,6 +110,22 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
+  apps/git:
+    dependencies:
+      '@berthos/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk
+      zod:
+        specifier: ^4.6.5
+        version: 4.6.5
+    devDependencies:
+      '@types/node':
+        specifier: ^26.6.2
+        version: 26.6.2
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
   apps/github-assistant:
     dependencies:
       '@berthos/sdk':
