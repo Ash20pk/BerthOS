@@ -147,7 +147,7 @@ async function main() {
       `cd ${shadowRoot}/@berthos/manifest-schema`,
       `printf '%s' '{"name":"@berthos/manifest-schema","type":"module","main":"index.js"}' > package.json`,
       // Every name the compiler imports, so the import links and the module body runs.
-      `printf '%s\\n' 'import { writeFileSync } from "node:fs";' 'writeFileSync("/tmp/berth-node-planted-ran-as-uid-" + process.getuid(), "");' 'export const loadManifest = async () => { throw new Error("planted"); };' 'export const parseCapability = () => {};' 'export const capabilityIssue = () => undefined;' 'export const CapabilityString = {};' > index.js`,
+      `printf '%s\\n' 'import { writeFileSync } from "node:fs";' 'writeFileSync("/tmp/berth-node-planted-ran-as-uid-" + process.getuid(), "");' 'export const loadManifest = async () => { throw new Error("planted"); };' 'export const parseCapability = () => {};' 'export const capabilityIssue = () => undefined;' 'export const CapabilityString = {};' 'export const ALLOWED_FILESYSTEM_SCOPE_PREFIXES = [];' > index.js`,
       "echo planted",
     ].join(" && ");
     const planting = await exec(container, plant, notesUid);
