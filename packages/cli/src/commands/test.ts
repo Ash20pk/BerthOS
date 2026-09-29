@@ -5,6 +5,8 @@ import { loadManifestOrExit } from "../util/manifest.js";
 import { buildProductionImage, productionImageTag } from "../util/build.js";
 import { resolveApps, assertAtMostOneBrowserApp, type AppSpec } from "../util/multi-app.js";
 import { startContainer, stopContainer } from "@berthos/docker-orchestrator";
+import type { BerthManifest } from "@berthos/manifest-schema";
+import { exportCheckCommand, pythonAppTestCommand } from "../util/test-commands.js";
 
 interface ExportCheckResult {
   ok: boolean;
@@ -35,13 +37,8 @@ export default class Test extends Command {
     await buildProductionImage(appDir, manifest, companions);
     const image = productionImageTag(manifest);
 
-    const exportCheck = await this.runInContainer(
-      docker,
-      image,
-      apps,
-      ["node", "node_modules/@berthos/sdk/dist/check-exports.js"],
-    );
-    const appTestCheck = await this.maybeRunAppTests(docker, image, appDir, apps);
+    const exportCheck = await this.runInContainer(docker, image, apps, exportCheckCommand(manifest.runtime));
+    const appTestCheck = await this.maybeRunAppTests(docker, image, appDir, apps, manifest.runtime);
 
     const summary = {
       manifest: manifest.name,
@@ -65,9 +62,14 @@ export default class Test extends Command {
     image: string,
     appDir: string,
     apps: AppSpec[],
+    runtime: BerthManifest["runtime"],
   ): Promise<{ exitCode: number; output: string } | null> {
     const fs = await import("node:fs/promises");
     const path = await import("node:path");
+    if (runtime === "python") {
+      const command = await pythonAppTestCommand(appDir);
+      return command ? this.runInContainer(docker, image, apps, command) : null;
+    }
     try {
       const pkg = JSON.parse(await fs.readFile(path.join(appDir, "package.json"), "utf-8"));
       if (!pkg.scripts?.test) return null;
@@ -186,14 +188,13 @@ export default class Test extends Command {
   }
 }
 
-
 function parseLastJsonLine(output: string): ExportCheckResult | undefined {
   const lastLine = output.trim().split("\n").pop();
   if (!lastLine) return undefined;
   try {
     return JSON.parse(lastLine);
   } catch {
-    // app's own `npm test` output won't be JSON — that's expected.
+    // app's own `npm test`/pytest output won't be JSON — that's expected.
     return undefined;
   }
 }

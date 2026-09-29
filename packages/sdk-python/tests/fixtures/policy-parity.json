@@ -1,0 +1,52 @@
+{
+  "description": "Capability lists compiled by both generate-capability-policy.ts and berth_sdk.generate_capability_policy; tests/test_policy_parity.py asserts identical output. The conformance corpus's manifests are added to these at test time.",
+  "cases": [
+    { "appName": "empty", "capabilities": [] },
+    { "appName": "writer", "capabilities": ["filesystem:write:/workspace", "filesystem:write:/context/*", "filesystem:write:/workspace"] },
+    { "appName": "reader", "capabilities": ["filesystem:read:/workspace/data", "filesystem:read:/app/*"] },
+    { "appName": "github-reader", "capabilities": ["github:read:repos", "filesystem:read:/workspace"] },
+    { "appName": "github-no-reads", "capabilities": ["github:write:issues"] },
+    { "appName": "net", "capabilities": ["network:connect:443", "network:connect:80", "network:connect:443", "network:connect:0", "network:connect:70000", "network:connect:abc", "network:connect:0x50", "network:connect:1e3", "network:connect:80.5"] },
+    { "appName": "net-open", "capabilities": ["network:connect:*", "network:connect:22"] },
+    { "appName": "binder", "capabilities": ["network:bind:8080", "network:bind:*", "network:bind:0", "network:bind:65535"] },
+    { "appName": "mesh", "capabilities": ["network:peer:crew-*", "network:peer:crew-*", "network:connect:443"] },
+    { "appName": "term", "capabilities": ["terminal:attach:*", "filesystem:read:/workspace"] },
+    {
+      "appName": "hostile",
+      "capabilities": [
+        "filesystem:write:/",
+        "filesystem:write:/etc",
+        "filesystem:write:*",
+        "filesystem:write:/workspace/../etc",
+        "filesystem:write:/workspace/",
+        "filesystem:write:/workspace/a*b",
+        "filesystem:read:/root",
+        "filesystem:write:/workspacex",
+        "filesystem:write:/tmp/ok",
+        "not-a-capability",
+        "UPPER:case:scope",
+        "a:b:",
+        "filesystem:write:/workspace\n",
+        42
+      ]
+    },
+    { "appName": "mixed", "capabilities": ["browser:navigate:*.github.com", "app:invoke:other", "network:host:api.example.com", "filesystem:write:/tmp/mixed"] },
+    {
+      "appName": "dependencies",
+      "capabilities": [
+        "filesystem:write:/app/apps/dependencies/node_modules/@berthos/sdk/dist/node_modules",
+        "filesystem:write:/app/node_modules",
+        "filesystem:write:/workspace/node_modules/*",
+        "filesystem:read:/app/node_modules",
+        "filesystem:write:/workspace/node_modules_backup"
+      ]
+    }
+  ],
+  "bindPortCases": [
+    { "appName": "a", "env": {}, "capabilities": [] },
+    { "appName": "a", "env": { "BERTH_HTTP_RPC_PORT": "7777" }, "capabilities": [] },
+    { "appName": "a", "env": { "BERTH_HTTP_RPC_PORT": "7777", "BERTH_HTTP_RPC_APP": "a" }, "capabilities": ["terminal:attach:*"] },
+    { "appName": "a", "env": { "BERTH_HTTP_RPC_PORT": "7777", "BERTH_HTTP_RPC_APP": "b" }, "capabilities": ["terminal:attach:*"] },
+    { "appName": "a", "env": { "BERTH_HTTP_RPC_PORT": "7681" }, "capabilities": ["terminal:attach:*"] }
+  ]
+}

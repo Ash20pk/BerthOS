@@ -325,6 +325,17 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
   // same mesh IP across a `berth dev` restart, rather than the container's
   // own randomly-assigned Docker hostname. See docs/mesh-reference.md.
   env.BERTH_MESH_PEER_NAME = options.name;
+  // Tells entrypoint.sh that this container path is the host's source tree,
+  // bind-mounted, rather than a directory in the image. Only then may a Python
+  // app import the checkout's own packages/sdk-python instead of the image's
+  // /opt/berth/sdk-python. Without the flag the entrypoint cannot tell a real
+  // checkout from a production /workspace an app wrote a berth_sdk/ into.
+  // Set last, over options.env, so a caller's env cannot point it elsewhere.
+  if (options.bindMount) {
+    env.BERTH_DEV_SOURCE_MOUNT = options.bindMount.containerPath;
+  } else {
+    delete env.BERTH_DEV_SOURCE_MOUNT;
+  }
   if (options.meshCoordinatorUrl) {
     env.BERTH_MESH_COORDINATOR_URL = options.meshCoordinatorUrl;
   }

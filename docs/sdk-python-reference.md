@@ -50,29 +50,19 @@ The runtime loads `src/app.py` and looks for a module-level variable named `app`
 
 ## Running a Python app
 
-The sandbox runs a Python app when the container has `BERTH_APP_RUNTIME=python`. The `berth` CLI doesn't set this, so `berth dev`, `berth test`, `berth mcp` and `berth deploy` start apps as TypeScript. Boot a Python app with `@berthos/docker-orchestrator` instead:
+Declare the runtime in `berth.yml`:
 
-```ts
-import Docker from "dockerode";
-import { loadManifest } from "@berthos/manifest-schema";
-import { buildImage, startContainer } from "@berthos/docker-orchestrator";
-
-const docker = new Docker();
-const manifest = await loadManifest("apps/hello-world-py/berth.yml");
-
-await buildImage({ appDir: "apps/hello-world-py", tag: "berth/hello-world-py:dev", target: "dev", docker });
-const running = await startContainer({
-  image: "berth/hello-world-py:dev",
-  name: "hello-world-py",
-  manifest,
-  bindMount: { hostPath: process.cwd(), containerPath: "/workspace" },   // the repo root
-  workingDir: "/workspace/apps/hello-world-py",
-  env: { BERTH_APP_RUNTIME: "python" },
-  docker,
-});
+```yaml
+name: my-app
+version: 0.1.0
+runtime: python
 ```
 
-Inside the sandbox the SDK is loaded from `packages/sdk-python` in the mounted repo, and the image already has `pydantic`, `pyyaml` and `protobuf`. Your capabilities are compiled into the same kernel policy a TypeScript app gets. Put your own dependencies in `on_install` (`pip install -r requirements.txt`).
+Then run it like any other app: `berth dev`, `berth test`, `berth mcp`, `berth os up`, or `Computer.boot()`. A Python app can share a sandbox with TypeScript apps; each is started with its own runtime, and they talk over the same context bus. It can call and be called with `app:invoke:`, and is gated by a `governs: true` app in the same sandbox (or be that app), exactly as a TypeScript app is.
+
+Every sandbox image carries the SDK at `/opt/berth/sdk-python`, and already has `pydantic`, `pyyaml` and `protobuf`. When `berth dev` bind-mounts a clone of the repo, the app's process imports the repo's own `packages/sdk-python` instead, so SDK edits need no rebuild; the capability policy is always compiled by the image's copy. Your capabilities are compiled into the same kernel policy a TypeScript app gets. Put your own dependencies in `on_install` (`pip install -r requirements.txt`).
+
+`berth test` checks your exports against `berth.yml` and calls each one with a stub input built from its Pydantic model, as it does for a TypeScript app. If the app has a `tests/` directory it then runs `python3 -m pytest -q tests` in the image. pytest isn't in the base image, so install it through `on_install`.
 
 ## How an app boots
 
@@ -126,7 +116,7 @@ Hooks are plain functions, not `async`. A handler only receives its input, so ke
 
 ## Protocol
 
-Exports are served as line-delimited JSON on stdio, and also on a Unix socket when `BERTH_RPC_SOCKET` is set:
+Exports are served as line-delimited JSON on stdio, and also on a Unix socket when `BERTH_RPC_SOCKET` is set. Next to that socket, the runtime binds one socket per sibling allowed to call the app, at `peers/<caller>/rpc.sock`; which socket a call arrives on is how the app, and its governor, know who called:
 
 ```json
 {"id": "1", "export": "greet", "input": {"name": "Ada"}}
@@ -138,7 +128,6 @@ Exports are served as line-delimited JSON on stdio, and also on a Unix socket wh
 
 | Variable | Default |
 |---|---|
-| `BERTH_APP_RUNTIME` | `node`; set to `python` to run a Python app |
 | `BERTH_MANIFEST_PATH` | `./berth.yml` |
 | `BERTH_APP_ENTRY` | `./src/app.py` |
 | `BERTH_RPC_SOCKET` | unset (stdio only) |
@@ -146,6 +135,5 @@ Exports are served as line-delimited JSON on stdio, and also on a Unix socket wh
 
 ## Limits
 
-- **One app per sandbox.** A Python app can't be a companion in a multi-app sandbox, so it can't use `app:invoke:` or be governed by another app.
-- **No `network:bind:` or `network:peer:`.** The Python policy compiler ignores them, so a Python app can't listen on a port or join the mesh.
+- **No HTTP RPC bridge or TCP listener.** A Python app is reached over stdio and its Unix sockets only.
 - **No semantic filesystem client, `requestCapability` or `configureEgressProxy`.** Reading and writing files under `/context` works as ordinary file I/O. To use the egress proxy, point your HTTP client at `$BERTH_EGRESS_PROXY_URL`.

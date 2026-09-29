@@ -190,7 +190,9 @@ async function runCase(adapter, testCase, describe) {
   if (op === "describe") {
     const problems = [];
     if (typeof describe.implementation !== "string" || describe.implementation === "") problems.push("missing 'implementation'");
-    if (describe.specVersion !== "1.0.0") problems.push(`targets specVersion ${JSON.stringify(describe.specVersion)}, this corpus is 1.0.0`);
+    // Minor versions are additive (SPEC.md §10): a 1.0.0 implementation is
+    // still measured against a 1.x corpus, and fails only what it doesn't do.
+    if (!/^1\.\d+\.\d+$/.test(String(describe.specVersion))) problems.push(`targets specVersion ${JSON.stringify(describe.specVersion)}, this corpus is 1.x`);
     if (!Array.isArray(describe.filesystemAllowlist) || describe.filesystemAllowlist.length === 0) problems.push("missing 'filesystemAllowlist'");
     else if (!describe.filesystemAllowlist.every((p) => typeof p === "string" && p.startsWith("/"))) problems.push("'filesystemAllowlist' must be absolute paths");
     if (!Number.isInteger(describe.schemaVersion) || describe.schemaVersion < 0) problems.push("missing non-negative integer 'schemaVersion'");

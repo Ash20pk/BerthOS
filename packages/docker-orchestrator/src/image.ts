@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join, dirname, basename, resolve as resolvePath, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadManifest } from "@berthos/manifest-schema";
+import { excludedFromPythonImage, stageAppRuntimes } from "./app-runtime.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -33,6 +34,24 @@ const CONTEXT_BUS_DAEMON_DIR = daemonSourceDir("context-bus-daemon");
 const AGENT_INIT_DIR = daemonSourceDir("agent-init");
 const SEMANTIC_FS_DAEMON_DIR = daemonSourceDir("semantic-fs-daemon");
 const MESH_DAEMON_DIR = daemonSourceDir("mesh-daemon");
+
+/** The Python SDK (berth_sdk): the checkout's packages/sdk-python, or the copy bundled into this package. */
+export function pythonSdkSourceDir(pkgRoot = join(__dirname, "..")): string {
+  const sibling = join(pkgRoot, "..", "sdk-python");
+  return existsSync(join(sibling, "berth_sdk", "__init__.py")) ? sibling : join(pkgRoot, "daemons", "sdk-python");
+}
+const PYTHON_SDK_DIR = pythonSdkSourceDir();
+
+/**
+ * @berthos/sdk's root-run tools (the policy compiler and the lifecycle flags),
+ * each bundled into one file with no bare imports by scripts/bundle-daemons.mjs.
+ * Always the bundle, in the checkout too: the source needs esbuild to become
+ * something entrypoint.sh can run, and the build is what runs it.
+ */
+export function nodeSdkToolsDir(pkgRoot = join(__dirname, "..")): string {
+  return join(pkgRoot, "daemons", "sdk-node");
+}
+const NODE_SDK_TOOLS_DIR = nodeSdkToolsDir();
 
 export type BuildTarget = "dev" | "production";
 
@@ -293,6 +312,13 @@ export async function makeDeployReproducible(stagingDir: string, containerAppRoo
  * another ~160 MB layer behind.
  */
 export async function stageProductionSource(appDir: string, stagingDir: string, containerAppRoot: string): Promise<void> {
+  // A Python app has no node_modules to materialize: its SDK is in the image
+  // (/opt/berth/sdk-python), so its own directory is the whole of it.
+  if ((await loadManifest(join(appDir, "berth.yml"))).runtime === "python") {
+    await cp(appDir, stagingDir, { recursive: true, filter: (src) => !excludedFromPythonImage(appDir, src) });
+    return;
+  }
+
   const workspaceRoot = workspaceRootAbove(appDir);
 
   if (workspaceRoot) {
@@ -641,8 +667,12 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
       await stageDevOnInstallContext(options, stagingDir);
     }
 
+    // Each app's resolved `runtime:`, for entrypoint.sh — see app-runtime.ts.
+    const primaryName = options.appName ?? (await loadManifest(join(options.appDir, "berth.yml"))).name;
+    await stageAppRuntimes(stagingDir, [{ name: primaryName, appDir: options.appDir }, ...(options.companions ?? [])]);
+
     await cp(DOCKER_ASSETS_DIR, join(stagingDir, "docker"), { recursive: true });
-    for (const dir of [CONTEXT_BUS_DAEMON_DIR, AGENT_INIT_DIR, SEMANTIC_FS_DAEMON_DIR, MESH_DAEMON_DIR]) {
+    for (const dir of [CONTEXT_BUS_DAEMON_DIR, AGENT_INIT_DIR, SEMANTIC_FS_DAEMON_DIR, MESH_DAEMON_DIR, PYTHON_SDK_DIR, NODE_SDK_TOOLS_DIR]) {
       if (!existsSync(dir)) {
         throw new Error(
           `daemon source not found at ${dir}: this @berthos/docker-orchestrator has neither the repository's packages/ nor a bundled daemons/ copy (run its build, which bundles them)`,
@@ -660,6 +690,11 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
       filter: (src) => !src.includes(join(AGENT_INIT_DIR, "target")),
     });
     await cp(SEMANTIC_FS_DAEMON_DIR, join(stagingDir, "semantic-fs-daemon"), { recursive: true });
+    await cp(join(PYTHON_SDK_DIR, "berth_sdk"), join(stagingDir, "sdk-python", "berth_sdk"), {
+      recursive: true,
+      filter: (src) => !src.includes("__pycache__"),
+    });
+    await cp(NODE_SDK_TOOLS_DIR, join(stagingDir, "sdk-node"), { recursive: true });
     await cp(MESH_DAEMON_DIR, join(stagingDir, "mesh-daemon"), {
       recursive: true,
       filter: (src) => !src.includes(join(MESH_DAEMON_DIR, "target")),

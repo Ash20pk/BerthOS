@@ -37,6 +37,7 @@ on_install:
 | [`version`](#version-required) | string, `x.y.z` | required | App version and image tag |
 | [`schema_version`](#schema_version-default-current) | non-negative integer | current (`1`) | Which shape of `berth.yml` this file is written in |
 | [`description`](#description-default-) | string | `""` | Summary shown by the app registry |
+| [`runtime`](#runtime-default-node) | `node` or `python` | `node` | The language the app is written in |
 | [`capabilities`](#capabilities-default-) | list of `namespace:action:scope` | `[]` | What the app may touch |
 | [`secrets`](#secrets-default-) | list of env var names | `[]` | Credentials delivered only to this app |
 | [`exports`](#exports-default-) | list of export specs | `[]` | The functions the app exposes as tools |
@@ -62,6 +63,10 @@ The version of the `berth.yml` format itself, not of your app. Leave it out. Omi
 ### `description` (default: `""`)
 
 A one-line summary. The [app registry](./app-registry-reference.md) shows it in listings and matches search terms against it.
+
+### `runtime` (default: `node`)
+
+The language the app's code is written in: `node` (the [TypeScript SDK](./sdk-reference.md)) or `python` (the [Python SDK](./sdk-python-reference.md)). Every way of running an app reads it, `berth test` included, and apps with different runtimes can share one sandbox. It is recorded in the image when the image is built, so changing it needs a rebuild, as `on_install` does.
 
 ### `capabilities` (default: `[]`)
 
@@ -202,6 +207,8 @@ A `filesystem:read:` or `filesystem:write:` scope must be:
 - absolute and canonical: no `.`, `..`, empty segments or trailing slash
 - `/workspace`, `/context`, `/tmp` or `/app`, or a path beneath one of them
 - free of `*`, except a trailing `/*`, which means the same as the directory itself
+
+A `filesystem:write:` scope also can't name a path inside a `node_modules` directory: that is an app's dependencies, and a directory created there for an app would let it put a module where Node looks before the real one. Reading there is fine.
 
 `filesystem:write:/` is refused. Berth creates each declared write path at boot, before enforcement starts, which is why the scope can't be an arbitrary string. Under `berth dev` your project folder is mounted read-only, so a declared path that doesn't exist there is skipped with a warning; declare paths that exist.
 

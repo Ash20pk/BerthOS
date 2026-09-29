@@ -85,6 +85,13 @@ export const BerthManifestSchema = z
     version: z.string().regex(/^\d+\.\d+\.\d+$/, "version must be semver (x.y.z)"),
     /** Optional human-readable summary — surfaced by the Phase 5 registry's listing/search, unused before that. */
     description: z.string().default(""),
+    /**
+     * The language the app's code is written in, which decides the runtime
+     * that starts it: `node` (@berthos/sdk) or `python` (berthos-sdk,
+     * packages/sdk-python). Default node, so every existing manifest means
+     * what it meant.
+     */
+    runtime: z.enum(["node", "python"]).default("node"),
     capabilities: z.array(CapabilityString).default([]),
     exports: z.array(ExportSpec).default([]),
     on_install: z.array(z.string()).default([]),

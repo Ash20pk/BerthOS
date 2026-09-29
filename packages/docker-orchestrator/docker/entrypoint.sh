@@ -507,6 +507,94 @@ EOF
   fi
 }
 
+# The runtime an app's code needs: node or python. Decided once, at build time,
+# by the manifest loader (image.ts's stageAppRuntimes writes one file per app
+# into the image at /etc/berth/runtime), so this script and the build cannot
+# disagree about what `runtime:` says. $1 is the app's name, or `_primary` in
+# single-app mode, where the name isn't known until the policy is compiled.
+# A missing entry is an image this entrypoint didn't come with; say so, and
+# start it the way every image before `runtime:` existed was started.
+app_runtime() {
+  local entry="/etc/berth/runtime/$1"
+  if [ ! -f "$entry" ]; then
+    echo "[berth:entrypoint] WARNING: no runtime recorded for ${1} in this image (${entry}) — starting it as node" >&2
+    echo node
+    return 0
+  fi
+  case "$(tr -d '[:space:]' <"$entry")" in
+    python) echo python ;;
+    *) echo node ;;
+  esac
+}
+
+# base.Dockerfile's CMD, which is what a container started with no command of
+# its own passes here.
+NODE_RUNTIME_CMD="node node_modules/@berthos/sdk/dist/runtime.js"
+
+# The copy of berth_sdk every image carries: root-owned, written at build
+# time, and nothing an app can write.
+BERTH_IMAGE_PYTHON_SDK=/opt/berth/sdk-python
+
+# Where a Python app's own process imports berth_sdk from. The checkout's copy
+# only when container.ts says the source tree is bind-mounted there
+# (BERTH_DEV_SOURCE_MOUNT, set for `berth dev` and nothing else) *and* that
+# path really is a mount point — live SDK edits in dev, no rebuild. Anything
+# short of both is the image's copy.
+#
+# Existence alone is not enough, and that was the bug: in production
+# /workspace is a directory in the image that precreate_declared_paths hands
+# to an app declaring filesystem:write:/workspace, so a berth_sdk/ there is
+# something an app can plant.
+python_sdk_path() {
+  local mount="${BERTH_DEV_SOURCE_MOUNT:-}"
+  if [ -n "$mount" ] \
+      && awk -v p="$mount" '$5 == p { found = 1 } END { exit !found }' /proc/self/mountinfo 2>/dev/null \
+      && [ -f "$mount/packages/sdk-python/berth_sdk/__init__.py" ]; then
+    echo "$mount/packages/sdk-python"
+  else
+    echo "$BERTH_IMAGE_PYTHON_SDK"
+  fi
+}
+
+# Runs one berth_sdk module as a tool of this script — as root, before
+# agent-init has applied anything — which is what the policy compiler and the
+# lifecycle flags are. Always from the image's root-owned copy, never the dev
+# mount, and with -I: no PYTHONPATH, no user site-packages, and no current
+# directory on sys.path. The current directory is the app's own, so a plain
+# `python3 -m berth_sdk...` there imports an app-supplied berth_sdk/ first,
+# and runs it as root.
+#
+# PYTHONPATH is still passed, set to what the app's own process will get,
+# because the policy compiler reads it: every app's reads are scoped, and the
+# directory berth_sdk is imported from is granted from it (_sdk_read_paths,
+# which filters each entry). -I keeps it off this tool's own sys.path, so it
+# changes what the policy says, never what runs as root.
+run_python_sdk_tool() {
+  PYTHONPATH="$(python_sdk_path)${PYTHONPATH:+:$PYTHONPATH}" python3 -I -c'import runpy, sys; sys.path.insert(0, sys.argv[1]); runpy.run_module(sys.argv[2], run_name="__main__", alter_sys=True)' \
+    "$BERTH_IMAGE_PYTHON_SDK" "berth_sdk.$1"
+}
+
+# The image's own copy of @berthos/sdk's root-run tools: the policy compiler
+# and the lifecycle flags, each bundled into one file with nothing left to
+# import but node's own modules (scripts/bundle-daemons.mjs). Root-owned,
+# written at build time, and nothing an app can write.
+BERTH_IMAGE_NODE_SDK=/opt/berth/sdk-node
+
+# The Node counterpart of run_python_sdk_tool: runs one of those tools as
+# root, before agent-init, by absolute path. They used to run from the app's
+# own node_modules/@berthos/sdk, and a bare import there is looked up first in
+# node_modules/@berthos/sdk/dist/node_modules, which no image has: an app
+# could declare filesystem:write: for it, have it created for itself by
+# precreate_declared_paths, and plant a module there for root to run on the
+# next boot. The bundle imports nothing but node's own modules, so where it
+# runs from has no say in what it loads. It still runs in the app's directory,
+# which the compiler reads as the app's working directory (the read
+# baseline, and where berth.yml and .berth/ are by default). NODE_OPTIONS
+# and NODE_PATH are dropped, as -I drops PYTHON* for the Python tools.
+run_node_sdk_tool() {
+  env -u NODE_OPTIONS -u NODE_PATH node "$BERTH_IMAGE_NODE_SDK/$1.mjs"
+}
+
 if [ -z "${BERTH_APPS:-}" ]; then
   # --- Single-app mode. ---
   # BERTH_APPS is only ever set by container.ts when more than one app
@@ -518,14 +606,7 @@ if [ -z "${BERTH_APPS:-}" ]; then
     exit 1
   fi
 
-  # Additive, defaults to "node" (today's exact behavior, byte-for-byte,
-  # when unset) — a Python resident app sets BERTH_APP_RUNTIME=python.
-  # PYTHONPATH points straight at the bind-mounted packages/sdk-python
-  # source, the same role a pre-existing node_modules symlink plays for a
-  # TS app's @berthos/sdk — no pip install needed for dev mode.
-  if [ "${BERTH_APP_RUNTIME:-node}" = "python" ]; then
-    export PYTHONPATH="/workspace/packages/sdk-python${PYTHONPATH:+:$PYTHONPATH}"
-  fi
+  APP_RUNTIME="$(app_runtime _primary)"
 
   # Reports two independent flags: whether a browser:* capability is declared
   # (needs Xvfb/a display) and whether a browser:navigate:*/network:host:*
@@ -539,10 +620,10 @@ if [ -z "${BERTH_APPS:-}" ]; then
   # The lifecycle script's last stdout line is "<0|1>,<0|1>" — everything
   # before that is its own on_install command output (already streamed to
   # stderr/stdout by execSync's inherited stdio).
-  if [ "${BERTH_APP_RUNTIME:-node}" = "python" ]; then
-    LIFECYCLE_FLAGS="$(python3 -m berth_sdk.run_lifecycle | tail -n1)"
+  if [ "$APP_RUNTIME" = "python" ]; then
+    LIFECYCLE_FLAGS="$(run_python_sdk_tool run_lifecycle | tail -n1)"
   else
-    LIFECYCLE_FLAGS="$(node "$PWD/node_modules/@berthos/sdk/dist/run-lifecycle.js" | tail -n1)"
+    LIFECYCLE_FLAGS="$(run_node_sdk_tool run-lifecycle | tail -n1)"
   fi
   NEEDS_BROWSER="${LIFECYCLE_FLAGS%,*}"
   NEEDS_EGRESS_BROKER="${LIFECYCLE_FLAGS#*,}"
@@ -599,12 +680,12 @@ if [ -z "${BERTH_APPS:-}" ]; then
   # Translates berth.yml's capabilities into the JSON policy agent-init reads
   # (see @berthos/sdk's generate-capability-policy.ts for why this lives in
   # Node/TypeScript rather than being parsed from YAML in Rust) — mirrored
-  # exactly in Python for BERTH_APP_RUNTIME=python (same policy JSON shape;
+  # exactly in Python for a `runtime: python` app (same policy JSON shape;
   # agent-init doesn't care which one wrote it).
-  if [ "${BERTH_APP_RUNTIME:-node}" = "python" ]; then
-    python3 -m berth_sdk.generate_capability_policy
+  if [ "$APP_RUNTIME" = "python" ]; then
+    run_python_sdk_tool generate_capability_policy
   else
-    node "$PWD/node_modules/@berthos/sdk/dist/generate-capability-policy.js"
+    run_node_sdk_tool generate-capability-policy
   fi
 
   # The app's name comes from the policy that was just generated rather than
@@ -694,11 +775,20 @@ if [ -z "${BERTH_APPS:-}" ]; then
   # unverifiable in principle, not just in practice.
 
   echo "[berth:entrypoint] handing off to agent-init for kernel-level capability enforcement" >&2
-  if [ "${BERTH_APP_RUNTIME:-node}" = "python" ]; then
-    exec /usr/local/bin/agent-init python3 -m berth_sdk.runtime
-  else
-    exec /usr/local/bin/agent-init "$@"
+  if [ "$APP_RUNTIME" = "python" ]; then
+    # PYTHONPATH plays the role for a Python app that node_modules/@berthos/sdk
+    # plays for a TypeScript one — no pip install needed. Set only here, for
+    # the app's own process under agent-init, not for the root tools above.
+    export PYTHONPATH="$(python_sdk_path)${PYTHONPATH:+:$PYTHONPATH}"
+    # The image's CMD is the Node runtime (one Dockerfile serves both), so
+    # that command, or none, means "start the app". Anything else is a
+    # command someone asked for — `berth test`'s export check — and runs as
+    # given, under the same enforcement, exactly as it does for a Node app.
+    if [ "$#" -eq 0 ] || [ "$*" = "$NODE_RUNTIME_CMD" ]; then
+      exec /usr/local/bin/agent-init python3 -m berth_sdk.runtime
+    fi
   fi
+  exec /usr/local/bin/agent-init "$@"
 fi
 
 # --- Multi-app mode: every app gets its own, real, independent Landlock
@@ -838,7 +928,13 @@ run_app() {
   # browser/egress flags (the grep loop above decides those for the whole
   # container), so once on_install moved to build time,
   # the only thing this invocation still did was cost a Node startup per app.
-  node "node_modules/@berthos/sdk/dist/generate-capability-policy.js"
+  if [ "$(app_runtime "$app_name")" = "python" ]; then
+    run_python_sdk_tool generate_capability_policy
+    secure_capability_policy "$BERTH_CAPABILITY_POLICY"
+    export PYTHONPATH="$(python_sdk_path)${PYTHONPATH:+:$PYTHONPATH}"
+    exec /usr/local/bin/agent-init python3 -m berth_sdk.runtime
+  fi
+  run_node_sdk_tool generate-capability-policy
   secure_capability_policy "$BERTH_CAPABILITY_POLICY"
 
   exec /usr/local/bin/agent-init "$@"
@@ -887,16 +983,34 @@ precreate_declared_paths() {
     # Same command run_app runs; running it twice is idempotent and costs one
     # Node start per app, which buys a deterministic boot.
     ( cd "$dir" \
-        && BERTH_MANIFEST_PATH="$dir/berth.yml" \
-           BERTH_CAPABILITY_POLICY="$dir/.berth/capability-policy.json" \
-           node "node_modules/@berthos/sdk/dist/generate-capability-policy.js" >/dev/null ) \
+        && export BERTH_MANIFEST_PATH="$dir/berth.yml" BERTH_CAPABILITY_POLICY="$dir/.berth/capability-policy.json" \
+        && if [ "$(app_runtime "$name")" = "python" ]; then
+             run_python_sdk_tool generate_capability_policy >/dev/null
+           else
+             run_node_sdk_tool generate-capability-policy >/dev/null
+           fi ) \
       || { echo "[berth:entrypoint] WARNING: could not pre-compile ${name}'s capability policy — its declared paths may not exist when a sibling binds a read grant on them" >&2; continue; }
 
+    # Only paths this pass may create as root: the manifest schema's
+    # filesystem allowlist (ALLOWED_FILESYSTEM_SCOPE_PREFIXES, canonical, no
+    # globs, nothing inside a node_modules). Both compilers already drop anything else, but this is the
+    # process doing the mkdir and chown, so it does not take the policy file's
+    # word for it — the same reason agent-init re-checks its own copy.
+    # Baseline entries outside it (/dev/null, /run/berth/<app>, /dev/pts)
+    # already exist and were never created here.
     node -e '
       const fs = require("fs");
-      const policy = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-      for (const p of policy.writePaths ?? []) process.stdout.write(`${p}\t${process.argv[2]}\n`);
-    ' "$dir/.berth/capability-policy.json" "$uid" >>"$decls" 2>/dev/null || true
+      let policy;
+      try { policy = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); } catch { process.exit(0); }
+      const allowed = (p) =>
+        typeof p === "string" && !p.includes("\0") && !p.includes("*") &&
+        ["/workspace", "/context", "/tmp", "/app"].some((pre) => p === pre || p.startsWith(`${pre}/`)) &&
+        !p.slice(1).split("/").some((s) => s === "" || s === "." || s === ".." || s === "node_modules");
+      for (const p of policy.writePaths ?? []) {
+        if (allowed(p)) process.stdout.write(`${p}\t${process.argv[2]}\n`);
+        else if (typeof p !== "string" || !fs.existsSync(p)) console.error(`[berth:entrypoint] WARNING: not creating ${JSON.stringify(p)} for ${process.argv[3]} — outside /workspace, /context, /tmp, /app, or inside a node_modules`);
+      }
+    ' "$dir/.berth/capability-policy.json" "$uid" "$name" >>"$decls" || true
   done <<<"$tsv"
 
   local path owners owner
