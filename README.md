@@ -159,6 +159,7 @@ The rest is in [Resident apps](./docs/resident-apps.md) and the [manifest refere
 | [`browser-native`](./apps/browser-native) | Headless Chromium you can watch over VNC | `browser:navigate:*` |
 | [`web-fetch`](./apps/web-fetch) | Call APIs and read web pages, on the hosts you list | `network:host:<host>`, one per host |
 | [`git`](./apps/git) | Clone, branch, commit, diff, push and pull in the workspace, over HTTPS to the hosts you list | `filesystem:write:/workspace`, `network:host:github.com` |
+| [`postgres`](./apps/postgres) | Query your PostgreSQL database; read-only by default | `network:host:<db>:5432`, a `DATABASE_URL` secret |
 | [`github-assistant`](./apps/github-assistant) | Read repos, open issues | `github:read:repos`, `github:write:issues` |
 | [`notes`](./apps/notes) | Stateful notes, persisted to disk | `filesystem:write:/workspace` |
 
