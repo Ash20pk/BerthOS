@@ -1,6 +1,6 @@
 import { Args, Command } from "@oclif/core";
 import Docker from "dockerode";
-import { readOsState, removeOsState, stopContainer } from "@berthos/docker-orchestrator";
+import { readOsState, removeImageKeepingCache, removeOsState, stopContainer } from "@berthos/docker-orchestrator";
 
 export default class OsDown extends Command {
   static override description = "Tear down a Berth OS instance started with `berth os up`";
@@ -24,12 +24,9 @@ export default class OsDown extends Command {
     } catch (err) {
       this.warn(`could not stop container ${state.containerName}: ${err instanceof Error ? err.message : String(err)}`);
     }
-    await docker
-      .getImage(state.image)
-      .remove()
-      .catch(() => {
-        /* already reclaimed, or never fully built — fine either way */
-      });
+    // Keeps the parent layers, which are the build cache for the next
+    // `berth os up` (see removeImageKeepingCache).
+    await removeImageKeepingCache(docker, state.image);
 
     await removeOsState(args.name);
     this.log(`"${args.name}" is down.`);

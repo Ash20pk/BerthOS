@@ -2,10 +2,10 @@ import Docker from "dockerode";
 import tarFs from "tar-fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdtemp, cp, rm, readFile, writeFile, mkdir, chmod } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { mkdtemp, cp, rm, readFile, writeFile, mkdir, chmod, readdir, readlink, realpath } from "node:fs/promises";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
+import { join, dirname, basename, resolve as resolvePath, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadManifest } from "@berthos/manifest-schema";
 
@@ -125,6 +125,162 @@ function excludedFromBuildContext(appDir: string, src: string): boolean {
 }
 
 /**
+ * Runs `pnpm deploy --legacy` for a workspace member without leaving the
+ * workspace's pnpm-lock.yaml modified.
+ *
+ * A deploy can rewrite the lockfile (workspace links become injected `file:`
+ * dependencies), so image builds from a clone used to leave the tracked file
+ * changed. The first attempt is `--frozen-lockfile`, where pnpm never writes
+ * the lockfile at all: nothing to put back, and nothing to race with. Only
+ * when that fails (a lockfile the deploy has to change) does it deploy
+ * normally, under withLockfileRestored().
+ */
+async function deployWorkspaceMember(workspaceRoot: string, name: string, stagingDir: string): Promise<void> {
+  const deploy = (extra: string[]) =>
+    execFileAsync("pnpm", ["--filter", name, "deploy", "--prod", "--legacy", ...extra, stagingDir], { cwd: workspaceRoot });
+  try {
+    await deploy(["--frozen-lockfile"]);
+    return;
+  } catch {
+    await rm(stagingDir, { recursive: true, force: true });
+  }
+  await withLockfileRestored(workspaceRoot, () => deploy([]));
+}
+
+/** One lockfile-rewriting deploy at a time per workspace, so no deploy snapshots another's rewrite as "before". */
+const lockfileDeploys = new Map<string, Promise<unknown>>();
+
+/**
+ * Puts the workspace lockfile back after `run` changes it, without undoing
+ * anyone else's edit.
+ *
+ * - The original goes back the moment the deploy exits, and only if the
+ *   file changed, by rename, so nothing ever reads a half-written lockfile.
+ * - Deploys in this process are serialized per workspace. Two overlapping
+ *   ones otherwise saw each other's rewrite as the original, and the later
+ *   restore left the lockfile modified.
+ * - SIGINT/SIGTERM mid-deploy restores it too, synchronously, before the
+ *   signal takes its usual course. An edit made *during* the deploy can't
+ *   be told apart from the deploy's own and is replaced; that window is the
+ *   deploy itself, and the frozen-lockfile attempt in
+ *   deployWorkspaceMember() means it is only open when the lockfile had to
+ *   change anyway.
+ */
+export async function withLockfileRestored<T>(workspaceRoot: string, run: () => Promise<T>): Promise<T> {
+  const previous = lockfileDeploys.get(workspaceRoot) ?? Promise.resolve();
+  const mine = previous.catch(() => {}).then(() => restoringLockfile(workspaceRoot, run));
+  lockfileDeploys.set(workspaceRoot, mine);
+  try {
+    return await mine;
+  } finally {
+    if (lockfileDeploys.get(workspaceRoot) === mine) lockfileDeploys.delete(workspaceRoot);
+  }
+}
+
+async function restoringLockfile<T>(workspaceRoot: string, run: () => Promise<T>): Promise<T> {
+  const lockfile = join(workspaceRoot, "pnpm-lock.yaml");
+  if (!existsSync(lockfile)) return run();
+  const before = readFileSync(lockfile);
+  const current = () => {
+    try {
+      return readFileSync(lockfile);
+    } catch {
+      return undefined;
+    }
+  };
+  const putBack = () => {
+    const temp = `${lockfile}.berth-restore-${process.pid}`;
+    writeFileSync(temp, before);
+    renameSync(temp, lockfile);
+  };
+
+  const signals = ["SIGINT", "SIGTERM"] as const;
+  const onSignal = (signal: NodeJS.Signals) => {
+    const after = current();
+    if (!after || !after.equals(before)) putBack();
+    // Only stand in for the default handler when nobody else is listening;
+    // otherwise whoever registered first decides what the signal means.
+    const alone = process.listenerCount(signal) === 1;
+    removeHandlers();
+    if (alone) process.kill(process.pid, signal);
+  };
+  const removeHandlers = () => {
+    for (const signal of signals) process.off(signal, onSignal);
+  };
+  for (const signal of signals) process.on(signal, onSignal);
+
+  try {
+    return await run();
+  } finally {
+    removeHandlers();
+    const after = current();
+    if (!after || !after.equals(before)) putBack();
+  }
+}
+
+/**
+ * Makes a deployed tree identical from one build to the next, and correct
+ * inside the image. `pnpm deploy` writes its own (random, temporary) target
+ * path into the `.bin` shims' NODE_PATH and into `.modules.yaml`, so the
+ * staged app never matched the previous build's and its `COPY` layer missed
+ * the build cache every time: a new ~160 MB layer per boot of an unchanged
+ * app. Those paths don't exist inside the container either.
+ *
+ *  - the target path in `.bin` shims becomes the app's path in the image;
+ *  - `.modules.yaml` and `.pnpm-workspace-state-v1.json` (pnpm's install
+ *    bookkeeping, unread at runtime) go. Both carry a fresh timestamp on
+ *    every install, and `.modules.yaml` names the builder's store too, which
+ *    is what made a `pnpm install` run from `on_install` in /app refuse to
+ *    proceed without a TTY (ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY);
+ *    without it pnpm simply reinstalls;
+ *  - symlinks that resolve outside the staged tree go, including ones that
+ *    only get out through another link. They were relative links back into
+ *    the builder's checkout (the app's own workspace entry, a pnpm
+ *    override's target), dangling in the image and naming the builder's
+ *    home directory.
+ */
+export async function makeDeployReproducible(stagingDir: string, containerAppRoot: string): Promise<void> {
+  const root = await realpath(stagingDir);
+  // Longest first: the real path (/private/tmp/…) contains the one it was
+  // given (/tmp/…) on macOS, and replacing the shorter one first leaves
+  // "/private" behind.
+  const spellings = [...new Set([stagingDir, root])].sort((x, y) => y.length - x.length);
+  const escaping: string[] = [];
+  const walk = async (dir: string): Promise<void> => {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isSymbolicLink()) {
+        // Compared as real paths on both sides: a link can stay inside the
+        // tree by name and still leave it through another link, and a
+        // dangling one (no real path) is judged by where it points. Removed
+        // only after the walk, so no link's verdict depends on whether a
+        // link it goes through was already removed.
+        const named = resolvePath(dirname(path), await readlink(path));
+        const target = await realpath(named).catch(() => named);
+        if (target !== root && !target.startsWith(root + sep)) escaping.push(path);
+        continue;
+      }
+      if (entry.isDirectory()) {
+        await walk(path);
+        continue;
+      }
+      if ((entry.name === ".modules.yaml" || entry.name === ".pnpm-workspace-state-v1.json") && dir.endsWith("node_modules")) {
+        await rm(path);
+        continue;
+      }
+      if (basename(dir) === ".bin") {
+        const text = await readFile(path, "utf-8");
+        let rewritten = text;
+        for (const spelling of spellings) rewritten = rewritten.split(spelling).join(containerAppRoot);
+        if (rewritten !== text) await writeFile(path, rewritten);
+      }
+    }
+  };
+  await walk(root);
+  for (const path of escaping) await rm(path);
+}
+
+/**
  * Materializes a real (non-symlinked-outside) node_modules for the
  * production image. A dev image relies on a bind mount plus the host's own
  * pnpm-managed node_modules, so it never needs this — but a production image
@@ -133,16 +289,23 @@ function excludedFromBuildContext(appDir: string, src: string): boolean {
  * copied in isolation. `pnpm deploy --legacy` is pnpm's own mechanism for
  * producing a fully self-contained package directory from a workspace
  * member — every dependency copied for real, nothing outside the target
- * directory. Standalone (non-workspace) apps just get a normal prod install.
+ * directory. Standalone (non-workspace) apps — every `berth init` project —
+ * just get a normal prod install.
+ *
+ * Both paths end in makeDeployReproducible(). A standalone app needs it as
+ * much as a workspace member: `pnpm install` in the (random, temporary)
+ * staging directory writes that path into the `.bin` shims too, and a fresh
+ * `prunedAt` timestamp into `.modules.yaml`, so without it every boot of an
+ * unchanged `berth init` project missed the `COPY . /app` cache and left
+ * another ~160 MB layer behind.
  */
-async function stageProductionSource(appDir: string, stagingDir: string): Promise<void> {
+export async function stageProductionSource(appDir: string, stagingDir: string, containerAppRoot: string): Promise<void> {
   const workspaceRoot = workspaceRootAbove(appDir);
 
   if (workspaceRoot) {
     const pkgJson = JSON.parse(await readFile(join(appDir, "package.json"), "utf-8")) as { name: string };
-    await execFileAsync("pnpm", ["--filter", pkgJson.name, "deploy", "--prod", "--legacy", stagingDir], {
-      cwd: workspaceRoot,
-    });
+    await deployWorkspaceMember(workspaceRoot, pkgJson.name, stagingDir);
+    await makeDeployReproducible(stagingDir, containerAppRoot);
     return;
   }
 
@@ -155,6 +318,7 @@ async function stageProductionSource(appDir: string, stagingDir: string): Promis
   } catch {
     await execFileAsync("npm", ["install", "--omit=dev"], { cwd: stagingDir });
   }
+  await makeDeployReproducible(stagingDir, containerAppRoot);
 }
 
 /** Wraps a string so a shell reads it as one literal argument, single quotes included. */
@@ -280,6 +444,168 @@ async function stageDevOnInstallContext(options: BuildImageOptions, stagingDir: 
 }
 
 /**
+ * The label on every image buildImage() produces. Its value is the image's
+ * build-cache reference (buildCacheRef()), so a berth image can be told
+ * apart from anyone else's without guessing from its name.
+ */
+export const BUILD_CACHE_LABEL = "io.berthos.build-cache";
+
+/**
+ * The tag that keeps the latest build of an app, per image repository and
+ * target, e.g. `berth-build-cache:production-berth-agent_notes` for every
+ * `berth-agent/notes:<timestamp>` a Computer boots. Keyed on the repository
+ * rather than the full tag because Computer.boot() tags each boot uniquely.
+ */
+export function buildCacheRef(tag: string, target: BuildTarget): string {
+  let repository = tag.split("@")[0]!;
+  const colon = repository.lastIndexOf(":");
+  if (colon > repository.lastIndexOf("/")) repository = repository.slice(0, colon);
+  return `berth-build-cache:${`${target}-${repository}`.replace(/[^A-Za-z0-9_.-]/g, "_").slice(0, 128)}`;
+}
+
+/** How recently created a dangling image must not be for retainLatestBuild()'s sweep to take it. */
+const SWEEP_MIN_AGE_SECONDS = 10 * 60;
+
+/**
+ * Keeps exactly one build per app and target, and reclaims the one it
+ * replaces.
+ *
+ * With the parents kept (removeImageKeepingCache()), a changed app used to
+ * leave its previous build behind: the old final image went `<none>`, and
+ * the `COPY . /app` layer under it (the ~160 MB one) stayed as a hidden
+ * intermediate that `docker image prune` doesn't touch. Every source change
+ * leaked one.
+ *
+ * So the build-cache reference moves to the new image, and the image it
+ * pointed at before is removed along with its unshared parents
+ * (removeUnsharedChain()). An old image that still carries some other tag (a
+ * published `berth/<app>:1.0.0`, a Computer still running under its own
+ * tag) is left alone, and so is one a container is using: Docker refuses
+ * that removal. Then every other dangling image of this same app and target
+ * goes the same way, which catches a final image orphaned some other way,
+ * e.g. by a run killed between its build and this cleanup.
+ *
+ * That sweep is narrow on purpose. Labels are inherited, so an image someone
+ * builds FROM a berth image carries BUILD_CACHE_LABEL too: the sweep only
+ * matches this build's own cacheRef as the label's value, and skips an image
+ * whose ancestry already has an image with that label (it was built on top of
+ * a berth build, not by one). It also skips anything created in the last
+ * SWEEP_MIN_AGE_SECONDS, so a concurrent build of the same app whose final
+ * image is momentarily untagged isn't taken for an orphan; a genuine orphan
+ * is still reclaimed by a later build.
+ *
+ * All of this is bookkeeping for the next build, never part of this one: the
+ * image is already built and tagged, so a failure here (a `docker tag` the
+ * daemon refuses, say) is reported as a warning and doesn't fail the build.
+ */
+export async function retainLatestBuild(docker: Docker, tag: string, cacheRef: string, previousIds: (string | undefined)[]): Promise<void> {
+  try {
+    await retainLatestBuildOrThrow(docker, tag, cacheRef, previousIds);
+  } catch (err) {
+    console.warn(`[berth:build] couldn't update the build cache for ${tag}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+async function retainLatestBuildOrThrow(docker: Docker, tag: string, cacheRef: string, previousIds: (string | undefined)[]): Promise<void> {
+  const built = await docker.getImage(tag).inspect().catch(() => undefined);
+  if (!built) return;
+  const split = cacheRef.lastIndexOf(":");
+  await docker.getImage(built.Id).tag({ repo: cacheRef.slice(0, split), tag: cacheRef.slice(split + 1) });
+
+  const retired: string[] = [];
+  for (const id of new Set(previousIds)) {
+    if (!id || id === built.Id) continue;
+    const old = await docker.getImage(id).inspect().catch(() => undefined);
+    if (!old || old.Config?.Labels?.[BUILD_CACHE_LABEL] === undefined) continue;
+    if ((old.RepoTags ?? []).some((t) => t !== cacheRef)) continue;
+    retired.push(id);
+  }
+  const dangling = await docker
+    .listImages({ filters: { dangling: ["true"], label: [`${BUILD_CACHE_LABEL}=${cacheRef}`] } })
+    .catch(() => [] as Docker.ImageInfo[]);
+  if (dangling.length > 0) {
+    const all = await docker.listImages({ all: true }).catch(() => [] as Docker.ImageInfo[]);
+    const byId = new Map(all.map((image) => [image.Id, image]));
+    const builtOnBerthImage = (image: Docker.ImageInfo): boolean => {
+      for (let parent = byId.get(image.ParentId); parent; parent = byId.get(parent.ParentId)) {
+        if (parent.Labels?.[BUILD_CACHE_LABEL] === cacheRef) return true;
+      }
+      return false;
+    };
+    const cutoff = Date.now() / 1000 - SWEEP_MIN_AGE_SECONDS;
+    for (const image of dangling) {
+      if (image.Id === built.Id || image.Created > cutoff || builtOnBerthImage(image)) continue;
+      retired.push(image.Id);
+    }
+  }
+
+  for (const id of new Set(retired)) await removeUnsharedChain(docker, id);
+}
+
+/**
+ * Removes an image and then each parent that nothing else needs any more,
+ * stopping at the first one that is tagged or still has another child.
+ *
+ * That is what `docker rmi`'s own parent pruning is documented to do, but
+ * it can't be relied on: with Docker's containerd image store, pruning an
+ * old build's parents also deleted intermediates the *current* build still
+ * descends from, i.e. the cached base layers, and the next boot re-ran the
+ * whole base image (checked: the build after such a removal took 160 s
+ * instead of 8 s). So the walk is done here, one `noprune` removal at a
+ * time, with the child counts taken from the daemon's own image list. Any
+ * refusal (a container using the image, a race with another build) ends
+ * the walk and leaves the rest in place.
+ */
+async function removeUnsharedChain(docker: Docker, id: string): Promise<void> {
+  const images = await docker.listImages({ all: true }).catch(() => undefined);
+  if (!images) return;
+  const byId = new Map(images.map((image) => [image.Id, image]));
+  const children = new Map<string, number>();
+  for (const image of images) if (image.ParentId) children.set(image.ParentId, (children.get(image.ParentId) ?? 0) + 1);
+
+  let current: string | undefined = id;
+  while (current) {
+    const image = byId.get(current);
+    if (!image || (children.get(current) ?? 0) > 0) return;
+    if ((image.RepoTags ?? []).some((t) => t !== "<none>:<none>")) return;
+    try {
+      await docker.getImage(current).remove({ noprune: true });
+    } catch {
+      return;
+    }
+    const parent: string | undefined = image.ParentId || undefined;
+    if (parent) children.set(parent, (children.get(parent) ?? 1) - 1);
+    current = parent;
+  }
+}
+
+/**
+ * Removes a built image's tag without pruning its parent layers.
+ *
+ * A plain `docker rmi` also deletes every untagged parent the image had, and
+ * with the classic builder those parents are the build cache. Removing a
+ * Computer's image on stop() therefore threw away the cached base layers, so
+ * the next boot re-ran the base image's `apk add` (Chromium, Python, tmux…):
+ * every boot of an unchanged app took over a minute, failed whenever the
+ * Alpine mirror did, and left the multi-stage builder images behind as new
+ * dangling images each time. Keeping the parents costs nothing extra: the
+ * next build of the same apps reuses them instead of recreating them.
+ *
+ * An image buildImage() made also carries its build-cache reference
+ * (retainLatestBuild()), so for those this only removes the tag: the latest
+ * build of each app stays, under `berth-build-cache:*`, and is reclaimed by
+ * the next build that replaces it.
+ */
+export async function removeImageKeepingCache(docker: Docker, tag: string): Promise<void> {
+  await docker
+    .getImage(tag)
+    .remove({ noprune: true })
+    .catch(() => {
+      /* already gone, or never fully built */
+    });
+}
+
+/**
  * Builds the Alpine "OS stand-in" image for a resident app. The shared
  * base.Dockerfile (Chromium/Xvfb/x11vnc/tini) lives in this package, not the
  * app's own directory, so we stage a temp build context that combines the
@@ -303,14 +629,14 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
       // simply ignored there.
       if ((options.companions && options.companions.length > 0) || options.forceCompanionLayout) {
         if (!options.appName) throw new Error("buildImage: appName is required when companions is non-empty or forceCompanionLayout is set");
-        await stageProductionSource(options.appDir, join(stagingDir, "apps", options.appName));
+        await stageProductionSource(options.appDir, join(stagingDir, "apps", options.appName), `/app/apps/${options.appName}`);
         await stageOnInstallScript(options.appDir, join(stagingDir, "apps", options.appName));
         for (const companion of options.companions ?? []) {
-          await stageProductionSource(companion.appDir, join(stagingDir, "apps", companion.name));
+          await stageProductionSource(companion.appDir, join(stagingDir, "apps", companion.name), `/app/apps/${companion.name}`);
           await stageOnInstallScript(companion.appDir, join(stagingDir, "apps", companion.name));
         }
       } else {
-        await stageProductionSource(options.appDir, stagingDir);
+        await stageProductionSource(options.appDir, stagingDir, "/app");
         await stageOnInstallScript(options.appDir, stagingDir);
       }
       // Empty, but present: see ensureOnInstallContext()'s note on the
@@ -351,11 +677,23 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
     const dockerfileContents = await readFile(join(DOCKER_ASSETS_DIR, "base.Dockerfile"), "utf-8");
     await writeFile(join(stagingDir, "Dockerfile"), dockerfileContents);
 
+    const cacheRef = buildCacheRef(options.tag, options.target);
+    const previousIds = await Promise.all(
+      [options.tag, cacheRef].map((ref) =>
+        docker
+          .getImage(ref)
+          .inspect()
+          .then((image) => image.Id)
+          .catch(() => undefined),
+      ),
+    );
+
     signal?.throwIfAborted();
     const tarStream = tarFs.pack(stagingDir);
     const buildStream = await docker.buildImage(tarStream, {
       t: options.tag,
       target: options.target,
+      labels: { [BUILD_CACHE_LABEL]: cacheRef },
       ...(signal ? { abortSignal: signal } : {}),
     });
 
@@ -391,6 +729,7 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
         },
       );
     });
+    await retainLatestBuild(docker, options.tag, cacheRef, previousIds);
   } finally {
     await rm(stagingDir, { recursive: true, force: true });
   }

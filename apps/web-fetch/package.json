@@ -1,0 +1,21 @@
+{
+  "name": "web-fetch",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test dist/*.test.js"
+  },
+  "dependencies": {
+    "@berthos/manifest-schema": "workspace:*",
+    "@berthos/sdk": "workspace:*",
+    "undici": "^8.11.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "@types/node": "^26.6.2"
+  }
+}
