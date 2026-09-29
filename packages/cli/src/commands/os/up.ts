@@ -1,4 +1,5 @@
 import { Args, Command, Flags } from "@oclif/core";
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 import Docker from "dockerode";
@@ -13,6 +14,7 @@ import {
   assertAtMostOneEgressBrokerApp,
 } from "../../util/os-config.js";
 import { isContainerRunning, removeStaleContainer } from "../../util/os-docker.js";
+import { describeEnvNames, parseEnvFile, resolveEnvFlags, undeclaredEnvNames } from "../../util/env-args.js";
 
 export default class OsUp extends Command {
   static override description =
@@ -22,6 +24,12 @@ export default class OsUp extends Command {
     name: Args.string({ description: "name for this OS instance — used by `berth os down`/`status` and Computer.connect()/createAgent({ connect })" }),
   };
 
+  static override examples = [
+    "<%= config.bin %> os up demo --apps=apps/filesystem,apps/notes",
+    "<%= config.bin %> os up gh --apps=apps/github-assistant --env GITHUB_TOKEN --env GITHUB_REPO=owner/name",
+    "<%= config.bin %> os up gh --apps=apps/github-assistant --env-file .env",
+  ];
+
   static override flags = {
     apps: Flags.string({ description: "comma-separated resident app directories to load (paths relative to cwd)" }),
     config: Flags.string({ description: "path to an OS config file (name + apps: [...] + network?) instead of --apps" }),
@@ -30,6 +38,12 @@ export default class OsUp extends Command {
       description:
         "expose @berthos/sdk's HTTP RPC bridge on a host port, for a process with no Docker API access (e.g. a Python client via berth_agents.Computer.connect()) to call this OS's exports over plain HTTP+bearer-token instead of docker exec",
     }),
+    env: Flags.string({
+      multiple: true,
+      description:
+        "a variable for the sandbox: NAME (value taken from this shell's environment, so it stays out of shell history and ps) or NAME=value (visible in both, so not for a secret). Repeatable. A name an app declares under secrets: is delivered to that app alone; any other name reaches every app in the sandbox, with a warning. Values are never saved in the instance's state file.",
+    }),
+    "env-file": Flags.string({ description: "dotenv file (NAME=value lines) of variables for the sandbox, applied before --env" }),
     "http-rpc-app": Flags.string({
       description: "which loaded app should bind the HTTP RPC bridge, when more than one is loaded (defaults to the first)",
     }),
@@ -77,12 +91,32 @@ export default class OsUp extends Command {
 
     const name = args.name ?? configName ?? apps[0]!.name;
 
+    let fromFile: Record<string, string> = {};
+    if (flags["env-file"]) {
+      try {
+        fromFile = parseEnvFile(await readFile(flags["env-file"], "utf-8"));
+      } catch (err) {
+        this.error(`--env-file ${flags["env-file"]}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    let env: Record<string, string> = {};
+    try {
+      env = resolveEnvFlags(flags.env ?? [], fromFile, process.env);
+    } catch (err) {
+      this.error(err instanceof Error ? err.message : String(err));
+    }
+
     const docker = new Docker();
 
     const existing = await readOsState(name);
     if (existing) {
       if (await isContainerRunning(docker, existing.containerName)) {
         this.log(`"${name}" is already up (container ${existing.containerName}). Run \`berth os down ${name}\` first to rebuild it.`);
+        if (Object.keys(env).length > 0) {
+          this.warn(
+            `--env/--env-file values were not applied: "${name}" keeps the environment it was booted with. To apply them, run \`berth os down ${name}\` and then \`berth os up\` again with the same flags.`,
+          );
+        }
         return;
       }
       // Not running, but still holding the name (crashed, OOM-killed, or
@@ -91,6 +125,13 @@ export default class OsUp extends Command {
       if (await removeStaleContainer(docker, existing.containerName)) {
         this.warn(`"${name}" had a stopped container (${existing.containerName}) left over from a previous run — removed it before rebuilding.`);
       }
+    }
+
+    const undeclared = undeclaredEnvNames(env, apps);
+    if (undeclared.length > 0) {
+      this.warn(
+        `no loaded app declares ${describeEnvNames(undeclared)} under secrets:, so every app in this sandbox can read ${undeclared.length === 1 ? "it" : "them"} (a credential-looking name through the shared secrets file, any other name in the container's plain environment, visible in docker inspect). Declare a secret in the berth.yml of the app that needs it to deliver it to that app alone — see docs/secrets-reference.md.`,
+      );
     }
 
     const [primary, ...companions] = apps;
@@ -110,6 +151,7 @@ export default class OsUp extends Command {
       apps: apps.map((a) => ({ name: a.name, workingDir: `/app/apps/${a.name}`, manifest: a.manifest })),
       network,
       httpRpc: flags["http-rpc"] ? { authToken: httpRpcToken!, appName: httpRpcAppName } : undefined,
+      ...(Object.keys(env).length > 0 ? { env } : {}),
       docker,
     });
 
