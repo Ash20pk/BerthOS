@@ -5,11 +5,13 @@ import { loadManifestOrExit } from "../util/manifest.js";
 import { buildProductionImage, productionImageTag } from "../util/build.js";
 import { resolveApps, assertAtMostOneBrowserApp, type AppSpec } from "../util/multi-app.js";
 import { startContainer, stopContainer } from "@berthos/docker-orchestrator";
+import type { BerthManifest } from "@berthos/manifest-schema";
+import { exportCheckCommand, pythonAppTestCommand } from "../util/test-commands.js";
 
 interface ExportCheckResult {
   ok: boolean;
   error?: string;
-  results?: Array<{ export: string; ok: boolean; error?: string }>;
+  results?: Array<{ export: string; ok: boolean; error?: string; unexercised?: string }>;
   missingInCode?: string[];
   missingInManifest?: string[];
 }
@@ -35,13 +37,8 @@ export default class Test extends Command {
     await buildProductionImage(appDir, manifest, companions);
     const image = productionImageTag(manifest);
 
-    const exportCheck = await this.runInContainer(
-      docker,
-      image,
-      apps,
-      ["node", "node_modules/@berthos/sdk/dist/check-exports.js"],
-    );
-    const appTestCheck = await this.maybeRunAppTests(docker, image, appDir, apps);
+    const exportCheck = await this.runInContainer(docker, image, apps, exportCheckCommand(manifest.runtime));
+    const appTestCheck = await this.maybeRunAppTests(docker, image, appDir, apps, manifest.runtime);
 
     const summary = {
       manifest: manifest.name,
@@ -65,9 +62,14 @@ export default class Test extends Command {
     image: string,
     appDir: string,
     apps: AppSpec[],
+    runtime: BerthManifest["runtime"],
   ): Promise<{ exitCode: number; output: string } | null> {
     const fs = await import("node:fs/promises");
     const path = await import("node:path");
+    if (runtime === "python") {
+      const command = await pythonAppTestCommand(appDir);
+      return command ? this.runInContainer(docker, image, apps, command) : null;
+    }
     try {
       const pkg = JSON.parse(await fs.readFile(path.join(appDir, "package.json"), "utf-8"));
       if (!pkg.scripts?.test) return null;
@@ -158,7 +160,10 @@ export default class Test extends Command {
     appTestCheck: { exitCode: number; output: string } | null,
   ): void {
     if (exportCheck.parsed?.ok) {
-      this.log(`✓ manifest + export contracts (${exportCheck.parsed.results?.length ?? 0} exports checked)`);
+      const results = exportCheck.parsed.results ?? [];
+      const unexercised = results.filter((r) => r.unexercised);
+      this.log(`✓ manifest + export contracts (${results.length} exports checked${unexercised.length ? `, ${unexercised.length} not exercised by stub inputs` : ""})`);
+      for (const r of unexercised) this.log(`  · ${r.export} threw on a stub input (fine if it needs real state): ${r.unexercised!.split("\n")[0]!.slice(0, 160)}`);
     } else {
       this.log("✗ manifest + export contracts failed:");
       if (exportCheck.parsed?.missingInCode?.length) {
@@ -173,11 +178,18 @@ export default class Test extends Command {
     }
 
     if (appTestCheck) {
-      this.log(appTestCheck.exitCode === 0 ? "✓ app test suite" : "✗ app test suite failed");
+      if (appTestCheck.exitCode === 0) {
+        this.log("✓ app test suite");
+      } else {
+        // The output was collected and then dropped, so a failure said only
+        // "failed". Show the end of it: that's where test runners summarize.
+        this.log(`✗ app test suite failed (exit ${appTestCheck.exitCode}). Last lines of its output:`);
+        const tail = appTestCheck.output.trimEnd().split("\n").slice(-40);
+        for (const line of tail) this.log(`  ${line}`);
+      }
     }
   }
 }
-
 
 function parseLastJsonLine(output: string): ExportCheckResult | undefined {
   const lastLine = output.trim().split("\n").pop();
@@ -185,7 +197,7 @@ function parseLastJsonLine(output: string): ExportCheckResult | undefined {
   try {
     return JSON.parse(lastLine);
   } catch {
-    // app's own `npm test` output won't be JSON — that's expected.
+    // app's own `npm test`/pytest output won't be JSON — that's expected.
     return undefined;
   }
 }

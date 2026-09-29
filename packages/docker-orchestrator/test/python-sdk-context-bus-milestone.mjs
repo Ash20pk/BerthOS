@@ -8,7 +8,7 @@
 // entrypoint path boots the context-bus daemon, and a companion app's
 // runtime is started as a second process via `docker exec`, sharing the
 // same daemon socket and /workspace bind mount. Here the PRIMARY is Python
-// (apps/hello-world-py, BERTH_APP_RUNTIME=python) and the COMPANION is
+// (apps/hello-world-py, runtime: python) and the COMPANION is
 // TypeScript (apps/code-editor) — the reverse language pairing from the
 // original Phase 2 test, proving the interop isn't an artifact of one
 // specific language being "first."
@@ -41,14 +41,13 @@ async function main() {
   console.log("--- Building hello-world-py's dev image ---");
   await buildImage({ appDir: APP_DIR, tag: "berth/hello-world-py:dev", target: "dev", docker });
 
-  console.log("\n--- Starting hello-world-py's sandbox (BERTH_APP_RUNTIME=python) ---");
+  console.log("\n--- Starting hello-world-py's sandbox (runtime: python) ---");
   const running = await startContainer({
     image: "berth/hello-world-py:dev",
     name: "berth-python-context-bus-milestone",
     manifest,
     bindMount: { hostPath: REPO_ROOT, containerPath: "/workspace" },
     workingDir: "/workspace/apps/hello-world-py",
-    env: { BERTH_APP_RUNTIME: "python" },
     docker,
   });
 

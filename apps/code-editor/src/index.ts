@@ -1,8 +1,10 @@
 import { defineApp } from "@berthos/sdk";
 import { z } from "zod";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { resolve } from "node:path";
 
+// Paths resolve against the root, so an absolute path is read as written
+// rather than nested under it (same as apps/filesystem).
 const WORKSPACE_ROOT = process.env.BERTH_WORKSPACE_ROOT ?? "/workspace";
 
 export default defineApp((app) => {
@@ -11,7 +13,7 @@ export default defineApp((app) => {
     input: z.object({ path: z.string() }),
     output: z.object({ content: z.string() }),
     handler: async ({ path: relativePath }) => ({
-      content: await readFile(join(WORKSPACE_ROOT, relativePath), "utf-8"),
+      content: await readFile(resolve(WORKSPACE_ROOT, relativePath), "utf-8"),
     }),
   });
 
@@ -25,7 +27,7 @@ export default defineApp((app) => {
     ctx.contextBus.subscribe("fs.file_created", async (payload) => {
       const event = payload as { path: string; createdBy: string };
       try {
-        const content = await readFile(join(WORKSPACE_ROOT, event.path), "utf-8");
+        const content = await readFile(resolve(WORKSPACE_ROOT, event.path), "utf-8");
         console.error(
           `[code-editor] reactively opened "${event.path}" (${content.length} bytes) after fs.file_created from "${event.createdBy}"`,
         );

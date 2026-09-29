@@ -108,6 +108,16 @@ jobs:
           pip install -e ".[dev]"
           pytest
 
+      # The policy parity test runs the TypeScript compiler from `pnpm build`
+      # above; required here, so a missing build is a failure, not a skip.
+      - name: Test packages/sdk-python
+        working-directory: packages/sdk-python
+        env:
+          BERTH_POLICY_PARITY_REQUIRED: "1"
+        run: |
+          pip install -e ".[dev]"
+          pytest
+
       # Gated at high+ (not "any finding"): moderate/low advisories often
       # have no available fix yet, or apply to a call path this project
       # never exercises — gating on those would make this step chronically

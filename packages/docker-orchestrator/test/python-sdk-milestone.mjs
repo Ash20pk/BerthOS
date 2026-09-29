@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Real, running verification that @berthos/sdk-python's RPC framing is
 // byte-compatible with @berthos/sdk's rpc.ts: boots a real apps/hello-world-py
-// container (BERTH_APP_RUNTIME=python), sends a real {id,export,input} line
+// container (runtime: python), sends a real {id,export,input} line
 // over its actual container stdio (the exact same attach-and-write pattern
 // every other milestone test in this repo uses against Node apps), and
 // asserts a correct {id,result} comes back.
@@ -47,14 +47,13 @@ async function main() {
   console.log("--- Building hello-world-py's dev image ---");
   await buildImage({ appDir: APP_DIR, tag: IMAGE_TAG, target: "dev", docker });
 
-  console.log("\n--- Starting the Python resident app's sandbox (BERTH_APP_RUNTIME=python) ---");
+  console.log("\n--- Starting the Python resident app's sandbox (runtime: python) ---");
   const running = await startContainer({
     image: IMAGE_TAG,
     name: "berth-python-sdk-milestone",
     manifest,
     bindMount: { hostPath: REPO_ROOT, containerPath: "/workspace" },
     workingDir: "/workspace/apps/hello-world-py",
-    env: { BERTH_APP_RUNTIME: "python" },
     docker,
   });
 

@@ -1,6 +1,6 @@
 # The Capability Manifest Specification
 
-**Version 1.0.0** — status: **stable**. Versioned independently of any
+**Version 1.1.0** — status: **stable**. Versioned independently of any
 implementation; see [§10 Versioning](#10-versioning-of-this-specification).
 
 A capability manifest is a declarative document in which an *application* —
@@ -84,7 +84,7 @@ implementation extension.
 
 Validation of a manifest yields exactly one of:
 
-- **valid** — with a *normalized* manifest (§4.11) as its result; or
+- **valid** — with a *normalized* manifest (§4.12) as its result; or
 - **invalid** — with at least one *error*, each carrying a `path`: the sequence
   of field names and array indices locating the offending value (e.g.
   `["capabilities", 2]`). A conforming implementation MUST report the path of
@@ -217,7 +217,7 @@ echoing the declaration.
 ## 4. Fields
 
 Each subsection gives the field's type, default, and semantics. A default is
-applied during normalization (§4.11); an absent field with a default MUST
+applied during normalization (§4.12); an absent field with a default MUST
 behave identically to the field written out with that default value.
 
 ### 4.1 `name` (REQUIRED)
@@ -230,7 +230,7 @@ uppercase letters, underscores, dots, or slashes.
 ### 4.2 `version` (REQUIRED)
 
 String matching `^\d+\.\d+\.\d+$` — three dot-separated non-negative integers.
-The application's own version. It is unrelated to `schema_version` (§4.10) and
+The application's own version. It is unrelated to `schema_version` (§4.11) and
 unrelated to this specification's version. Pre-release and build metadata
 (`1.0.0-rc.1`, `1.0.0+build`) are **not** accepted in this version of the
 specification.
@@ -352,7 +352,16 @@ Enforcement is best-effort and target-dependent. An implementation MUST state,
 per target, whether each key becomes a hard limit or is passed through
 unenforced, and MUST NOT describe an unenforced pass-through as a limit.
 
-### 4.10 `schema_version` (default: the implementation's current version)
+### 4.10 `runtime` (default `"node"`) — since 1.1.0
+
+The language the app's code is written in, which decides the runtime that
+starts it: `"node"` or `"python"`. Any other value is invalid, at path
+`runtime`. An implementation that runs apps MUST start each with the runtime
+its manifest names; one that only validates manifests MAY treat the field as
+descriptive. A manifest without the field is a Node app, exactly as under
+1.0.0.
+
+### 4.11 `schema_version` (default: the implementation's current version)
 
 A non-negative integer naming the version of the *manifest shape* this document
 was written against. It is metadata about the file, not part of the validated
@@ -371,7 +380,7 @@ content, and MUST be resolved before the rest of validation runs.
   was never written for is the precise failure this field exists to prevent.
 - **Not a non-negative integer** — invalid (`3.5`, `"1"`, `-1`, `null`).
 
-### 4.11 Normalization
+### 4.12 Normalization
 
 The normalized form of a valid manifest is the manifest with every defaulted
 field present at its default value, and `schema_version` resolved and removed.
@@ -560,7 +569,7 @@ is judged against its own declaration rather than against the reference one.
   every listed tier is one of the four words, and every namespace/action listed
   answers `tier` consistently with `describe`.
 - **Extended** (OPTIONAL) — cases tagged `extended`: governance, exports
-  cross-checks, exposure defaults, and resources. An implementation that does
+  cross-checks, exposure defaults, resources, and (since 1.1.0) `runtime`. An implementation that does
   not support a field MAY skip its extended cases, and MUST say so in its
   conformance report; it may not skip a `core` case for the same reason.
 
@@ -641,7 +650,7 @@ number. An implementation states which specification version it targets
 - **Major** (x.0.0) — any change that could make a previously valid manifest
   invalid, or change what a field means.
 
-`schema_version` (§4.10) versions the *manifest shape* within an
+`schema_version` (§4.11) versions the *manifest shape* within an
 implementation; this version numbers the *document you are reading*. They move
 independently: a specification patch changes no manifest, and a manifest-shape
 migration is an implementation event.

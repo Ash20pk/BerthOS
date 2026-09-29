@@ -16,13 +16,13 @@ git clone https://github.com/Ash20pk/BerthOS && cd BerthOS
 corepack enable && pnpm install && pnpm build
 ```
 
-- **Warm the app's image once**, before you configure a client. The first `berth mcp` builds a container image, which takes minutes. MCP clients give a server about 60 seconds to answer `initialize` and kill it if it's still building. Skip this and the setup fails in a confusing way.
+- **Optionally, build the app's image first.** The first `berth mcp` builds a container image, which takes minutes. The bridge answers your client straight away and builds in the background, but the first tool call waits for the build. Building it ahead of time makes that first call fast.
 
 ```bash
 node packages/cli/bin/berth.js mcp --app filesystem --app-dir apps/filesystem --warm
 ```
 
-`--warm` builds the image, boots the sandbox, waits for the app to report ready, stops it, and exits 0. Run it a second time: it should finish in a few seconds, which means the image is cached and a client will get through `initialize` in time.
+`--warm` builds the image, boots the sandbox, waits for the app to report ready, stops it, and exits 0. Run it a second time: it should finish in a few seconds, which means the image is cached.
 
 Enforcement needs a Landlock kernel. On macOS or Windows, run `node packages/cli/bin/berth.js doctor` first; see [the doctor reference](./doctor-reference.md).
 
@@ -106,6 +106,25 @@ The reader is usually another agent, so the message is built to be acted on:
 - **`denied-by:`** says `the kernel` only when the container reported a fully enforced Landlock ruleset. On a host without Landlock, such as Docker Desktop for Mac, it says the denial is not enforcement. `unknown` means the bridge couldn't read the container's enforcement status. Run [`berth doctor`](./doctor-reference.md) for the host-level answer.
 
 - **Other failures stay what they are.** `EROFS` is the read-only workspace mount, and the message says so instead of pointing at `capabilities:`. Ordinary app errors and input validation errors pass through unchanged.
+
+## See what it did, and prove it
+
+Every session is recorded. The bridge prints its run id when it starts:
+
+```
+[berth:mcp] recording tool calls in ~/.berth/audit/audit.jsonl as run mcp-filesystem-20260928T101500Z-3fa2c1 — attest it with `berth attest mcp-filesystem-20260928T101500Z-3fa2c1`
+```
+
+Afterwards, even once the sandbox has stopped:
+
+```bash
+berth audit list --decision denied                     # what the sandbox refused
+berth audit verify                                     # the trail hasn't been edited
+berth attest mcp-filesystem-20260928T101500Z-3fa2c1 --out session.json
+node scripts/verify-attestation.mjs session.json       # anyone can check it, no Berth install
+```
+
+The record says which calls the session made, which policies were enforced, and whether the kernel was enforcing them (`ACTIVE`) or not (`NOT_ENFORCED`). Only which export was called, when and with what outcome is recorded, not inputs or outputs. Use `--run-id` to choose the id, `--no-audit` to turn it off. See [audit](./audit-reference.md) and [attestation](./attestation-reference.md).
 
 ## `berth dev` and `berth mcp` together
 

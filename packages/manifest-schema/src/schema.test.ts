@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { BerthManifestSchema } from "./schema.js";
-import { matchesCapability, parseCapability, capabilityIssue, filesystemScopeIssue } from "./capability.js";
+import { matchesCapability, parseCapability, capabilityIssue, filesystemScopeIssue, filesystemWriteScopeIssue } from "./capability.js";
 
 test("accepts the PRD's github-assistant manifest", () => {
   const result = BerthManifestSchema.safeParse({
@@ -203,6 +203,21 @@ test("filesystemScopeIssue is exported for callers that validate capabilities ou
   assert.ok(filesystemScopeIssue("/etc"));
   assert.ok(capabilityIssue("filesystem:write:/etc"));
   assert.equal(capabilityIssue("github:read:repos"), undefined);
+});
+
+test("a write grant naming a path inside node_modules is refused, a read grant there is not", () => {
+  for (const capability of [
+    "filesystem:write:/app/apps/x/node_modules/@berthos/sdk/dist/node_modules",
+    "filesystem:write:/app/node_modules",
+    "filesystem:write:/workspace/node_modules/*",
+  ]) {
+    assert.match(capabilityIssue(capability) ?? "", /may not name a path inside node_modules/, capability);
+    assert.equal(capabilityResult(capability).success, false, `${capability} should be rejected`);
+  }
+  assert.equal(capabilityIssue("filesystem:read:/app/node_modules"), undefined);
+  assert.equal(capabilityIssue("filesystem:write:/workspace/node_modules_backup"), undefined);
+  assert.equal(filesystemWriteScopeIssue("/workspace/out"), undefined);
+  assert.ok(filesystemWriteScopeIssue("/etc"), "everything filesystemScopeIssue refuses too");
 });
 
 test("secrets: defaults to empty and accepts valid env var names", () => {

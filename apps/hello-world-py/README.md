@@ -4,16 +4,17 @@ A minimal resident app written in Python with [`berthos-sdk`](../../packages/sdk
 
 ## Run it
 
-`berth dev` doesn't pick the Python runtime yet, so start this app the way its test does: build the dev image and boot it with `BERTH_APP_RUNTIME=python`. The quickest way is the milestone test, from the repo root:
+The manifest says `runtime: python`, so every way of running an app runs it as Python:
 
 ```bash
-pnpm build
-node packages/docker-orchestrator/test/python-sdk-milestone.mjs
+cd apps/hello-world-py
+berth dev
+berth mcp --app hello-world-py --app-dir .   # as MCP tools
 ```
 
-It builds the image, starts the sandbox, calls `greet`, and checks the reply. To boot it from your own script, call `startContainer()` from `@berthos/docker-orchestrator` with `env: { BERTH_APP_RUNTIME: "python" }`, as that test does.
+From agent code it's `Computer.boot({ apps: ["apps/hello-world-py"] })`, alone or next to TypeScript apps in one sandbox. `berth` is the CLI: `npm install -g @berthos/cli`, or `node ../../packages/cli/bin/berth.js` from a clone.
 
-The SDK needs no install step: the sandbox puts the SDK source from `packages/sdk-python` on `PYTHONPATH`. The manifest's `on_install` runs `echo python-on-install-ran`, which shows that `on_install` runs for Python apps too.
+The SDK needs no install step: every sandbox image carries it, and in a clone the repo's own `packages/sdk-python` is used instead, so edits to the SDK show up without a rebuild. The manifest's `on_install` runs `echo python-on-install-ran`, which shows that `on_install` runs for Python apps too.
 
 ## Capabilities
 

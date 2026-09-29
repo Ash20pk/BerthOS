@@ -37,3 +37,13 @@ test("an unknown kind is null", () => {
   assert.equal(stubValue(z.date()), null);
   assert.equal(stubValue(undefined), null);
 });
+
+test("an enum or literal stub is one of its own values, not null", () => {
+  // code-interpreter's language is an enum: a null stub made its handler
+  // crash looking up a runner, which berth test rightly reports.
+  const language = z.enum(["python", "javascript", "shell"]);
+  assert.equal(stubValue(language), "python");
+  assert.equal(stubValue(z.literal("GET")), "GET");
+  const schema = z.object({ language, code: z.string() });
+  assert.equal(schema.safeParse(stubValue(schema)).success, true);
+});

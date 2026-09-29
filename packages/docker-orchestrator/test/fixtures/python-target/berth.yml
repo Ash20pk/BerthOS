@@ -1,0 +1,6 @@
+name: python-target
+version: 0.1.0
+runtime: python
+governance: { exempt: true }
+exports:
+  - name: whoami

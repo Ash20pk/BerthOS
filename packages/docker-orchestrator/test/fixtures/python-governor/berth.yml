@@ -1,0 +1,8 @@
+name: python-governor
+version: 0.1.0
+runtime: python
+governs: true
+exports:
+  - name: evaluate_action
+    input: { app: string, export: string, caller: string }
+    output: { allowed: boolean }

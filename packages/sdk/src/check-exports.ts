@@ -9,16 +9,10 @@ import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 import { loadManifest } from "@berthos/manifest-schema";
 import type { BerthApp } from "./app.js";
-import { stubValue } from "./stub-value.js";
+import { checkExport, type ExportResult } from "./export-check.js";
 
 const MANIFEST_PATH = process.env.BERTH_MANIFEST_PATH ?? join(process.cwd(), "berth.yml");
 const APP_ENTRY = process.env.BERTH_APP_ENTRY ?? join(process.cwd(), "dist", "index.js");
-
-interface ExportResult {
-  export: string;
-  ok: boolean;
-  error?: string;
-}
 
 async function main(): Promise<void> {
   const manifest = await loadManifest(MANIFEST_PATH);
@@ -45,15 +39,7 @@ async function main(): Promise<void> {
 
   const results: ExportResult[] = [];
   for (const name of codeExports) {
-    const def = app._exports.get(name)!;
-    try {
-      const input = def.input ? stubValue(def.input) : undefined;
-      const result = await def.handler(input);
-      if (def.output) def.output.parse(result);
-      results.push({ export: name, ok: true });
-    } catch (err) {
-      results.push({ export: name, ok: false, error: err instanceof Error ? err.message : String(err) });
-    }
+    results.push(await checkExport(name, app._exports.get(name)!));
   }
 
   const ok = results.every((r) => r.ok);

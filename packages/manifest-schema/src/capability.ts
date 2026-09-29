@@ -90,6 +90,34 @@ export function filesystemScopeIssue(scope: string): string | undefined {
 }
 
 /**
+ * Returns a reason a `filesystem:write:` scope is not allowed, or `undefined`:
+ * everything filesystemScopeIssue() refuses, and any path with a
+ * `node_modules` segment.
+ *
+ * node_modules is an app's dependency tree, and not only the app loads from
+ * it. A declared write path that doesn't exist yet is created as root and
+ * handed to the app before enforcement (precreate_declared_paths in
+ * entrypoint.sh, and agent-init), so a grant on, say,
+ * `/app/apps/x/node_modules/@berthos/sdk/dist/node_modules` gave the app a
+ * directory Node searches before the real one, inside code the sandbox's own
+ * tools once ran as root. Those tools no longer load from there; this is the
+ * other half, so nothing the sandbox runs can have a module slipped in
+ * beneath it. A read grant there is harmless and still allowed. The check is
+ * on the named path only: a grant on a parent (`/app`) still covers it, and
+ * what keeps an image's own node_modules unwritable there is that it is
+ * root-owned.
+ */
+export function filesystemWriteScopeIssue(scope: string): string | undefined {
+  const issue = filesystemScopeIssue(scope);
+  if (issue) return issue;
+  const path = scope.endsWith("/*") ? scope.slice(0, -2) : scope;
+  if (path.split("/").includes("node_modules")) {
+    return `filesystem:write: may not name a path inside node_modules (an app's dependencies, which the sandbox's own tools load), got ${JSON.stringify(scope)}`;
+  }
+  return undefined;
+}
+
+/**
  * Returns a reason `capability` is not an acceptable declaration, or
  * `undefined` if it is. Assumes the "namespace:action:scope" grammar already
  * holds (see CapabilityString in schema.ts) — this is the semantic layer on
@@ -102,9 +130,8 @@ export function capabilityIssue(capability: string): string | undefined {
   } catch (err) {
     return err instanceof Error ? err.message : String(err);
   }
-  if (parsed.namespace === "filesystem" && (parsed.action === "read" || parsed.action === "write")) {
-    return filesystemScopeIssue(parsed.scope);
-  }
+  if (parsed.namespace === "filesystem" && parsed.action === "write") return filesystemWriteScopeIssue(parsed.scope);
+  if (parsed.namespace === "filesystem" && parsed.action === "read") return filesystemScopeIssue(parsed.scope);
   return undefined;
 }
 

@@ -33,3 +33,10 @@ jobs:
       - name: Run python-sdk-milestone.mjs
         working-directory: packages/docker-orchestrator
         run: node test/python-sdk-milestone.mjs
+
+      # Python apps in a multi-app production sandbox: a Python governor
+      # gating Python and Node apps, app:invoke: into a Python app's peer
+      # socket, and no app-supplied berth_sdk ever run as root.
+      - name: Run python-multi-app-milestone.mjs
+        working-directory: packages/docker-orchestrator
+        run: node test/python-multi-app-milestone.mjs

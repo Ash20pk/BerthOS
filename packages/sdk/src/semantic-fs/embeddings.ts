@@ -1,5 +1,8 @@
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { register } from "node:module";
 import { fileURLToPath } from "node:url";
+import { SHARP_HOOK_URL } from "./sharp-hook.js";
 
 // Compute-on-tag, not compute-on-write: write_context_file (apps/filesystem)
 // does a raw fs write into the FUSE mount, never touching this SDK — the
@@ -14,7 +17,19 @@ export const EMBEDDING_MODEL = "Xenova/all-MiniLM-L6-v2";
 // Docker build context even exists; containers have no guaranteed runtime
 // internet). Resolved from this file's own location, not process.cwd() —
 // the caller's cwd is the *resident app's* directory, not this package's.
-const MODEL_CACHE_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "models");
+// "Its own location" differs by build: dist/semantic-fs/embeddings.js here,
+// but the package root itself in the external build, where esbuild bundles
+// this module into index.js and runtime.js. So the directory is found by
+// walking up to the nearest package.json, the SDK's own, rather than by a
+// fixed number of "..".
+const MODEL_CACHE_DIR = join(packageRoot(dirname(fileURLToPath(import.meta.url))), "models");
+
+function packageRoot(from: string): string {
+  for (let dir = from; ; dir = dirname(dir)) {
+    if (existsSync(join(dir, "package.json"))) return dir;
+    if (dirname(dir) === dir) return from;
+  }
+}
 
 // Lazily imported: pulling in @xenova/transformers (and its WASM ONNX
 // runtime) at module load time would pay that cost even for apps that never
@@ -23,7 +38,21 @@ const MODEL_CACHE_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", ".."
 type Pipeline = (text: string, options: { pooling: "mean"; normalize: boolean }) => Promise<{ data: Float32Array }>;
 let pipelinePromise: Promise<Pipeline> | undefined;
 
+/**
+ * Points @xenova/transformers' `import "sharp"` at the SDK's own stub before
+ * it loads (see sharp-hook.ts). Once per process; module.register() applies
+ * to every later import on this thread, which is why the hook only redirects
+ * imports made from inside @xenova/transformers.
+ */
+let sharpStubRegistered = false;
+export function registerSharpStub(): void {
+  if (sharpStubRegistered) return;
+  register(SHARP_HOOK_URL);
+  sharpStubRegistered = true;
+}
+
 async function loadPipeline(): Promise<Pipeline> {
+  registerSharpStub();
   const { pipeline, env } = await import("@xenova/transformers");
   env.allowRemoteModels = false; // fail closed if the cache is missing, rather than reaching out to the Hub
   // Two separate config properties, confirmed the hard way: `cacheDir` only

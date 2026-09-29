@@ -2,7 +2,7 @@
 
 A standalone, versioned spec for the manifest an application uses to declare, before it runs, everything it intends to touch, plus a conformance suite that checks whether an implementation follows it.
 
-- **[SPEC.md](./SPEC.md)**: the specification, version **1.0.0** ([VERSION](./VERSION)).
+- **[SPEC.md](./SPEC.md)**: the specification, version **1.1.0** ([VERSION](./VERSION)).
 - **[conformance/cases.json](./conformance/cases.json)**: 87 machine-readable test cases.
 - **[conformance/run.mjs](./conformance/run.mjs)**: the runner. No dependencies, no knowledge of any implementation.
 
