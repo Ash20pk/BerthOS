@@ -1,6 +1,7 @@
 import { defineApp } from "@berthos/sdk";
 import { z } from "zod";
 import { execFile, type ExecFileException } from "node:child_process";
+import { posix } from "node:path";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_TIMEOUT_MS = 60_000;
@@ -31,11 +32,71 @@ function truncate(output: string): string {
     : output;
 }
 
+/** One line of a run's output that looks like the sandbox refusing access to a path. */
+interface PossibleDenial {
+  /** The absolute path the line says was refused. */
+  path: string;
+  /** The line itself, trimmed and capped. */
+  line: string;
+}
+
 interface RunCodeResult {
   stdout: string;
   stderr: string;
   exit_code: number;
   timed_out: boolean;
+  denials: PossibleDenial[];
+}
+
+// The errno messages a refused open/mkdir/exec produces, in the shapes the
+// three runtimes print them: Python's `[Errno 13] Permission denied: '/x'`,
+// Node's `EACCES: permission denied, open '/x'`, coreutils' `touch: cannot
+// touch '/x': Permission denied` and bash's `bash: /x: Permission denied`.
+const DENIAL = /\b(?:EACCES|EPERM)\b|Permission denied|Operation not permitted/i;
+// An absolute path, quoted or bare, on the same line.
+const PATH = /['"`](\/[^'"`]*)['"`]|(?:^|[\s:(])(\/[^\s:'"`,)]+)/;
+// Refusals that aren't the sandbox: remote auth (ssh, git over ssh), a
+// password prompt, and an error that came back from a URL.
+const NOT_THE_SANDBOX = /Permission denied \((?:publickey|password|keyboard-interactive)|Permission denied, please try again|\bssh:|git@|https?:\/\//i;
+const MAX_DENIALS = 10;
+const MAX_LINE_CHARS = 200;
+
+/**
+ * The lines of a run's output that look like the sandbox refusing a path.
+ * Code that hits a denial usually handles it (a Python `except OSError`
+ * printing the error, a shell `|| echo failed`), so the run itself succeeds
+ * and the refusal is only text in stdout.
+ *
+ * "Look like" is all this can say: it reads the output, it doesn't see the
+ * syscall. So it only counts a line that names an absolute path, drops the
+ * common refusals that have nothing to do with the sandbox (ssh publickey,
+ * password prompts, errors from a remote URL), and drops paths inside this
+ * app's own workspace, which its declared capability allows: a refusal there
+ * is a file's own permissions, not the sandbox. What's left is reported as a
+ * possible refusal, never as a fact about the kernel.
+ */
+export function findDenials(outputs: string[], workspace: string = workspaceRoot()): PossibleDenial[] {
+  const found: PossibleDenial[] = [];
+  // Resolved first: as plain text, `/workspace/../etc/x` starts with the
+  // workspace and would be dropped as inside it.
+  const root = posix.resolve(workspace);
+  const inWorkspace = (path: string) => {
+    const resolved = posix.resolve(root, path);
+    return resolved === root || resolved.startsWith(`${root === "/" ? "" : root}/`);
+  };
+  for (const output of outputs) {
+    for (const raw of output.split("\n")) {
+      const line = raw.trim();
+      if (!DENIAL.test(line) || NOT_THE_SANDBOX.test(line)) continue;
+      const match = PATH.exec(line);
+      const path = match?.[1] ?? match?.[2];
+      if (!path || inWorkspace(path)) continue;
+      if (found.some((d) => d.path === path)) continue;
+      found.push({ path: path.slice(0, MAX_LINE_CHARS), line: line.slice(0, MAX_LINE_CHARS) });
+      if (found.length === MAX_DENIALS) return found;
+    }
+  }
+  return found;
 }
 
 function runCode(command: string, args: string[], timeoutMs: number): Promise<RunCodeResult> {
@@ -45,8 +106,9 @@ function runCode(command: string, args: string[], timeoutMs: number): Promise<Ru
       args,
       { timeout: timeoutMs, maxBuffer: MAX_OUTPUT_CHARS * 2, cwd: workspaceRoot() },
       (error, stdout, stderr) => {
+        const denials = findDenials([stderr, stdout]);
         if (!error) {
-          resolve({ stdout: truncate(stdout), stderr: truncate(stderr), exit_code: 0, timed_out: false });
+          resolve({ stdout: truncate(stdout), stderr: truncate(stderr), exit_code: 0, timed_out: false, denials });
           return;
         }
         // execFile's timeout option kills the process with `killSignal`
@@ -56,7 +118,7 @@ function runCode(command: string, args: string[], timeoutMs: number): Promise<Ru
         const execError = error as ExecFileException;
         const timedOut = Boolean(execError.killed && execError.signal);
         const exitCode = typeof execError.code === "number" ? execError.code : 1;
-        resolve({ stdout: truncate(stdout), stderr: truncate(stderr), exit_code: exitCode, timed_out: timedOut });
+        resolve({ stdout: truncate(stdout), stderr: truncate(stderr), exit_code: exitCode, timed_out: timedOut, denials });
       },
     );
   });
@@ -75,6 +137,7 @@ export default defineApp((app) => {
       stderr: z.string(),
       exit_code: z.number(),
       timed_out: z.boolean(),
+      denials: z.array(z.object({ path: z.string(), line: z.string() })),
     }),
     handler: async ({ language, code, timeout_ms }) => {
       const { command, args } = RUNNERS[language](code);

@@ -20,7 +20,7 @@ import { bootDevContainer } from "../util/dev-boot.js";
 import { resolveApps } from "../util/multi-app.js";
 import { explainAppError, enforcementFromContainerLogs, type EnforcementStatus } from "../util/capability-errors.js";
 import { createRunAudit, newRunId, type RunAudit } from "../util/run-audit.js";
-import { createInFlightCalls, createShutdown, handleToolCall, onClientPipesClosed } from "../util/mcp-call.js";
+import { createInFlightCalls, createShutdown, describeReportedDenials, exportReportsDenials, handleToolCall, onClientPipesClosed } from "../util/mcp-call.js";
 import { startBackgroundSandbox, type SandboxSteps } from "../util/mcp-sandbox.js";
 
 /**
@@ -246,6 +246,8 @@ export default class Mcp extends Command {
             export: tool.name,
             call: (request, options) => ready.rpc!.call(request, options),
             explain: (error) => explain(error, ready.enforcement),
+            reportsDenials: exportReportsDenials(manifest, tool.name),
+            describeReportedDenials: (denials) => describeReportedDenials(manifest, ready.enforcement, denials),
             runAudit,
             callTimeoutMs: flags["call-timeout"] * 1000,
             inFlight,

@@ -181,3 +181,30 @@ test("an app error's reason is its first line, capped", async () => {
   assert.equal(auditReason("EACCES: permission denied, open '/etc/x'"), "EACCES: permission denied, open '/etc/x'");
   assert.equal(auditReason("a\u001b[31mb"), "a [31mb");
 });
+
+// Only the count and paths: the lines they came from are the call's output,
+// and a record written with payload capture off must not carry output.
+test("possible refusals inside a call that succeeded are recorded as a count and paths, and the call stays allowed", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "berth-run-audit-"));
+  try {
+    const path = join(dir, "audit.jsonl");
+    const run = runAuditFor(createFileAuditSink({ path }));
+    await run.toolCall({
+      export: "run_code",
+      input: {},
+      durationMs: 3,
+      result: { stdout: "secret output\nPermissionError: [Errno 13] Permission denied: '/etc/x'", exit_code: 0 },
+      reportedDeniedPaths: ["/etc/x"],
+    });
+    const [record] = readAuditFile(path);
+    assert.equal(record!.decision, "allowed");
+    assert.equal(record!.reason, "the app reported 1 possible sandbox refusal(s) inside the call");
+    const meta = record!.meta as { reportedDenials?: number; reportedDeniedPaths?: string[] };
+    assert.equal(meta.reportedDenials, 1);
+    assert.deepEqual(meta.reportedDeniedPaths, ["/etc/x"]);
+    assert.ok(!JSON.stringify(record).includes("secret output"));
+    assert.ok(!JSON.stringify(record).includes("PermissionError"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

@@ -8,7 +8,13 @@ capabilities:
 exports:
   - name: run_code
     input: { language: string, code: string, timeout_ms: number }
-    output: { stdout: string, stderr: string, exit_code: number, timed_out: boolean }
+    # denials: possible sandbox refusals, [{ path, line }]: output lines with a
+    # permission error (EACCES, "Permission denied", "Operation not
+    # permitted") on an absolute path outside the workspace, even when the
+    # code caught the error and the run succeeded. Read from the output, so a
+    # possibility, not proof. Declaring it here is what lets `berth mcp`
+    # report them.
+    output: { stdout: string, stderr: string, exit_code: number, timed_out: boolean, denials: array }
 
 on_install: []
 on_agent_ready:
