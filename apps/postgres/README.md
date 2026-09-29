@@ -60,4 +60,4 @@ Results are capped at 500 rows and 200,000 characters, and each value at 10,000 
 
 ## Other databases
 
-This is the first database connector. MySQL is next; connectors for other engines will follow the same pattern: a declared `DATABASE_URL`, the same two network forms, read-only by default.
+[`mysql`](../mysql) is the other database connector, and it works the same way. Connectors for other engines will follow the same pattern: a declared `DATABASE_URL`, the same two network forms, read-only by default.
