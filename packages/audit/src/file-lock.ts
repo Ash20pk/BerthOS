@@ -77,25 +77,40 @@ export function acquireFileLock(lockPath: string, options: FileLockOptions = {})
   const owner = ownerLine();
   let delay = 1;
   for (;;) {
-    if (tryCreate(lockPath, owner)) {
-      const held = () => readOrUndefined(lockPath) === owner;
-      return {
-        held,
-        assertHeld() {
-          if (!held()) throw new Error(`lost the lock ${lockPath}: it was broken as stale while held`);
-        },
-        release() {
-          // Only ever remove our own lock: if it was broken as stale while we
-          // held it, the file there now is someone else's.
-          removeIfOwned(lockPath, owner);
-        },
-      };
-    }
+    if (tryCreate(lockPath, owner)) return heldLock(lockPath, owner);
     breakIfStale(lockPath, staleMs);
     if (Date.now() >= deadline) throw new Error(`timed out after ${waitMs}ms waiting for the lock ${lockPath}`);
     sleepSync(delay);
     delay = Math.min(delay * 2, 25);
   }
+}
+
+/**
+ * One attempt, without waiting: the lock, or undefined while a live holder
+ * has it. A stale lock is broken first, on the same terms as acquireFileLock.
+ * For a claim held for as long as some long piece of work takes, where the
+ * caller has something better to do than wait.
+ */
+export function tryAcquireFileLock(lockPath: string, options: Pick<FileLockOptions, "staleMs"> = {}): HeldLock | undefined {
+  const owner = ownerLine();
+  if (tryCreate(lockPath, owner)) return heldLock(lockPath, owner);
+  breakIfStale(lockPath, options.staleMs ?? DEFAULT_STALE_MS);
+  return tryCreate(lockPath, owner) ? heldLock(lockPath, owner) : undefined;
+}
+
+function heldLock(lockPath: string, owner: string): HeldLock {
+  const held = () => readOrUndefined(lockPath) === owner;
+  return {
+    held,
+    assertHeld() {
+      if (!held()) throw new Error(`lost the lock ${lockPath}: it was broken as stale while held`);
+    },
+    release() {
+      // Only ever remove our own lock: if it was broken as stale while we
+      // held it, the file there now is someone else's.
+      removeIfOwned(lockPath, owner);
+    },
+  };
 }
 
 function ownerLine(): string {

@@ -16,13 +16,13 @@ git clone https://github.com/Ash20pk/BerthOS && cd BerthOS
 corepack enable && pnpm install && pnpm build
 ```
 
-- **Warm the app's image once**, before you configure a client. The first `berth mcp` builds a container image, which takes minutes. MCP clients give a server about 60 seconds to answer `initialize` and kill it if it's still building. Skip this and the setup fails in a confusing way.
+- **Optionally, build the app's image first.** The first `berth mcp` builds a container image, which takes minutes. The bridge answers your client straight away and builds in the background, but the first tool call waits for the build. Building it ahead of time makes that first call fast.
 
 ```bash
 node packages/cli/bin/berth.js mcp --app filesystem --app-dir apps/filesystem --warm
 ```
 
-`--warm` builds the image, boots the sandbox, waits for the app to report ready, stops it, and exits 0. Run it a second time: it should finish in a few seconds, which means the image is cached and a client will get through `initialize` in time.
+`--warm` builds the image, boots the sandbox, waits for the app to report ready, stops it, and exits 0. Run it a second time: it should finish in a few seconds, which means the image is cached.
 
 Enforcement needs a Landlock kernel. On macOS or Windows, run `node packages/cli/bin/berth.js doctor` first; see [the doctor reference](./doctor-reference.md).
 

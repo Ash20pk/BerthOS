@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
-import { acquireFileLock } from "./file-lock.js";
+import { acquireFileLock, tryAcquireFileLock } from "./file-lock.js";
 
 function tmpLock(): string {
   return join(mkdtempSync(join(tmpdir(), "berth-lock-")), "audit.jsonl.lock");
@@ -131,4 +131,18 @@ test("contenders racing to break the same stale lock take turns", async () => {
   assert.equal(overlaps, 0);
   assert.equal(existsSync(path), false);
   assert.equal(existsSync(`${path}.break`), false);
+});
+
+test("tryAcquireFileLock takes a free or stale lock at once, and returns undefined while a live holder has it", () => {
+  const path = tmpLock();
+  const first = tryAcquireFileLock(path);
+  assert.ok(first);
+  assert.equal(tryAcquireFileLock(path), undefined);
+  first.release();
+
+  writeFileSync(path, `${DEAD_PID} ${hostname()} deadbeef\n`);
+  const second = tryAcquireFileLock(path);
+  assert.ok(second, "a dead holder's lock is broken and taken");
+  second.release();
+  assert.equal(existsSync(path), false);
 });

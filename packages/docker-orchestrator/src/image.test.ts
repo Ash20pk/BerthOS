@@ -16,11 +16,13 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
+import { PassThrough } from "node:stream";
 import { pathToFileURL } from "node:url";
 import type Docker from "dockerode";
 import {
   BUILD_CACHE_LABEL,
   buildCacheRef,
+  buildImage,
   makeDeployReproducible,
   retainLatestBuild,
   stageProductionSource,
@@ -253,11 +255,30 @@ interface FakeImage {
   Created?: number;
 }
 
-/** Just enough of dockerode's image API for retainLatestBuild(), with the removals it made. */
+/**
+ * Just enough of dockerode's image API for retainLatestBuild(), with the
+ * removals it made. buildImage() gets a daemon whose build stream never
+ * ends on its own, like a first build still compiling; `builds` records the
+ * options each build request carried.
+ */
 function fakeDocker(images: FakeImage[], inUse: string[] = [], { tagFails = false } = {}) {
   const removed: string[] = [];
+  const builds: { abortSignal?: AbortSignal; labels?: Record<string, string> }[] = [];
+  let stream: PassThrough | undefined;
   const find = (ref: string) => images.find((i) => i.Id === ref || i.RepoTags.includes(ref));
   const docker = {
+    buildImage: async (_context: unknown, options: { abortSignal?: AbortSignal; labels?: Record<string, string> }) => {
+      builds.push(options);
+      stream = new PassThrough();
+      return stream;
+    },
+    modem: {
+      followProgress: (s: PassThrough, onFinished: (err: Error | null) => void) => {
+        s.on("error", (err) => onFinished(err));
+        s.on("end", () => onFinished(null));
+        s.resume();
+      },
+    },
     getImage: (ref: string) => ({
       inspect: async () => {
         const image = find(ref);
@@ -300,7 +321,7 @@ function fakeDocker(images: FakeImage[], inUse: string[] = [], { tagFails = fals
           Created: i.Created ?? Math.floor(Date.now() / 1000) - 3600,
         })),
   };
-  return { docker: docker as unknown as Docker, removed, images };
+  return { docker: docker as unknown as Docker, removed, images, builds, stream: () => stream };
 }
 
 const labelled = (ref: string) => ({ [BUILD_CACHE_LABEL]: ref });
@@ -408,4 +429,33 @@ test("a failing docker tag is a warning, not a failed build, and retires nothing
   assert.match(warnings[0]!, /berth-agent\/notes:2.*tag refused/);
   // The cache reference didn't move, so the build it points at stays.
   assert.deepEqual(fake.removed, []);
+});
+
+function probeAppDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), "berth-image-"));
+  writeFileSync(join(dir, "berth.yml"), "name: probe\nversion: 0.0.1\n");
+  return dir;
+}
+
+test("a build is cancelled when its signal aborts, including the request to the daemon", async () => {
+  const fake = fakeDocker([]);
+  const controller = new AbortController();
+  const building = buildImage({ appDir: probeAppDir(), appName: "probe", tag: "berth/probe:dev", target: "dev", docker: fake.docker, signal: controller.signal });
+  for (let i = 0; i < 200 && !fake.stream(); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.ok(fake.stream(), "the build reached the daemon");
+  assert.equal(fake.builds[0]!.abortSignal, controller.signal, "the daemon request carries the signal");
+  assert.deepEqual(fake.builds[0]!.labels, labelled(buildCacheRef("berth/probe:dev", "dev")), "and still the build-cache label");
+
+  controller.abort();
+  await assert.rejects(building, /build of berth\/probe:dev was cancelled/);
+  assert.equal(fake.stream()!.destroyed, true);
+});
+
+test("a build whose signal has already aborted doesn't start", async () => {
+  const fake = fakeDocker([]);
+  await assert.rejects(
+    buildImage({ appDir: probeAppDir(), appName: "probe", tag: "berth/probe:dev", target: "dev", docker: fake.docker, signal: AbortSignal.abort() }),
+    { name: "AbortError" },
+  );
+  assert.equal(fake.builds.length, 0);
 });
