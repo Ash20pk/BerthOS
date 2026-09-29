@@ -9,8 +9,11 @@ capabilities:
   - filesystem:write:/context
 
 exports:
-  # Paths are relative to BERTH_WORKSPACE_ROOT, like apps/filesystem's, so a
-  # "../../../etc/x" path is a genuine attempt outside the declared scope.
+  # apps/filesystem's own write_file/read_file code (its paths.ts): paths
+  # resolve against BERTH_WORKSPACE_ROOT, an absolute one is used as written,
+  # and a write creates the directories its path names. So "../../../etc/x"
+  # and "/etc/x" are genuine attempts outside the declared scope, and so is
+  # the mkdir a write outside it starts with.
   - name: write_file
     input: { path: string, content: string }
   - name: read_file

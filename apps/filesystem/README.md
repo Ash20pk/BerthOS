@@ -37,6 +37,14 @@ No `network:*` capability is declared, so the app can't open any outbound connec
 | `query_context` | `{ text }` | `{ results: [] }` | Searches `/context` by tag text and returns metadata for each match |
 | `publish_context_event` | `{ topic, payload }` | | Publishes any event on the context bus |
 
+### Paths
+
+Paths are relative to `/workspace`, or to `/context` for the context exports, and a file's folders are created as needed.
+
+**An absolute path is used as written, not joined onto `/workspace`.** `/workspace/notes.txt` is the workspace's `notes.txt`, but `/notes.txt` is a file at the root of the filesystem, outside the workspace, and writing it fails. The error says where the path resolved. To mean the workspace, pass `notes.txt` or `/workspace/notes.txt`.
+
+Anything outside the app's declared scope is refused by the kernel (Landlock), when the host can enforce it. `Computer.boot()` and production images set `BERTH_REQUIRE_ENFORCEMENT=1`, so there an app the kernel can't confine doesn't start. `berth dev` runs apps anyway on a host without Landlock, such as Docker Desktop, and the boot log says `NOT RESTRICTED`: nothing then stops a path outside the scope except the file's own permissions. See [Kernel enforcement, by platform](../../docs/kernel-enforcement.md#kernel-enforcement-by-platform).
+
 ## Working with other apps
 
 - **Context bus.** After every `write_file`, the app publishes `fs.file_created` with `{ path, createdBy: "filesystem" }`. [`code-editor`](../code-editor) and [`activity-feed`](../activity-feed) subscribe to it. See [Talking to other apps](../../docs/resident-apps.md#talking-to-other-apps).

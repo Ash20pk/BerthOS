@@ -1,19 +1,13 @@
 import { defineApp, type ContextBusClient, type SemanticFsClient } from "@berthos/sdk";
 import { z } from "zod";
-import { mkdir, readFile, writeFile, readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readdir } from "node:fs/promises";
+import { readFileUnder, relativeUnder, writeFileUnder } from "./paths.js";
 
 const WORKSPACE_ROOT = process.env.BERTH_WORKSPACE_ROOT ?? "/workspace";
 const CONTEXT_ROOT = process.env.BERTH_CONTEXT_MOUNT ?? "/context";
 
-function resolveInWorkspace(relativePath: string): string {
-  return join(WORKSPACE_ROOT, relativePath);
-}
-
-function resolveInContext(relativePath: string): string {
-  return join(CONTEXT_ROOT, relativePath);
-}
-
+// Paths are resolved against the root (see paths.ts): relative ones land under
+// it, absolute ones are used as written.
 export default defineApp((app) => {
   // Captured at onAgentReady and read inside export handlers — export
   // handlers only receive `input`, not the AppContext, so publishing from
@@ -25,9 +19,7 @@ export default defineApp((app) => {
     name: "write_file",
     input: z.object({ path: z.string(), content: z.string() }),
     handler: async ({ path: relativePath, content }) => {
-      const absolutePath = resolveInWorkspace(relativePath);
-      await mkdir(WORKSPACE_ROOT, { recursive: true });
-      await writeFile(absolutePath, content, "utf-8");
+      await writeFileUnder(WORKSPACE_ROOT, relativePath, content);
       await contextBus?.publish("fs.file_created", { path: relativePath, createdBy: "filesystem" });
     },
   });
@@ -37,7 +29,7 @@ export default defineApp((app) => {
     input: z.object({ path: z.string() }),
     output: z.object({ content: z.string() }),
     handler: async ({ path: relativePath }) => ({
-      content: await readFile(resolveInWorkspace(relativePath), "utf-8"),
+      content: await readFileUnder(WORKSPACE_ROOT, relativePath),
     }),
   });
 
@@ -54,8 +46,7 @@ export default defineApp((app) => {
     name: "write_context_file",
     input: z.object({ path: z.string(), content: z.string() }),
     handler: async ({ path: relativePath, content }) => {
-      await mkdir(CONTEXT_ROOT, { recursive: true });
-      await writeFile(resolveInContext(relativePath), content, "utf-8");
+      await writeFileUnder(CONTEXT_ROOT, relativePath, content);
     },
   });
 
@@ -64,7 +55,7 @@ export default defineApp((app) => {
     input: z.object({ path: z.string() }),
     output: z.object({ content: z.string() }),
     handler: async ({ path: relativePath }) => ({
-      content: await readFile(resolveInContext(relativePath), "utf-8"),
+      content: await readFileUnder(CONTEXT_ROOT, relativePath),
     }),
   });
 
@@ -72,7 +63,10 @@ export default defineApp((app) => {
     name: "tag_context_file",
     input: z.object({ path: z.string(), task: z.string(), relatedApps: z.array(z.string()) }),
     handler: async ({ path: relativePath, task, relatedApps }) => {
-      await semanticFs?.tag(relativePath, { task, relatedApps });
+      // The key semantic-fs indexes the file under, whichever way the path
+      // was spelled, so "/context/a.txt" tags the file write_context_file
+      // wrote rather than a second entry beside it.
+      await semanticFs?.tag(relativeUnder(CONTEXT_ROOT, relativePath), { task, relatedApps });
     },
   });
 
