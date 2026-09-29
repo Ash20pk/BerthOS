@@ -631,6 +631,27 @@ fn is_allowed_write_path(path: &str, app_name: &str) -> bool {
         .any(|prefix| path == *prefix || path.starts_with(&format!("{prefix}/")))
 }
 
+/// Read grants get a narrower check than writes, not the write allowlist:
+/// the policy's read baseline legitimately covers /usr, /etc, /proc and the
+/// rest, so what is refused is what no well-formed policy ever contains. That
+/// is "/" itself, which would make read scoping a no-op, whether named
+/// directly or reached through a symlink or a non-canonical path (the SDK
+/// realpaths the dependency locations it grants, and once derived them from
+/// symlinks an app controls, so `node_modules/root -> /` became "/"). No
+/// declared capability can be "/" either: the manifest schema rejects
+/// filesystem:*:/.
+fn is_allowed_read_path(path: &str) -> bool {
+    if !path.starts_with('/') || path == "/" || path.contains('\0') {
+        return false;
+    }
+    if path.split('/').skip(1).any(|segment| segment.is_empty() || segment == "." || segment == "..") {
+        return false;
+    }
+    // Resolving to "/" through a symlink. A path that doesn't exist yet is
+    // left to the open below, which reports it.
+    !matches!(std::fs::canonicalize(path), Ok(real) if real == Path::new("/"))
+}
+
 /// Hands a directory this process just created to the app's own uid, so that
 /// a write path Landlock grants is one DAC also allows. A no-op when no app
 /// identity was provisioned, which is the pre-Step-2 world.
@@ -776,6 +797,10 @@ fn apply_policy(policy_path: &str) -> Result<(CapabilityPolicy, RulesetStatus), 
 
     if restrict_reads {
         for path in &policy.read_paths {
+            if !is_allowed_read_path(path) {
+                eprintln!("[agent-init] WARNING: refusing to grant read access to \"{path}\" — it is, or resolves to, the whole filesystem, or isn't a canonical absolute path");
+                continue;
+            }
             // Deliberately NOT created, unlike the write loop above: a read
             // grant needs no directory to exist for the app to work, so
             // creating one is a pure side effect of *declaring* a capability
@@ -837,6 +862,29 @@ fn apply_policy(policy_path: &str) -> Result<(CapabilityPolicy, RulesetStatus), 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_read_grant_of_the_whole_filesystem_is_refused() {
+        for path in ["/", "", "relative", "/workspace/../", "/workspace//x", "/workspace/./x", "/workspace/", "/a\0b"] {
+            assert!(!is_allowed_read_path(path), "{path:?} must not be granted for reading");
+        }
+        for path in ["/usr", "/etc", "/proc", "/workspace/node_modules/.pnpm", "/workspace/does-not-exist-yet"] {
+            assert!(is_allowed_read_path(path), "{path:?} must stay grantable for reading");
+        }
+    }
+
+    #[test]
+    fn a_read_grant_through_a_symlink_to_root_is_refused() {
+        let dir = std::env::temp_dir().join(format!("agent-init-read-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let link = dir.join("root");
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink("/", &link).unwrap();
+        let real_dir = std::fs::canonicalize(&dir).unwrap();
+        assert!(!is_allowed_read_path(link.to_str().unwrap()));
+        assert!(is_allowed_read_path(real_dir.to_str().unwrap()));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     // "Stay root" is the fallback for every shape of missing or malformed
     // input, and it has to be, since agent-init is run directly by several

@@ -27,7 +27,10 @@ const manifestPkg = JSON.parse(await readFile(join(MANIFEST_SCHEMA_ROOT, "packag
 // the same story, more so — its backend-selection code branches on
 // platform/environment and does its own dynamic module resolution (ONNX
 // runtime WASM/native backends), which esbuild bundling would break.
-const EXTERNAL_DEPS = ["zod", "protobufjs", "yaml", "@xenova/transformers"];
+// "undici" too: it is CommonJS that requires node: builtins at load time,
+// which esbuild's ESM output can't do ("Dynamic require of "node:assert" is
+// not supported"), so bundling it broke `import "@berthos/sdk"` outright.
+const EXTERNAL_DEPS = ["zod", "protobufjs", "yaml", "@xenova/transformers", "undici"];
 
 await rm(OUT_DIR, { recursive: true, force: true });
 await mkdir(OUT_DIR, { recursive: true });

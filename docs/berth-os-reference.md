@@ -62,6 +62,8 @@ Builds a production image for the apps and starts a container that keeps running
 | `--apps=<dirs>` | Comma-separated app directories, relative to the current directory. |
 | `--config=<path>` | A YAML file listing the apps instead (see below). Pass `--apps` or `--config`, not both. |
 | `--network=<name>` | Join a Docker network (see `Crew.networked()`). Overrides the config file's `network:`. |
+| `--env=<NAME or NAME=value>` | A variable for the sandbox; repeatable. `NAME` alone takes the value from your shell's environment, keeping it out of shell history; `NAME=value` is visible in history and `ps`, so don't use it for a secret. A name an app declares under `secrets:` reaches that app only; any other name reaches every app, with a warning ([secrets](./secrets-reference.md)). Never saved in the state file. Ignored, with a warning, if the instance is already up. |
+| `--env-file=<path>` | A dotenv file of variables, applied before `--env`. Quoted values may span lines. |
 | `--http-rpc` | Also expose the app's exports over HTTP on a host port, for a client with no Docker access, such as the [Python client](./agents-python-reference.md). The URL and a fresh bearer token are printed and saved in the state file. |
 | `--http-rpc-app=<name>` | Which loaded app serves the HTTP bridge. Defaults to the first. Needs `--http-rpc`. |
 
@@ -87,7 +89,7 @@ Across the loaded apps, at most one may declare each of `browser:*`, `terminal:*
 
 `berth os status [<name>]` lists each recorded instance with `running` or `stopped`, its container, its apps and, if set, its HTTP bridge URL. A container that stopped on its own keeps its record until you run `down`.
 
-`berth os down <name>` stops and removes the container, removes the image, and deletes the record.
+`berth os down <name>` stops and removes the container, removes the image's tag, and deletes the record. The image itself stays as build cache, tagged `berth-build-cache:production-berth-os_<name>`, so the next `berth os up` of the same apps doesn't rebuild from the base; the next build that replaces it removes it. Every image Berth builds carries the label `io.berthos.build-cache`, which is how to find them: `docker images --filter label=io.berthos.build-cache`.
 
 ## The HTTP bridge
 

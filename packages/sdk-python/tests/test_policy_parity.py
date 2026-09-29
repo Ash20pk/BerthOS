@@ -70,6 +70,10 @@ def _typescript(policies: list[dict], bind_ports: list[dict], cwd: Path) -> dict
 
 
 def test_both_compilers_produce_the_same_policy(short_tmp, clean_env):
+    # The SDK's PYTHONPATH entry is the Python side's counterpart of the
+    # dependency paths TypeScript finds under the app's node_modules; cwd is
+    # an empty directory here, so neither side has any.
+    clean_env.delenv("PYTHONPATH", raising=False)
     policies = _policy_cases()
     bind_ports = FIXTURES["bindPortCases"]
     # process.cwd() is the resolved path (/tmp is a symlink on macOS).

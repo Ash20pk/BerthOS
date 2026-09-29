@@ -1,8 +1,8 @@
 """Mirrors @berthos/sdk's generate-capability-policy.ts exactly (same policy
-shape, same deny-by-default network/opt-in read-path rules, same
-per-app baseline write/read paths, same field order) — agent-init (Rust)
-reads whichever one ran, TypeScript or Python, without caring which wrote
-it. Invoked as `python3 -m berth_sdk.generate_capability_policy`.
+shape, same deny-by-default network and read-path rules, same per-app
+baseline write/read paths, same field order) — agent-init (Rust) reads
+whichever one ran, TypeScript or Python, without caring which wrote it.
+Invoked as `python3 -m berth_sdk.generate_capability_policy`.
 
 tests/test_policy_parity.py compiles the same capability lists with both and
 asserts the JSON is identical, so a change to one that isn't made to the other
@@ -56,6 +56,62 @@ TERMINAL_BIND_PORT = 7681
 # control socket before connecting to it needs it.
 def _baseline_read_paths(app_name: str, cwd: str) -> list[str]:
     return ["/usr", "/bin", "/sbin", "/lib", "/etc", "/proc", "/dev", "/tmp", f"/run/berth/{app_name}", cwd]
+
+
+def _sdk_read_paths(pythonpath: str | None = None, app_dir: str | None = None) -> list[str]:
+    """Where berth_sdk itself is loaded from (entrypoint.sh's PYTHONPATH):
+    the image's /opt/berth/sdk-python, or the checkout's packages/sdk-python
+    when the repo is bind-mounted. The runtime can't start without it once
+    reads are scoped.
+
+    PYTHONPATH is the boot environment's, which entrypoint.sh only prepends
+    to, so an entry is not taken on trust: each is resolved, and kept only if
+    it is an existing directory at least two levels deep that doesn't contain
+    the app's own directory and isn't another app's (see _is_app_content).
+    That drops "/", "/workspace" or "/app" (which would grant every other
+    app's code), /app/apps/other or /workspace/examples/..., and anything that
+    doesn't exist."""
+    raw = os.environ.get("PYTHONPATH", "") if pythonpath is None else pythonpath
+    app_real = os.path.realpath(app_dir if app_dir is not None else os.getcwd())
+    out: list[str] = []
+    for entry in raw.split(":"):
+        if not entry or not os.path.isabs(entry):
+            continue
+        real = os.path.realpath(entry)
+        too_broad = len(Path(real).parts) < 3 or app_real == real or app_real.startswith(real.rstrip("/") + "/")
+        if too_broad or not os.path.isdir(real) or _is_app_content(real):
+            _warn(f"not granting read access to PYTHONPATH entry {entry!r} — it is missing, not a directory, too broad, or another app's directory")
+            continue
+        if real not in out:
+            out.append(real)
+    return out
+
+
+# How far below a PYTHONPATH entry to look for a berth.yml. The SDK's own
+# directory holds none at any depth; a directory of apps (examples/,
+# examples/resident-apps/) holds one within a level or two.
+_APP_SCAN_DEPTH = 3
+_APP_SCAN_SKIP = {"node_modules", "__pycache__"}
+
+
+def _is_app_content(real: str) -> bool:
+    """True if `real` is part of an app, or holds one: it is under an apps/
+    directory, it or a directory above it has a berth.yml, or one of the
+    directories within _APP_SCAN_DEPTH levels below it does. The SDK lives
+    in packages/sdk-python or /opt/berth/sdk-python, none of which match."""
+    path = Path(real)
+    if "apps" in path.parts:
+        return True
+    if any((d / "berth.yml").is_file() for d in (path, *path.parents)):
+        return True
+    for current, dirs, files in os.walk(real):
+        if "berth.yml" in files:
+            return True
+        depth = len(Path(current).relative_to(path).parts)
+        # Pruned in place, so os.walk doesn't descend: not past the depth
+        # limit, and not into dependency or hidden directories.
+        dirs[:] = [] if depth + 1 >= _APP_SCAN_DEPTH else [d for d in dirs if d not in _APP_SCAN_SKIP and not d.startswith(".")]
+    return False
 
 
 def _strip_trailing_glob(scope: str) -> str:
@@ -162,19 +218,29 @@ def compile_capability_policy(
         elif ns == "github":
             needs_github_broker_ca = True
 
-    # Opt-in: only restrict reads at all if the app declared a
-    # filesystem:read: capability; an empty list means "don't touch reads".
-    read_paths: list[str] = []
-    if declared_read_paths:
-        read_paths = list(
-            dict.fromkeys(
-                [
-                    *_baseline_read_paths(app_name, cwd),
-                    *([GITHUB_BROKER_CERT_DIR] if needs_github_broker_ca else []),
-                    *declared_read_paths,
-                ]
-            )
+    # Always scoped, as in generate-capability-policy.ts: an app reads the
+    # baseline, the SDK (where the TypeScript compiler grants its
+    # dependencies' real locations), what it may write, and what it declares.
+    # Reads used to be opt-in, which let an app with no read scope read every
+    # other app's code and config in the sandbox. Write paths the baseline
+    # already covers are left out: /dev/null and the pty devices are files,
+    # and a read rule on a file leaves the ruleset PartiallyEnforced.
+    baseline = _baseline_read_paths(app_name, cwd)
+
+    def covered(path: str) -> bool:
+        return any(path == b or path.startswith(b + "/") for b in baseline)
+
+    read_paths = list(
+        dict.fromkeys(
+            [
+                *baseline,
+                *_sdk_read_paths(app_dir=cwd),
+                *[path for path in write_paths if not covered(path)],
+                *([GITHUB_BROKER_CERT_DIR] if needs_github_broker_ca else []),
+                *declared_read_paths,
+            ]
         )
+    )
 
     return {
         "appName": app_name,

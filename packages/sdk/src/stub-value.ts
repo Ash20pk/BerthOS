@@ -16,6 +16,7 @@ const FIELD_NAME_HINTS: Record<string, string> = {
   url: "https://example.com",
   selector: "body",
   email: "test@example.com",
+  method: "GET",
 };
 
 /** A schema's kind in zod 4's lowercase vocabulary, from either major. */
