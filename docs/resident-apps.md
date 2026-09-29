@@ -164,7 +164,9 @@ On an enforcing kernel, a direct connection that skips the proxy is refused too,
 berth test
 ```
 
-`berth test` builds the production image, checks that your code's exports match `berth.yml`, calls each export with a generated input that fits its schema, and runs your `npm test` if `package.json` has one. `--json` prints a summary for CI.
+`berth test` builds the production image, checks that your code's exports match `berth.yml`, calls each export with a generated input that fits its schema, and runs your `npm test` if `package.json` has one (for a `runtime: python` app, `pytest` if it has a `tests/` directory). `--json` prints a summary for CI.
+
+The generated inputs are made up (a field named `url` gets `https://example.com`, `selector` gets `body`, `email` gets `test@example.com`, anything else a placeholder), so an export that needs real state or a service will usually throw on them. That's reported as not exercised, with the error, and doesn't fail the check. What fails it is an export missing on one side, output that doesn't match the declared schema, or a `TypeError` or `ReferenceError` thrown by the handler, which is a bug in the code rather than a refusal of the input. Your `npm test` runs inside the sandbox, under your app's own capabilities: a test that needs something the app doesn't declare, such as listening on a port, fails there.
 
 ## 5. Use it from an agent
 

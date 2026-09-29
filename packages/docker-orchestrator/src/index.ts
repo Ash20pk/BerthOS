@@ -10,7 +10,7 @@ export {
   describeDockerHost,
   type DockerHostResolution,
 } from "./docker-host.js";
-export { buildImage, type BuildImageOptions, type BuildTarget } from "./image.js";
+export { buildImage, removeImageKeepingCache, type BuildImageOptions, type BuildTarget } from "./image.js";
 export {
   startContainer,
   stopContainer,
@@ -51,7 +51,7 @@ export {
 } from "./attest.js";
 export { watchApp, type WatchHandle } from "./watch.js";
 export { invokeAppExport, rpcSocketPathFor, RPC_SOCKET_DIR, type RpcRequest, type RpcResponse } from "./relay.js";
-export { createStdioRpcClient, type StdioRpcClient } from "./stdio-rpc.js";
+export { createStdioRpcClient, DEFAULT_STDIO_RPC_TIMEOUT_MS, RpcNotSentError, type StdioRpcCallOptions, type StdioRpcClient } from "./stdio-rpc.js";
 export {
   createSnapshot,
   restoreSnapshot,

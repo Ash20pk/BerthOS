@@ -19,6 +19,7 @@ export {
   matchesCapability,
   capabilityIssue,
   filesystemScopeIssue,
+  filesystemWriteScopeIssue,
   ALLOWED_FILESYSTEM_SCOPE_PREFIXES,
   type ParsedCapability,
   type CapabilityRequest,

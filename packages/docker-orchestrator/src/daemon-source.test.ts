@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { daemonSourceDir } from "./image.js";
+import { daemonSourceDir, pythonSdkSourceDir } from "./image.js";
 
 // A fake packages/ directory: <root>/docker-orchestrator is the package.
 function layout(withSiblings: boolean): string {
@@ -40,6 +40,18 @@ test("a sibling folder without the daemon's manifest isn't mistaken for its sour
   const pkgRoot = layout(false);
   mkdirSync(join(pkgRoot, "..", "mesh-daemon"));
   assert.equal(daemonSourceDir("mesh-daemon", pkgRoot), join(pkgRoot, "daemons", "mesh-daemon"));
+});
+
+test("the Python SDK comes from the checkout when there is one, else the bundled copy", () => {
+  const pkgRoot = layout(false);
+  assert.equal(pythonSdkSourceDir(pkgRoot), join(pkgRoot, "daemons", "sdk-python"));
+
+  // A sibling sdk-python without berth_sdk/__init__.py is not the SDK.
+  mkdirSync(join(pkgRoot, "..", "sdk-python", "berth_sdk"), { recursive: true });
+  assert.equal(pythonSdkSourceDir(pkgRoot), join(pkgRoot, "daemons", "sdk-python"));
+
+  writeFileSync(join(pkgRoot, "..", "sdk-python", "berth_sdk", "__init__.py"), "");
+  assert.equal(pythonSdkSourceDir(pkgRoot), join(pkgRoot, "..", "sdk-python"));
 });
 
 test("an app's own pnpm-workspace.yaml doesn't make it a workspace member", async () => {

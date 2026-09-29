@@ -1,0 +1,10 @@
+name: python-worker
+version: 0.1.0
+runtime: python
+capabilities:
+  - app:invoke:python-target
+  - network:bind:9123
+exports:
+  - name: ok
+  - name: blocked
+  - name: call_target

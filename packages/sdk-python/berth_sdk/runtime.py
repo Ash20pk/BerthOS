@@ -52,15 +52,16 @@ def _assert_exports_match_manifest(app: BerthApp, declared_exports: list[str]) -
         raise RuntimeError(f"exports mismatch between berth.yml and app code — {'; '.join(problems)}")
 
 
-def main() -> None:
+def default_paths() -> tuple[str, str]:
+    """(manifest path, app entry), from the same env vars runtime.ts reads."""
     app_root = Path(os.getcwd())
     manifest_path = os.environ.get("BERTH_MANIFEST_PATH", str(app_root / "berth.yml"))
     app_entry = os.environ.get("BERTH_APP_ENTRY", str(app_root / "src" / "app.py"))
+    return manifest_path, app_entry
 
-    print(f"[berth:runtime] loading manifest from {manifest_path}", file=sys.stderr)
-    manifest = load_manifest(manifest_path)
 
-    print(f"[berth:runtime] loading app entry {app_entry}", file=sys.stderr)
+def load_app(app_entry: str) -> BerthApp:
+    """Imports the app module and returns its module-level `app`."""
     spec = importlib.util.spec_from_file_location("berth_app_entry", app_entry)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"could not load a Python module from {app_entry}")
@@ -70,6 +71,17 @@ def main() -> None:
     app = getattr(module, "app", None)
     if not isinstance(app, BerthApp):
         raise RuntimeError(f"{app_entry} must define a module-level `app = define_app(...)`")
+    return app
+
+
+def main() -> None:
+    manifest_path, app_entry = default_paths()
+
+    print(f"[berth:runtime] loading manifest from {manifest_path}", file=sys.stderr)
+    manifest = load_manifest(manifest_path)
+
+    print(f"[berth:runtime] loading app entry {app_entry}", file=sys.stderr)
+    app = load_app(app_entry)
 
     _assert_exports_match_manifest(app, [e.name for e in manifest.exports])
 
@@ -81,13 +93,20 @@ def main() -> None:
     for hook in app.on_agent_ready_hooks:
         hook(ctx)
 
-    start_rpc_server(app, socket_path=os.environ.get("BERTH_RPC_SOCKET"))
+    socket_thread = start_rpc_server(app, socket_path=os.environ.get("BERTH_RPC_SOCKET"))
     print(f'[berth:runtime] "{manifest.name}" ready', file=sys.stderr)
 
-    # Blocks forever, reading stdio RPC requests — this is what keeps the
-    # process alive, same role Node's active readline listener plays in
-    # rpc.ts (its event loop just never empties).
+    # Reads stdio RPC requests until stdin closes.
     serve_stdio_forever(app)
+
+    # In a multi-app sandbox every app's stdin is /dev/null and it is reached
+    # only through its socket, so stdin ends at once. The socket server runs on
+    # a daemon thread, which died with the process: the app logged "ready",
+    # then exited, and every call to it was refused. Keep serving the socket,
+    # which is what the Node runtime does (its open server keeps the event
+    # loop alive).
+    if socket_thread is not None:
+        socket_thread.join()
 
 
 if __name__ == "__main__":

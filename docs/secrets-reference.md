@@ -13,10 +13,16 @@ secrets:
   - GITHUB_TOKEN
 ```
 
-Pass the values in the `env` you boot the sandbox with: the `env` option of `startContainer()` from `@berthos/docker-orchestrator`, or `Computer.boot({ apps, env })` in the experimental agent framework. For example `env: { GITHUB_TOKEN: process.env.GITHUB_TOKEN }`. Inside the app, read it as usual: `process.env.GITHUB_TOKEN`.
+Pass the values when you boot the sandbox:
+
+- **`berth os up`**: `--env GITHUB_TOKEN` takes the value from your shell's environment (exported earlier, or loaded by a tool such as direnv), so it stays out of shell history and `ps`. `--env-file .env` reads a dotenv file, which suits a secret too; keep the file out of version control. `--env NAME=value` gives a value inline, where it is visible in shell history and `ps`, so use it only for values that aren't secret. Values are never written to the instance's state file, and a parse error names only the line and, at most, the variable name. If the instance is already up, `berth os up` changes nothing and warns that the values weren't applied; run `berth os down` first.
+- **From code**: the `env` option of `startContainer()` from `@berthos/docker-orchestrator`, or `Computer.boot({ apps, env })` in the experimental agent framework. For example `env: { GITHUB_TOKEN: process.env.GITHUB_TOKEN }`.
+
+Inside the app, read it as usual: `process.env.GITHUB_TOKEN`.
 
 - A declared name reaches only the apps that declared it. Two apps may declare the same name, and each gets it.
 - A declared name with no value at boot prints a warning naming it (never the value), and the app boots without it.
+- A name you pass that no app declares isn't scoped to one app: it goes to the shared file if it looks like a credential (see below) and into `Env` otherwise, and every app can read it. `berth os up` passes it through, since ordinary configuration such as `GITHUB_REPO` travels this way, but warns naming it. To keep a secret to one app, declare it in that app's `berth.yml`.
 - A `secrets:` entry must be a valid environment variable name.
 
 ## How it works

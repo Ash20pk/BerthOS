@@ -95,6 +95,7 @@ async function startWithFakeDocker(options: {
   secretsRunDir: string;
   runtime?: string;
   extraSecurityOpt?: string[];
+  bindMount?: { hostPath: string; containerPath: string; readOnly?: boolean };
   /** Use the /context posture the process env already selects, even none. */
   postureFromEnv?: boolean;
 }): Promise<Docker.ContainerCreateOptions> {
@@ -120,6 +121,7 @@ async function startWithFakeDocker(options: {
       secretsRunDir: options.secretsRunDir,
       runtime: options.runtime,
       extraSecurityOpt: options.extraSecurityOpt,
+      bindMount: options.bindMount,
       docker: fakeDocker(captured),
     });
   } finally {
@@ -224,6 +226,27 @@ test("startContainer appends extraSecurityOpt to HostConfig.SecurityOpt", async 
 
   const without = await startWithFakeDocker({ name: "berth-test-no-secopt", secretsRunDir: runDir });
   assert.ok(!(without.HostConfig?.SecurityOpt ?? []).some((o: string) => o.startsWith("seccomp=")));
+});
+
+test("a dev bind mount is announced to the entrypoint, and nothing else can announce one", async () => {
+  const runDir = await mkdtemp(join(tmpdir(), "berth-container-devmount-"));
+  const mounted = await startWithFakeDocker({
+    name: "berth-test-dev-mount",
+    secretsRunDir: runDir,
+    bindMount: { hostPath: runDir, containerPath: "/workspace", readOnly: true },
+    env: { BERTH_DEV_SOURCE_MOUNT: "/somewhere-else" },
+  });
+  assert.ok((mounted.Env ?? []).includes("BERTH_DEV_SOURCE_MOUNT=/workspace"), JSON.stringify(mounted.Env));
+  assert.ok(!(mounted.Env ?? []).includes("BERTH_DEV_SOURCE_MOUNT=/somewhere-else"));
+
+  // No bind mount (test, production): the flag is absent even if a caller's env
+  // sets it, so a production /workspace is never taken for a checkout.
+  const production = await startWithFakeDocker({
+    name: "berth-test-no-dev-mount",
+    secretsRunDir: runDir,
+    env: { BERTH_DEV_SOURCE_MOUNT: "/workspace" },
+  });
+  assert.ok(!(production.Env ?? []).some((e: string) => e.startsWith("BERTH_DEV_SOURCE_MOUNT=")), JSON.stringify(production.Env));
 });
 
 /**

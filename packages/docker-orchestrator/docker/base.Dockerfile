@@ -153,6 +153,13 @@ RUN chmod +x /entrypoint.sh /usr/local/bin/berth-run-on-install
 COPY docker/rpc-relay.js /usr/local/bin/berth-rpc-relay.js
 COPY docker/egress-broker.cjs /usr/local/bin/berth-egress-broker.js
 COPY docker/github-api-broker.cjs /usr/local/bin/berth-github-api-broker.js
+# berth_sdk for `runtime: python` apps (entrypoint.sh puts it on PYTHONPATH
+# unless the checkout's own packages/sdk-python is bind-mounted).
+COPY sdk-python /opt/berth/sdk-python
+# @berthos/sdk's policy compiler and lifecycle flags, which entrypoint.sh runs
+# as root before agent-init: one bundled file each, with nothing left to
+# resolve from an app's node_modules.
+COPY sdk-node /opt/berth/sdk-node
 
 # 9222 (CDP) is deliberately not here, and as of the egress-milestone fix
 # Chromium no longer binds it at all: --remote-debugging-port is gone, so
@@ -167,6 +174,11 @@ ENTRYPOINT ["/sbin/tini", "--", "/entrypoint.sh"]
 # --- dev target: bind-mounted source, devDependencies kept for fast iteration ---
 FROM base AS dev
 ENV NODE_ENV=development
+# Each app's `runtime:` as the manifest loader resolved it at build time
+# (image.ts's stageAppRuntimes). entrypoint.sh reads this rather than parsing
+# berth.yml itself. Per target rather than in base, so base stays one cached
+# image for every app.
+COPY berth-runtime /etc/berth/runtime
 # on_install runs here, at build time, and nowhere else — see
 # docker/run-on-install.sh. A dev image holds no app
 # source (it arrives via `berth dev`'s bind mount at container start), so this
@@ -190,6 +202,7 @@ CMD ["node", "node_modules/@berthos/sdk/dist/runtime.js"]
 # apps — so no install step runs here at all.
 FROM base AS production
 ENV NODE_ENV=production
+COPY berth-runtime /etc/berth/runtime
 # Every production image refuses to exec its resident app unrestricted —
 # agent-init (see packages/agent-init/src/main.rs) exits non-zero instead of
 # falling back to "warn and run anyway" if Landlock didn't fully enforce the

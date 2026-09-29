@@ -1,0 +1,35 @@
+name: web-fetch
+version: 0.1.0
+description: "Lets an agent call APIs and read web pages on the hosts you list, and nowhere else. Every request goes through the sandbox's egress proxy, which refuses any host this file doesn't name."
+
+capabilities:
+  # The hosts this app may reach: edit these. A pattern with no port covers
+  # 80 and 443; name any other port (api.internal.example:8443) or use :*.
+  # Only * is a wildcard (*.example.com). Internal addresses (loopback,
+  # private ranges, the cloud metadata address) are refused under every
+  # pattern.
+  - network:host:example.com
+  # The egress proxy's port: the only port the kernel lets this app connect to.
+  - network:connect:8090
+
+# Optional. A JSON object mapping a host to headers this app adds to every
+# request to that host, e.g. {"api.example.com": {"Authorization": "Bearer ..."}}.
+# The agent never sees these values, and they are never sent to another host.
+secrets:
+  - WEB_FETCH_HEADERS
+
+exports:
+  - name: get
+    input: { url: string }
+    output: { url: string, status: number, content_type: string, body: string, truncated: boolean }
+  - name: request
+    input: { method: string, url: string, body: string, content_type: string }
+    output: { url: string, status: number, content_type: string, body: string, truncated: boolean }
+  - name: read_page
+    input: { url: string }
+    output: { url: string, status: number, title: string, text: string, links: array, truncated: boolean }
+  - name: allowed_hosts
+    output: { hosts: array }
+
+on_install: []
+on_agent_ready: []
