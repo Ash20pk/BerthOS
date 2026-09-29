@@ -89,7 +89,7 @@ Across the loaded apps, at most one may declare each of `browser:*`, `terminal:*
 
 `berth os status [<name>]` lists each recorded instance with `running` or `stopped`, its container, its apps and, if set, its HTTP bridge URL. A container that stopped on its own keeps its record until you run `down`.
 
-`berth os down <name>` stops and removes the container, removes the image, and deletes the record.
+`berth os down <name>` stops and removes the container, removes the image's tag, and deletes the record. The image itself stays as build cache, tagged `berth-build-cache:production-berth-os_<name>`, so the next `berth os up` of the same apps doesn't rebuild from the base; the next build that replaces it removes it. Every image Berth builds carries the label `io.berthos.build-cache`, which is how to find them: `docker images --filter label=io.berthos.build-cache`.
 
 ## The HTTP bridge
 

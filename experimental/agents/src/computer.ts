@@ -2,6 +2,7 @@ import { randomUUID, randomBytes } from "node:crypto";
 import Docker from "dockerode";
 import {
   startContainer,
+  removeImageKeepingCache,
   stopContainer,
   createStdioRpcClient,
   invokeAppExport,
@@ -295,10 +296,7 @@ export class Computer implements ComputerHandle {
     const bootFailure = await describeContainerFailure(container);
     if (bootFailure) {
       await stopContainer(container).catch(() => {});
-      await docker
-        .getImage(image)
-        .remove()
-        .catch(() => {});
+      await removeImageKeepingCache(docker, image);
       throw new Error(`Computer.boot() failed: ${containerName} exited during startup${formatContainerFailure(bootFailure)}`);
     }
 
@@ -370,10 +368,7 @@ export class Computer implements ComputerHandle {
       } catch (err) {
         stdioClient?.close();
         await stopContainer(container).catch(() => {});
-        await docker
-          .getImage(image)
-          .remove()
-          .catch(() => {});
+        await removeImageKeepingCache(docker, image);
         throw err;
       }
     }
@@ -481,10 +476,7 @@ export class Computer implements ComputerHandle {
     if (!this.ownsLifecycle) return;
     await stopContainer(this.container);
     if (this.image) {
-      await this.docker
-        .getImage(this.image)
-        .remove()
-        .catch(() => {});
+      await removeImageKeepingCache(this.docker, this.image);
     }
   }
 }
