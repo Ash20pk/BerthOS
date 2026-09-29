@@ -269,6 +269,32 @@ def compute_bind_ports(app_name: str, env: Mapping[str, str], capabilities: Iter
     return list(dict.fromkeys(ports))
 
 
+def http_rpc_tls_read_paths(app_name: str, env: Mapping[str, str]) -> list[str]:
+    """httpRpcTlsReadPaths() in the TypeScript file: the directories holding
+    the HTTP RPC bridge's TLS certificate and key, for the one app that serves
+    the bridge (gated as compute_bind_ports is). The directory, not the file,
+    since a read rule on a file leaves the ruleset PartiallyEnforced; the path
+    as given and its real location both count, and "/" and relative paths are
+    never granted."""
+    bound_app = env.get("BERTH_HTTP_RPC_APP")
+    if not env.get("BERTH_HTTP_RPC_PORT") or (bound_app and bound_app != app_name):
+        return []
+    dirs: list[str] = []
+    for file in (env.get("BERTH_HTTP_RPC_TLS_CERT"), env.get("BERTH_HTTP_RPC_TLS_KEY")):
+        if not file or not os.path.isabs(file):
+            continue
+        try:
+            real: Optional[str] = str(Path(file).resolve(strict=True))
+        except OSError:
+            real = None
+        for path in (file, real):
+            # path.dirname() ignores trailing slashes; os.path.dirname does not.
+            directory = os.path.dirname(path.rstrip("/") or "/") if path else None
+            if directory and directory != "/":
+                dirs.append(directory)
+    return list(dict.fromkeys(dirs))
+
+
 def main() -> None:
     manifest_path = os.environ.get("BERTH_MANIFEST_PATH", str(Path.cwd() / "berth.yml"))
     policy_path = Path(os.environ.get("BERTH_CAPABILITY_POLICY", str(Path.cwd() / ".berth" / "capability-policy.json")))
@@ -278,6 +304,10 @@ def main() -> None:
     # Union, not overwrite, as in the TypeScript main().
     policy["bindPorts"] = list(
         dict.fromkeys([*policy["bindPorts"], *compute_bind_ports(manifest.name, os.environ, manifest.capabilities)])
+    )
+    granted = list(policy["readPaths"])
+    policy["readPaths"].extend(
+        d for d in http_rpc_tls_read_paths(manifest.name, os.environ) if not any(d == g or d.startswith(g + "/") for g in granted)
     )
 
     policy_path.parent.mkdir(parents=True, exist_ok=True)
