@@ -563,8 +563,14 @@ python_sdk_path() {
 # directory on sys.path. The current directory is the app's own, so a plain
 # `python3 -m berth_sdk...` there imports an app-supplied berth_sdk/ first,
 # and runs it as root.
+#
+# PYTHONPATH is still passed, set to what the app's own process will get,
+# because the policy compiler reads it: every app's reads are scoped, and the
+# directory berth_sdk is imported from is granted from it (_sdk_read_paths,
+# which filters each entry). -I keeps it off this tool's own sys.path, so it
+# changes what the policy says, never what runs as root.
 run_python_sdk_tool() {
-  python3 -I -c 'import runpy, sys; sys.path.insert(0, sys.argv[1]); runpy.run_module(sys.argv[2], run_name="__main__", alter_sys=True)' \
+  PYTHONPATH="$(python_sdk_path)${PYTHONPATH:+:$PYTHONPATH}" python3 -I -c'import runpy, sys; sys.path.insert(0, sys.argv[1]); runpy.run_module(sys.argv[2], run_name="__main__", alter_sys=True)' \
     "$BERTH_IMAGE_PYTHON_SDK" "berth_sdk.$1"
 }
 
