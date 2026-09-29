@@ -173,7 +173,15 @@ export default class Test extends Command {
     }
 
     if (appTestCheck) {
-      this.log(appTestCheck.exitCode === 0 ? "✓ app test suite" : "✗ app test suite failed");
+      if (appTestCheck.exitCode === 0) {
+        this.log("✓ app test suite");
+      } else {
+        // The output was collected and then dropped, so a failure said only
+        // "failed". Show the end of it: that's where test runners summarize.
+        this.log(`✗ app test suite failed (exit ${appTestCheck.exitCode}). Last lines of its output:`);
+        const tail = appTestCheck.output.trimEnd().split("\n").slice(-40);
+        for (const line of tail) this.log(`  ${line}`);
+      }
     }
   }
 }

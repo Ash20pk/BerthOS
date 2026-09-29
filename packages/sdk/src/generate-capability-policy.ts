@@ -6,11 +6,13 @@
 // @berthos/manifest-schema, already a dependency) is the single place that
 // understands the capability-string grammar.
 //
-// Phase 3 scope: filesystem:write:<path> always translates into real kernel
-// enforcement (Landlock write-access restriction). filesystem:read:<path> is
-// opt-in — only enforced when at least one is declared, because enumerating
-// every path Node/Alpine need to read to run at all is fragile; an app that
-// declares none keeps today's fully-open read behavior.
+// filesystem:write:<path> always translates into real kernel enforcement
+// (Landlock write-access restriction), and so, now, do reads. An app reads
+// the system baseline (below), its own directory, what it may write, the
+// real locations of its dependencies, and whatever filesystem:read:<path> it
+// declares. Reads used to be opt-in: an app that declared no read scope could
+// read everything, including every other app's code and config in the same
+// sandbox (browser-native through file://, terminal's shell with cat).
 //
 // network:connect:<port> is deny-by-default (not opt-in): an app that
 // declares no network:connect capability gets zero outbound TCP, full stop.
@@ -31,9 +33,16 @@
 // existing networkPorts allow-list, so an app that never opted into the mesh
 // can't reach the coordinator's registration API at all.
 import { writeFile, mkdir } from "node:fs/promises";
-import { realpathSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { loadManifest, parseCapability, capabilityIssue, CapabilityString, type ParsedCapability } from "@berthos/manifest-schema";
+import { lstatSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { dirname, isAbsolute, join } from "node:path";
+import {
+  loadManifest,
+  parseCapability,
+  capabilityIssue,
+  CapabilityString,
+  ALLOWED_FILESYSTEM_SCOPE_PREFIXES,
+  type ParsedCapability,
+} from "@berthos/manifest-schema";
 
 const MANIFEST_PATH = process.env.BERTH_MANIFEST_PATH ?? join(process.cwd(), "berth.yml");
 const POLICY_PATH = process.env.BERTH_CAPABILITY_POLICY ?? join(process.cwd(), ".berth", "capability-policy.json");
@@ -146,6 +155,135 @@ const GITHUB_BROKER_CERT_DIR = "/run/berth/github-api-broker";
 
 function baselineReadPaths(appName: string): string[] {
   return ["/usr", "/bin", "/sbin", "/lib", "/etc", "/proc", "/dev", "/tmp", appRunDir(appName), process.cwd()];
+}
+
+/**
+ * Where an app's dependencies really live, when that is outside its own
+ * directory. A production image has a real node_modules under the app, so
+ * this is empty there. Under `berth dev` the checkout is bind-mounted and pnpm
+ * links each dependency into the workspace: node_modules/@berthos/sdk is
+ * /workspace/packages/sdk, and every third-party package sits in
+ * /workspace/node_modules/.pnpm. Without these an app can't load its own
+ * runtime once reads are scoped (the boundary fixtures used to declare
+ * filesystem:read:/workspace/packages and /workspace/node_modules by hand for
+ * exactly this). Reads only: this is library code, not another app's data.
+ *
+ * A symlink under the app's node_modules is the app's own content, so where
+ * it points proves nothing: `node_modules/root -> /` would otherwise have
+ * granted the whole filesystem, and `node_modules/x -> ../../other-app` a
+ * sibling's directory. So a target is accepted only if it is one of the two
+ * things pnpm actually links to, both inside the pnpm workspace that
+ * contains the app (the nearest proper ancestor with a pnpm-workspace.yaml):
+ *
+ *  - that workspace's own store, <workspace>/node_modules/.pnpm, and
+ *  - a library package directly under one of WORKSPACE_LIBRARY_DIRS, never
+ *    an app (a directory with a berth.yml) and never the workspace itself.
+ *
+ * Anything else is dropped with a warning naming the link, and every
+ * accepted path is also held to the same prefix allowlist a declared
+ * filesystem path is.
+ */
+export function dependencyReadPaths(appDir: string, allowedPrefixes: readonly string[] = ALLOWED_FILESYSTEM_SCOPE_PREFIXES): string[] {
+  const out = new Set<string>();
+  const appReal = safeRealpath(appDir) ?? appDir;
+  const workspace = findWorkspaceRoot(appReal);
+  const visited = new Set<string>();
+  const scan = (packageDir: string) => {
+    const modules = join(packageDir, "node_modules");
+    if (visited.has(modules)) return;
+    visited.add(modules);
+    for (const entry of safeReaddir(modules)) {
+      if (entry.startsWith(".")) continue;
+      const names = entry.startsWith("@") ? safeReaddir(join(modules, entry)).map((n) => join(entry, n)) : [entry];
+      for (const name of names) {
+        const linkPath = join(modules, name);
+        if (!isSymlink(linkPath)) continue;
+        const target = safeRealpath(linkPath);
+        if (!target || isWithin(target, appReal)) continue;
+        const dependency = workspace ? acceptedDependency(target, workspace) : undefined;
+        const refusal = !dependency
+          ? "a dependency must resolve into this app's pnpm workspace store or one of its library packages"
+          : !isUnderPrefix(dependency.path, allowedPrefixes)
+            ? `it is outside ${allowedPrefixes.join(", ")}`
+            : undefined;
+        if (!dependency || refusal) {
+          console.error(`[berth:capability-policy] WARNING: ignoring ${linkPath} -> ${target} (${refusal}), so it grants no read access`);
+          continue;
+        }
+        out.add(dependency.path);
+        // A workspace package: its own node_modules links into the store too.
+        if (dependency.kind === "package") scan(target);
+      }
+    }
+  };
+  scan(appDir);
+  return [...out];
+}
+
+/** Workspace directories whose direct children are library packages an app may depend on (see pnpm-workspace.yaml). */
+const WORKSPACE_LIBRARY_DIRS = ["packages", "packages/adapters", "experimental"];
+
+function acceptedDependency(target: string, workspace: string): { path: string; kind: "store" | "package" } | undefined {
+  const store = join(workspace, "node_modules", ".pnpm");
+  if (isWithin(target, store) && target !== store) return { path: store, kind: "store" };
+  const parent = dirname(target);
+  const isLibrary = WORKSPACE_LIBRARY_DIRS.some((dir) => parent === join(workspace, dir));
+  if (isLibrary && isFile(join(target, "package.json")) && !isFile(join(target, "berth.yml"))) return { path: target, kind: "package" };
+  return undefined;
+}
+
+/** The nearest proper ancestor of `dir` holding a pnpm-workspace.yaml — never `dir` itself, which is the app's own content. */
+function findWorkspaceRoot(dir: string): string | undefined {
+  for (let current = dirname(dir); ; current = dirname(current)) {
+    if (current !== "/" && isFile(join(current, "pnpm-workspace.yaml"))) return current;
+    if (current === "/") return undefined;
+  }
+}
+
+function isWithin(path: string, dir: string): boolean {
+  return path === dir || path.startsWith(dir + "/");
+}
+
+function isUnderPrefix(path: string, prefixes: readonly string[]): boolean {
+  return path !== "/" && prefixes.some((prefix) => prefix !== "/" && isWithin(path, prefix));
+}
+
+// The scan reads the filesystem and warns about every link it refuses, and
+// its answer can't change within one run, so it's done once per directory.
+const dependencyCache = new Map<string, string[]>();
+function cachedDependencyReadPaths(appDir: string): string[] {
+  let paths = dependencyCache.get(appDir);
+  if (!paths) dependencyCache.set(appDir, (paths = dependencyReadPaths(appDir)));
+  return paths;
+}
+
+function safeRealpath(path: string): string | undefined {
+  try {
+    return realpathSync(path);
+  } catch {
+    return undefined;
+  }
+}
+function safeReaddir(path: string): string[] {
+  try {
+    return readdirSync(path);
+  } catch {
+    return [];
+  }
+}
+function isFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+function isSymlink(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
 }
 
 export interface CapabilityPolicy {
@@ -278,13 +416,23 @@ export function compileCapabilityPolicy(appName: string, rawCapabilities: string
     }
   }
 
-  // Opt-in: only restrict reads at all if the app declared at least one
-  // filesystem:read:<path> capability — otherwise leave readPaths empty,
-  // which agent-init treats as "don't touch read access."
-  const readPaths =
-    declaredReadPaths.size > 0
-      ? [...new Set([...baselineReadPaths(appName), ...(needsGithubBrokerCa ? [GITHUB_BROKER_CERT_DIR] : []), ...declaredReadPaths])]
-      : [];
+  // Always scoped (see this file's header). What an app may write it may
+  // also read, since Landlock's write rights don't include reading, except
+  // what the baseline already covers. That exception matters: /dev/null and
+  // the pty devices are files, and a read rule on a file can't carry the
+  // directory-reading right, which leaves the whole ruleset PartiallyEnforced
+  // (and BERTH_REQUIRE_ENFORCEMENT refuses to boot).
+  const baseline = baselineReadPaths(appName);
+  const covered = (path: string) => baseline.some((b) => path === b || path.startsWith(b + "/"));
+  const readPaths = [
+    ...new Set([
+      ...baseline,
+      ...cachedDependencyReadPaths(process.cwd()),
+      ...[...writePaths].filter((path) => !covered(path)),
+      ...(needsGithubBrokerCa ? [GITHUB_BROKER_CERT_DIR] : []),
+      ...declaredReadPaths,
+    ]),
+  ];
 
   return {
     appName,
@@ -355,6 +503,35 @@ export function computeBindPorts(
   return [...new Set(ports)];
 }
 
+/**
+ * Directories holding the HTTP RPC bridge's TLS certificate and key, for the
+ * one app that serves the bridge (the same gating as computeBindPorts()).
+ * They are operator-chosen paths (a mounted secret, a file a deploy adapter
+ * wrote) that runtime.ts reads after agent-init has enforced, so with reads
+ * scoped they'd fail with EACCES unless granted. The directory is granted,
+ * not the file: a read rule on a file leaves the ruleset PartiallyEnforced.
+ * That makes the whole directory readable (a cert at /app/cert.pem grants
+ * /app), which is why docs/tls-reference.md asks for a dedicated one.
+ * Both the path as given and its real location count, since a Kubernetes
+ * secret mount reaches its files through a symlink. "/" and relative paths
+ * are never granted.
+ */
+export function httpRpcTlsReadPaths(
+  appName: string,
+  env: Partial<Pick<NodeJS.ProcessEnv, "BERTH_HTTP_RPC_PORT" | "BERTH_HTTP_RPC_APP" | "BERTH_HTTP_RPC_TLS_CERT" | "BERTH_HTTP_RPC_TLS_KEY">>,
+): string[] {
+  if (!env.BERTH_HTTP_RPC_PORT || (env.BERTH_HTTP_RPC_APP && env.BERTH_HTTP_RPC_APP !== appName)) return [];
+  const dirs = new Set<string>();
+  for (const file of [env.BERTH_HTTP_RPC_TLS_CERT, env.BERTH_HTTP_RPC_TLS_KEY]) {
+    if (!file || !isAbsolute(file)) continue;
+    for (const path of [file, safeRealpath(file)]) {
+      const dir = path ? dirname(path) : undefined;
+      if (dir && dir !== "/") dirs.add(dir);
+    }
+  }
+  return [...dirs];
+}
+
 async function main(): Promise<void> {
   const manifest = await loadManifest(MANIFEST_PATH);
   const policy = compileCapabilityPolicy(manifest.name, manifest.capabilities);
@@ -364,6 +541,8 @@ async function main(): Promise<void> {
   policy.bindPorts = [
     ...new Set([...policy.bindPorts, ...computeBindPorts(manifest.name, process.env, manifest.capabilities)]),
   ];
+  const covered = (path: string) => policy.readPaths.some((granted) => path === granted || path.startsWith(granted + "/"));
+  policy.readPaths.push(...httpRpcTlsReadPaths(manifest.name, process.env).filter((dir) => !covered(dir)));
 
   await mkdir(dirname(POLICY_PATH), { recursive: true });
   await writeFile(POLICY_PATH, JSON.stringify(policy, null, 2));
