@@ -4,9 +4,9 @@
 // and a write outside it (via path traversal — proving the kernel catches
 // what app code doesn't validate itself) is refused BY THE KERNEL. Also
 // covers read-path scoping (opt-in — see generate-capability-policy.ts):
-// apps/filesystem/berth.yml already declares filesystem:read:/workspace and
-// filesystem:read:/context, so reads are confined to baseline+declared paths
-// for this app without any test-only manifest changes.
+// the enforcement-probe fixture declares filesystem:read:/workspace and
+// filesystem:read:/context (apps/filesystem's own capabilities), so reads are
+// confined to baseline+declared paths without any further manifest changes.
 //
 // Note on scope: this only exercises the app's own runtime process, which is
 // what agent-init actually restricts via landlock_restrict_self() before
@@ -42,7 +42,11 @@ import { buildImage, startContainer, stopContainer, invokeAppExport } from "../d
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");
-const FILESYSTEM_APP_DIR = join(REPO_ROOT, "apps", "filesystem");
+// Declares exactly apps/filesystem's capabilities, plus the diagnostic exports
+// the checks below call. They live in a fixture so the shipped filesystem app
+// doesn't hand every agent tools named probe_raw_socket and friends.
+const PROBE_APP_DIR = join(__dirname, "fixtures", "enforcement-probe");
+const PROBE_APP_CONTAINER_DIR = "/workspace/packages/docker-orchestrator/test/fixtures/enforcement-probe";
 const BOUNDARY_APP_A_DIR = join(__dirname, "fixtures", "boundary-app-a");
 const BOUNDARY_APP_B_DIR = join(__dirname, "fixtures", "boundary-app-b");
 // The authorized counterpart to app A: same source, but its berth.yml declares
@@ -72,19 +76,19 @@ const docker = new Docker();
 async function main() {
   mkdirSync(DEV_WORKSPACE_HOST_DIR, { recursive: true });
 
-  const manifest = await loadManifest(join(FILESYSTEM_APP_DIR, "berth.yml"));
+  const manifest = await loadManifest(join(PROBE_APP_DIR, "berth.yml"));
 
-  console.log("Building filesystem's dev image...");
-  await buildImage({ appDir: FILESYSTEM_APP_DIR, tag: "berth/filesystem:dev", target: "dev", docker });
+  console.log("Building enforcement-probe's dev image...");
+  await buildImage({ appDir: PROBE_APP_DIR, tag: "berth/enforcement-probe:dev", target: "dev", docker });
 
-  console.log("Starting filesystem's sandbox...");
+  console.log("Starting enforcement-probe's sandbox...");
   const running = await startContainer({
-    image: "berth/filesystem:dev",
-    name: "berth-capability-enforcement-filesystem",
+    image: "berth/enforcement-probe:dev",
+    name: "berth-capability-enforcement-probe",
     manifest,
     bindMount: { hostPath: REPO_ROOT, containerPath: "/workspace" },
     extraBinds: [`${DEV_WORKSPACE_HOST_DIR}:${DEV_WORKSPACE}`],
-    workingDir: "/workspace/apps/filesystem",
+    workingDir: PROBE_APP_CONTAINER_DIR,
     env: { BERTH_WORKSPACE_ROOT: DEV_WORKSPACE },
     docker,
   });
@@ -97,7 +101,7 @@ async function main() {
   let landlockActive;
 
   try {
-    await waitFor(() => /"filesystem" ready/.test(containerLog.text()), 20000, "filesystem runtime ready");
+    await waitFor(() => /"enforcement-probe" ready/.test(containerLog.text()), 20000, "enforcement-probe runtime ready");
     await waitFor(() => /ruleset=/.test(containerLog.text()), 5000, "agent-init's landlock status line");
 
     const statusLine = containerLog.text().match(/\[agent-init\] landlock restrict_self\(\).*$/m)?.[0] ?? "";
@@ -151,8 +155,8 @@ async function main() {
     }
 
     console.log("\n--- Test 3: read INSIDE the declared+baseline path (should always succeed) ---");
-    // apps/filesystem/berth.yml already declares filesystem:read:/workspace
-    // and filesystem:read:/context — read scoping (opt-in per
+    // enforcement-probe's berth.yml (apps/filesystem's capabilities) declares
+    // filesystem:read:/workspace and filesystem:read:/context — read scoping (opt-in per
     // generate-capability-policy.ts) is therefore already active for this
     // app, no synthetic manifest needed to exercise it.
     const insideRead = await rpc.call({ id: "3", export: "read_file", input: { path: "allowed.txt" } });
@@ -184,8 +188,8 @@ async function main() {
       console.log("\nNOT VERIFIED (expected in this environment) — Landlock isn't enforced here.");
     }
 
-    console.log("\n--- Test 5: network is deny-by-default — filesystem declares no network:connect capability ---");
-    // apps/filesystem/berth.yml declares no network:* capability, so under
+    console.log("\n--- Test 5: network is deny-by-default — the app declares no network:connect capability ---");
+    // enforcement-probe's berth.yml declares no network:* capability, so under
     // the deny-by-default policy (packages/agent-init/src/main.rs) it should
     // get a Landlock ruleset with zero allowed outbound ports — a real
     // attempted TCP connect from inside the actually-restricted runtime
@@ -390,8 +394,9 @@ async function main() {
     // no privilege at all, and the kernel gives its creator a fresh
     // CAP_FULL_SET bounding set *inside* the new namespace. So `unshare -Urm`
     // handed back everything the drop had just removed, and mount(2) — which
-    // Landlock does not cover — worked again. Reproduced in the real
-    // berth/filesystem image during the audit.
+    // Landlock does not cover — worked again. Reproduced during the audit in
+    // a real Berth container, when this probe still lived in apps/filesystem;
+    // it now runs from the enforcement-probe fixture, on the same base image.
     //
     // Docker's own default seccomp profile blocks this, which is why it is not
     // a problem for containers generally. It stops doing so when the container
@@ -431,11 +436,11 @@ async function main() {
   // agent-init's fail-closed gate (packages/agent-init/src/main.rs) without
   // touching the container Test 1-7 already tore down.
   const enforcedRunning = await startContainer({
-    image: "berth/filesystem:dev",
-    name: "berth-capability-enforcement-filesystem-require-enforcement",
+    image: "berth/enforcement-probe:dev",
+    name: "berth-capability-enforcement-probe-require-enforcement",
     manifest,
     bindMount: { hostPath: REPO_ROOT, containerPath: "/workspace" },
-    workingDir: "/workspace/apps/filesystem",
+    workingDir: PROBE_APP_CONTAINER_DIR,
     env: { BERTH_REQUIRE_ENFORCEMENT: "1" },
     docker,
   });
@@ -444,7 +449,7 @@ async function main() {
     if (landlockActive) {
       // Enforcement is genuinely FullyEnforced/PartiallyEnforced here, so the
       // gate must not interfere with a boot that would have passed anyway.
-      await waitFor(() => /"filesystem" ready/.test(enforcedLog.text()), 20000, "filesystem runtime ready under BERTH_REQUIRE_ENFORCEMENT");
+      await waitFor(() => /"enforcement-probe" ready/.test(enforcedLog.text()), 20000, "enforcement-probe runtime ready under BERTH_REQUIRE_ENFORCEMENT");
       console.log("\nPASS — BERTH_REQUIRE_ENFORCEMENT=1 did not block a correctly-enforced boot.");
     } else {
       // This host can't fully enforce the policy — agent-init must refuse to
@@ -473,7 +478,7 @@ async function main() {
 
   console.log("\n--- Test 9: cross-app boundary — one app's grant must not reach a sibling app's directory ---");
   // boundary-app-a/-b (test/fixtures) are each scoped ONLY to their own
-  // /workspace/apps/boundary-app-<x> subdirectory (unlike filesystem's own
+  // /workspace/apps/boundary-app-<x> subdirectory (unlike enforcement-probe's
   // broad filesystem:write:/workspace grant, which legitimately covers the
   // whole tree and so proves nothing about cross-app isolation). Both run in
   // the SAME container via the real --apps multi-app path (see
