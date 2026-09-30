@@ -240,10 +240,24 @@ pub fn install_no_new_namespaces_filter() -> Result<(), Box<dyn std::error::Erro
 // can also build TCP in userspace over AF_PACKET and never call connect(2) at
 // all, which is the one syscall Landlock watches.
 //
-// The filter refuses socket(2) for the datagram and raw families rather than
-// trying to police send/recv, so there is no fd to smuggle and no per-call
-// check to race — an app with no declared network capability cannot obtain a
-// UDP or raw socket in the first place.
+// The filter refuses socket(2) for everything except TCP rather than trying to
+// police send/recv, so there is no fd to smuggle and no per-call check to race
+// — an app with no declared network capability cannot obtain a UDP or raw
+// socket in the first place.
+//
+// "Everything except TCP" is stated as what stays open rather than as a list
+// of what is refused, because the list kept being incomplete. It used to name
+// UDP, raw and AF_PACKET, and SCTP walked straight past it: Linux loads the
+// sctp module on demand for an unprivileged socket(AF_INET, SOCK_SEQPACKET,
+// IPPROTO_SCTP), whose one-to-many form sends with sendmsg(2) and never calls
+// the connect(2) Landlock checks, and whose STREAM form is not TCP, which is
+// all Landlock's rules cover. DCCP, MPTCP, RDS (which can make its own TCP
+// connections from inside the kernel), TIPC and vsock are the same shape of
+// problem. So, for an app with this filter, socket(2) succeeds only for:
+//
+//   - AF_INET/AF_INET6 with SOCK_STREAM and protocol 0 or IPPROTO_TCP, which
+//     is TCP, and which Landlock polices per port;
+//   - AF_UNIX, and AF_NETLINK (see 2 and 3 below).
 //
 // Deliberately narrow, in three ways worth stating plainly:
 //
@@ -260,14 +274,22 @@ pub fn install_no_new_namespaces_filter() -> Result<(), Box<dyn std::error::Erro
 //   3. AF_NETLINK is untouched — it is how a process reads its own interface
 //      list, and it is not routable off-box.
 
-// From <bits/socket.h>, spelled out for the same reason the clone flags above
-// are.
+// From <bits/socket.h> and <netinet/in.h>, spelled out for the same reason the
+// clone flags above are.
+const AF_UNIX: u64 = 1;
 const AF_INET: u64 = 2;
 const AF_INET6: u64 = 10;
-const AF_PACKET: u64 = 17;
+const AF_NETLINK: u64 = 16;
 
-const SOCK_DGRAM: u64 = 2;
-const SOCK_RAW: u64 = 3;
+const IPPROTO_IP: u64 = 0;
+const IPPROTO_TCP: u64 = 6;
+
+const SOCK_STREAM: u64 = 1;
+/// Every other type the kernel accepts for socket(2): SOCK_DGRAM, SOCK_RAW,
+/// SOCK_RDM, SOCK_SEQPACKET, SOCK_DCCP and SOCK_PACKET. seccomp-bpf has a
+/// masked-equal comparison but no masked-not-equal, so "not SOCK_STREAM" is
+/// spelled out as each of these instead.
+const NON_STREAM_SOCK_TYPES: [u64; 6] = [2, 3, 4, 5, 6, 10];
 // socket(2)'s `type` argument carries SOCK_NONBLOCK (0o4000) and SOCK_CLOEXEC
 // (0o2000000) OR'd into the low bits' actual type. Comparing the whole
 // argument for equality would be trivially bypassed by passing
@@ -279,37 +301,45 @@ const SOCK_TYPE_MASK: u64 = 0xf;
 /// behaviour — without this process having to permanently constrain itself.
 pub fn compile_no_udp_no_raw_filter() -> Result<BpfProgram, Box<dyn std::error::Error>> {
     let mut rules: BTreeMap<i64, Vec<SeccompRule>> = BTreeMap::new();
+    let domain_is = |domain| SeccompCondition::new(0, SeccompCmpArgLen::Dword, SeccompCmpOp::Eq, domain);
+    let domain_is_not = |domain| SeccompCondition::new(0, SeccompCmpArgLen::Dword, SeccompCmpOp::Ne, domain);
+    let type_is = |sock_type| {
+        SeccompCondition::new(1, SeccompCmpArgLen::Dword, SeccompCmpOp::MaskedEq(SOCK_TYPE_MASK), sock_type)
+    };
+    let protocol_is_not = |protocol| SeccompCondition::new(2, SeccompCmpArgLen::Dword, SeccompCmpOp::Ne, protocol);
 
-    let mut socket_rules = Vec::new();
+    // Rules are OR'd, conditions within one AND'd; a socket(2) call matching
+    // any rule is refused.
+    let mut socket_rules = vec![
+        // Any family but the four this filter leaves open. AF_PACKET, AF_VSOCK,
+        // AF_XDP, AF_RDS, AF_TIPC, and whatever a future kernel adds.
+        SeccompRule::new(vec![
+            domain_is_not(AF_UNIX)?,
+            domain_is_not(AF_NETLINK)?,
+            domain_is_not(AF_INET)?,
+            domain_is_not(AF_INET6)?,
+        ])?,
+    ];
     for domain in [AF_INET, AF_INET6] {
-        for sock_type in [SOCK_DGRAM, SOCK_RAW] {
-            socket_rules.push(SeccompRule::new(vec![
-                SeccompCondition::new(0, SeccompCmpArgLen::Dword, SeccompCmpOp::Eq, domain)?,
-                SeccompCondition::new(
-                    1,
-                    SeccompCmpArgLen::Dword,
-                    SeccompCmpOp::MaskedEq(SOCK_TYPE_MASK),
-                    sock_type,
-                )?,
-            ])?);
+        // IP, but not a stream: UDP, ICMP, raw, SCTP's one-to-many form, DCCP.
+        for sock_type in NON_STREAM_SOCK_TYPES {
+            socket_rules.push(SeccompRule::new(vec![domain_is(domain)?, type_is(sock_type)?])?);
         }
+        // IP and a stream, but not TCP: SCTP's one-to-one form, MPTCP.
+        socket_rules.push(SeccompRule::new(vec![
+            domain_is(domain)?,
+            type_is(SOCK_STREAM)?,
+            protocol_is_not(IPPROTO_IP)?,
+            protocol_is_not(IPPROTO_TCP)?,
+        ])?);
     }
-    // AF_PACKET has no legitimate use for a resident app and every type it
-    // supports is a link-layer escape hatch, so it's refused whole rather
-    // than per-type.
-    socket_rules.push(SeccompRule::new(vec![SeccompCondition::new(
-        0,
-        SeccompCmpArgLen::Dword,
-        SeccompCmpOp::Eq,
-        AF_PACKET,
-    )?])?);
 
     rules.insert(libc::SYS_socket, socket_rules);
 
     let filter = SeccompFilter::new(
         rules,
-        // Allow-by-default: this filter's whole job is to remove the two
-        // socket families Landlock can't see. Everything else the app does
+        // Allow-by-default: this filter's whole job is to remove the
+        // sockets Landlock can't see. Everything else the app does
         // is already governed by the Landlock domain and the capability
         // bounding set, and a syscall allowlist here would be a second,
         // divergent copy of "what a Node runtime needs to run."
@@ -361,7 +391,8 @@ pub fn install_no_udp_no_raw_filter() -> Result<(), Box<dyn std::error::Error>> 
 //
 // AF_VSOCK. vsock connects a guest to its hypervisor, addressed by context id
 // and port rather than by IP. It is not AF_INET, so Landlock's TCP rules never
-// apply to it, and section 2 never matched it. Under Docker it goes nowhere,
+// apply to it, and section 2 only refuses it for apps that declared no network
+// capability. Under Docker it goes nowhere,
 // but in a microVM it reaches every port the host maps to the guest, from an
 // app whatever its network capabilities say. Nothing in a resident app needs
 // it. Refused for every socket type, for every app.
@@ -375,7 +406,8 @@ pub fn install_no_udp_no_raw_filter() -> Result<(), Box<dyn std::error::Error>> 
 //     removes and section 1 keeps removed. mesh-daemon, the one process that
 //     does need netlink write access, is not started through agent-init.
 //   - AF_PACKET and AF_XDP both need CAP_NET_RAW, which is likewise gone.
-//     Section 2 still refuses AF_PACKET outright for no-network apps.
+//     Section 2 refuses both anyway for no-network apps, with every other
+//     family that isn't IP, Unix or netlink.
 
 const AF_VSOCK: u64 = 40;
 
@@ -806,24 +838,39 @@ mod tests {
         let outcome = std::thread::spawn(|| {
             install_no_udp_no_raw_filter().expect("seccomp filter should install");
 
-            // (domain, type, expected-to-be-denied)
-            let cases: [(libc::c_int, libc::c_int, bool); 6] = [
-                (libc::AF_INET, libc::SOCK_DGRAM, true),
-                (libc::AF_INET, libc::SOCK_DGRAM | libc::SOCK_CLOEXEC, true),
-                (libc::AF_INET6, libc::SOCK_DGRAM, true),
-                (libc::AF_PACKET, libc::SOCK_RAW, true),
+            // (domain, type, protocol, expected-to-be-denied)
+            let cases: [(libc::c_int, libc::c_int, libc::c_int, bool); 15] = [
+                (libc::AF_INET, libc::SOCK_DGRAM, 0, true),
+                (libc::AF_INET, libc::SOCK_DGRAM | libc::SOCK_CLOEXEC, 0, true),
+                (libc::AF_INET6, libc::SOCK_DGRAM, 0, true),
+                (libc::AF_INET, libc::SOCK_RAW, libc::IPPROTO_ICMP, true),
+                (libc::AF_PACKET, libc::SOCK_RAW, 0, true),
+                // SCTP, both ways it can be asked for. The one-to-many
+                // SEQPACKET form sends with sendmsg(2) and never calls
+                // connect(2), so Landlock has nothing to check; the STREAM
+                // form is not TCP, which is all Landlock's rules cover.
+                (libc::AF_INET, libc::SOCK_SEQPACKET, libc::IPPROTO_SCTP, true),
+                (libc::AF_INET6, libc::SOCK_SEQPACKET | libc::SOCK_NONBLOCK, libc::IPPROTO_SCTP, true),
+                (libc::AF_INET, libc::SOCK_STREAM, libc::IPPROTO_SCTP, true),
+                (libc::AF_INET, libc::SOCK_STREAM, libc::IPPROTO_MPTCP, true),
+                // Families other than IP that can carry traffic off the box.
+                (libc::AF_VSOCK, libc::SOCK_STREAM, 0, true),
+                (libc::AF_TIPC, libc::SOCK_RDM, 0, true),
                 // Still permitted: TCP is Landlock's to police per-port, and
                 // AF_UNIX is how every local RPC path in the container works.
-                (libc::AF_INET, libc::SOCK_STREAM, false),
-                (libc::AF_UNIX, libc::SOCK_DGRAM, false),
+                // AF_NETLINK is how a runtime reads its own interface list.
+                (libc::AF_INET, libc::SOCK_STREAM, 0, false),
+                (libc::AF_INET6, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, libc::IPPROTO_TCP, false),
+                (libc::AF_UNIX, libc::SOCK_DGRAM, 0, false),
+                (libc::AF_NETLINK, libc::SOCK_RAW, libc::NETLINK_ROUTE, false),
             ];
 
             cases
                 .iter()
-                .map(|&(domain, sock_type, expect_denied)| {
+                .map(|&(domain, sock_type, protocol, expect_denied)| {
                     // SAFETY: socket(2) with constant arguments; the returned
                     // fd (when there is one) is closed immediately below.
-                    let fd = unsafe { libc::socket(domain, sock_type, 0) };
+                    let fd = unsafe { libc::socket(domain, sock_type, protocol) };
                     // Only meaningful on failure — errno is not cleared by a
                     // successful call, so reading it unconditionally would
                     // carry the previous case's EPERM forward.
@@ -836,18 +883,18 @@ mod tests {
                         // SAFETY: fd was just returned by socket(2).
                         unsafe { libc::close(fd) };
                     }
-                    (domain, sock_type, expect_denied, fd, errno)
+                    (domain, sock_type, protocol, expect_denied, fd, errno)
                 })
                 .collect::<Vec<_>>()
         })
         .join()
         .expect("probe thread should not panic");
 
-        for (domain, sock_type, expect_denied, fd, errno) in outcome {
+        for (domain, sock_type, protocol, expect_denied, fd, errno) in outcome {
             if expect_denied {
                 assert!(
                     fd < 0 && errno == libc::EPERM,
-                    "socket({domain}, {sock_type}) should have been refused with EPERM, got fd={fd} errno={errno}",
+                    "socket({domain}, {sock_type}, {protocol}) should have been refused with EPERM, got fd={fd} errno={errno}",
                 );
             } else {
                 // AF_PACKET aside, a permitted case can still fail for
@@ -855,7 +902,7 @@ mod tests {
                 // must never happen is this filter being the reason.
                 assert!(
                     errno != libc::EPERM,
-                    "socket({domain}, {sock_type}) must not be refused by this filter, got errno={errno}",
+                    "socket({domain}, {sock_type}, {protocol}) must not be refused by this filter, got errno={errno}",
                 );
             }
         }
