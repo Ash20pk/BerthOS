@@ -31,7 +31,12 @@ if [ ! -d "$KV" ]; then
 fi
 cp config-berth_aarch64 "$KV/.config"
 cd "$KV"
-make -s olddefconfig
+# The builder root is shared with the agent-init build, which installs rustc.
+# Kconfig probes for it and records its version in .config, so hide it: the
+# kernel has no Rust code in this config, and the output should not depend on
+# what else the builder has installed.
+KMAKE="make RUSTC=/bin/false"
+$KMAKE -s olddefconfig
 
 # Every line in the delta must have survived olddefconfig.
 grep -E '^(CONFIG_|# CONFIG_)' /out/src/berth-kernel.config | while read -r line; do
@@ -41,7 +46,7 @@ done | tee /out/check.txt
 if grep -q '^MISS' /out/check.txt; then echo "config delta did not apply cleanly" >&2; exit 1; fi
 
 rm -f .version
-time make -j"$JOBS" KBUILD_BUILD_TIMESTAMP="Mon Sep 21 20:29:27 CEST 2026" KBUILD_BUILD_USER=berth KBUILD_BUILD_HOST=berth-kernel Image >/out/build.log 2>&1 || { tail -40 /out/build.log; exit 1; }
+time $KMAKE -j"$JOBS" KBUILD_BUILD_TIMESTAMP="Mon Sep 21 20:29:27 CEST 2026" KBUILD_BUILD_USER=berth KBUILD_BUILD_HOST=berth-kernel Image >/out/build.log 2>&1 || { tail -40 /out/build.log; exit 1; }
 cp arch/arm64/boot/Image /out/Image
 cp .config /out/config
 ls -l /out/Image

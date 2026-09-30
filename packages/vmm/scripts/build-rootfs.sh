@@ -10,9 +10,9 @@ min_free_gb 10
 build_vmm
 R="$ART/rootfs-notes"
 APP="$ART/app-notes"
-AI="$ART/agent-init-build/out"
+AGENT_INIT_OUT="$ART/agent-init-build/out"
 NM=${NODE_MODULES_FROM:-$HOME/agentOS}
-[ -f "$AI/agent-init" ] || { echo "run build-agent-init.sh first" >&2; exit 1; }
+[ -f "$AGENT_INIT_OUT/agent-init" ] || { echo "run build-agent-init.sh first" >&2; exit 1; }
 
 if [ ! -x "$R/usr/bin/node" ]; then
     alpine_tree "$R"
@@ -28,8 +28,8 @@ grep -q '^notes:' "$R/etc/passwd" || {
     echo "notes:x:10000:" >> "$R/etc/group"
 }
 mkdir -p "$R/workspace" "$R/app" "$R/usr/local/bin" "$R/opt/berth/sdk-node"
-install -m 0755 "$AI/agent-init" "$R/usr/local/bin/agent-init"
-install -m 0755 "$AI/probe" "$R/usr/local/bin/berth-probe"
+install -m 0755 "$AGENT_INIT_OUT/agent-init" "$R/usr/local/bin/agent-init"
+install -m 0755 "$AGENT_INIT_OUT/probe" "$R/usr/local/bin/berth-probe"
 install -m 0755 "$VMM_DIR/guest/berth-init.sh" "$R/sbin/berth-init"
 install -m 0755 "$VMM_DIR/guest/net-probe.sh" "$R/usr/local/bin/net-probe"
 install -m 0755 "$VMM_DIR/guest/leak-probe.sh" "$R/usr/local/bin/leak-probe"

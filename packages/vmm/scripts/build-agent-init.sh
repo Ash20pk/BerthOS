@@ -23,4 +23,5 @@ DYLD_LIBRARY_PATH="$STOCK_KRUNFW_DIR" "$VMM" --tsi --cpus "${CPUS:-8}" --mem "${
     --share src:"$B/src":ro --share out:"$B/out" \
     -- /bin/sh /berth/build-agent-init-in-vm.sh </dev/null
 cp "$B/src/agent-init/REF" "$B/out/agent-init.ref"
+[ "${KEEP_SCRATCH:-0}" = 1 ] || rm -f "$B/build.img"
 ls -l "$B/out"

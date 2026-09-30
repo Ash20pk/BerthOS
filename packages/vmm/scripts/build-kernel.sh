@@ -21,7 +21,7 @@ cp "$VMM_DIR/kernel/berth-kernel.config" "$B/out/src/"
 # Sparse; only what the build writes is allocated.
 [ -f "$B/build.img" ] || mkfile -n 8g "$B/build.img"
 
-DYLD_LIBRARY_PATH="$STOCK_KRUNFW_DIR" "$VMM" --tsi --cpus "${CPUS:-8}" --mem "${MEM:-6144}" \
+DYLD_LIBRARY_PATH="$STOCK_KRUNFW_DIR" "$VMM" --tsi --cpus "${CPUS:-8}" --mem "${MEM:-4096}" \
     --root "$BUILDER_ROOT" --disk build:"$B/build.img" --share out:"$B/out" \
     -- /bin/sh /berth/build-in-vm.sh </dev/null
 
@@ -33,4 +33,6 @@ python3 "$S/bin2cbundle.py" --os Darwin -t Image "$B/out/Image" "$S/kernel.c"
 cc -fPIC -DABI_VERSION=5 -shared -o "$ART/kernel/lib/libkrunfw.5.dylib" "$S/kernel.c"
 cp "$B/out/Image" "$B/out/config" "$B/out/check.txt" "$ART/kernel/"
 rm -rf "$S"
+# The ext4 scratch volume holds the kernel tree and tarball (~2.2 GB).
+[ "${KEEP_SCRATCH:-0}" = 1 ] || rm -f "$B/build.img"
 shasum -a 256 "$ART/kernel/Image" "$ART/kernel/config" "$ART/kernel/lib/libkrunfw.5.dylib"
