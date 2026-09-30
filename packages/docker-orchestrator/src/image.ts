@@ -3,7 +3,8 @@ import tarFs from "tar-fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdtemp, cp, rm, readFile, writeFile, mkdir, chmod, readdir, readlink, realpath } from "node:fs/promises";
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, dirname, basename, resolve as resolvePath, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -477,15 +478,67 @@ async function stageDevOnInstallContext(options: BuildImageOptions, stagingDir: 
 export const BUILD_CACHE_LABEL = "io.berthos.build-cache";
 
 /**
- * The tag that keeps the latest build of an app, per image repository and
- * target, e.g. `berth-build-cache:production-berth-agent_notes` for every
- * `berth-agent/notes:<timestamp>` a Computer boots. Keyed on the repository
- * rather than the full tag because Computer.boot() tags each boot uniquely.
+ * A short, stable id for one checkout of an app: the first 8 hex digits of
+ * the SHA-256 of the app directory's real path. Two git worktrees, or two
+ * projects that each contain an app called `filesystem`, get different ids;
+ * the same directory always gets the same one, however it is spelled
+ * (relative, through a symlink, macOS's /tmp for /private/tmp).
  */
-export function buildCacheRef(tag: string, target: BuildTarget): string {
-  let repository = tag.split("@")[0]!;
+export function checkoutId(appDir: string): string {
+  const absolute = resolvePath(appDir);
+  let real = absolute;
+  try {
+    real = realpathSync(absolute);
+  } catch {
+    /* not there (yet): the absolute path is still stable */
+  }
+  return createHash("sha256").update(real).digest("hex").slice(0, 8);
+}
+
+/**
+ * An image tag made specific to one checkout of an app, by appending its
+ * checkoutId() to the tag part: `berth/filesystem:dev` becomes
+ * `berth/filesystem:dev-1a2b3c4d`. For local images only (`berth dev`,
+ * `berth test`, the milestone tests), where two checkouts building under the
+ * same name would otherwise each move the tag to their own image and start
+ * containers from the other's code. A tag that gets pushed somewhere keeps
+ * its plain name.
+ */
+export function checkoutTag(tag: string, appDir: string): string {
+  const { repository, tagPart } = splitTag(tag);
+  const suffix = `-${checkoutId(appDir)}`;
+  return `${repository}:${(tagPart ?? "latest").slice(0, 128 - suffix.length)}${suffix}`;
+}
+
+/** `registry:5000/berth/notes:dev@sha256:…` → repository `registry:5000/berth/notes`, tag `dev`. */
+function splitTag(tag: string): { repository: string; tagPart?: string } {
+  const repository = tag.split("@")[0]!;
   const colon = repository.lastIndexOf(":");
-  if (colon > repository.lastIndexOf("/")) repository = repository.slice(0, colon);
+  if (colon > repository.lastIndexOf("/")) return { repository: repository.slice(0, colon), tagPart: repository.slice(colon + 1) };
+  return { repository };
+}
+
+/**
+ * The tag that keeps the latest build of an app, per image repository,
+ * target and checkout, e.g. `berth-build-cache:production-berth-agent_notes-1a2b3c4d`
+ * for every `berth-agent/notes:<timestamp>` a Computer boots from one
+ * directory. Keyed on the repository rather than the full tag because
+ * Computer.boot() tags each boot uniquely.
+ *
+ * And on the checkout (checkoutId()), because the repository alone is the
+ * app's name: two worktrees of this repository, or two projects that both
+ * contain `filesystem`, shared one reference, so each one's build retired
+ * the other's image (retainLatestBuild()) — images vanished from under a
+ * test run going on in the other worktree.
+ */
+export function buildCacheRef(tag: string, target: BuildTarget, appDir: string): string {
+  const suffix = `-${checkoutId(appDir)}`;
+  return `${legacyBuildCacheRef(tag, target).slice(0, 128 + "berth-build-cache:".length - suffix.length)}${suffix}`;
+}
+
+/** The reference builds used before it was per checkout, shared by every checkout of an app with this name. */
+function legacyBuildCacheRef(tag: string, target: BuildTarget): string {
+  const { repository } = splitTag(tag);
   return `berth-build-cache:${`${target}-${repository}`.replace(/[^A-Za-z0-9_.-]/g, "_").slice(0, 128)}`;
 }
 
@@ -493,7 +546,7 @@ export function buildCacheRef(tag: string, target: BuildTarget): string {
 const SWEEP_MIN_AGE_SECONDS = 10 * 60;
 
 /**
- * Keeps exactly one build per app and target, and reclaims the one it
+ * Keeps exactly one build per app, target and checkout, and reclaims the one it
  * replaces.
  *
  * With the parents kept (removeImageKeepingCache()), a changed app used to
@@ -712,7 +765,7 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
     const dockerfileContents = await readFile(join(DOCKER_ASSETS_DIR, "base.Dockerfile"), "utf-8");
     await writeFile(join(stagingDir, "Dockerfile"), dockerfileContents);
 
-    const cacheRef = buildCacheRef(options.tag, options.target);
+    const cacheRef = buildCacheRef(options.tag, options.target, options.appDir);
     const previousIds = await Promise.all(
       [options.tag, cacheRef].map((ref) =>
         docker

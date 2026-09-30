@@ -23,6 +23,8 @@ import {
   BUILD_CACHE_LABEL,
   buildCacheRef,
   buildImage,
+  checkoutId,
+  checkoutTag,
   makeDeployReproducible,
   retainLatestBuild,
   stageProductionSource,
@@ -239,11 +241,34 @@ test("Ctrl-C in the middle of a deploy still puts the lockfile back", async () =
   }
 });
 
-test("the build-cache reference is per repository and target, not per tag", () => {
-  assert.equal(buildCacheRef("berth-agent/notes:1790000000000", "production"), "berth-build-cache:production-berth-agent_notes");
-  assert.equal(buildCacheRef("berth-agent/notes:1790000000001", "production"), buildCacheRef("berth-agent/notes:1", "production"));
-  assert.equal(buildCacheRef("berth/notes:dev", "dev"), "berth-build-cache:dev-berth_notes");
-  assert.equal(buildCacheRef("localhost:5000/berth/notes", "production"), "berth-build-cache:production-localhost_5000_berth_notes");
+/** Where the app under test lives; nothing reads it, it only keys the build-cache reference. */
+const APP = "/work/notes";
+
+test("the build-cache reference is per repository, target and checkout, not per tag", () => {
+  const id = checkoutId(APP);
+  assert.match(id, /^[0-9a-f]{8}$/);
+  assert.equal(buildCacheRef("berth-agent/notes:1790000000000", "production", APP), `berth-build-cache:production-berth-agent_notes-${id}`);
+  assert.equal(buildCacheRef("berth-agent/notes:1790000000001", "production", APP), buildCacheRef("berth-agent/notes:1", "production", APP));
+  assert.equal(buildCacheRef("berth/notes:dev", "dev", APP), `berth-build-cache:dev-berth_notes-${id}`);
+  assert.equal(buildCacheRef("localhost:5000/berth/notes", "production", APP), `berth-build-cache:production-localhost_5000_berth_notes-${id}`);
+  // A long name loses its end, never the checkout.
+  const long = buildCacheRef(`berth/${"n".repeat(300)}:dev`, "dev", APP);
+  assert.equal(long.length - "berth-build-cache:".length, 128);
+  assert.ok(long.endsWith(`-${id}`));
+});
+
+test("two checkouts of an app with the same name get different references and tags", () => {
+  const a = mkdtempSync(join(tmpdir(), "berth-checkout-a-"));
+  const b = mkdtempSync(join(tmpdir(), "berth-checkout-b-"));
+  assert.notEqual(buildCacheRef("berth/filesystem:dev", "dev", a), buildCacheRef("berth/filesystem:dev", "dev", b));
+  assert.notEqual(checkoutTag("berth/filesystem:dev", a), checkoutTag("berth/filesystem:dev", b));
+  assert.equal(checkoutTag("berth/filesystem:dev", a), `berth/filesystem:dev-${checkoutId(a)}`);
+  assert.equal(checkoutTag("localhost:5000/berth/filesystem", a), `localhost:5000/berth/filesystem:latest-${checkoutId(a)}`);
+  // The same checkout, however it's spelled, is the same checkout.
+  const link = join(mkdtempSync(join(tmpdir(), "berth-checkout-link-")), "a");
+  symlinkSync(a, link);
+  assert.equal(checkoutId(link), checkoutId(a));
+  assert.equal(checkoutId(join(a, "sub", "..")), checkoutId(a));
 });
 
 interface FakeImage {
@@ -339,7 +364,7 @@ function twoBuilds(ref: string, newTag: string, oldTags: string[]): FakeImage[] 
 }
 
 test("a rebuilt app's previous image and its own layers go; the shared cache stays", async () => {
-  const ref = buildCacheRef("berth-agent/notes:2", "production");
+  const ref = buildCacheRef("berth-agent/notes:2", "production", APP);
   // The previous boot's build: its own tag already removed by stop(), so
   // only the cache reference holds it.
   const fake = fakeDocker(twoBuilds(ref, "berth-agent/notes:2", [ref]));
@@ -350,7 +375,7 @@ test("a rebuilt app's previous image and its own layers go; the shared cache sta
 });
 
 test("an unchanged rebuild removes nothing", async () => {
-  const ref = buildCacheRef("berth/notes:dev", "dev");
+  const ref = buildCacheRef("berth/notes:dev", "dev", APP);
   const fake = fakeDocker([
     { Id: "sha256:base", RepoTags: [] },
     { Id: "sha256:same", ParentId: "sha256:base", RepoTags: ["berth/notes:dev", ref], Labels: labelled(ref) },
@@ -360,7 +385,7 @@ test("an unchanged rebuild removes nothing", async () => {
 });
 
 test("a previous image someone else still tags, or a container still uses, is left alone", async () => {
-  const ref = buildCacheRef("berth/notes:1.0.1", "production");
+  const ref = buildCacheRef("berth/notes:1.0.1", "production", APP);
   const tagged = fakeDocker(twoBuilds(ref, "berth/notes:1.0.1", ["berth/notes:1.0.0", ref]));
   await retainLatestBuild(tagged.docker, "berth/notes:1.0.1", ref, [undefined, "sha256:old"]);
   assert.deepEqual(tagged.removed, []);
@@ -372,7 +397,7 @@ test("a previous image someone else still tags, or a container still uses, is le
 });
 
 test("only berth-labelled dangling images are cleaned up", async () => {
-  const ref = buildCacheRef("berth/notes:dev", "dev");
+  const ref = buildCacheRef("berth/notes:dev", "dev", APP);
   const fake = fakeDocker([
     { Id: "sha256:base", RepoTags: [] },
     { Id: "sha256:orphan", ParentId: "sha256:base", RepoTags: [], Labels: labelled(ref) },
@@ -384,8 +409,8 @@ test("only berth-labelled dangling images are cleaned up", async () => {
 });
 
 test("the sweep leaves other apps' images and images built FROM a berth image alone", async () => {
-  const ref = buildCacheRef("berth/notes:dev", "dev");
-  const other = buildCacheRef("berth/filesystem:dev", "dev");
+  const ref = buildCacheRef("berth/notes:dev", "dev", APP);
+  const other = buildCacheRef("berth/filesystem:dev", "dev", APP);
   const fake = fakeDocker([
     { Id: "sha256:base", RepoTags: [] },
     { Id: "sha256:orphan", ParentId: "sha256:base", RepoTags: [], Labels: labelled(ref) },
@@ -404,7 +429,7 @@ test("the sweep leaves other apps' images and images built FROM a berth image al
 
 test("the sweep skips a dangling image too new to be an orphan", async () => {
   // A concurrent build of the same app, its final image not tagged yet.
-  const ref = buildCacheRef("berth/notes:dev", "dev");
+  const ref = buildCacheRef("berth/notes:dev", "dev", APP);
   const fake = fakeDocker([
     { Id: "sha256:base", RepoTags: [] },
     { Id: "sha256:in-flight", ParentId: "sha256:base", RepoTags: [], Labels: labelled(ref), Created: Math.floor(Date.now() / 1000) - 5 },
@@ -414,8 +439,36 @@ test("the sweep skips a dangling image too new to be an orphan", async () => {
   assert.deepEqual(fake.removed, []);
 });
 
+test("two checkouts building an app with the same name don't evict each other's images", async () => {
+  // Two worktrees of one repository, both building `filesystem` under the
+  // tag the milestone tests use, one after the other.
+  const tag = "berth/filesystem:dev";
+  const refA = buildCacheRef(tag, "dev", "/work/a/apps/filesystem");
+  const refB = buildCacheRef(tag, "dev", "/work/b/apps/filesystem");
+  const fake = fakeDocker([
+    { Id: "sha256:base", RepoTags: [] },
+    // A's current build, which a test in worktree A is about to start a container from.
+    { Id: "sha256:a", ParentId: "sha256:base", RepoTags: [refA], Labels: labelled(refA) },
+    // An old orphan of A's, which only A's own next build should take.
+    { Id: "sha256:a-orphan", ParentId: "sha256:base", RepoTags: [], Labels: labelled(refA) },
+    // B's build has just finished and taken the shared tag.
+    { Id: "sha256:b", ParentId: "sha256:base", RepoTags: [tag], Labels: labelled(refB) },
+  ]);
+  // What buildImage() found under the tag and B's reference before building: A's image, and nothing.
+  await retainLatestBuild(fake.docker, tag, refB, ["sha256:a", undefined]);
+  assert.deepEqual(fake.removed, [], "B's build touched none of A's images");
+  assert.deepEqual(fake.images.find((i) => i.Id === "sha256:a")!.RepoTags, [refA]);
+
+  // And back: A rebuilds, the tag moves again, and only A's own images go.
+  fake.images.find((i) => i.Id === "sha256:b")!.RepoTags = [refB];
+  fake.images.push({ Id: "sha256:a2", ParentId: "sha256:base", RepoTags: [tag], Labels: labelled(refA) });
+  await retainLatestBuild(fake.docker, tag, refA, ["sha256:b", "sha256:a"]);
+  assert.deepEqual(fake.removed.sort(), ["sha256:a", "sha256:a-orphan"]);
+  assert.deepEqual(fake.images.find((i) => i.Id === "sha256:b")!.RepoTags, [refB], "B's build is still there");
+});
+
 test("a failing docker tag is a warning, not a failed build, and retires nothing", async () => {
-  const ref = buildCacheRef("berth-agent/notes:2", "production");
+  const ref = buildCacheRef("berth-agent/notes:2", "production", APP);
   const fake = fakeDocker(twoBuilds(ref, "berth-agent/notes:2", [ref]), [], { tagFails: true });
   const warnings: string[] = [];
   const warn = console.warn;
@@ -440,11 +493,12 @@ function probeAppDir(): string {
 test("a build is cancelled when its signal aborts, including the request to the daemon", async () => {
   const fake = fakeDocker([]);
   const controller = new AbortController();
-  const building = buildImage({ appDir: probeAppDir(), appName: "probe", tag: "berth/probe:dev", target: "dev", docker: fake.docker, signal: controller.signal });
+  const appDir = probeAppDir();
+  const building = buildImage({ appDir, appName: "probe", tag: "berth/probe:dev", target: "dev", docker: fake.docker, signal: controller.signal });
   for (let i = 0; i < 200 && !fake.stream(); i++) await new Promise((resolve) => setTimeout(resolve, 10));
   assert.ok(fake.stream(), "the build reached the daemon");
   assert.equal(fake.builds[0]!.abortSignal, controller.signal, "the daemon request carries the signal");
-  assert.deepEqual(fake.builds[0]!.labels, labelled(buildCacheRef("berth/probe:dev", "dev")), "and still the build-cache label");
+  assert.deepEqual(fake.builds[0]!.labels, labelled(buildCacheRef("berth/probe:dev", "dev", appDir)), "and still the build-cache label");
 
   controller.abort();
   await assert.rejects(building, /build of berth\/probe:dev was cancelled/);
