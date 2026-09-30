@@ -12,7 +12,6 @@ For one app:
 |---|---|---|
 | `cpu: 0.5` | `cpu.max` | `50000 100000`: half a core over each 100ms period |
 | `memory_mb: 256` | `memory.max` | 256 MiB. Past this, the kernel OOM-kills in this app's cgroup |
-| | `memory.high` | 90% of `memory.max`. Past this, the app is throttled and reclaimed before anything is killed |
 | | `memory.swap.max` | `0`, so the limit can't be paged around |
 | `pids: 64` | `pids.max` | 64 tasks. That counts threads as well as processes. `fork()` and `clone()` past it fail with `EAGAIN` |
 | `gpu` | none | A device request on the container, shared by every app in it. No cgroup divides a GPU |
@@ -23,7 +22,13 @@ An app that declares nothing still gets limits:
 - `pids.max` 1024. That's high enough for Chromium under Playwright, which uses several hundred threads, and it still stops a fork bomb.
 - No `memory.max` of its own. It shares the apps' memory budget (below).
 
+There is no `memory.high`, deliberately. Past `memory.high` the kernel throttles an app and tries to reclaim its memory instead of killing it. A sandbox has no swap, so there's nowhere to reclaim anonymous memory to: an app that leaks past `memory.high` slows to a crawl and can stay there indefinitely without ever reaching `memory.max`. A leak then looks like a hang. With `memory.max` alone, the process that goes past the limit is OOM-killed straight away, in the app's own cgroup, and `memory.events` counts it (`oom_kill`). The app's supervisor, and anyone reading the boot log, can see that.
+
 The files come from each app's capability policy (`cgroupLimits` in `.berth/capability-policy.json`), which the policy compiler writes from `berth.yml`. The TypeScript and Python compilers produce identical output, and a parity test checks that.
+
+### Why the default task limit is 1024
+
+`pids.max` counts tasks, and a thread is a task. So the number that matters is threads, not processes. A Node runtime is about a dozen tasks before the app does anything. Chromium under Playwright is several hundred across its browser, GPU, network and renderer processes, and grows with each page. A default in the tens or low hundreds would make a browser app fail with `EAGAIN` in ordinary use, which looks like a crash with no obvious cause. 1024 leaves room for that, and it still stops a fork bomb well short of the sandbox's own limit (the apps' sum plus the daemons' 1024), so the daemons and the other apps keep running. An app that needs less, or more, declares `pids`.
 
 ## The sandbox around them
 
@@ -65,13 +70,13 @@ The boot log says what happened:
 
 ```
 [berth:entrypoint] per-app cgroups active (controllers: cpu memory pids): daemons in /berth/daemons (cpu.weight 1000, 256 MiB held back from the apps), apps under /berth/apps (memory.max 1786396672)
-[berth:entrypoint] cgroup-neighbour runs in cgroup /berth/apps/cgroup-neighbour: cpu.max=max/100000 cpu.weight=100 memory.high=max memory.max=max memory.swap.max=max pids.max=1024
-[berth:entrypoint] cgroup-hog runs in cgroup /berth/apps/cgroup-hog: cpu.max=50000/100000 cpu.weight=100 memory.high=90595328 memory.max=100663296 memory.swap.max=0 pids.max=64
+[berth:entrypoint] cgroup-neighbour runs in cgroup /berth/apps/cgroup-neighbour: cpu.max=max/100000 cpu.weight=100 memory.max=max memory.swap.max=max pids.max=1024
+[berth:entrypoint] cgroup-hog runs in cgroup /berth/apps/cgroup-hog: cpu.max=50000/100000 cpu.weight=100 memory.max=100663296 memory.swap.max=0 pids.max=64
 ```
 
 or `per-app cgroups inactive: <reason>`. The same facts are logged as JSON events (`cgroup_delegation`, `cgroup_limits_applied`), with each app's limits read back from the kernel. `berth attest` collects them into the boot evidence as `resourceLimits`; see the [attestation reference](./attestation-reference.md).
 
-`packages/docker-orchestrator/test/resource-limits-milestone.mjs` checks all of this end to end. A two-app sandbox runs one app that fork-bombs, allocates past its memory limit and spins eight busy loops, while a neighbour app that declares nothing, and a context-bus round trip, keep answering. A control boot with per-app cgroups turned off shows the same fork bomb isn't stopped at the app's limit.
+`packages/docker-orchestrator/test/resource-limits-milestone.mjs` checks all of this end to end. A two-app sandbox runs one app that fork-bombs, allocates past its memory limit (and has to be OOM-killed for it, not stalled) and spins eight busy loops, while a neighbour app that declares nothing, and a context-bus round trip, keep answering. A control boot with per-app cgroups turned off shows the same fork bomb isn't stopped at the app's limit.
 
 ## Turning it off
 
@@ -79,7 +84,7 @@ or `per-app cgroups inactive: <reason>`. The same facts are logged as JSON event
 
 ## Limits
 
-- **Memory past `memory.high` is throttled, not killed, for a long time.** A sandbox has no swap, so the kernel can't reclaim anonymous memory. An app that keeps allocating past `memory.high` is slowed to a crawl, and only reaches `memory.max` and the OOM killer much later. Its neighbours are unaffected either way.
+- **The OOM killer picks a process, not the app.** Past `memory.max` the kernel kills the largest process in the app's cgroup. That's usually the one that allocated, but for a single-process app it's the app itself, which then exits like any other crash.
 - **No I/O limits.** `io.max` needs a block device's major:minor, which a portable manifest can't name, and `io.weight` only works with the BFQ scheduler.
 - **The semantic-fs sidecar is a separate container** with its own limits, outside the sandbox's.
 - **Everything shares one GPU request.** `gpu` stays the largest count any app asks for.
