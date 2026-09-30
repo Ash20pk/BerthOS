@@ -23,10 +23,19 @@
 //     6. eight busy loops are held to about half a core, and the neighbour's
 //        RPC and a bus round trip stay fast while they run.
 //
-//   Control boot (BERTH_DISABLE_APP_CGROUPS=1):
-//     7. the same hog, in the same image, is in no cgroup of its own and forks
-//        200 tasks without a refusal — so 4 is the per-app limit at work, not
-//        something else that happens to stop at 64.
+//   Strict mode (BERTH_REQUIRE_APP_CGROUPS=1, which the production image sets):
+//     7. with per-app cgroups turned off on the host, startContainer() refuses
+//        the boot before creating anything, and says why;
+//     8. with them turned off inside the sandbox instead, so that the host
+//        delegates and only entrypoint.sh can tell, the sandbox refuses to
+//        boot: it exits non-zero with a FATAL line and a
+//        cgroup_delegation_refused event, and no app ever answers.
+//
+//   Control boot (BERTH_DISABLE_APP_CGROUPS=1, BERTH_REQUIRE_APP_CGROUPS=0 —
+//   the permissive posture a dev image has):
+//     9. it boots, with a warning; the same hog, in the same image, is in no
+//        cgroup of its own and forks 200 tasks without a refusal — so 4 is the
+//        per-app limit at work, not something else that happens to stop at 64.
 //
 // Production image, no bind mount, so it runs wherever Docker does. It needs a
 // host that delegates cgroups (cgroup v2 with nsdelegate, Docker 28+), which
@@ -90,28 +99,48 @@ async function waitForApps(container) {
   }
 }
 
-async function boot(disableCgroups) {
-  const specs = [
+function appSpecs() {
+  return [
     { name: HOG, appDir: join(FIXTURES, HOG) },
     { name: NEIGHBOUR, appDir: join(FIXTURES, NEIGHBOUR) },
   ];
+}
+
+/**
+ * Starts the two-app sandbox. `hostDisable` sets BERTH_DISABLE_APP_CGROUPS=1
+ * on the host (startContainer then never asks for delegation); `env` is the
+ * sandbox's. `wait: false` returns as soon as the container is started.
+ */
+async function start({ hostDisable = false, env, wait = true, name = `berth-resource-limits-milestone-${Date.now()}` } = {}) {
+  const specs = appSpecs();
   for (const spec of specs) spec.manifest = await loadManifest(join(spec.appDir, "berth.yml"));
-  if (disableCgroups) process.env.BERTH_DISABLE_APP_CGROUPS = "1";
+  if (hostDisable) process.env.BERTH_DISABLE_APP_CGROUPS = "1";
   else delete process.env.BERTH_DISABLE_APP_CGROUPS;
   try {
     const running = await startContainer({
       image: IMAGE_TAG,
-      name: `berth-resource-limits-milestone-${Date.now()}`,
+      name,
       manifest: specs[0].manifest,
       workingDir: `/app/apps/${HOG}`,
       apps: specs.map((s) => ({ name: s.name, workingDir: `/app/apps/${s.name}`, manifest: s.manifest })),
+      env,
       docker,
     });
-    await waitForApps(running.container);
+    if (wait) await waitForApps(running.container);
     return running.container;
   } finally {
     delete process.env.BERTH_DISABLE_APP_CGROUPS;
   }
+}
+
+async function waitForExit(container, timeoutMs = 60000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const state = (await container.inspect()).State;
+    if (!state.Running) return state;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return (await container.inspect()).State;
 }
 
 /** The neighbour's RPC and a context-bus round trip, timed. */
@@ -146,7 +175,7 @@ async function main() {
   await build();
 
   console.log("\n=== Enforced boot ===");
-  let container = await boot(false);
+  let container = await start();
   try {
     const logs = await bootLog(container);
     const active = /per-app cgroups active/.test(logs);
@@ -166,6 +195,7 @@ async function main() {
     const expectedPids = 64 + DEFAULT_APP_PIDS + DAEMON_RESERVE.pids;
     check(`PidsLimit is the apps' sum plus the reserve (${expectedPids})`, host.PidsLimit === expectedPids, `got ${host.PidsLimit}`);
     check("no container memory cap, since the neighbour declares none", !host.Memory, `got ${host.Memory}`);
+    check("the production image requires per-app cgroups (BERTH_REQUIRE_APP_CGROUPS=1)", (info.Config.Env ?? []).includes("BERTH_REQUIRE_APP_CGROUPS=1"), JSON.stringify(info.Config.Env));
 
     console.log("\n--- 2: where everything runs, and what the kernel holds ---");
     const hogWhere = (await call(container, HOG, "whereami")).result;
@@ -275,13 +305,45 @@ async function main() {
     await stopContainer(container).catch(() => {});
   }
 
-  console.log("\n=== Control boot: BERTH_DISABLE_APP_CGROUPS=1 ===");
+  console.log("\n=== Strict mode: BERTH_REQUIRE_APP_CGROUPS=1, from the production image ===");
   await build();
-  container = await boot(true);
+  console.log("\n--- 7: no delegation on the host side: startContainer() refuses before creating anything ---");
+  const refusedName = `berth-resource-limits-milestone-refused-${Date.now()}`;
+  let hostRefusal;
+  try {
+    const unexpected = await start({ hostDisable: true, wait: false, name: refusedName });
+    await stopContainer(unexpected).catch(() => {});
+  } catch (err) {
+    hostRefusal = String(err?.message ?? err);
+  }
+  console.log(`  ${hostRefusal}`);
+  check("startContainer() refused the boot", /BERTH_REQUIRE_APP_CGROUPS is set but per-app cgroups are unavailable/.test(hostRefusal ?? ""), hostRefusal);
+  check("and named the reason", /BERTH_DISABLE_APP_CGROUPS=1/.test(hostRefusal ?? ""), hostRefusal);
+  const leftover = await docker.listContainers({ all: true, filters: JSON.stringify({ name: [refusedName] }) });
+  check("no container was created", leftover.length === 0, JSON.stringify(leftover.map((c) => c.Names)));
+
+  console.log("\n--- 8: delegation off inside the sandbox: entrypoint.sh refuses to boot ---");
+  container = await start({ env: { BERTH_DISABLE_APP_CGROUPS: "1" }, wait: false });
+  try {
+    const state = await waitForExit(container);
+    const logs = await bootLog(container);
+    const fatal = logs.match(/\[berth:entrypoint\] FATAL: BERTH_REQUIRE_APP_CGROUPS.*/)?.[0];
+    console.log(`  exit ${state.ExitCode}: ${fatal ?? "(no FATAL line)"}`);
+    check("the sandbox exited non-zero", state.Running === false && state.ExitCode !== 0, JSON.stringify({ running: state.Running, exit: state.ExitCode }));
+    check("with a FATAL line naming the reason", /per-app cgroups are unavailable: BERTH_DISABLE_APP_CGROUPS=1/.test(fatal ?? ""), fatal);
+    check("and a cgroup_delegation_refused event", logs.includes('"event":"cgroup_delegation_refused"'));
+    check("before any app started (agent-init never ran)", !/\[agent-init\]/.test(logs));
+  } finally {
+    await stopContainer(container).catch(() => {});
+  }
+
+  console.log("\n=== Control boot: BERTH_DISABLE_APP_CGROUPS=1, BERTH_REQUIRE_APP_CGROUPS=0 ===");
+  await build();
+  container = await start({ hostDisable: true, env: { BERTH_REQUIRE_APP_CGROUPS: "0" } });
   try {
     const logs = await bootLog(container);
-    console.log("\n--- 7: without per-app cgroups, the same fork bomb is not stopped at 64 ---");
-    check("the boot log says per-app cgroups are inactive", /per-app cgroups inactive/.test(logs));
+    console.log("\n--- 9: permissive, without per-app cgroups: it boots with a warning, and the fork bomb is not stopped at 64 ---");
+    check("the boot log warns that per-app cgroups are inactive", /WARNING: per-app cgroups inactive/.test(logs));
     const info = await container.inspect();
     check("and no writable cgroups were requested", !(info.HostConfig.SecurityOpt ?? []).includes("writable-cgroups=true"));
     const where = (await call(container, HOG, "whereami")).result;
