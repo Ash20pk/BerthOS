@@ -733,6 +733,9 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
       t: options.tag,
       target: options.target,
       labels: { [BUILD_CACHE_LABEL]: cacheRef },
+      // For measuring a cold build on a daemon other builds share (their
+      // layers would otherwise be cache hits): scripts/bench/local-boot.mjs.
+      ...(process.env.BERTH_BUILD_NO_CACHE === "1" ? { nocache: true } : {}),
       ...(signal ? { abortSignal: signal } : {}),
     });
 
