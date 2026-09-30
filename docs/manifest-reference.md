@@ -50,7 +50,7 @@ on_install:
 
 ### `name` (required)
 
-Lowercase letters, digits and dashes. Berth uses it as the image name (`berth/<name>:<version>`), the app's identity on the context bus, and the name other apps use in `app:invoke:<name>`.
+Lowercase letters, digits and dashes. Berth uses it as the image name (`berth/<name>:<version>` for `berth publish` and `berth deploy`; `berth/<name>:dev-<hash>` for `berth dev` and `berth/<name>:<version>-<hash>` for `berth test`, where `<hash>` is 8 hex digits derived from the app directory's path, so two checkouts of an app with the same name don't share an image), the app's identity on the context bus, and the name other apps use in `app:invoke:<name>`.
 
 ### `version` (required)
 

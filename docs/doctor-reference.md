@@ -7,7 +7,7 @@ berth doctor
 berth doctor --json
 berth doctor --fix
 berth doctor --runtime runsc
-berth doctor --image berth/filesystem:dev
+berth doctor --image berth/filesystem:dev-1a2b3c4d
 berth doctor --no-probe
 ```
 
@@ -36,7 +36,7 @@ On macOS and Windows your apps run inside Docker's Linux VM, so the kernel that 
 
 ```
 Kernel that runs Berth's apps: 6.10.14-linuxkit (Docker Desktop)
-Probed in: berth/filesystem:dev
+Probed in: berth/filesystem:dev-1a2b3c4d
 
   ✔ Docker daemon reachable
       Docker Desktop (28.0.1), kernel 6.10.14-linuxkit on aarch64
@@ -122,7 +122,7 @@ Schema version `1`. New checks and new optional fields keep version `1`; anythin
     "arch": "aarch64",
     "securityOptions": ["name=seccomp,profile=unconfined", "name=cgroupns"]
   },
-  "probeImage": "berth/filesystem:dev"    // omitted when the probe didn't run
+  "probeImage": "berth/filesystem:dev-1a2b3c4d"    // omitted when the probe didn't run
 }
 ```
 
