@@ -219,8 +219,29 @@ fn json_str(s: &str) -> String {
     format!("{s:?}")
 }
 
+/// libkrun opens virtio-fs directories only when the guest activates the
+/// device; a failure there panics a vCPU thread and leaves the VM hung. Check
+/// up front (this is also where a host sandbox profile's denial shows up).
+fn preflight(o: &Opts) {
+    let mut dirs: Vec<&str> = o.shares.iter().map(|s| s.path.as_str()).collect();
+    if let Some(r) = &o.root {
+        dirs.push(r);
+    }
+    for d in dirs {
+        if let Err(e) = std::fs::read_dir(d) {
+            die(&format!("cannot open directory {d}: {e}"));
+        }
+    }
+    for f in o.disks.iter().map(|d| d.path.as_str()).chain(o.root_disk.as_deref()) {
+        if let Err(e) = std::fs::File::open(f) {
+            die(&format!("cannot open disk image {f}: {e}"));
+        }
+    }
+}
+
 fn main() {
     let o = parse();
+    preflight(&o);
     unsafe {
         check("krun_init_log", krun_init_log(KRUN_LOG_TARGET_DEFAULT, o.log_level, KRUN_LOG_STYLE_AUTO, 0));
         let ctx = krun_create_ctx();

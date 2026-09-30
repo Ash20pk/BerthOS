@@ -32,6 +32,7 @@ install -m 0755 "$AI/agent-init" "$R/usr/local/bin/agent-init"
 install -m 0755 "$AI/probe" "$R/usr/local/bin/berth-probe"
 install -m 0755 "$VMM_DIR/guest/berth-init.sh" "$R/sbin/berth-init"
 install -m 0755 "$VMM_DIR/guest/net-probe.sh" "$R/usr/local/bin/net-probe"
+install -m 0755 "$VMM_DIR/guest/leak-probe.sh" "$R/usr/local/bin/leak-probe"
 
 B="$ART/notes-bundle"
 node "$VMM_DIR/scripts/bundle-notes.mjs" "$B" \

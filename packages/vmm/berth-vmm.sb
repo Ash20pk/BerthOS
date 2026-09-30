@@ -1,0 +1,47 @@
+(version 1)
+; Seatbelt profile for berth-vmm (spike). libkrun treats the VMM and the guest
+; as one security context, so what this process can reach on the host is what
+; a compromised guest could reach. Parameters (sandbox-exec -D):
+;   ART      artifacts dir: rootfs, app dir, kernel dylib, run/ sockets
+;   VMM_DIR  packages/vmm (the binary itself)
+(deny default)
+
+; Process basics.
+(allow process-exec (subpath (param "VMM_DIR")))
+; /usr/bin/env sets DYLD_LIBRARY_PATH inside the sandbox (sandbox-exec is a
+; platform binary, so dyld strips DYLD_* on the way in).
+(allow process-exec file-read* (literal "/usr/bin/env"))
+(allow process-fork)
+(allow signal (target self))
+(allow sysctl-read)
+(allow mach-lookup)
+(allow ipc-posix-shm)
+(allow iokit-open)
+
+; System libraries and the Homebrew libkrun stack, read only.
+(allow file-read* file-map-executable
+    (subpath "/System")
+    (subpath "/usr/lib")
+    (subpath "/usr/share")
+    (subpath "/private/var/db/dyld")
+    (subpath "/Library/Apple")
+    (subpath "/opt/homebrew/opt")
+    (subpath "/opt/homebrew/Cellar"))
+(allow file-read-metadata)
+; dyld reads the root directory itself at startup; without it, abort().
+(allow file-read-data (literal "/"))
+(allow file-read* (literal "/dev/null") (literal "/dev/urandom") (literal "/dev/random") (literal "/dev/tty")
+    (literal "/private/etc/localtime"))
+(allow file-write* (literal "/dev/null") (literal "/dev/tty"))
+(allow file-ioctl (literal "/dev/tty"))
+
+; The sandbox's own files. The rootfs and app dir are read only from the
+; host side as well; only run/ (the vsock Unix sockets) is writable.
+(allow file-read* file-map-executable (subpath (param "VMM_DIR")))
+(allow file-read* (subpath (param "ART")))
+(allow file-write* (subpath (string-append (param "ART") "/run")))
+
+; No network at all, except the vsock-mapped Unix sockets under run/.
+(allow network-bind network-inbound network-outbound
+    (local unix-socket (subpath (string-append (param "ART") "/run")))
+    (remote unix-socket (subpath (string-append (param "ART") "/run"))))

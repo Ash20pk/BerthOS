@@ -120,7 +120,10 @@ async function bootOnce(i) {
   const marks = {};
   const cmd = process.env.SANDBOX_PROFILE ? "sandbox-exec" : VMM;
   const args = process.env.SANDBOX_PROFILE
-    ? ["-f", process.env.SANDBOX_PROFILE, "-D", `ART=${ART}`, "-D", `VMM_DIR=${vmmDir}`, VMM, ...vmArgs()]
+    ? // sandbox-exec is a platform binary, so dyld drops DYLD_* on the way in;
+    // env re-adds it inside. sandbox-exec and env both exec, so vm.pid stays
+    // the berth-vmm process.
+    ["-f", process.env.SANDBOX_PROFILE, "-D", `ART=${ART}`, "-D", `VMM_DIR=${vmmDir}`, "/usr/bin/env", `DYLD_LIBRARY_PATH=${KRUNFW_DIR}`, VMM, ...vmArgs()]
     : vmArgs();
   const t0 = performance.now();
   const vm = spawn(cmd, args, {
@@ -155,7 +158,7 @@ async function bootOnce(i) {
   const firstRpcMs = result.tFirst - t0;
   // Let the guest-mem line (logged 2 s after init) arrive, then sample RSS.
   await new Promise((r) => setTimeout(r, 2500));
-  const vmmPid = process.env.SANDBOX_PROFILE ? Number(execFileSync("pgrep", ["-P", String(vm.pid)], { encoding: "utf8" }).trim()) || vm.pid : vm.pid;
+  const vmmPid = vm.pid;
   const rss = rssKiB(vmmPid);
   const footprint = footprintMiB(vmmPid);
   vm.kill("SIGTERM");
