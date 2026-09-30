@@ -9,6 +9,7 @@ import { join, dirname, basename, resolve as resolvePath, sep } from "node:path"
 import { fileURLToPath } from "node:url";
 import { loadManifest } from "@berthos/manifest-schema";
 import { excludedFromPythonImage, stageAppRuntimes } from "./app-runtime.js";
+import { phaseTimer } from "./timing.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -642,6 +643,7 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
   const docker = options.docker ?? new Docker();
   const { signal } = options;
   signal?.throwIfAborted();
+  const mark = phaseTimer();
   const stagingDir = await mkdtemp(join(tmpdir(), "berth-build-"));
 
   try {
@@ -679,6 +681,7 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
     // Each app's resolved `runtime:`, for entrypoint.sh — see app-runtime.ts.
     const primaryName = options.appName ?? (await loadManifest(join(options.appDir, "berth.yml"))).name;
     await stageAppRuntimes(stagingDir, [{ name: primaryName, appDir: options.appDir }, ...(options.companions ?? [])]);
+    mark("build.stage-source");
 
     await cp(DOCKER_ASSETS_DIR, join(stagingDir, "docker"), { recursive: true });
     for (const dir of [CONTEXT_BUS_DAEMON_DIR, AGENT_INIT_DIR, SEMANTIC_FS_DAEMON_DIR, MESH_DAEMON_DIR, PYTHON_SDK_DIR, NODE_SDK_TOOLS_DIR]) {
@@ -723,6 +726,7 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
       ),
     );
 
+    mark("build.stage-assets");
     signal?.throwIfAborted();
     const tarStream = tarFs.pack(stagingDir);
     const buildStream = await docker.buildImage(tarStream, {
@@ -764,7 +768,9 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
         },
       );
     });
+    mark("build.docker-build");
     await retainLatestBuild(docker, options.tag, cacheRef, previousIds);
+    mark("build.retain-cache");
   } finally {
     await rm(stagingDir, { recursive: true, force: true });
   }
