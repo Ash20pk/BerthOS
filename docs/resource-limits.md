@@ -50,7 +50,7 @@ The files come from each app's capability policy (`cgroupLimits` in `.berth/capa
 
 Docker mounts `/sys/fs/cgroup` read-only in an unprivileged container. The usual ways around that are `--privileged` or `CAP_SYS_ADMIN` to remount it, and the sandbox is designed to have neither. Berth instead passes Docker's `--security-opt writable-cgroups=true` (Docker 28 and later). With the default private cgroup namespace, that option makes the container's own cgroup subtree writable by root in the container, and nothing else. The container can't see any cgroup above its own, and its capability set is unchanged.
 
-That's only safe with one host setting: the cgroup2 hierarchy has to be mounted with `nsdelegate`. With it, the kernel refuses (`EPERM`) any write from inside a cgroup namespace to the namespace root's own limit files, which are the files Docker's `--memory` and `--pids-limit` live in. Without it, root in the sandbox could raise the caps that bound the sandbox. So Berth requests the option only when the kernel probe (the one behind `berth doctor`) saw cgroup v2 with `nsdelegate`. systemd hosts, Colima and Lima all mount it that way. Anywhere else, the sandbox boots with the container-level caps alone and says why.
+That's only safe with one host setting: the cgroup2 hierarchy has to be mounted with `nsdelegate`. With it, the kernel refuses (`EPERM`) any write from inside a cgroup namespace to the namespace root's own limit files, which are the files Docker's `--memory` and `--pids-limit` live in. Without it, root in the sandbox could raise the caps that bound the sandbox. So Berth requests the option only when the kernel probe (the one behind `berth doctor`) saw cgroup v2 with `nsdelegate`. systemd hosts, Colima and Lima all mount it that way. Anywhere else, a dev sandbox boots with the container-level caps alone and warns; a production one refuses to boot (see [Requiring them](#requiring-them)).
 
 Inside the sandbox, `entrypoint.sh` sets everything up as root, before any daemon starts:
 
@@ -74,13 +74,36 @@ The boot log says what happened:
 [berth:entrypoint] cgroup-hog runs in cgroup /berth/apps/cgroup-hog: cpu.max=50000/100000 cpu.weight=100 memory.max=100663296 memory.swap.max=0 pids.max=64
 ```
 
-or `per-app cgroups inactive: <reason>`. The same facts are logged as JSON events (`cgroup_delegation`, `cgroup_limits_applied`), with each app's limits read back from the kernel. `berth attest` collects them into the boot evidence as `resourceLimits`; see the [attestation reference](./attestation-reference.md).
+or `WARNING: per-app cgroups inactive: <reason>`, or, in strict mode, a `FATAL` line (below). The same facts are logged as JSON events (`cgroup_delegation`, `cgroup_limits_applied`, and `cgroup_delegation_refused` or `cgroup_limits_refused` when strict mode stops a boot), with each app's limits read back from the kernel. `berth attest` collects them into the boot evidence as `resourceLimits`; see the [attestation reference](./attestation-reference.md).
 
-`packages/docker-orchestrator/test/resource-limits-milestone.mjs` checks all of this end to end. A two-app sandbox runs one app that fork-bombs, allocates past its memory limit (and has to be OOM-killed for it, not stalled) and spins eight busy loops, while a neighbour app that declares nothing, and a context-bus round trip, keep answering. A control boot with per-app cgroups turned off shows the same fork bomb isn't stopped at the app's limit.
+`packages/docker-orchestrator/test/resource-limits-milestone.mjs` checks all of this end to end. A two-app sandbox runs one app that fork-bombs, allocates past its memory limit (and has to be OOM-killed for it, not stalled) and spins eight busy loops, while a neighbour app that declares nothing, and a context-bus round trip, keep answering. It also checks strict mode: with delegation turned off on the host the boot is refused before anything is created, and with it turned off inside the sandbox `entrypoint.sh` refuses before any app starts. A permissive control boot with per-app cgroups turned off warns, runs, and shows the same fork bomb isn't stopped at the app's limit.
+
+## Requiring them
+
+`BERTH_REQUIRE_APP_CGROUPS=1` (or `true`) refuses to boot a sandbox whose apps wouldn't each get their own cgroup, rather than running them bounded only by the container's caps. It's the resource-limit counterpart of [`BERTH_REQUIRE_ENFORCEMENT`](./capability-tokens-reference.md#environment-variables).
+
+| Where | Default |
+|---|---|
+| Production images (`berth test`, `berth os up`, `Computer.boot()`, and what `berth deploy` ships) | On. `base.Dockerfile` sets it next to `BERTH_REQUIRE_ENFORCEMENT=1`, and `Computer.boot()` also passes it explicitly |
+| Dev images (`berth dev`) | Off. A boot without per-app cgroups runs, with a warning from the host and one in the boot log |
+| `berth deploy --fleet=k8s` | Off. The kubelet mounts `/sys/fs/cgroup` read-only, so a Pod can never have them, and a Pod holds one app whose `resources:` are already the Pod's limits |
+
+The boot is refused when:
+
+- the host can't delegate: no cgroup v2, no `nsdelegate`, or `BERTH_DISABLE_APP_CGROUPS=1`. `startContainer()` refuses before it creates the container, the sidecar or any secrets file.
+- the daemon rejects `--security-opt writable-cgroups=true` (older than Docker 28). `startContainer()` refuses instead of retrying without it.
+- inside the sandbox, `/sys/fs/cgroup` turns out read-only, isn't mounted with `nsdelegate`, or the `berth/` tree can't be built. `entrypoint.sh` exits non-zero before any daemon or app starts, with a `FATAL` line and a `cgroup_delegation_refused` event.
+- an app's own limits don't apply: its cgroup can't be created, a limit file is missing or the kernel refuses the write, or the app can't be moved in. That app doesn't start (`cgroup_limits_refused`). As with `BERTH_REQUIRE_ENFORCEMENT`, a companion that refuses doesn't take the sandbox down; the primary refusing does. A missing `memory.swap.max` is let through only on a machine with no swap, where it has nothing to limit.
+
+```
+[berth:entrypoint] FATAL: BERTH_REQUIRE_APP_CGROUPS is set but per-app cgroups are unavailable: /sys/fs/cgroup is read-only here (orchestrator: off: the host's cgroup2 mount has no nsdelegate, …) — refusing to boot apps bounded only by the sandbox's container-level caps. …
+```
+
+`Computer.boot({ enforcement: "warn" })` and `BERTH_ALLOW_UNENFORCED=1` turn it off along with `BERTH_REQUIRE_ENFORCEMENT`. To relax only this, pass `env: { BERTH_REQUIRE_APP_CGROUPS: "0" }` to `Computer.boot()` or `startContainer()`; the caller's env wins over the image's.
 
 ## Turning it off
 
-`BERTH_DISABLE_APP_CGROUPS=1` on the host (or in the sandbox's environment) skips per-app cgroups. The container-level caps still apply.
+`BERTH_DISABLE_APP_CGROUPS=1` on the host (or in the sandbox's environment) skips per-app cgroups. The container-level caps still apply. Under `BERTH_REQUIRE_APP_CGROUPS` that's a refused boot, so set `BERTH_REQUIRE_APP_CGROUPS=0` as well.
 
 ## Limits
 
@@ -88,3 +111,11 @@ or `per-app cgroups inactive: <reason>`. The same facts are logged as JSON event
 - **No I/O limits.** `io.max` needs a block device's major:minor, which a portable manifest can't name, and `io.weight` only works with the BFQ scheduler.
 - **The semantic-fs sidecar is a separate container** with its own limits, outside the sandbox's.
 - **Everything shares one GPU request.** `gpu` stays the largest count any app asks for.
+
+## Follow-ups
+
+Recorded here, not yet done:
+
+- **The applied limits aren't in the attestation record.** `berth attest` puts `resourceLimits` in the boot evidence it gathers, but not in the attestation record itself: the record's fields are fixed by the attestation spec, and `recordSha256` covers only those. (The record is hashed, not signed; see the [attestation reference](./attestation-reference.md).) The declared limits are covered indirectly, since each app's `cgroupLimits` is in the policy file whose hash is in `policies[]`, but what the kernel actually held after `entrypoint.sh` wrote it is not. Adding it needs a spec change (a new record field, a version bump, and verifiers that check it), not only a code change.
+- **The boot-log events can be forged by an app.** `berth attest` reads agent-init's `capability_policy_applied` events, and this page's `cgroup_delegation` and `cgroup_limits_applied` events, out of the container's log. Every app writes to that same log, and every app inherits `BERTH_BOOT_ID`, so an app can print a line indistinguishable from a real event for this boot. Ruleset reports are collected from every matching line, so a forged one is added alongside the real ones; the cgroup parser keeps the first event per app, so in a multi-app sandbox, where apps start concurrently, one app can get its forgery for a sibling in before the sibling's real line. Fixing this needs a channel the apps can't write to: for example, events written by root to a file or socket outside every app's Landlock policy and DAC, or signed by agent-init with a per-boot key no app process ever holds.
+- **E2B and Daytona.** Neither adapter overrides `BERTH_REQUIRE_APP_CGROUPS`, and neither provider documents whether its VM gives the image's root a writable cgroup2 mount. If a production image there refuses to boot, pass `BERTH_REQUIRE_APP_CGROUPS=0` in the deploy's env, as the k8s adapter does by default. Both ignore `resources:` today anyway.

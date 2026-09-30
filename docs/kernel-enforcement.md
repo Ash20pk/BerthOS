@@ -69,7 +69,7 @@ gVisor doesn't implement Landlock, so under `runsc` you lose the kernel level en
 
 ## Resource limits
 
-Each app runs in its own cgroup v2 with the `cpu`, `memory_mb` and `pids` its manifest declares, next to a reserved cgroup for the daemons and brokers. So one app that fork-bombs, leaks memory or spins can't starve its neighbours or the daemons. The app can't leave its cgroup or change its limits: the files are root's, the app has no capabilities, and `agent-init` never grants a Landlock write under `/sys`. This needs a host whose cgroup2 mount has `nsdelegate` (Docker 28+); `berth doctor`'s `cgroups` check says whether yours does. Details are in [resource limits](./resource-limits.md).
+Each app runs in its own cgroup v2 with the `cpu`, `memory_mb` and `pids` its manifest declares, next to a reserved cgroup for the daemons and brokers. So one app that fork-bombs, leaks memory or spins can't starve its neighbours or the daemons. The app can't leave its cgroup or change its limits: the files are root's, the app has no capabilities, and `agent-init` never grants a Landlock write under `/sys`. This needs a host whose cgroup2 mount has `nsdelegate` (Docker 28+); `berth doctor`'s `cgroups` check says whether yours does. Production images set `BERTH_REQUIRE_APP_CGROUPS=1` and refuse to boot on a host that can't. Details are in [resource limits](./resource-limits.md).
 
 ## Limits
 

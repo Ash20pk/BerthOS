@@ -71,6 +71,7 @@ Declared filesystem paths must be `/workspace`, `/context`, `/tmp`, `/app` or be
 | Variable | Effect |
 |---|---|
 | `BERTH_REQUIRE_ENFORCEMENT` | `1` or `true`: refuse to start an app that isn't fully enforced. Set in production images. |
+| `BERTH_REQUIRE_APP_CGROUPS` | `1` or `true`: refuse to boot apps that wouldn't each get their own cgroup and limits. Set in production images. See [resource limits](./resource-limits.md#requiring-them). |
 | `BERTH_CAPABILITY_POLICY` | Path of the policy file. Default `.berth/capability-policy.json`. |
 | `BERTH_MANIFEST_PATH` | Manifest the policy is compiled from. Default `./berth.yml`. |
 | `BERTH_APP_UID`, `BERTH_APP_GID`, `BERTH_APP_SUPPLEMENTARY_GIDS` | The identity `agent-init` switches to. Set by the container's entrypoint; without them the app stays root. |
