@@ -14,6 +14,8 @@ exports:
     input: { count: number, hold: number }
   - name: alloc
     input: { mb: number, timeout: number }
+  - name: alive
+    input: { pid: number }
   - name: spin
     input: { workers: number, seconds: number }
   - name: escape_cgroup

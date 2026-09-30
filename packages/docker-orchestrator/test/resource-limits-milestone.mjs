@@ -16,10 +16,10 @@
 //        from outside agent-init, where only DAC stands in the way;
 //     4. a fork bomb stops at the hog's 64 tasks, and while it holds them the
 //        neighbour answers RPC and a context-bus round trip completes;
-//     5. an allocation past 96 MiB never gets there: it is throttled past
-//        memory.high and OOM-killed at memory.max (or throttled until it
-//        gives up), in the hog's cgroup; the hog itself survives, and the
-//        neighbour and the bus answer while it is at its limit;
+//     5. an allocation past 96 MiB never gets there: with no memory.high to
+//        throttle it, it is OOM-killed at memory.max, promptly, in the hog's
+//        cgroup (memory.events oom_kill >= 1, the process gone); the hog
+//        itself survives, and the neighbour and the bus answer meanwhile;
 //     6. eight busy loops are held to about half a core, and the neighbour's
 //        RPC and a bus round trip stay fast while they run.
 //
@@ -183,12 +183,13 @@ async function main() {
       "cpu.max": await cgroupFile(container, HOG, "cpu.max"),
       "memory.max": await cgroupFile(container, HOG, "memory.max"),
       "memory.high": await cgroupFile(container, HOG, "memory.high"),
+      "memory.swap.max": await cgroupFile(container, HOG, "memory.swap.max").catch(() => ""),
       "pids.max": await cgroupFile(container, HOG, "pids.max"),
     };
     console.log("  hog:", JSON.stringify(hogLimits));
     check("hog cpu.max = 50000 100000", hogLimits["cpu.max"] === "50000 100000");
     check("hog memory.max = 96 MiB", hogLimits["memory.max"] === String(96 * 1024 * 1024));
-    check("hog memory.high below memory.max", Number(hogLimits["memory.high"]) < Number(hogLimits["memory.max"]));
+    check("hog memory.high is left at max, so going past memory.max kills rather than stalls", hogLimits["memory.high"] === "max", hogLimits["memory.high"]);
     check("hog pids.max = 64", hogLimits["pids.max"] === "64");
     const neighbourPids = await cgroupFile(container, NEIGHBOUR, "pids.max");
     const neighbourMem = await cgroupFile(container, NEIGHBOUR, "memory.max");
@@ -227,24 +228,32 @@ async function main() {
     check("neighbour answered RPC during the fork bomb", duringBomb.ping, JSON.stringify(duringBomb.raw.ping));
     check("a context-bus round trip completed during the fork bomb", duringBomb.bus, JSON.stringify(duringBomb.raw.bus));
 
-    console.log("\n--- 5: memory past 96 MiB is throttled, then killed, in the hog's cgroup; the hog and its neighbour live ---");
+    console.log("\n--- 5: memory past 96 MiB is OOM-killed in the hog's cgroup; the hog and its neighbour live ---");
+    const eventsBefore = await cgroupFile(container, HOG, "memory.events");
+    const oomKills = (events) => Number(events.match(/oom_kill (\d+)/)?.[1] ?? 0);
     const allocating = call(container, HOG, "alloc", { mb: 256, timeout: 30 }, 60000);
-    await new Promise((r) => setTimeout(r, 4000));
-    const memNow = Number(await cgroupFile(container, HOG, "memory.current"));
+    // Asked straight away, while the child is still allocating toward the
+    // limit, and again once the kernel has killed it.
     const duringAlloc = await neighbourHealth(container);
     const alloc = (await allocating).result;
+    const afterAlloc = await neighbourHealth(container);
     const memEvents = await cgroupFile(container, HOG, "memory.events");
     const peak = Number(await cgroupFile(container, HOG, "memory.peak"));
-    console.log("  alloc:", JSON.stringify(alloc), `memory.current during: ${memNow}, peak: ${peak}; events: ${memEvents.replace(/\n/g, ", ")}`);
+    const gone = alloc?.pid ? (await call(container, HOG, "alive", { pid: alloc.pid })).result : undefined;
+    console.log("  alloc:", JSON.stringify(alloc), `peak: ${peak}; events: ${memEvents.replace(/\n/g, ", ")}`);
     check("the 256 MiB allocation never completed", alloc?.allocated === false, JSON.stringify(alloc));
+    check("it was SIGKILLed, not left throttled until the timeout", alloc?.returncode === -9 && alloc.timed_out === false, JSON.stringify(alloc));
     check(
-      "it was killed by the OOM killer, or held back by memory.high until it gave up",
-      (alloc?.returncode === -9 && /oom_kill [1-9]/.test(memEvents)) || (alloc?.timed_out === true && /high [1-9]/.test(memEvents)),
-      `${JSON.stringify(alloc)}; ${memEvents.replace(/\n/g, ", ")}`,
+      "by the OOM killer in the hog's cgroup (memory.events oom_kill went up)",
+      oomKills(memEvents) >= 1 && oomKills(memEvents) > oomKills(eventsBefore),
+      `before: ${eventsBefore.replace(/\n/g, ", ")}; after: ${memEvents.replace(/\n/g, ", ")}`,
     );
+    check("promptly: the kill came in seconds, not after a stall", alloc?.seconds < 15, `${alloc?.seconds}s`);
+    check("the allocating process is gone", gone?.alive === false, JSON.stringify(gone));
     check("the hog's memory never passed its memory.max", peak <= 96 * 1024 * 1024, String(peak));
-    check("neighbour answered RPC while the hog was at its memory limit", duringAlloc.ping, JSON.stringify(duringAlloc.raw.ping));
+    check("neighbour answered RPC while the hog ran into its memory limit", duringAlloc.ping, JSON.stringify(duringAlloc.raw.ping));
     check("a context-bus round trip completed meanwhile", duringAlloc.bus, JSON.stringify(duringAlloc.raw.bus));
+    check("and both still answer after the kill", afterAlloc.ping && afterAlloc.bus, JSON.stringify(afterAlloc.raw));
     check("the hog itself survived", (await call(container, HOG, "ping")).result?.ok === true);
 
     console.log("\n--- 6: eight busy loops are held to half a core ---");

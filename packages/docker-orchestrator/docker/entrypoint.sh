@@ -610,7 +610,7 @@ run_node_sdk_tool() {
 #       │                             RPC relay (runc joins PID 1's cgroup)
 #       └── apps/                     every app's memory together stops a
 #           │                         reserve short of the sandbox's
-#           ├── <app>/                one app: cpu.max, memory.high/max,
+#           ├── <app>/                one app: cpu.max, memory.max,
 #           └── ...                   memory.swap.max, pids.max
 #
 # Built here, in the sandbox, rather than through Docker's API, because the
@@ -628,8 +628,11 @@ BERTH_CGROUP_APPS="${BERTH_CGROUP_FS}/berth/apps"
 BERTH_CGROUPS_ACTIVE=0
 BERTH_CGROUP_CONTROLLERS=""
 # The only files this script will write into an app's cgroup, whatever a
-# policy file lists. cgroup.procs and cgroup.subtree_control are not limits.
-BERTH_CGROUP_LIMIT_FILES="cpu.max cpu.weight memory.high memory.max memory.swap.max pids.max"
+# policy file lists. cgroup.procs and cgroup.subtree_control are not limits,
+# and memory.high stays at the kernel's max on purpose: with no swap, an app
+# past it is throttled indefinitely instead of OOM-killed at memory.max (see
+# appCgroupLimits in @berthos/manifest-schema).
+BERTH_CGROUP_LIMIT_FILES="cpu.max cpu.weight memory.max memory.swap.max pids.max"
 
 # JSON string contents: backslashes and double quotes escaped. Everything
 # this is used on is either fixed text or a kernel value, but a reason can

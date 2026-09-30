@@ -45,21 +45,30 @@ def fork_bomb(input):
 
 
 def alloc(input):
-    # In a child, so that what the kernel stops is the allocation and not this
-    # app's runtime: the app surviving its own overreach is the point. Past
-    # memory.high the child is throttled, and past memory.max it is killed;
-    # with no swap to reclaim into, the throttling alone can outlast
-    # `timeout`, which is reported rather than waited out.
+    # In a child, so that what the kernel kills is the allocation and not this
+    # app's runtime: the app surviving its own overreach is the point. There
+    # is no memory.high and no swap, so the child runs into memory.max and is
+    # OOM-killed there; `timeout` only bounds a regression to throttling,
+    # which is reported rather than waited out.
     mb, timeout = int(input["mb"]), float(input.get("timeout", 30))
     code = f"b = bytearray({mb} * 1024 * 1024)\nfor i in range(0, len(b), 4096): b[i] = 1\nprint('allocated')"
+    started = time.monotonic()
     proc = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    result = {"pid": proc.pid}
     try:
         out, _ = proc.communicate(timeout=timeout)
-        return {"returncode": proc.returncode, "allocated": "allocated" in out, "timed_out": False}
+        result.update(returncode=proc.returncode, allocated="allocated" in out, timed_out=False)
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.wait()
-        return {"returncode": proc.returncode, "allocated": False, "timed_out": True}
+        result.update(returncode=proc.returncode, allocated=False, timed_out=True)
+    result["seconds"] = round(time.monotonic() - started, 2)
+    return result
+
+
+def alive(input):
+    # Whether a pid still exists, from inside this app's pid namespace.
+    return {"alive": os.path.exists(f"/proc/{int(input['pid'])}")}
 
 
 def spin(input):
@@ -109,6 +118,7 @@ def setup(a):
     a.export("whereami", whereami)
     a.export("fork_bomb", fork_bomb)
     a.export("alloc", alloc)
+    a.export("alive", alive)
     a.export("spin", spin)
     a.export("escape_cgroup", escape_cgroup)
 
