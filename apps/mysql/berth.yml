@@ -1,0 +1,33 @@
+name: mysql
+version: 0.1.0
+description: "Query a MySQL or MariaDB database you point it at: run SQL, list tables, describe them. Read-only unless you say otherwise. Berth doesn't host the database; this connects to yours, and nothing else."
+
+capabilities:
+  # Where your database is: edit this. Through the egress proxy, exactly this
+  # host and port are reachable and nothing else. The proxy never tunnels to an
+  # internal address (a private network, localhost), so for a database on one,
+  # replace both lines with `- network:connect:3306`: the kernel then allows
+  # that port to any host, and the host comes only from DATABASE_URL.
+  - network:host:db.example.com:3306
+  - network:connect:8090
+
+# mysql://user:password@host:3306/database. The agent never sees it. Give it a
+# user that can only read unless the agent should write.
+secrets:
+  - DATABASE_URL
+
+exports:
+  - name: query
+    input: { sql: string, params: array }
+    output: { columns: array, rows: array, row_count: number, truncated: boolean }
+  - name: list_tables
+    input: { schema: string }
+    output: { tables: array }
+  - name: describe_table
+    input: { table: string }
+    output: { columns: array }
+  - name: connection_info
+    output: { host: string, port: number, database: string, user: string, mode: string, route: string }
+
+on_install: []
+on_agent_ready: []
