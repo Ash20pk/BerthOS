@@ -620,8 +620,11 @@ run_node_sdk_tool() {
 #
 # Needs a writable cgroup namespace, which container.ts asks Docker for only
 # where the host makes it safe (cgroup v2 with nsdelegate). Anything short of
-# that and this does nothing but say why: each app then has the sandbox's
+# that and this does nothing but warn: each app then has the sandbox's
 # container-level caps only, which is what every sandbox had before this.
+# Unless BERTH_REQUIRE_APP_CGROUPS is set (production images set it, as they
+# set BERTH_REQUIRE_ENFORCEMENT): then the boot is refused instead, and so is
+# an app whose own limits the kernel would not take.
 BERTH_CGROUP_FS=/sys/fs/cgroup
 BERTH_CGROUP_DAEMONS="${BERTH_CGROUP_FS}/berth/daemons"
 BERTH_CGROUP_APPS="${BERTH_CGROUP_FS}/berth/apps"
@@ -661,6 +664,29 @@ enable_cgroup_controllers() {
   printf '%s' "$enabled"
 }
 
+# BERTH_REQUIRE_APP_CGROUPS, spelled like BERTH_REQUIRE_ENFORCEMENT.
+app_cgroups_required() {
+  case "${BERTH_REQUIRE_APP_CGROUPS:-0}" in
+    1 | true) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Per-app cgroups could not be set up, for reason $1. A warning, or under
+# BERTH_REQUIRE_APP_CGROUPS the end of the boot: this runs in the script
+# itself, before any daemon or app has started, so exiting here is the
+# container exiting.
+cgroups_inactive() {
+  local reason="$1"
+  if app_cgroups_required; then
+    echo "[berth:entrypoint] FATAL: BERTH_REQUIRE_APP_CGROUPS is set but per-app cgroups are unavailable: ${reason} — refusing to boot apps bounded only by the sandbox's container-level caps. Per-app cgroups need cgroup v2 mounted with nsdelegate and Docker 28+ (see \`berth doctor\`); set BERTH_REQUIRE_APP_CGROUPS=0 to boot without them." >&2
+    cgroup_event cgroup_delegation_refused "\"reason\":\"$(json_escape "$reason")\""
+    exit 1
+  fi
+  echo "[berth:entrypoint] WARNING: per-app cgroups inactive: ${reason} — each app is bounded only by the sandbox's container-level caps" >&2
+  cgroup_event cgroup_delegation "\"status\":\"inactive\",\"reason\":\"$(json_escape "$reason")\""
+}
+
 setup_app_cgroups() {
   local reason=""
   if [ "${BERTH_DISABLE_APP_CGROUPS:-0}" = "1" ]; then
@@ -673,8 +699,7 @@ setup_app_cgroups() {
     reason="/sys/fs/cgroup is read-only here (orchestrator: ${BERTH_APP_CGROUPS:-not stated})"
   fi
   if [ -n "$reason" ]; then
-    echo "[berth:entrypoint] per-app cgroups inactive: ${reason} — each app is bounded only by the sandbox's container-level caps" >&2
-    cgroup_event cgroup_delegation "\"status\":\"inactive\",\"reason\":\"$(json_escape "$reason")\""
+    cgroups_inactive "$reason"
     return 0
   fi
 
@@ -685,12 +710,15 @@ setup_app_cgroups() {
   # still worth having, but the sandbox's outer bound is not what it seems.
   if ! awk '$5 == "/sys/fs/cgroup" { for (i = 6; i <= NF; i++) if ($i == "-") { print $(i + 3); exit } }' /proc/self/mountinfo 2>/dev/null \
       | tr ',' '\n' | grep -qx nsdelegate; then
+    # Strict mode takes the host's word only when it is the safe one.
+    if app_cgroups_required; then
+      cgroups_inactive "/sys/fs/cgroup is writable but not mounted with nsdelegate, so root in this sandbox could raise the sandbox's own limits"
+    fi
     echo "[berth:entrypoint] WARNING: /sys/fs/cgroup is writable but not mounted with nsdelegate — root in this sandbox could raise the sandbox's own limits" >&2
   fi
 
   if ! mkdir -p "$BERTH_CGROUP_DAEMONS" "$BERTH_CGROUP_APPS" 2>/dev/null; then
-    echo "[berth:entrypoint] per-app cgroups inactive: could not create ${BERTH_CGROUP_FS}/berth — each app is bounded only by the sandbox's container-level caps" >&2
-    cgroup_event cgroup_delegation '"status":"inactive","reason":"could not create /sys/fs/cgroup/berth"'
+    cgroups_inactive "could not create ${BERTH_CGROUP_FS}/berth"
     return 0
   fi
 
@@ -708,8 +736,7 @@ setup_app_cgroups() {
     [ -n "$controllers" ] && break
   done
   if [ -z "$controllers" ]; then
-    echo "[berth:entrypoint] per-app cgroups inactive: no controller could be enabled in ${BERTH_CGROUP_FS}" >&2
-    cgroup_event cgroup_delegation '"status":"inactive","reason":"no controller could be enabled"'
+    cgroups_inactive "no controller could be enabled in ${BERTH_CGROUP_FS}"
     return 0
   fi
   enable_cgroup_controllers "$BERTH_CGROUP_FS/berth" >/dev/null
@@ -756,12 +783,25 @@ setup_app_cgroups() {
 # A limit that won't write is reported and skipped, not fatal — the app still
 # gets every other limit and the sandbox's caps, and what was actually
 # applied is what the boot log and `berth attest` record, read back from the
-# kernel rather than from the policy.
+# kernel rather than from the policy. Under BERTH_REQUIRE_APP_CGROUPS it is
+# fatal instead (app_cgroup_failed): the app does not start. In multi-app mode
+# this runs in the app's own subshell, so that is the app refusing to start,
+# the same as agent-init refusing it under BERTH_REQUIRE_ENFORCEMENT; the
+# primary's refusal ends the container.
+# App $1's limits did not all apply, for reason $2. Exits under strict mode.
+app_cgroup_failed() {
+  app_cgroups_required || return 0
+  echo "[berth:entrypoint] FATAL: BERTH_REQUIRE_APP_CGROUPS is set but ${1}'s cgroup limits did not apply: ${2} — refusing to start it without them. Set BERTH_REQUIRE_APP_CGROUPS=0 to start it anyway." >&2
+  cgroup_event cgroup_limits_refused "\"app\":\"$(json_escape "$1")\",\"reason\":\"$(json_escape "$2")\""
+  exit 1
+}
+
 place_app_in_cgroup() {
   local app_name="$1" policy="$2" pid="$3"
   [ "$BERTH_CGROUPS_ACTIVE" = "1" ] || return 0
   local dir="$BERTH_CGROUP_APPS/$app_name"
   if ! mkdir -p "$dir" 2>/dev/null; then
+    app_cgroup_failed "$app_name" "could not create ${dir}"
     echo "[berth:entrypoint] WARNING: could not create ${dir} — ${app_name} runs with no limits of its own" >&2
     return 0
   fi
@@ -780,7 +820,7 @@ place_app_in_cgroup() {
     }
   ' "$policy" "${BERTH_DEFAULT_APP_PIDS:-1024}" 2>/dev/null)" || true
 
-  local file value skipped=""
+  local file value skipped="" failed=""
   while IFS=$'\t' read -r file value; do
     [ -n "$file" ] || continue
     case " $BERTH_CGROUP_LIMIT_FILES " in
@@ -791,13 +831,22 @@ place_app_in_cgroup() {
     # sandbox with no swap to page into has nothing for it to limit.
     if [ ! -e "$dir/$file" ]; then
       skipped="${skipped:+$skipped, }${file} (no such file — controller not enabled)"
+      # The one absence strict mode lets through: no swap accounting on a
+      # machine with no swap leaves nothing for memory.swap.max to limit.
+      if [ "$file" != "memory.swap.max" ] || [ "$(awk '/^SwapTotal:/ { print $2; exit }' /proc/meminfo 2>/dev/null)" != "0" ]; then
+        failed="${failed:+$failed, }${file} (no such file)"
+      fi
       continue
     fi
-    printf '%s\n' "$value" >"$dir/$file" 2>/dev/null \
-      || skipped="${skipped:+$skipped, }${file}=${value} (write refused)"
+    if ! printf '%s\n' "$value" >"$dir/$file" 2>/dev/null; then
+      skipped="${skipped:+$skipped, }${file}=${value} (write refused)"
+      failed="${failed:+$failed, }${file}=${value} (write refused)"
+    fi
   done <<<"$limits"
+  [ -z "$failed" ] || app_cgroup_failed "$app_name" "$failed"
 
   if ! echo "$pid" >"$dir/cgroup.procs" 2>/dev/null; then
+    app_cgroup_failed "$app_name" "could not move it into ${dir}"
     echo "[berth:entrypoint] WARNING: could not move ${app_name} into ${dir} — it runs in the daemons' cgroup, with no limits of its own" >&2
     return 0
   fi
