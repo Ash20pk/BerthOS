@@ -595,6 +595,221 @@ run_node_sdk_tool() {
   env -u NODE_OPTIONS -u NODE_PATH node "$BERTH_IMAGE_NODE_SDK/$1.mjs"
 }
 
+# --- Per-app resource limits (cgroup v2). ---
+#
+# Every app runs in a cgroup of its own, with the limits its berth.yml
+# declares under `resources:`, and the daemons and brokers run in a sibling
+# one the apps cannot starve:
+#
+#   /sys/fs/cgroup                    this sandbox's cgroup namespace root —
+#   │                                 the container, whose caps Docker set
+#   └── berth/
+#       ├── daemons/                  tini, this script, context-bus,
+#       │                             semantic-fs, the egress and GitHub
+#       │                             brokers, mesh, and every `docker exec`
+#       │                             RPC relay (runc joins PID 1's cgroup)
+#       └── apps/                     every app's memory together stops a
+#           │                         reserve short of the sandbox's
+#           ├── <app>/                one app: cpu.max, memory.high/max,
+#           └── ...                   memory.swap.max, pids.max
+#
+# Built here, in the sandbox, rather than through Docker's API, because the
+# same files exist in a Berth-owned microVM's guest kernel: the limits are
+# the policy compiler's (cgroupLimits in each app's capability policy), and
+# nothing below knows it is inside a container.
+#
+# Needs a writable cgroup namespace, which container.ts asks Docker for only
+# where the host makes it safe (cgroup v2 with nsdelegate). Anything short of
+# that and this does nothing but say why: each app then has the sandbox's
+# container-level caps only, which is what every sandbox had before this.
+BERTH_CGROUP_FS=/sys/fs/cgroup
+BERTH_CGROUP_DAEMONS="${BERTH_CGROUP_FS}/berth/daemons"
+BERTH_CGROUP_APPS="${BERTH_CGROUP_FS}/berth/apps"
+BERTH_CGROUPS_ACTIVE=0
+BERTH_CGROUP_CONTROLLERS=""
+# The only files this script will write into an app's cgroup, whatever a
+# policy file lists. cgroup.procs and cgroup.subtree_control are not limits.
+BERTH_CGROUP_LIMIT_FILES="cpu.max cpu.weight memory.high memory.max memory.swap.max pids.max"
+
+# JSON string contents: backslashes and double quotes escaped. Everything
+# this is used on is either fixed text or a kernel value, but a reason can
+# quote a runtime name the host passed in.
+json_escape() {
+  printf '%s' "$1" | sed 's/[\\"]/\\&/g'
+}
+
+# One un-prefixed JSON line on stderr, the shape agent-init's own audit
+# events have, so `berth attest` can pick it out of the boot log the same way.
+cgroup_event() {
+  printf '{"source":"berth-entrypoint","event":"%s","bootId":"%s",%s}\n' "$1" "$BERTH_BOOT_ID" "$2" >&2
+}
+
+# Enables each controller this sandbox needs in $1's subtree_control, one at a
+# time so a missing one costs only itself. Prints what is now enabled.
+enable_cgroup_controllers() {
+  local dir="$1" controller enabled=""
+  for controller in cpu memory pids; do
+    grep -qw "$controller" "$dir/cgroup.controllers" 2>/dev/null || continue
+    if grep -qw "$controller" "$dir/cgroup.subtree_control" 2>/dev/null \
+        || echo "+${controller}" >"$dir/cgroup.subtree_control" 2>/dev/null; then
+      enabled="${enabled:+$enabled }$controller"
+    fi
+  done
+  printf '%s' "$enabled"
+}
+
+setup_app_cgroups() {
+  local reason=""
+  if [ "${BERTH_DISABLE_APP_CGROUPS:-0}" = "1" ]; then
+    reason="BERTH_DISABLE_APP_CGROUPS=1"
+  elif [ ! -f "$BERTH_CGROUP_FS/cgroup.controllers" ]; then
+    reason="/sys/fs/cgroup is not a cgroup v2 hierarchy"
+  elif [ ! -w "$BERTH_CGROUP_FS/cgroup.subtree_control" ]; then
+    # container.ts says why it did or didn't ask; a read-only mount after it
+    # asked means the daemon didn't honour the option.
+    reason="/sys/fs/cgroup is read-only here (orchestrator: ${BERTH_APP_CGROUPS:-not stated})"
+  fi
+  if [ -n "$reason" ]; then
+    echo "[berth:entrypoint] per-app cgroups inactive: ${reason} — each app is bounded only by the sandbox's container-level caps" >&2
+    cgroup_event cgroup_delegation "\"status\":\"inactive\",\"reason\":\"$(json_escape "$reason")\""
+    return 0
+  fi
+
+  # The superblock's options are the host's. Without nsdelegate the kernel
+  # does not stop this namespace's root from writing its own limits, which is
+  # why container.ts never asks for a writable mount there; if one got here
+  # anyway (a hand-run container, another orchestrator) the limits below are
+  # still worth having, but the sandbox's outer bound is not what it seems.
+  if ! awk '$5 == "/sys/fs/cgroup" { for (i = 6; i <= NF; i++) if ($i == "-") { print $(i + 3); exit } }' /proc/self/mountinfo 2>/dev/null \
+      | tr ',' '\n' | grep -qx nsdelegate; then
+    echo "[berth:entrypoint] WARNING: /sys/fs/cgroup is writable but not mounted with nsdelegate — root in this sandbox could raise the sandbox's own limits" >&2
+  fi
+
+  if ! mkdir -p "$BERTH_CGROUP_DAEMONS" "$BERTH_CGROUP_APPS" 2>/dev/null; then
+    echo "[berth:entrypoint] per-app cgroups inactive: could not create ${BERTH_CGROUP_FS}/berth — each app is bounded only by the sandbox's container-level caps" >&2
+    cgroup_event cgroup_delegation '"status":"inactive","reason":"could not create /sys/fs/cgroup/berth"'
+    return 0
+  fi
+
+  # A cgroup with processes of its own cannot enable controllers for its
+  # children (the kernel's "no internal processes" rule), so everything in
+  # the namespace root — tini as PID 1, and this script — moves to daemons/
+  # first. Everything this script starts from here on is born there. A
+  # `docker exec` racing this lands in the root and is moved on the retry.
+  local attempt pid controllers=""
+  for attempt in 1 2 3; do
+    while read -r pid; do
+      echo "$pid" >"$BERTH_CGROUP_DAEMONS/cgroup.procs" 2>/dev/null || true
+    done <"$BERTH_CGROUP_FS/cgroup.procs"
+    controllers="$(enable_cgroup_controllers "$BERTH_CGROUP_FS")"
+    [ -n "$controllers" ] && break
+  done
+  if [ -z "$controllers" ]; then
+    echo "[berth:entrypoint] per-app cgroups inactive: no controller could be enabled in ${BERTH_CGROUP_FS}" >&2
+    cgroup_event cgroup_delegation '"status":"inactive","reason":"no controller could be enabled"'
+    return 0
+  fi
+  enable_cgroup_controllers "$BERTH_CGROUP_FS/berth" >/dev/null
+  BERTH_CGROUP_CONTROLLERS="$(enable_cgroup_controllers "$BERTH_CGROUP_APPS")"
+
+  # The daemons' reserve. CPU by weight, ten to one against all the apps
+  # together, so a spinning app slows the daemons' share only when they are
+  # not asking for it. Memory by subtraction: apps/ may use the sandbox's
+  # memory less the reserve, so the apps can exhaust their budget, one or
+  # all of them, and the daemons still have theirs. The sandbox's memory is
+  # its own cap when there is one (every app declared memory_mb), and the
+  # machine's otherwise — MemTotal is the host's in a container, and the
+  # guest's in a VM, which is the bound in both cases.
+  echo 1000 >"$BERTH_CGROUP_DAEMONS/cpu.weight" 2>/dev/null || true
+  local reserve_mb="${BERTH_DAEMON_MEMORY_RESERVE_MB:-256}" total apps_max="max"
+  total="$(cat "$BERTH_CGROUP_FS/memory.max" 2>/dev/null || echo max)"
+  if [ "$total" = "max" ]; then
+    total="$(awk '/^MemTotal:/ { print $2 * 1024; exit }' /proc/meminfo 2>/dev/null)"
+  fi
+  case "$total" in
+    '' | *[!0-9]*) ;;
+    *)
+      local reserve_bytes=$((reserve_mb * 1024 * 1024))
+      if [ "$total" -gt $((reserve_bytes * 2)) ] && echo $((total - reserve_bytes)) >"$BERTH_CGROUP_APPS/memory.max" 2>/dev/null; then
+        apps_max=$((total - reserve_bytes))
+      fi
+      ;;
+  esac
+
+  BERTH_CGROUPS_ACTIVE=1
+  echo "[berth:entrypoint] per-app cgroups active (controllers: ${BERTH_CGROUP_CONTROLLERS}): daemons in /berth/daemons (cpu.weight 1000, ${reserve_mb} MiB held back from the apps), apps under /berth/apps (memory.max ${apps_max})" >&2
+  cgroup_event cgroup_delegation "\"status\":\"active\",\"controllers\":\"${BERTH_CGROUP_CONTROLLERS}\",\"daemonsCpuWeight\":\"$(cat "$BERTH_CGROUP_DAEMONS/cpu.weight" 2>/dev/null)\",\"daemonReserveMemoryMb\":\"${reserve_mb}\",\"appsMemoryMax\":\"$(cat "$BERTH_CGROUP_APPS/memory.max" 2>/dev/null)\""
+}
+
+# Puts process $3 — the shell that is about to exec agent-init for app $1 —
+# into that app's own cgroup, with the limits from its policy file $2. Every
+# process the app ever starts inherits it, and none can leave: the cgroup's
+# files are root's, 0644, in root's 0755 directories, the app holds no
+# capability past agent-init, and no policy can grant it a Landlock write on
+# /sys (agent-init refuses the path).
+#
+# A limit that won't write is reported and skipped, not fatal — the app still
+# gets every other limit and the sandbox's caps, and what was actually
+# applied is what the boot log and `berth attest` record, read back from the
+# kernel rather than from the policy.
+place_app_in_cgroup() {
+  local app_name="$1" policy="$2" pid="$3"
+  [ "$BERTH_CGROUPS_ACTIVE" = "1" ] || return 0
+  local dir="$BERTH_CGROUP_APPS/$app_name"
+  if ! mkdir -p "$dir" 2>/dev/null; then
+    echo "[berth:entrypoint] WARNING: could not create ${dir} — ${app_name} runs with no limits of its own" >&2
+    return 0
+  fi
+
+  # file<TAB>value per line. An unreadable policy, or one from before
+  # cgroupLimits existed, still gets the defaults every app gets: an app
+  # nobody could size is not an app with no task limit.
+  local limits
+  limits="$(node -e '
+    const fs = require("fs");
+    let limits;
+    try { limits = JSON.parse(fs.readFileSync(process.argv[1], "utf8")).cgroupLimits; } catch {}
+    if (!limits || typeof limits !== "object") limits = { "cpu.weight": "100", "pids.max": process.argv[2] };
+    for (const [file, value] of Object.entries(limits)) {
+      if (typeof value === "string" && /^[0-9a-z ]+$/.test(value)) console.log(`${file}\t${value}`);
+    }
+  ' "$policy" "${BERTH_DEFAULT_APP_PIDS:-1024}" 2>/dev/null)" || true
+
+  local file value skipped=""
+  while IFS=$'\t' read -r file value; do
+    [ -n "$file" ] || continue
+    case " $BERTH_CGROUP_LIMIT_FILES " in
+      *" $file "*) ;;
+      *) skipped="${skipped:+$skipped, }${file} (not a limit this script writes)"; continue ;;
+    esac
+    # memory.swap.max is absent on a kernel without swap accounting; a
+    # sandbox with no swap to page into has nothing for it to limit.
+    if [ ! -e "$dir/$file" ]; then
+      skipped="${skipped:+$skipped, }${file} (no such file — controller not enabled)"
+      continue
+    fi
+    printf '%s\n' "$value" >"$dir/$file" 2>/dev/null \
+      || skipped="${skipped:+$skipped, }${file}=${value} (write refused)"
+  done <<<"$limits"
+
+  if ! echo "$pid" >"$dir/cgroup.procs" 2>/dev/null; then
+    echo "[berth:entrypoint] WARNING: could not move ${app_name} into ${dir} — it runs in the daemons' cgroup, with no limits of its own" >&2
+    return 0
+  fi
+
+  local applied="" json=""
+  for file in $BERTH_CGROUP_LIMIT_FILES; do
+    [ -r "$dir/$file" ] || continue
+    value="$(cat "$dir/$file" 2>/dev/null)" || continue
+    applied="${applied:+$applied }${file}=${value// /\/}"
+    json="${json:+$json,}\"${file}\":\"$(json_escape "$value")\""
+  done
+  echo "[berth:entrypoint] ${app_name} runs in cgroup /berth/apps/${app_name}: ${applied}${skipped:+ — skipped: $skipped}" >&2
+  cgroup_event cgroup_limits_applied "\"app\":\"${app_name}\",\"cgroup\":\"/berth/apps/${app_name}\",\"limits\":{${json}},\"skipped\":\"$(json_escape "$skipped")\""
+}
+
+setup_app_cgroups
+
 if [ -z "${BERTH_APPS:-}" ]; then
   # --- Single-app mode. ---
   # BERTH_APPS is only ever set by container.ts when more than one app
@@ -774,6 +989,12 @@ if [ -z "${BERTH_APPS:-}" ]; then
   # very process the tokens were meant to constrain is what made them
   # unverifiable in principle, not just in practice.
 
+  # Last, after every daemon and broker above has been started (they stay in
+  # the daemons' cgroup), and before the exec that turns this shell into the
+  # app. Named "app" when the policy gave no name, rather than left behind in
+  # the daemons' cgroup where nothing would bound it.
+  place_app_in_cgroup "${APP_NAME:-app}" "$SINGLE_APP_POLICY" "$BASHPID"
+
   echo "[berth:entrypoint] handing off to agent-init for kernel-level capability enforcement" >&2
   if [ "$APP_RUNTIME" = "python" ]; then
     # PYTHONPATH plays the role for a Python app that node_modules/@berthos/sdk
@@ -928,14 +1149,19 @@ run_app() {
   # browser/egress flags (the grep loop above decides those for the whole
   # container), so once on_install moved to build time,
   # the only thing this invocation still did was cost a Node startup per app.
+  #
+  # $BASHPID, not $$: this is a backgrounded subshell, and $$ is still the
+  # parent script's pid — the one process that must stay with the daemons.
   if [ "$(app_runtime "$app_name")" = "python" ]; then
     run_python_sdk_tool generate_capability_policy
     secure_capability_policy "$BERTH_CAPABILITY_POLICY"
+    place_app_in_cgroup "$app_name" "$BERTH_CAPABILITY_POLICY" "$BASHPID"
     export PYTHONPATH="$(python_sdk_path)${PYTHONPATH:+:$PYTHONPATH}"
     exec /usr/local/bin/agent-init python3 -m berth_sdk.runtime
   fi
   run_node_sdk_tool generate-capability-policy
   secure_capability_policy "$BERTH_CAPABILITY_POLICY"
+  place_app_in_cgroup "$app_name" "$BERTH_CAPABILITY_POLICY" "$BASHPID"
 
   exec /usr/local/bin/agent-init "$@"
 }
