@@ -74,6 +74,8 @@ The same checks are available as `verifyAttestation()` in `@berthos/audit`. Each
 | `policies[]` | sha256 of each app's enforced policy file, computed inside the container. |
 | `recordSha256` | sha256 over the canonical JSON of every other field. |
 
+The boot evidence `berth attest` gathers (and `berth mcp` records with a run) also has `resourceLimits`: whether this boot gave each app its own cgroup and, per app, the limits the kernel held after `entrypoint.sh` wrote them. It isn't a field of the record. The declared limits are already covered by `policies[]`, because each app's `cgroupLimits` is in the policy file that gets hashed. See [resource limits](./resource-limits.md).
+
 ### How the status is decided
 
 | Status | When |
