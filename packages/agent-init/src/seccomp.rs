@@ -329,6 +329,7 @@ pub fn install_no_udp_no_raw_filter() -> Result<(), Box<dyn std::error::Error>> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     #[test]
     fn both_filter_sets_compile_to_non_empty_bpf_programs() {
@@ -404,6 +405,214 @@ mod tests {
             fork_rc >= 0,
             "fork(2) was refused (rc={fork_rc}) — the namespace filter is too broad and would break every child process an app spawns",
         );
+    }
+
+    // A minimal io_uring client, just enough to submit one IORING_OP_SOCKET
+    // and read its completion — the smallest demonstration of the bypass the
+    // io_uring filter exists for. Hand-rolled against the kernel ABI rather
+    // than pulled in as a dependency, for a test's worth of use. Layouts are
+    // from <linux/io_uring.h>, and identical on x86_64 and aarch64.
+    #[repr(C)]
+    #[derive(Default)]
+    struct SqringOffsets {
+        head: u32,
+        tail: u32,
+        ring_mask: u32,
+        ring_entries: u32,
+        flags: u32,
+        dropped: u32,
+        array: u32,
+        resv1: u32,
+        user_addr: u64,
+    }
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct CqringOffsets {
+        head: u32,
+        tail: u32,
+        ring_mask: u32,
+        ring_entries: u32,
+        overflow: u32,
+        cqes: u32,
+        flags: u32,
+        resv1: u32,
+        user_addr: u64,
+    }
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct IoUringParams {
+        sq_entries: u32,
+        cq_entries: u32,
+        flags: u32,
+        sq_thread_cpu: u32,
+        sq_thread_idle: u32,
+        features: u32,
+        wq_fd: u32,
+        resv: [u32; 3],
+        sq_off: SqringOffsets,
+        cq_off: CqringOffsets,
+    }
+
+    const IORING_OFF_SQ_RING: libc::off_t = 0;
+    const IORING_OFF_CQ_RING: libc::off_t = 0x0800_0000;
+    const IORING_OFF_SQES: libc::off_t = 0x1000_0000;
+    const IORING_OP_SOCKET: u8 = 45;
+    const IORING_ENTER_GETEVENTS: u32 = 1;
+    const SQE_SIZE: usize = 64;
+    const CQE_SIZE: usize = 16;
+
+    /// How far an io_uring socket attempt got.
+    #[derive(Debug, PartialEq)]
+    enum UringSocket {
+        /// io_uring_setup(2) itself failed with this errno.
+        SetupRefused(i32),
+        /// The ring worked and the SOCKET op completed with this errno
+        /// (EINVAL on a kernel older than 5.19, which has no such op).
+        OpFailed(i32),
+        /// The kernel handed back a socket fd without socket(2) ever being
+        /// called. Already closed by the time this is returned; carries the
+        /// socket's SO_TYPE, read back from the fd before closing it.
+        Created { so_type: i32 },
+    }
+
+    /// Asks the kernel for a socket through io_uring instead of socket(2).
+    fn socket_via_io_uring(domain: i32, sock_type: i32) -> UringSocket {
+        let mut params = IoUringParams::default();
+        // SAFETY: io_uring_setup(2) writes only into `params`, which lives for
+        // the duration of the call.
+        let ring = unsafe { libc::syscall(libc::SYS_io_uring_setup, 1u32, &mut params as *mut IoUringParams) };
+        if ring < 0 {
+            return UringSocket::SetupRefused(std::io::Error::last_os_error().raw_os_error().unwrap_or(0));
+        }
+        let ring = ring as i32;
+
+        let sq_len = params.sq_off.array as usize + params.sq_entries as usize * 4;
+        let cq_len = params.cq_off.cqes as usize + params.cq_entries as usize * CQE_SIZE;
+        let sqes_len = params.sq_entries as usize * SQE_SIZE;
+        let map = |len: usize, offset: libc::off_t| {
+            // SAFETY: a fresh shared mapping of the ring fd at one of the
+            // kernel-defined offsets; the result is checked against MAP_FAILED.
+            let ptr = unsafe {
+                libc::mmap(
+                    std::ptr::null_mut(),
+                    len,
+                    libc::PROT_READ | libc::PROT_WRITE,
+                    libc::MAP_SHARED | libc::MAP_POPULATE,
+                    ring,
+                    offset,
+                )
+            };
+            assert_ne!(ptr, libc::MAP_FAILED, "mmap of the io_uring ring at {offset:#x} failed");
+            ptr as *mut u8
+        };
+        let sq = map(sq_len, IORING_OFF_SQ_RING);
+        let cq = map(cq_len, IORING_OFF_CQ_RING);
+        let sqes = map(sqes_len, IORING_OFF_SQES);
+
+        // SAFETY: every offset below comes from the kernel's own io_uring_params
+        // and stays within the mappings sized from those same values. The ring
+        // indices the kernel also touches are accessed through atomics.
+        let outcome = unsafe {
+            // io_uring_prep_socket(): fd = domain, off = type, len = protocol.
+            std::ptr::write_bytes(sqes, 0, SQE_SIZE);
+            *sqes = IORING_OP_SOCKET;
+            *(sqes.add(4) as *mut i32) = domain;
+            *(sqes.add(8) as *mut u64) = sock_type as u64;
+
+            let sq_mask = *(sq.add(params.sq_off.ring_mask as usize) as *const u32);
+            let sq_tail = &*(sq.add(params.sq_off.tail as usize) as *const AtomicU32);
+            let tail = sq_tail.load(Ordering::Acquire);
+            *(sq.add(params.sq_off.array as usize) as *mut u32).add((tail & sq_mask) as usize) = 0;
+            sq_tail.store(tail.wrapping_add(1), Ordering::Release);
+
+            let entered = libc::syscall(
+                libc::SYS_io_uring_enter,
+                ring,
+                1u32,
+                1u32,
+                IORING_ENTER_GETEVENTS,
+                std::ptr::null::<libc::c_void>(),
+                0usize,
+            );
+            assert!(entered >= 0, "io_uring_enter failed: {}", std::io::Error::last_os_error());
+
+            let cq_mask = *(cq.add(params.cq_off.ring_mask as usize) as *const u32);
+            let cq_head = &*(cq.add(params.cq_off.head as usize) as *const AtomicU32);
+            let head = cq_head.load(Ordering::Acquire);
+            let cqe = cq.add(params.cq_off.cqes as usize + (head & cq_mask) as usize * CQE_SIZE);
+            let res = *(cqe.add(8) as *const i32);
+            cq_head.store(head.wrapping_add(1), Ordering::Release);
+
+            if res < 0 {
+                UringSocket::OpFailed(-res)
+            } else {
+                let mut so_type: libc::c_int = 0;
+                let mut len = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+                libc::getsockopt(
+                    res,
+                    libc::SOL_SOCKET,
+                    libc::SO_TYPE,
+                    &mut so_type as *mut libc::c_int as *mut libc::c_void,
+                    &mut len,
+                );
+                libc::close(res);
+                UringSocket::Created { so_type }
+            }
+        };
+
+        // SAFETY: unmapping exactly the regions mapped above, then closing
+        // the ring fd they belong to.
+        unsafe {
+            libc::munmap(sq as *mut libc::c_void, sq_len);
+            libc::munmap(cq as *mut libc::c_void, cq_len);
+            libc::munmap(sqes as *mut libc::c_void, sqes_len);
+            libc::close(ring);
+        }
+        outcome
+    }
+
+    /// The positive control for the io_uring filter, and the demonstration of
+    /// the hole it closes: with only the socket(2) filter installed, a UDP
+    /// socket that socket(2) refuses comes straight back from io_uring's
+    /// IORING_OP_SOCKET. If this ever stops producing a socket on a kernel
+    /// that has the op, the refusal test below has stopped proving anything,
+    /// because the probe itself has broken.
+    ///
+    /// Skipped, loudly, where io_uring is unavailable to begin with: Docker's
+    /// default seccomp profile refuses it, and so does a host with
+    /// kernel.io_uring_disabled set. Run the crate's tests under
+    /// `--security-opt seccomp=unconfined` to see it.
+    #[test]
+    fn io_uring_creates_the_udp_socket_the_socket_filter_alone_refuses() {
+        let (direct_errno, via_uring) = std::thread::spawn(|| {
+            install_no_udp_no_raw_filter().expect("seccomp filter should install");
+            // SAFETY: socket(2) with constant arguments; closed if it succeeds.
+            let fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_DGRAM, 0) };
+            let errno = if fd < 0 { std::io::Error::last_os_error().raw_os_error().unwrap_or(0) } else { 0 };
+            if fd >= 0 {
+                unsafe { libc::close(fd) };
+            }
+            (errno, socket_via_io_uring(libc::AF_INET, libc::SOCK_DGRAM))
+        })
+        .join()
+        .expect("probe thread should not panic");
+
+        assert_eq!(direct_errno, libc::EPERM, "socket(AF_INET, SOCK_DGRAM) should be refused by the UDP filter");
+        match via_uring {
+            UringSocket::SetupRefused(errno) => {
+                eprintln!("SKIPPED: io_uring_setup is unavailable in this environment (errno {errno}), so the bypass cannot be shown here");
+            }
+            UringSocket::OpFailed(libc::EINVAL) => {
+                eprintln!("SKIPPED: this kernel has no IORING_OP_SOCKET (added in Linux 5.19)");
+            }
+            other => assert_eq!(
+                other,
+                UringSocket::Created { so_type: libc::SOCK_DGRAM },
+                "expected io_uring to hand back the UDP socket socket(2) refused",
+            ),
+        }
     }
 
     /// The behavioural test: install the filter on a
