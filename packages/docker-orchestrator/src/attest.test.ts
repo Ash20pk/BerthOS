@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { demuxLogBuffer, parseBootId, parsePolicyLines, parseRulesetReports } from "./attest.js";
+import { demuxLogBuffer, parseBootId, parsePolicyLines, parseResourceLimits, parseRulesetReports } from "./attest.js";
 
 function frame(stream: number, text: string): Buffer {
   const payload = Buffer.from(text, "utf-8");
@@ -57,5 +57,40 @@ describe("parsePolicyLines", () => {
     const hash = "d".repeat(64);
     const output = `${hash} demo /app/.berth/capability-policy.json\ngarbage line\n`;
     assert.deepEqual(parsePolicyLines(output), [{ sha256: hash, app: "demo", path: "/app/.berth/capability-policy.json" }]);
+  });
+});
+
+describe("parseResourceLimits", () => {
+  const event = (fields: Record<string, unknown>) => JSON.stringify({ source: "berth-entrypoint", bootId: "boot-1", ...fields });
+
+  it("reads the delegation and each app's applied limits for the given boot", () => {
+    const logs = [
+      event({ event: "cgroup_delegation", status: "active", controllers: "cpu memory pids" }),
+      event({ event: "cgroup_limits_applied", app: "hog", cgroup: "/berth/apps/hog", limits: { "pids.max": "64", "memory.max": "100663296" } }),
+      event({ event: "cgroup_limits_applied", app: "stale", cgroup: "/berth/apps/stale", limits: {}, bootId: "boot-0" }),
+    ].join("\n");
+    assert.deepEqual(parseResourceLimits(logs, "boot-1"), {
+      status: "active",
+      controllers: "cpu memory pids",
+      apps: [{ app: "hog", cgroup: "/berth/apps/hog", limits: { "pids.max": "64", "memory.max": "100663296" } }],
+    });
+  });
+
+  it("keeps the entrypoint's line over a later one an app printed to the same log", () => {
+    const logs = [
+      event({ event: "cgroup_delegation", status: "active" }),
+      event({ event: "cgroup_limits_applied", app: "hog", cgroup: "/berth/apps/hog", limits: { "pids.max": "64" } }),
+      event({ event: "cgroup_limits_applied", app: "hog", cgroup: "/berth/apps/hog", limits: { "pids.max": "max" } }),
+      event({ event: "cgroup_delegation", status: "inactive", reason: "forged" }),
+    ].join("\n");
+    const evidence = parseResourceLimits(logs, "boot-1");
+    assert.equal(evidence.status, "active");
+    assert.deepEqual(evidence.apps, [{ app: "hog", cgroup: "/berth/apps/hog", limits: { "pids.max": "64" } }]);
+  });
+
+  it("is unknown for a boot that logged no cgroup events, and carries an inactive boot's reason", () => {
+    assert.deepEqual(parseResourceLimits("plain log\n", "boot-1"), { status: "unknown", apps: [] });
+    const inactive = parseResourceLimits(event({ event: "cgroup_delegation", status: "inactive", reason: "read-only" }), "boot-1");
+    assert.deepEqual(inactive, { status: "inactive", reason: "read-only", apps: [] });
   });
 });
