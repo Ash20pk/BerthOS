@@ -536,8 +536,12 @@ export function buildCacheRef(tag: string, target: BuildTarget, appDir: string):
   return `${legacyBuildCacheRef(tag, target).slice(0, 128 + "berth-build-cache:".length - suffix.length)}${suffix}`;
 }
 
-/** The reference builds used before it was per checkout, shared by every checkout of an app with this name. */
-function legacyBuildCacheRef(tag: string, target: BuildTarget): string {
+/**
+ * The reference builds used before it was per checkout, shared by every
+ * checkout of an app with this name. Only looked up to reclaim the image an
+ * older Berth left under it; see retainLatestBuild().
+ */
+export function legacyBuildCacheRef(tag: string, target: BuildTarget): string {
   const { repository } = splitTag(tag);
   return `berth-build-cache:${`${target}-${repository}`.replace(/[^A-Za-z0-9_.-]/g, "_").slice(0, 128)}`;
 }
@@ -573,19 +577,38 @@ const SWEEP_MIN_AGE_SECONDS = 10 * 60;
  * image is momentarily untagged isn't taken for an orphan; a genuine orphan
  * is still reclaimed by a later build.
  *
+ * An image left under legacyBuildCacheRef() by a Berth from before the
+ * reference was per checkout goes too, the first time any checkout builds
+ * this app, since nothing would ever reclaim it otherwise. Only when that
+ * reference is all that tags it and it carries the label with that value:
+ * so an older Berth's `berth/<app>:dev`, which a checkout still on it may be
+ * using, keeps its image.
+ *
  * All of this is bookkeeping for the next build, never part of this one: the
  * image is already built and tagged, so a failure here (a `docker tag` the
  * daemon refuses, say) is reported as a warning and doesn't fail the build.
  */
-export async function retainLatestBuild(docker: Docker, tag: string, cacheRef: string, previousIds: (string | undefined)[]): Promise<void> {
+export async function retainLatestBuild(
+  docker: Docker,
+  tag: string,
+  cacheRef: string,
+  previousIds: (string | undefined)[],
+  legacyRef?: string,
+): Promise<void> {
   try {
-    await retainLatestBuildOrThrow(docker, tag, cacheRef, previousIds);
+    await retainLatestBuildOrThrow(docker, tag, cacheRef, previousIds, legacyRef);
   } catch (err) {
     console.warn(`[berth:build] couldn't update the build cache for ${tag}: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
-async function retainLatestBuildOrThrow(docker: Docker, tag: string, cacheRef: string, previousIds: (string | undefined)[]): Promise<void> {
+async function retainLatestBuildOrThrow(
+  docker: Docker,
+  tag: string,
+  cacheRef: string,
+  previousIds: (string | undefined)[],
+  legacyRef: string | undefined,
+): Promise<void> {
   const built = await docker.getImage(tag).inspect().catch(() => undefined);
   if (!built) return;
   const split = cacheRef.lastIndexOf(":");
@@ -619,6 +642,18 @@ async function retainLatestBuildOrThrow(docker: Docker, tag: string, cacheRef: s
   }
 
   for (const id of new Set(retired)) await removeUnsharedChain(docker, id);
+
+  if (legacyRef && legacyRef !== cacheRef) {
+    const legacy = await docker.getImage(legacyRef).inspect().catch(() => undefined);
+    if (
+      legacy &&
+      legacy.Id !== built.Id &&
+      legacy.Config?.Labels?.[BUILD_CACHE_LABEL] === legacyRef &&
+      (legacy.RepoTags ?? []).every((t) => t === legacyRef)
+    ) {
+      await removeUnsharedChain(docker, legacy.Id, legacyRef);
+    }
+  }
 }
 
 /**
@@ -635,7 +670,7 @@ async function retainLatestBuildOrThrow(docker: Docker, tag: string, cacheRef: s
  * refusal (a container using the image, a race with another build) ends
  * the walk and leaves the rest in place.
  */
-async function removeUnsharedChain(docker: Docker, id: string): Promise<void> {
+async function removeUnsharedChain(docker: Docker, id: string, ownTag?: string): Promise<void> {
   const images = await docker.listImages({ all: true }).catch(() => undefined);
   if (!images) return;
   const byId = new Map(images.map((image) => [image.Id, image]));
@@ -646,7 +681,9 @@ async function removeUnsharedChain(docker: Docker, id: string): Promise<void> {
   while (current) {
     const image = byId.get(current);
     if (!image || (children.get(current) ?? 0) > 0) return;
-    if ((image.RepoTags ?? []).some((t) => t !== "<none>:<none>")) return;
+    // `ownTag` only for the first image: removing an image by ID drops the
+    // one tag it has along with it (Docker refuses when there are more).
+    if ((image.RepoTags ?? []).some((t) => t !== "<none>:<none>" && !(current === id && t === ownTag))) return;
     try {
       await docker.getImage(current).remove({ noprune: true });
     } catch {
@@ -817,7 +854,7 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
         },
       );
     });
-    await retainLatestBuild(docker, options.tag, cacheRef, previousIds);
+    await retainLatestBuild(docker, options.tag, cacheRef, previousIds, legacyBuildCacheRef(options.tag, options.target));
   } finally {
     await rm(stagingDir, { recursive: true, force: true });
   }

@@ -25,6 +25,7 @@ import {
   buildImage,
   checkoutId,
   checkoutTag,
+  legacyBuildCacheRef,
   makeDeployReproducible,
   retainLatestBuild,
   stageProductionSource,
@@ -319,7 +320,8 @@ function fakeDocker(images: FakeImage[], inUse: string[] = [], { tagFails = fals
       remove: async (options: { noprune?: boolean }) => {
         assert.equal(options?.noprune, true, "every removal is noprune: the walk is done by hand");
         const image = find(ref)!;
-        if (image.RepoTags.length > 0 || inUse.includes(image.Id)) throw new Error("conflict");
+        // Docker's rule: by ID, an image's one tag goes with it, but not two.
+        if (image.RepoTags.length > (ref === image.Id ? 1 : 0) || inUse.includes(image.Id)) throw new Error("conflict");
         if (images.some((i) => i.ParentId === image.Id)) throw new Error("conflict: image has dependent child images");
         images.splice(images.indexOf(image), 1);
         removed.push(image.Id);
@@ -465,6 +467,32 @@ test("two checkouts building an app with the same name don't evict each other's 
   await retainLatestBuild(fake.docker, tag, refA, ["sha256:b", "sha256:a"]);
   assert.deepEqual(fake.removed.sort(), ["sha256:a", "sha256:a-orphan"]);
   assert.deepEqual(fake.images.find((i) => i.Id === "sha256:b")!.RepoTags, [refB], "B's build is still there");
+});
+
+test("the image an older Berth kept under the shared reference is reclaimed, unless something else tags it", async () => {
+  const legacy = legacyBuildCacheRef("berth-agent/notes:2", "production");
+  assert.equal(legacy, "berth-build-cache:production-berth-agent_notes");
+  const ref = buildCacheRef("berth-agent/notes:2", "production", APP);
+  const images = (legacyTags: string[]) =>
+    twoBuilds(ref, "berth-agent/notes:2", legacyTags).map((i) => (i.Id === "sha256:old" ? { ...i, Labels: labelled(legacy) } : i));
+
+  const fake = fakeDocker(images([legacy]));
+  await retainLatestBuild(fake.docker, "berth-agent/notes:2", ref, [undefined, undefined], legacy);
+  assert.deepEqual(fake.removed, ["sha256:old", "sha256:old-copy"]);
+
+  // A checkout still on the older Berth tags its dev image berth/notes:dev too.
+  const tagged = fakeDocker(images([legacy, "berth/notes:dev"]));
+  await retainLatestBuild(tagged.docker, "berth-agent/notes:2", ref, [undefined, undefined], legacy);
+  assert.deepEqual(tagged.removed, []);
+
+  const running = fakeDocker(images([legacy]), ["sha256:old"]);
+  await retainLatestBuild(running.docker, "berth-agent/notes:2", ref, [undefined, undefined], legacy);
+  assert.deepEqual(running.removed, []);
+
+  // Something else's image, tagged under the old name by hand: not a berth build of it.
+  const foreign = fakeDocker(twoBuilds(ref, "berth-agent/notes:2", [legacy]).map((i) => (i.Id === "sha256:old" ? { ...i, Labels: {} } : i)));
+  await retainLatestBuild(foreign.docker, "berth-agent/notes:2", ref, [undefined, undefined], legacy);
+  assert.deepEqual(foreign.removed, []);
 });
 
 test("a failing docker tag is a warning, not a failed build, and retires nothing", async () => {
