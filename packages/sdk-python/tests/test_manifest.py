@@ -43,3 +43,18 @@ def test_the_grammar_does_not_accept_a_trailing_newline():
     # Python's `$` matches before a final newline; JavaScript's does not.
     assert is_capability_string("github:read:repos")
     assert not is_capability_string("github:read:repos\n")
+
+
+def test_resources_are_validated_as_the_typescript_schema_does():
+    ok = BerthManifest.model_validate({"name": "a", "version": "1.0.0", "resources": {"cpu": 0.5, "memory_mb": 256, "gpu": 1, "pids": 64}})
+    assert (ok.resources.cpu, ok.resources.memory_mb, ok.resources.gpu, ok.resources.pids) == (0.5, 256, 1, 64)
+    assert BerthManifest.model_validate({"name": "a", "version": "1.0.0"}).resources.pids is None
+
+
+@pytest.mark.parametrize(
+    "resources",
+    [{"cpu": 0}, {"cpu": "0.5"}, {"cpu": True}, {"memory_mb": 1.5}, {"memory_mb": -1}, {"gpu": 1.5}, {"pids": 0}, {"pids": 1.5}, {"pids": "64"}],
+)
+def test_invalid_resources_are_refused(resources):
+    with pytest.raises(ValidationError):
+        BerthManifest.model_validate({"name": "a", "version": "1.0.0", "resources": resources})
