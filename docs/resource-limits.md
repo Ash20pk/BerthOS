@@ -64,7 +64,8 @@ An app can't move itself out of its cgroup or loosen its limits. The cgroup file
 The boot log says what happened:
 
 ```
-[berth:entrypoint] per-app cgroups active (controllers: cpu memory pids): daemons in /berth/daemons (cpu.weight 1000, 256 MiB held back from the apps), apps under /berth/apps (memory.max 8052580352)
+[berth:entrypoint] per-app cgroups active (controllers: cpu memory pids): daemons in /berth/daemons (cpu.weight 1000, 256 MiB held back from the apps), apps under /berth/apps (memory.max 1786396672)
+[berth:entrypoint] cgroup-neighbour runs in cgroup /berth/apps/cgroup-neighbour: cpu.max=max/100000 cpu.weight=100 memory.high=max memory.max=max memory.swap.max=max pids.max=1024
 [berth:entrypoint] cgroup-hog runs in cgroup /berth/apps/cgroup-hog: cpu.max=50000/100000 cpu.weight=100 memory.high=90595328 memory.max=100663296 memory.swap.max=0 pids.max=64
 ```
 
