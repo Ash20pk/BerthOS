@@ -1,14 +1,31 @@
-import { buildImage } from "@berthos/docker-orchestrator";
+import { buildImage, checkoutTag } from "@berthos/docker-orchestrator";
 import type { BerthManifest } from "@berthos/manifest-schema";
 import type { AppSpec } from "./multi-app.js";
 import type { OsAppSpec } from "./os-config.js";
 
-export function devImageTag(manifest: BerthManifest): string {
-  return `berth/${manifest.name}:dev`;
+/**
+ * `berth/<name>:dev-<hash8>`, the hash being the app directory's
+ * (checkoutTag()): `berth dev` in two checkouts of an app with the same name
+ * would otherwise keep moving one tag between their two images, and each
+ * start its container from whichever was built last.
+ */
+export function devImageTag(manifest: BerthManifest, appDir: string): string {
+  return checkoutTag(`berth/${manifest.name}:dev`, appDir);
 }
 
+/** The name `berth publish` and `berth deploy` ship the image under. */
 export function productionImageTag(manifest: BerthManifest): string {
   return `berth/${manifest.name}:${manifest.version}`;
+}
+
+/**
+ * The same production build, tagged for `berth test` in this checkout only
+ * (`berth/<name>:<version>-<hash8>`): it never leaves the machine, and two
+ * checkouts testing the same app and version at once would otherwise each
+ * run the other's image.
+ */
+export function testImageTag(manifest: BerthManifest, appDir: string): string {
+  return checkoutTag(productionImageTag(manifest), appDir);
 }
 
 /**
@@ -20,7 +37,7 @@ export function productionImageTag(manifest: BerthManifest): string {
  * while it still ran in production.
  */
 export async function buildDevImage(appDir: string, manifest: BerthManifest, companions: AppSpec[] = [], signal?: AbortSignal): Promise<string> {
-  const tag = devImageTag(manifest);
+  const tag = devImageTag(manifest, appDir);
   await buildImage({
     appDir,
     tag,
@@ -38,8 +55,12 @@ export async function buildDevImage(appDir: string, manifest: BerthManifest, com
  * `--apps`) are staged into their own `apps/<name>/` subdirectories — see
  * `@berthos/docker-orchestrator`'s `buildImage()`.
  */
-export async function buildProductionImage(appDir: string, manifest: BerthManifest, companions: AppSpec[] = []): Promise<string> {
-  const tag = productionImageTag(manifest);
+export async function buildProductionImage(
+  appDir: string,
+  manifest: BerthManifest,
+  companions: AppSpec[] = [],
+  tag: string = productionImageTag(manifest),
+): Promise<string> {
   await buildImage({
     appDir,
     tag,

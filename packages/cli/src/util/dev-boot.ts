@@ -1,7 +1,7 @@
 import Docker from "dockerode";
 import { startContainer, type RunningContainer } from "@berthos/docker-orchestrator";
 import type { BerthManifest } from "@berthos/manifest-schema";
-import { buildDevImage, devImageTag } from "./build.js";
+import { buildDevImage } from "./build.js";
 import { resolveDevBindMount, devStatePath } from "./workspace.js";
 import type { AppSpec } from "./multi-app.js";
 
@@ -46,7 +46,7 @@ export async function bootDevContainer(options: BootDevContainerOptions): Promis
   const companions = apps.slice(1);
 
   log(`Building dev image for "${manifest.name}"...`);
-  await buildDevImage(appDir, manifest, companions, options.signal);
+  const image = await buildDevImage(appDir, manifest, companions, options.signal);
 
   const { bindMount, extraBinds, workingDir, workspaceRoot } = resolveDevBindMount(
     appDir,
@@ -67,7 +67,7 @@ export async function bootDevContainer(options: BootDevContainerOptions): Promis
 
   options.signal?.throwIfAborted();
   return startContainer({
-    image: devImageTag(manifest),
+    image,
     name: options.containerName ?? `berth-dev-${manifest.name}`,
     manifest,
     bindMount,

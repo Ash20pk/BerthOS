@@ -10,7 +10,7 @@ export {
   describeDockerHost,
   type DockerHostResolution,
 } from "./docker-host.js";
-export { buildImage, removeImageKeepingCache, type BuildImageOptions, type BuildTarget } from "./image.js";
+export { buildImage, checkoutId, checkoutTag, removeImageKeepingCache, type BuildImageOptions, type BuildTarget } from "./image.js";
 export {
   startContainer,
   stopContainer,
