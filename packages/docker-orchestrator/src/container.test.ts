@@ -362,7 +362,7 @@ test("a failed sidecar boots without /context instead of handing SYS_ADMIN to th
  */
 async function startWithCgroupProbe(
   cgroup: { v2: boolean; nsdelegate: boolean } | undefined,
-  opts: { rejectWritableCgroups?: boolean; name: string },
+  opts: { rejectWritableCgroups?: boolean; name: string; env?: Record<string, string>; imageEnv?: string[] },
 ): Promise<Docker.ContainerCreateOptions[]> {
   const home = await mkdtemp(join(tmpdir(), "berth-cgroup-home-"));
   const { writeFile } = await import("node:fs/promises");
@@ -382,6 +382,7 @@ async function startWithCgroupProbe(
     },
     // cgroup probe results that need no re-probe never reach this.
     listImages: async () => [],
+    getImage: () => ({ inspect: async () => ({ Config: { Env: opts.imageEnv ?? [] } }) }),
   } as unknown as Docker;
   const prev = { home: process.env.BERTH_HOME, banner: process.env.BERTH_NO_ENFORCEMENT_BANNER, semfs: process.env.BERTH_NO_SEMANTIC_FS };
   process.env.BERTH_HOME = home;
@@ -393,6 +394,7 @@ async function startWithCgroupProbe(
       name: opts.name,
       manifest: manifestWithResources({ memory_mb: 128 }),
       secretsRunDir: home,
+      env: opts.env,
       docker,
     });
   } finally {
@@ -442,4 +444,68 @@ test("a daemon that refuses writable-cgroups gets the same sandbox without it, n
   assert.ok(!(retry.HostConfig?.SecurityOpt ?? []).includes("writable-cgroups=true"));
   assert.equal(retry.HostConfig?.PidsLimit, DEFAULT_APP_PIDS + DAEMON_RESERVE.pids, "the container-level caps survive the retry");
   assert.ok((retry.Env ?? []).some((e) => e.startsWith("BERTH_APP_CGROUPS=off: ")));
+});
+
+// BERTH_REQUIRE_APP_CGROUPS: the host half of strict mode. entrypoint.sh
+// refuses the same boot from inside; this one refuses before anything exists.
+
+test("strict mode refuses to create a sandbox the host cannot delegate a cgroup to", async () => {
+  for (const [cgroup, name] of [
+    [{ v2: true, nsdelegate: false }, "berth-test-strict-no-nsdelegate"],
+    [{ v2: false, nsdelegate: false }, "berth-test-strict-v1"],
+  ] as const) {
+    let creates: Docker.ContainerCreateOptions[] | undefined;
+    await assert.rejects(
+      async () => {
+        creates = await startWithCgroupProbe(cgroup, { name, env: { BERTH_REQUIRE_APP_CGROUPS: "1" } });
+      },
+      /BERTH_REQUIRE_APP_CGROUPS is set but per-app cgroups are unavailable/,
+    );
+    assert.equal(creates, undefined, "no container is created");
+  }
+});
+
+test("a production image's own BERTH_REQUIRE_APP_CGROUPS=1 is strict too, and the caller's env can turn it off", async () => {
+  await assert.rejects(
+    () => startWithCgroupProbe({ v2: true, nsdelegate: false }, { name: "berth-test-strict-image", imageEnv: ["BERTH_REQUIRE_APP_CGROUPS=1"] }),
+    /BERTH_REQUIRE_APP_CGROUPS is set/,
+  );
+  const creates = await startWithCgroupProbe(
+    { v2: true, nsdelegate: false },
+    { name: "berth-test-strict-image-off", imageEnv: ["BERTH_REQUIRE_APP_CGROUPS=1"], env: { BERTH_REQUIRE_APP_CGROUPS: "0" } },
+  );
+  assert.equal(creates.length, 1);
+});
+
+test("strict mode refuses, instead of retrying without, when the daemon rejects writable-cgroups", async () => {
+  let creates: Docker.ContainerCreateOptions[] | undefined;
+  await assert.rejects(
+    async () => {
+      creates = await startWithCgroupProbe(
+        { v2: true, nsdelegate: true },
+        { name: "berth-test-strict-rejected", rejectWritableCgroups: true, env: { BERTH_REQUIRE_APP_CGROUPS: "1" } },
+      );
+    },
+    /BERTH_REQUIRE_APP_CGROUPS is set .*does not support --security-opt writable-cgroups=true/,
+  );
+  assert.equal(creates, undefined);
+});
+
+test("strict mode boots normally where delegation is available", async () => {
+  const [created] = await startWithCgroupProbe({ v2: true, nsdelegate: true }, { name: "berth-test-strict-ok", env: { BERTH_REQUIRE_APP_CGROUPS: "1" } });
+  assert.ok((created!.HostConfig?.SecurityOpt ?? []).includes("writable-cgroups=true"));
+  assert.ok((created!.Env ?? []).includes("BERTH_REQUIRE_APP_CGROUPS=1"), "the entrypoint makes the same check from inside");
+});
+
+test("without strict mode, a host that cannot delegate still boots, with a warning", async () => {
+  const warnings: string[] = [];
+  const original = console.warn;
+  console.warn = (...args: unknown[]) => void warnings.push(args.join(" "));
+  try {
+    const creates = await startWithCgroupProbe({ v2: true, nsdelegate: false }, { name: "berth-test-permissive" });
+    assert.equal(creates.length, 1);
+  } finally {
+    console.warn = original;
+  }
+  assert.ok(warnings.some((w) => /per-app cgroups are off/.test(w) && /BERTH_REQUIRE_APP_CGROUPS=1/.test(w)), JSON.stringify(warnings));
 });

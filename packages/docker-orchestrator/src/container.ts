@@ -1,5 +1,5 @@
 import Docker from "dockerode";
-import { cgroupDelegationForBoot, warnIfEnforcementInactive } from "./doctor.js";
+import { appCgroupsRefusal, appCgroupsRequired, cgroupDelegationForBoot, warnIfEnforcementInactive } from "./doctor.js";
 import {
   CONTAINER_APP_SECRETS_DIR,
   CONTAINER_SECRETS_PATH,
@@ -84,6 +84,17 @@ async function hostCpuCount(docker: Docker): Promise<number | undefined> {
   try {
     const info = (await docker.info()) as { NCPU?: number };
     return typeof info.NCPU === "number" ? info.NCPU : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** One variable from an image's own `ENV`, e.g. a production image's BERTH_REQUIRE_APP_CGROUPS=1. Undefined when unset or the image can't be inspected. */
+async function imageEnvValue(docker: Docker, image: string, name: string): Promise<string | undefined> {
+  try {
+    const info = (await docker.getImage(image).inspect()) as { Config?: { Env?: string[] } };
+    const entry = info.Config?.Env?.find((e) => e.startsWith(`${name}=`));
+    return entry?.slice(name.length + 1);
   } catch {
     return undefined;
   }
@@ -276,6 +287,24 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
   // nothing after that. Best-effort by construction: it never throws and
   // never blocks a boot.
   await warnIfEnforcementInactive(docker, options.image, runtime);
+
+  // Whether this sandbox's apps can each get a cgroup of their own, decided
+  // here, before the sidecar or any secrets file exists, so that a strict
+  // boot (BERTH_REQUIRE_APP_CGROUPS, which production images set) that
+  // cannot have them is refused with nothing to clean up. The caller's env
+  // wins over the image's, as it does in the container.
+  const delegation = await cgroupDelegationForBoot(docker, options.image, runtime);
+  const cgroupsRequired = appCgroupsRequired(
+    options.env?.BERTH_REQUIRE_APP_CGROUPS ?? (await imageEnvValue(docker, options.image, "BERTH_REQUIRE_APP_CGROUPS")),
+  );
+  const cgroupsRefused = appCgroupsRefusal(cgroupsRequired, delegation);
+  if (cgroupsRefused) throw new Error(cgroupsRefused);
+  if (!delegation.delegate) {
+    console.warn(
+      `[berth] per-app cgroups are off for ${options.name}: ${delegation.reason}. Each app is bounded only by the sandbox's container-level caps. ` +
+        "Set BERTH_REQUIRE_APP_CGROUPS=1 to refuse such a boot instead; see docs/resource-limits.md.",
+    );
+  }
   const wantsBrowserPorts =
     options.apps && options.apps.length > 0
       ? options.apps.some((a) => needsBrowserPorts(a.manifest))
@@ -503,7 +532,6 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
   const deviceRequests: Docker.DeviceRequest[] | undefined = resources.gpu
     ? [{ Driver: "nvidia", Count: resources.gpu, Capabilities: [["gpu"]] }]
     : undefined;
-  const delegation = await cgroupDelegationForBoot(docker, options.image, runtime);
   if (delegation.delegate) securityOpt.push(WRITABLE_CGROUPS_OPT);
   // What entrypoint.sh reserves for the daemons inside the sandbox, and the
   // default it applies to an app whose policy it cannot read — the same
@@ -613,6 +641,16 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
     // it's learned: boot again without it, with the container-level caps
     // only, and say so — in the log here and in the sandbox's own boot log.
     if (!delegation.delegate || !/writable-cgroups/i.test((err as Error).message ?? "")) throw err;
+    const refused = appCgroupsRefusal(cgroupsRequired, {
+      delegate: false,
+      reason: `this Docker daemon does not support --security-opt ${WRITABLE_CGROUPS_OPT} (Docker 28+)`,
+    });
+    if (refused) {
+      // Nothing was created, but the sidecar and the secrets files were.
+      if (sidecar) await stopSemanticFsSidecar(options.name, docker).catch(() => {});
+      await removeContainerSecretsDir(options.name, options.secretsRunDir).catch(() => {});
+      throw new Error(refused);
+    }
     console.warn(
       `[berth] this Docker daemon does not support --security-opt ${WRITABLE_CGROUPS_OPT} (Docker 28+), so apps in this sandbox get no cgroup of their own — only the sandbox's container-level caps apply.`,
     );

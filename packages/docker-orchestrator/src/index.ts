@@ -40,6 +40,8 @@ export {
   enforcementStatusForBoot,
   cgroupDelegationVerdict,
   cgroupDelegationForBoot,
+  appCgroupsRequired,
+  appCgroupsRefusal,
   type CgroupProbe,
   warnIfEnforcementInactive,
   unenforcedBanner,

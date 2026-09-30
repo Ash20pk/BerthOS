@@ -857,3 +857,32 @@ export async function cgroupDelegationForBoot(docker: Docker, image: string, run
     return cgroupDelegationVerdict(undefined, runtime);
   }
 }
+
+/**
+ * BERTH_REQUIRE_APP_CGROUPS: refuse to boot a sandbox whose apps would not
+ * each get their own cgroup, rather than running them bounded only by the
+ * container's caps. The cgroup counterpart of BERTH_REQUIRE_ENFORCEMENT, and
+ * spelled the same way (`1` or `true`). Production images set it (see
+ * base.Dockerfile), and so does Computer.boot(); dev images leave it unset,
+ * and a dev boot without delegation warns instead.
+ */
+export function appCgroupsRequired(value: string | undefined): boolean {
+  return value === "1" || value === "true";
+}
+
+/**
+ * The strict-mode decision for a boot: the refusal to raise, or undefined when
+ * the boot may go ahead. `delegation` is cgroupDelegationVerdict()'s answer,
+ * or, when the daemon turned the option down at create time, that reason.
+ * Only the host half of the check: entrypoint.sh makes the same refusal
+ * inside the sandbox, which also covers a limit the kernel would not take.
+ */
+export function appCgroupsRefusal(required: boolean, delegation: { delegate: boolean; reason: string }): string | undefined {
+  if (!required || delegation.delegate) return undefined;
+  return (
+    `BERTH_REQUIRE_APP_CGROUPS is set but per-app cgroups are unavailable: ${delegation.reason}. ` +
+    "Refusing to boot apps bounded only by the sandbox's container-level caps. " +
+    "Per-app cgroups need cgroup v2 mounted with nsdelegate and Docker 28 or later (`berth doctor` checks); " +
+    "set BERTH_REQUIRE_APP_CGROUPS=0 to boot without them."
+  );
+}
