@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { mkdir } from "node:fs/promises";
 import { loadManifest } from "@berthos/manifest-schema";
-import { buildImage, startContainer, stopContainer } from "../dist/index.js";
+import { buildImage, checkoutTag, startContainer, stopContainer } from "../dist/index.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
@@ -41,11 +41,11 @@ async function main() {
   const manifest = await loadManifest(join(FILESYSTEM_APP_DIR, "berth.yml"));
 
   console.log("Building filesystem's dev image...");
-  await buildImage({ appDir: FILESYSTEM_APP_DIR, tag: "berth/filesystem:dev", target: "dev", docker });
+  await buildImage({ appDir: FILESYSTEM_APP_DIR, tag: checkoutTag("berth/filesystem:dev", FILESYSTEM_APP_DIR), target: "dev", docker });
 
   console.log("Starting filesystem's sandbox as berth-dev-filesystem (matches `berth mcp`'s default container naming)...");
   const running = await startContainer({
-    image: "berth/filesystem:dev",
+    image: checkoutTag("berth/filesystem:dev", FILESYSTEM_APP_DIR),
     name: "berth-dev-filesystem",
     manifest,
     bindMount: { hostPath: REPO_ROOT, containerPath: "/workspace" },

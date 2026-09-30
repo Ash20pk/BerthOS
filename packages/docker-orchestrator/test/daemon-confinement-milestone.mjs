@@ -32,12 +32,12 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { loadManifest } from "@berthos/manifest-schema";
 import Docker from "dockerode";
-import { buildImage, startContainer, stopContainer, sidecarName } from "../dist/index.js";
+import { buildImage, checkoutTag, startContainer, stopContainer, sidecarName } from "../dist/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");
 const APP_DIR = join(REPO_ROOT, "apps", "filesystem");
-const IMAGE_TAG = "berth/filesystem-daemon-confinement:dev";
+const IMAGE_TAG = checkoutTag("berth/filesystem-daemon-confinement:dev", APP_DIR);
 const CONTAINER_NAME = "berth-daemon-confinement-milestone";
 
 const CONTEXT_BUS_UID = "9001";

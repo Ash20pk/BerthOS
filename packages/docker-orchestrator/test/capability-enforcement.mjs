@@ -38,7 +38,7 @@ import { fileURLToPath } from "node:url";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { loadManifest } from "@berthos/manifest-schema";
-import { buildImage, startContainer, stopContainer, invokeAppExport } from "../dist/index.js";
+import { buildImage, checkoutTag, startContainer, stopContainer, invokeAppExport } from "../dist/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");
@@ -79,11 +79,11 @@ async function main() {
   const manifest = await loadManifest(join(PROBE_APP_DIR, "berth.yml"));
 
   console.log("Building enforcement-probe's dev image...");
-  await buildImage({ appDir: PROBE_APP_DIR, tag: "berth/enforcement-probe:dev", target: "dev", docker });
+  await buildImage({ appDir: PROBE_APP_DIR, tag: checkoutTag("berth/enforcement-probe:dev", PROBE_APP_DIR), target: "dev", docker });
 
   console.log("Starting enforcement-probe's sandbox...");
   const running = await startContainer({
-    image: "berth/enforcement-probe:dev",
+    image: checkoutTag("berth/enforcement-probe:dev", PROBE_APP_DIR),
     name: "berth-capability-enforcement-probe",
     manifest,
     bindMount: { hostPath: REPO_ROOT, containerPath: "/workspace" },
@@ -505,7 +505,7 @@ async function main() {
   // agent-init's fail-closed gate (packages/agent-init/src/main.rs) without
   // touching the container Test 1-7 already tore down.
   const enforcedRunning = await startContainer({
-    image: "berth/enforcement-probe:dev",
+    image: checkoutTag("berth/enforcement-probe:dev", PROBE_APP_DIR),
     name: "berth-capability-enforcement-probe-require-enforcement",
     manifest,
     bindMount: { hostPath: REPO_ROOT, containerPath: "/workspace" },
@@ -559,7 +559,7 @@ async function main() {
   const boundaryCManifest = await loadManifest(join(BOUNDARY_APP_C_DIR, "berth.yml"));
 
   console.log("Building boundary-app-a's dev image (shared by both apps in this container)...");
-  await buildImage({ appDir: BOUNDARY_APP_A_DIR, tag: "berth/boundary-app-a:dev", target: "dev", docker });
+  await buildImage({ appDir: BOUNDARY_APP_A_DIR, tag: checkoutTag("berth/boundary-app-a:dev", BOUNDARY_APP_A_DIR), target: "dev", docker });
 
   const BOUNDARY_APP_A_CONTAINER_DIR = "/workspace/packages/docker-orchestrator/test/fixtures/boundary-app-a";
   const BOUNDARY_APP_B_CONTAINER_DIR = "/workspace/packages/docker-orchestrator/test/fixtures/boundary-app-b";
@@ -581,7 +581,7 @@ async function main() {
   }
 
   const boundaryRunning = await startContainer({
-    image: "berth/boundary-app-a:dev",
+    image: checkoutTag("berth/boundary-app-a:dev", BOUNDARY_APP_A_DIR),
     name: "berth-capability-enforcement-boundary",
     manifest: boundaryAManifest,
     bindMount: { hostPath: REPO_ROOT, containerPath: "/workspace" },

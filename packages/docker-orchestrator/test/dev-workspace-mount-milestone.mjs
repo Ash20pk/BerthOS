@@ -36,13 +36,13 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { readFileSync, existsSync, rmSync } from "node:fs";
 import { loadManifest } from "@berthos/manifest-schema";
-import { buildImage, startContainer, stopContainer, createStdioRpcClient } from "../dist/index.js";
+import { buildImage, checkoutTag, startContainer, stopContainer, createStdioRpcClient } from "../dist/index.js";
 import { resolveDevBindMount } from "../../cli/dist/util/workspace.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");
 const APP_DIR = join(REPO_ROOT, "apps", "filesystem");
-const TAG = "berth/filesystem:dev";
+const TAG = checkoutTag("berth/filesystem:dev", APP_DIR);
 const CONTAINER_NAME = "berth-test-dev-workspace-mount";
 
 const docker = new Docker();

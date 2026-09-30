@@ -17,7 +17,7 @@ import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { loadManifest } from "@berthos/manifest-schema";
-import { buildImage, startContainer, stopContainer, createStdioRpcClient } from "../dist/index.js";
+import { buildImage, checkoutTag, startContainer, stopContainer, createStdioRpcClient } from "../dist/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");
@@ -29,11 +29,11 @@ async function main() {
   const manifest = await loadManifest(join(FILESYSTEM_APP_DIR, "berth.yml"));
 
   console.log("Building filesystem's dev image (with Phase 4's semantic-fs-daemon baked in)...");
-  await buildImage({ appDir: FILESYSTEM_APP_DIR, tag: "berth/filesystem:dev", target: "dev", docker });
+  await buildImage({ appDir: FILESYSTEM_APP_DIR, tag: checkoutTag("berth/filesystem:dev", FILESYSTEM_APP_DIR), target: "dev", docker });
 
   console.log("Starting filesystem's sandbox...");
   const running = await startContainer({
-    image: "berth/filesystem:dev",
+    image: checkoutTag("berth/filesystem:dev", FILESYSTEM_APP_DIR),
     name: "berth-semantic-fs-milestone-filesystem",
     manifest,
     bindMount: { hostPath: REPO_ROOT, containerPath: "/workspace" },

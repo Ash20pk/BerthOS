@@ -21,12 +21,12 @@ import Docker from "dockerode";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { loadManifest } from "@berthos/manifest-schema";
-import { buildImage, startContainer, stopContainer, restartContainer, invokeAppExport } from "../dist/index.js";
+import { buildImage, checkoutTag, startContainer, stopContainer, restartContainer, invokeAppExport } from "../dist/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");
 const FIXTURES = join(__dirname, "fixtures");
-const IMAGE_TAG = "berth/python-multi-app-milestone:test";
+const IMAGE_TAG = checkoutTag("berth/python-multi-app-milestone:test", join(FIXTURES, "python-worker"));
 
 const docker = new Docker();
 

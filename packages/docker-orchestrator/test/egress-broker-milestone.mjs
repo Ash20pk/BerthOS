@@ -46,7 +46,7 @@ import { dirname, join } from "node:path";
 import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { loadManifest } from "@berthos/manifest-schema";
-import { buildImage, startContainer, stopContainer } from "../dist/index.js";
+import { buildImage, checkoutTag, startContainer, stopContainer } from "../dist/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");
@@ -452,11 +452,11 @@ async function runPartB() {
   const manifest = await loadManifest(join(BROWSER_NATIVE_APP_DIR, "berth.yml"));
 
   console.log("Building browser-native's dev image...");
-  await buildImage({ appDir: BROWSER_NATIVE_APP_DIR, tag: "berth/browser-native:dev", target: "dev", docker });
+  await buildImage({ appDir: BROWSER_NATIVE_APP_DIR, tag: checkoutTag("berth/browser-native:dev", BROWSER_NATIVE_APP_DIR), target: "dev", docker });
 
   console.log("Starting browser-native's sandbox (headless, BERTH_TEST_MODE=1)...");
   const running = await startContainer({
-    image: "berth/browser-native:dev",
+    image: checkoutTag("berth/browser-native:dev", BROWSER_NATIVE_APP_DIR),
     name: "berth-egress-broker-milestone-browser-native",
     manifest,
     bindMount: { hostPath: REPO_ROOT, containerPath: "/workspace" },
@@ -545,11 +545,11 @@ async function runPartC() {
   const manifest = await loadManifest(join(HTTP_FETCH_APP_DIR, "berth.yml"));
 
   console.log("Building http-fetch's dev image...");
-  await buildImage({ appDir: HTTP_FETCH_APP_DIR, tag: "berth/http-fetch:dev", target: "dev", docker });
+  await buildImage({ appDir: HTTP_FETCH_APP_DIR, tag: checkoutTag("berth/http-fetch:dev", HTTP_FETCH_APP_DIR), target: "dev", docker });
 
   console.log("Starting http-fetch's sandbox...");
   const running = await startContainer({
-    image: "berth/http-fetch:dev",
+    image: checkoutTag("berth/http-fetch:dev", HTTP_FETCH_APP_DIR),
     name: "berth-egress-broker-milestone-http-fetch",
     manifest,
     bindMount: { hostPath: REPO_ROOT, containerPath: "/workspace" },

@@ -16,12 +16,12 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { rm } from "node:fs/promises";
 import { loadManifest } from "@berthos/manifest-schema";
-import { buildImage, startContainer, stopContainer, createSnapshot, restoreSnapshot, snapshotDirFor } from "../dist/index.js";
+import { buildImage, checkoutTag, startContainer, stopContainer, createSnapshot, restoreSnapshot, snapshotDirFor } from "../dist/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");
 const FILESYSTEM_APP_DIR = join(REPO_ROOT, "apps", "filesystem");
-const IMAGE_TAG = "berth/filesystem:snapshot-milestone";
+const IMAGE_TAG = checkoutTag("berth/filesystem:snapshot-milestone", FILESYSTEM_APP_DIR);
 
 const docker = new Docker();
 
