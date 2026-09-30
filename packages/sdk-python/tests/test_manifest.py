@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from berth_sdk.manifest import BerthManifest, capability_issue, is_capability_string
+from berth_sdk.manifest import BerthManifest, app_cgroup_limits, capability_issue, is_capability_string
 
 
 def test_a_filesystem_scope_outside_the_allowlist_is_rejected_on_load():
@@ -58,3 +58,13 @@ def test_resources_are_validated_as_the_typescript_schema_does():
 def test_invalid_resources_are_refused(resources):
     with pytest.raises(ValidationError):
         BerthManifest.model_validate({"name": "a", "version": "1.0.0", "resources": resources})
+
+
+def test_memory_is_a_hard_limit_with_no_memory_high():
+    # Past memory.high an app with no swap is throttled indefinitely instead of
+    # being OOM-killed, so the compiler writes memory.max only.
+    resources = BerthManifest.model_validate({"name": "a", "version": "1.0.0", "resources": {"memory_mb": 64}}).resources
+    limits = app_cgroup_limits(resources)
+    assert limits["memory.max"] == str(64 * 1024 * 1024)
+    assert limits["memory.swap.max"] == "0"
+    assert "memory.high" not in limits

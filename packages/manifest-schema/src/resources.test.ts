@@ -14,11 +14,10 @@ test("an app that declares nothing still gets an equal CPU share and a task limi
   assert.deepEqual(appCgroupLimits({}), { "cpu.weight": "100", "pids.max": String(DEFAULT_APP_PIDS) });
 });
 
-test("declared cpu, memory_mb and pids become cpu.max, memory.high/max/swap.max and pids.max", () => {
+test("declared cpu, memory_mb and pids become cpu.max, memory.max/swap.max and pids.max", () => {
   assert.deepEqual(appCgroupLimits({ cpu: 0.5, memory_mb: 256, pids: 64 }), {
     "cpu.weight": "100",
     "cpu.max": "50000 100000",
-    "memory.high": String(Math.floor(256 * 1024 * 1024 * 0.9)),
     "memory.max": String(256 * 1024 * 1024),
     "memory.swap.max": "0",
     "pids.max": "64",
@@ -31,9 +30,11 @@ test("cpu.max rounds half up, and never below the kernel's 1ms minimum quota", (
   assert.equal(appCgroupLimits({ cpu: 0.123455 })["cpu.max"], "12346 100000");
 });
 
-test("memory.high sits below memory.max", () => {
+test("memory has a hard limit and no memory.high, so an app past it is OOM-killed rather than throttled forever", () => {
   const limits = appCgroupLimits({ memory_mb: 1 });
-  assert.ok(Number(limits["memory.high"]) < Number(limits["memory.max"]));
+  assert.equal(limits["memory.max"], String(1024 * 1024));
+  assert.equal(limits["memory.swap.max"], "0");
+  assert.equal("memory.high" in limits, false);
 });
 
 test("the sandbox is the sum of its apps plus the daemon reserve, not the max", () => {

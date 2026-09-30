@@ -36,15 +36,6 @@ export const DEFAULT_APP_PIDS = 1024;
 export const DEFAULT_APP_CPU_WEIGHT = 100;
 
 /**
- * `memory.high` as a fraction of `memory.max`. Past `memory.high` the kernel
- * throttles and reclaims the app instead of killing it, so an app that
- * overshoots gradually slows down first, and only one that keeps allocating
- * reaches `memory.max` and the OOM killer.
- */
-const MEMORY_HIGH_NUMERATOR = 9;
-const MEMORY_HIGH_DENOMINATOR = 10;
-
-/**
  * What the berth daemons and brokers (context-bus, semantic-fs, the egress and
  * GitHub brokers, mesh, and every `docker exec` RPC relay) keep regardless of
  * what the apps do. Added to the container's cap on top of the apps' sum, and
@@ -86,9 +77,13 @@ export function appCgroupLimits(resources: CgroupResources): Record<string, stri
     limits["cpu.max"] = `${quota} ${CPU_PERIOD_US}`;
   }
   if (resources.memory_mb !== undefined) {
-    const bytes = resources.memory_mb * 1024 * 1024;
-    limits["memory.high"] = String(Math.floor((bytes * MEMORY_HIGH_NUMERATOR) / MEMORY_HIGH_DENOMINATOR));
-    limits["memory.max"] = String(bytes);
+    // memory.max alone, and no memory.high. Past memory.high the kernel
+    // throttles an app and reclaims its memory instead of killing it, but a
+    // sandbox has no swap to reclaim anonymous memory into: an app that leaks
+    // past it is slowed indefinitely and never reaches memory.max, so a leak
+    // looks like a hang. At memory.max it is OOM-killed, a failure its
+    // supervisor, and whoever reads the boot log, can see.
+    limits["memory.max"] = String(resources.memory_mb * 1024 * 1024);
     // A limit an app can page its way past isn't one.
     limits["memory.swap.max"] = "0";
   }

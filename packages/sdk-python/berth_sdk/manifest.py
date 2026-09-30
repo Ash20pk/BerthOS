@@ -222,9 +222,8 @@ def app_cgroup_limits(resources: ResourcesSpec) -> dict[str, str]:
         quota = max(_MIN_CPU_QUOTA_US, math.floor(resources.cpu * CPU_PERIOD_US + 0.5))
         limits["cpu.max"] = f"{quota} {CPU_PERIOD_US}"
     if resources.memory_mb is not None:
-        memory_bytes = resources.memory_mb * 1024 * 1024
-        limits["memory.high"] = str(memory_bytes * 9 // 10)
-        limits["memory.max"] = str(memory_bytes)
+        # memory.max only, no memory.high: see resources.ts for why.
+        limits["memory.max"] = str(resources.memory_mb * 1024 * 1024)
         limits["memory.swap.max"] = "0"
     limits["pids.max"] = str(resources.pids if resources.pids is not None else DEFAULT_APP_PIDS)
     return limits
