@@ -477,3 +477,33 @@ test("fresh: true does not invent enforcement either — an enforcing kernel sti
   const result = await withBerthHome(home, () => enforcementStatusForBoot(docker, "img", undefined, { fresh: true }));
   assert.equal(result.status, "enforcing");
 });
+
+// --- per-app cgroups ---------------------------------------------------------
+
+test("cgroup v2 with nsdelegate reports per-app cgroups ok, without touching the enforcement verdict", async () => {
+  const report = await runDoctor({
+    docker: fakeDocker(),
+    probe: probeReturning({ status: "enforcing", abi: 5, fuse: true, cgroup: { v2: true, nsdelegate: true } }),
+  });
+  assert.equal(report.checks.find((c) => c.id === "cgroups")?.status, "ok");
+  assert.equal(report.verdict, "enforcement: ACTIVE");
+});
+
+test("no nsdelegate warns and says why delegation would be unsafe; enforcement is still ACTIVE", async () => {
+  const report = await runDoctor({
+    docker: fakeDocker(),
+    probe: probeReturning({ status: "enforcing", abi: 5, fuse: true, cgroup: { v2: true, nsdelegate: false } }),
+  });
+  const cgroups = report.checks.find((c) => c.id === "cgroups");
+  assert.equal(cgroups?.status, "warn");
+  assert.match(cgroups?.detail ?? "", /nsdelegate/);
+  assert.match(cgroups?.detail ?? "", /container-level caps/);
+  assert.equal(report.enforcementActive, true);
+});
+
+test("a probe that did not report cgroups is unknown, not ok", async () => {
+  const report = await runDoctor({ docker: fakeDocker(), probe: probeReturning({ status: "enforcing", abi: 5, fuse: true }) });
+  assert.equal(report.checks.find((c) => c.id === "cgroups")?.status, "unknown");
+  const skipped = await runDoctor({ docker: fakeDocker(), skipProbe: true });
+  assert.equal(skipped.checks.find((c) => c.id === "cgroups")?.status, "unknown");
+});

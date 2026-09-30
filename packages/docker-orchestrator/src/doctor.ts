@@ -21,7 +21,7 @@ export type CheckStatus = "ok" | "warn" | "fail" | "unknown";
 
 export interface DoctorCheck {
   /** Stable machine-readable id. Part of the `--json` contract; do not rename. Additions (like `runtime`) are non-breaking — consumers must tolerate ids they don't know. */
-  id: "docker" | "landlock" | "seccomp" | "fuse" | "runtime";
+  id: "docker" | "landlock" | "seccomp" | "fuse" | "runtime" | "cgroups";
   /** Human-readable one-liner. */
   title: string;
   status: CheckStatus;
@@ -143,6 +143,24 @@ else:
 # container, so probing it without them would report a failure that says nothing
 # about whether a real sandbox could mount /context.
 out["fuse"] = os.path.exists("/dev/fuse")
+
+# Whether this kernel's cgroup hierarchy can be handed to a sandbox safely,
+# which is what per-app resource limits need (see cgroupDelegationForBoot).
+# Read from the mount's *superblock* options, which are the host's: nsdelegate
+# is what makes the kernel refuse a write from inside a cgroup namespace to the
+# namespace root's own limits, so without it a writable cgroupfs would let root
+# in the sandbox raise the container's memory and pids caps.
+cg = {"v2": False, "nsdelegate": False}
+try:
+    for line in open("/proc/self/mountinfo"):
+        fields = line.split()
+        if len(fields) > 4 and fields[4] == "/sys/fs/cgroup" and "-" in fields:
+            rest = fields[fields.index("-") + 1:]
+            cg["v2"] = rest[0] == "cgroup2"
+            cg["nsdelegate"] = "nsdelegate" in (rest[2] if len(rest) > 2 else "").split(",")
+except OSError:
+    pass
+out["cgroup"] = cg
 print(json.dumps(out))
 `;
 
@@ -168,6 +186,14 @@ export interface LandlockProbeResult {
   abi?: number | null;
   reason?: string;
   fuse?: boolean;
+  /** The container's /sys/fs/cgroup mount: cgroup v2, and mounted with nsdelegate. Absent from a probe (or a cached answer) that predates the question. */
+  cgroup?: CgroupProbe;
+}
+
+/** What per-app cgroups need from the kernel. See cgroupDelegationForBoot(). */
+export interface CgroupProbe {
+  v2: boolean;
+  nsdelegate: boolean;
 }
 
 /** How long the probe container gets before we give up on it. */
@@ -456,6 +482,7 @@ export async function runDoctor(options: RunDoctorOptions = {}): Promise<DoctorR
       : `Pull ${PROBE_FALLBACK_IMAGE}, build any Berth app (\`berth dev <app>\` builds one), or pass \`--image <image>\` to probe a specific one.`;
     checks.push({ id: "landlock", title: "Landlock enforcement in the container kernel", status: "unknown", detail, remedy });
     checks.push({ id: "fuse", title: "/dev/fuse available to a sandbox", status: "unknown", detail, remedy });
+    checks.push({ id: "cgroups", title: CGROUPS_TITLE, status: "unknown", detail, remedy });
   } else {
     try {
       const probe = await (options.probe ?? probeKernel)(docker, probeImage, runtime);
@@ -473,10 +500,12 @@ export async function runDoctor(options: RunDoctorOptions = {}): Promise<DoctorR
           ? undefined
           : "Semantic FS mounts /context over FUSE, so it will not come up. On a Linux host, `modprobe fuse`; in a VM, ensure the FUSE module is in the guest kernel.",
       });
+      checks.push(cgroupsCheck(probe.cgroup, runtime));
     } catch (err) {
       const detail = `probe failed to run in ${probeImage}: ${err instanceof Error ? err.message : String(err)}`;
       checks.push({ id: "landlock", title: "Landlock enforcement in the container kernel", status: "unknown", detail });
       checks.push({ id: "fuse", title: "/dev/fuse available to a sandbox", status: "unknown", detail });
+      checks.push({ id: "cgroups", title: CGROUPS_TITLE, status: "unknown", detail });
     }
   }
 
@@ -554,6 +583,29 @@ function landlockCheck(probe: LandlockProbeResult, runtime?: string): DoctorChec
   }
 }
 
+const CGROUPS_TITLE = "Per-app resource limits (cgroup v2 delegation)";
+
+/**
+ * Whether a sandbox's apps can each get their own cgroup. `warn`, never
+ * `fail`: without it the container-level caps still hold, and what is lost is
+ * the division between apps, not the sandbox's bound. It is also not part of
+ * the enforcement verdict, which is about Landlock.
+ */
+function cgroupsCheck(cgroup: CgroupProbe | undefined, runtime?: string): DoctorCheck {
+  const verdict = cgroupDelegationVerdict(cgroup, runtime);
+  return {
+    id: "cgroups",
+    title: CGROUPS_TITLE,
+    status: verdict.delegate ? "ok" : cgroup ? "warn" : "unknown",
+    detail: verdict.delegate
+      ? "cgroup v2 with nsdelegate: each app gets its own cgroup and limits, and the daemons a reserved one"
+      : `per-app cgroups are off: ${verdict.reason}. Each app still has the sandbox's container-level caps, but not a limit of its own`,
+    remedy: verdict.delegate || !cgroup
+      ? undefined
+      : "Run Berth on a host whose cgroup2 hierarchy is mounted with nsdelegate (systemd hosts, Colima and Lima all do), with Docker 28 or later. See docs/resource-limits.md.",
+  };
+}
+
 /** The `reasons` list, in the order a reader should act on them. */
 function collectReasons(checks: DoctorCheck[]): string[] {
   const reasons: string[] = [];
@@ -584,7 +636,13 @@ import { dirname, join } from "node:path";
 
 interface CacheFile {
   /** Keyed by the daemon's kernel + arch: the answer changes only when that does. */
-  [kernelAndArch: string]: { status: LandlockProbeResult["status"]; abi?: number | null; reason?: string; probedAt: string };
+  [kernelAndArch: string]: {
+    status: LandlockProbeResult["status"];
+    abi?: number | null;
+    reason?: string;
+    cgroup?: CgroupProbe;
+    probedAt: string;
+  };
 }
 
 function cachePath(): string {
@@ -677,8 +735,8 @@ export async function enforcementStatusForBoot(
   docker: Docker,
   image: string,
   runtime?: string,
-  opts: { fresh?: boolean } = {},
-): Promise<{ status: LandlockProbeResult["status"] | "unknown"; abi?: number | null; reason?: string }> {
+  opts: { fresh?: boolean; needsCgroup?: boolean } = {},
+): Promise<{ status: LandlockProbeResult["status"] | "unknown"; abi?: number | null; reason?: string; cgroup?: CgroupProbe }> {
   let key: string;
   try {
     const info = (await docker.info()) as { KernelVersion?: string; Architecture?: string };
@@ -691,16 +749,19 @@ export async function enforcementStatusForBoot(
   }
 
   const cache = readCache();
+  // A cached answer from before the probe asked about cgroups is still a
+  // good Landlock answer, but not a complete one: re-probe once, and the
+  // entry written back has both.
   if (!opts.fresh) {
     const hit = cache[key];
-    if (hit) return { status: hit.status, abi: hit.abi, reason: hit.reason };
+    if (hit && (hit.cgroup || !opts.needsCgroup)) return { status: hit.status, abi: hit.abi, reason: hit.reason, cgroup: hit.cgroup };
   }
 
   try {
     const probe = await probeKernel(docker, image, runtime);
-    cache[key] = { status: probe.status, abi: probe.abi, reason: probe.reason, probedAt: new Date().toISOString() };
+    cache[key] = { status: probe.status, abi: probe.abi, reason: probe.reason, cgroup: probe.cgroup, probedAt: new Date().toISOString() };
     writeCache(cache);
-    return { status: probe.status, abi: probe.abi, reason: probe.reason };
+    return { status: probe.status, abi: probe.abi, reason: probe.reason, cgroup: probe.cgroup };
   } catch {
     // Deliberately not cached: a probe that failed to run tells us nothing about
     // the kernel, and caching it would suppress the banner until the kernel
@@ -750,5 +811,49 @@ export async function warnIfEnforcementInactive(docker: Docker, image: string, r
     }
   } catch {
     // Never let a diagnostic stop a boot.
+  }
+}
+
+// --- per-app cgroups ----------------------------------------------------------
+
+/**
+ * Whether startContainer() should hand this sandbox a writable cgroup
+ * subtree (`--security-opt writable-cgroups=true`), so entrypoint.sh can give
+ * each app its own cgroup and the daemons a reserved one.
+ *
+ * Docker mounts /sys/fs/cgroup read-only in an unprivileged container, and
+ * the only other ways to a writable one are CAP_SYS_ADMIN (to remount it) or
+ * `--privileged`, both of which the sandbox exists not to have. Docker 28's
+ * writable-cgroups option makes the container's own cgroup namespace
+ * writable to root in it and nothing else — the container never sees an
+ * ancestor, and the capability set is unchanged. That is only a safe grant
+ * with nsdelegate on the host's cgroup2 mount, which is what makes the
+ * kernel refuse (EPERM) a write from inside the namespace to the namespace
+ * root's own limit files, the ones Docker's `--memory`/`--pids-limit` live
+ * in. Without it, root in the sandbox could raise the very caps that bound
+ * the sandbox. So: delegate only when the probe saw both, and otherwise boot
+ * with the container-level caps alone.
+ */
+export function cgroupDelegationVerdict(cgroup: CgroupProbe | undefined, runtime?: string): { delegate: boolean; reason: string } {
+  if (process.env.BERTH_DISABLE_APP_CGROUPS === "1") return { delegate: false, reason: "BERTH_DISABLE_APP_CGROUPS=1" };
+  if (!cgroup) return { delegate: false, reason: "the kernel probe did not run, so cgroup delegation could not be checked" };
+  if (!cgroup.v2) return { delegate: false, reason: `the container's /sys/fs/cgroup is not cgroup v2${runtime ? ` under the "${runtime}" runtime` : ""}` };
+  if (!cgroup.nsdelegate) {
+    return {
+      delegate: false,
+      reason: "the host's cgroup2 mount has no nsdelegate, so a writable cgroup namespace would let root in the sandbox raise the sandbox's own limits",
+    };
+  }
+  return { delegate: true, reason: "cgroup v2 with nsdelegate" };
+}
+
+/** The verdict for a boot, from the same cached probe the enforcement banner uses. Never throws. */
+export async function cgroupDelegationForBoot(docker: Docker, image: string, runtime?: string): Promise<{ delegate: boolean; reason: string }> {
+  if (process.env.BERTH_DISABLE_APP_CGROUPS === "1") return cgroupDelegationVerdict(undefined);
+  try {
+    const { cgroup } = await enforcementStatusForBoot(docker, image, runtime, { needsCgroup: true });
+    return cgroupDelegationVerdict(cgroup, runtime);
+  } catch {
+    return cgroupDelegationVerdict(undefined, runtime);
   }
 }
