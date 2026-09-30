@@ -730,7 +730,9 @@ setup_app_cgroups() {
     '' | *[!0-9]*) ;;
     *)
       local reserve_bytes=$((reserve_mb * 1024 * 1024))
-      if [ "$total" -gt $((reserve_bytes * 2)) ] && echo $((total - reserve_bytes)) >"$BERTH_CGROUP_APPS/memory.max" 2>/dev/null; then
+      # A sandbox too small to hold the reserve and 32 MiB of apps keeps no
+      # reserve at all rather than a budget no runtime could start in.
+      if [ "$total" -gt $((reserve_bytes + 32 * 1024 * 1024)) ] && echo $((total - reserve_bytes)) >"$BERTH_CGROUP_APPS/memory.max" 2>/dev/null; then
         apps_max=$((total - reserve_bytes))
       fi
       ;;
