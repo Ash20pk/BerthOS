@@ -1,26 +1,32 @@
-// Two seccomp-bpf filters, installed by main() immediately before exec().
+// Three sets of seccomp-bpf filters, installed by main() immediately before
+// exec().
 //
 //   1. no_new_namespaces. Installed for every app,
 //      unconditionally. Without it, the capability bounding-set drop in
 //      main.rs's drop_all_capabilities() is reversible by the app itself.
 //   2. no_udp_no_raw. Installed only for apps that
 //      declared no network capability at all.
+//   3. no_io_uring_no_vsock. Installed for every app. io_uring would
+//      otherwise create the sockets 2 refuses without calling socket(2), and
+//      AF_VSOCK reaches a microVM's host without touching AF_INET at all.
 //
-// Both are allow-by-default: they remove specific syscalls that neither
+// All are allow-by-default: they remove specific syscalls that neither
 // Landlock nor the capability model can express, rather than acting as a
 // syscall allowlist. An allowlist here would be a second, divergent copy of
 // "what a Node runtime needs to run," and would break on the next Node release
 // rather than on the next security review.
 //
-// They are installed as two filters rather than one because a seccompiler
+// They are installed as several filters rather than one because a seccompiler
 // `SeccompFilter` carries a single match action, and these need different
-// errnos (DENIED_ERRNO vs CLONE3_ERRNO below). The kernel evaluates every
-// installed filter and applies the most restrictive result; these two cover
-// disjoint syscall sets, so there is no interaction between them.
+// errnos (DENIED_ERRNO vs CLONE3_ERRNO and IO_URING_ERRNO below). The kernel
+// evaluates every installed filter and applies the most restrictive result.
+// Only 2 and 3 both match socket(2), on different address families and with
+// the same EPERM, so no call gets a different answer for being matched by
+// both.
 //
 // x86_64 and aarch64 — the only two architectures this image is built for —
-// both dispatch socket(2), clone(2), unshare(2), and setns(2) as real syscalls
-// with the argument order assumed below. The multiplexed socketcall(2) entry
+// both dispatch socket(2), clone(2), unshare(2), setns(2), and io_uring's
+// three syscalls as real syscalls with the argument order assumed below. The multiplexed socketcall(2) entry
 // point that would need separate filtering exists only on i386, and the
 // register-swapped clone(2) argument order exists only on s390x and cris.
 use std::collections::BTreeMap;
@@ -326,6 +332,103 @@ pub fn install_no_udp_no_raw_filter() -> Result<(), Box<dyn std::error::Error>> 
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// 3. Ways around socket(2): io_uring and AF_VSOCK
+// ---------------------------------------------------------------------------
+//
+// Installed for every app, whatever it declared.
+//
+// io_uring. The filter in section 2 works by matching socket(2)'s arguments,
+// and seccomp only ever sees syscalls. io_uring moves the operation into a
+// submission ring the kernel executes on the caller's behalf, so the syscalls
+// seccomp sees are io_uring_setup and io_uring_enter, never socket(2). Since
+// Linux 5.19 IORING_OP_SOCKET creates a socket that way, and
+// `io_uring_creates_the_udp_socket_the_socket_filter_alone_refuses` below gets
+// a UDP socket through it with section 2's filter installed. The same goes for
+// anything else a future filter here might match on: seccomp cannot inspect a
+// ring. So the three io_uring syscalls are refused outright.
+//
+// Docker's default seccomp profile has refused io_uring since 25.0, but that
+// is not something to rely on: Kubernetes runs pods Unconfined unless told
+// otherwise, and a microVM runtime brings its own profile or none.
+//
+// ENOSYS rather than EPERM, for the same reason as clone3: it is the answer a
+// runtime reads as "this kernel has no io_uring" and falls back from. libuv
+// (Node's event loop) probes with io_uring_setup and uses epoll and its
+// threadpool when that fails; Python, musl and glibc never call it. The file
+// and socket I/O an app does still works, through the ordinary syscalls every
+// other filter here already governs.
+//
+// AF_VSOCK. vsock connects a guest to its hypervisor, addressed by context id
+// and port rather than by IP. It is not AF_INET, so Landlock's TCP rules never
+// apply to it, and section 2 never matched it. Under Docker it goes nowhere,
+// but in a microVM it reaches every port the host maps to the guest, from an
+// app whatever its network capabilities say. Nothing in a resident app needs
+// it. Refused for every socket type, for every app.
+//
+// Considered and left alone:
+//   - socketpair(2) hands back two ends already connected to each other.
+//     AF_INET, AF_INET6 and AF_VSOCK refuse it (EOPNOTSUPP), so neither end
+//     can have a remote peer.
+//   - AF_NETLINK stays open, as section 2 explains. Changing routes or
+//     interfaces through it needs CAP_NET_ADMIN, which drop_all_capabilities()
+//     removes and section 1 keeps removed. mesh-daemon, the one process that
+//     does need netlink write access, is not started through agent-init.
+//   - AF_PACKET and AF_XDP both need CAP_NET_RAW, which is likewise gone.
+//     Section 2 still refuses AF_PACKET outright for no-network apps.
+
+const AF_VSOCK: u64 = 40;
+
+/// io_uring's three syscalls, refused whole: a ring's contents are behind
+/// pointers seccomp cannot follow, so there is no argument to match on.
+const IO_URING_SYSCALLS: [i64; 3] = [libc::SYS_io_uring_setup, libc::SYS_io_uring_enter, libc::SYS_io_uring_register];
+
+/// Returned for the io_uring syscalls. See the section header.
+const IO_URING_ERRNO: u32 = libc::ENOSYS as u32;
+
+/// Returns two programs, for the same reason as section 1: the ENOSYS one
+/// (io_uring) and the EPERM one (AF_VSOCK).
+pub fn compile_no_io_uring_no_vsock_filters() -> Result<[BpfProgram; 2], Box<dyn std::error::Error>> {
+    let mut io_uring_rules: BTreeMap<i64, Vec<SeccompRule>> = BTreeMap::new();
+    for syscall in IO_URING_SYSCALLS {
+        io_uring_rules.insert(syscall, vec![]);
+    }
+    let deny_io_uring = SeccompFilter::new(
+        io_uring_rules,
+        SeccompAction::Allow,
+        SeccompAction::Errno(IO_URING_ERRNO),
+        std::env::consts::ARCH.try_into()?,
+    )?;
+
+    let mut vsock_rules: BTreeMap<i64, Vec<SeccompRule>> = BTreeMap::new();
+    vsock_rules.insert(
+        libc::SYS_socket,
+        vec![SeccompRule::new(vec![SeccompCondition::new(
+            0,
+            SeccompCmpArgLen::Dword,
+            SeccompCmpOp::Eq,
+            AF_VSOCK,
+        )?])?],
+    );
+    let deny_vsock = SeccompFilter::new(
+        vsock_rules,
+        SeccompAction::Allow,
+        SeccompAction::Errno(DENIED_ERRNO),
+        std::env::consts::ARCH.try_into()?,
+    )?;
+
+    Ok([deny_io_uring.try_into()?, deny_vsock.try_into()?])
+}
+
+/// Installs both filters on the calling thread. Inherited across the execve()
+/// that follows in main(), and irrevocable from that point on.
+pub fn install_no_io_uring_no_vsock_filters() -> Result<(), Box<dyn std::error::Error>> {
+    for program in compile_no_io_uring_no_vsock_filters()? {
+        seccompiler::apply_filter(&program)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -338,6 +441,9 @@ mod tests {
         }
         let program = compile_no_udp_no_raw_filter().expect("filter should compile");
         assert!(!program.is_empty(), "an empty program would be silently refused by apply_filter()");
+        for program in compile_no_io_uring_no_vsock_filters().expect("io_uring/vsock filters should compile") {
+            assert!(!program.is_empty(), "an empty program would be silently refused by apply_filter()");
+        }
     }
 
     /// CLONE_NEWTIME's value collides with clone(2)'s CSIGNAL mask, so it
@@ -612,6 +718,80 @@ mod tests {
                 UringSocket::Created { so_type: libc::SOCK_DGRAM },
                 "expected io_uring to hand back the UDP socket socket(2) refused",
             ),
+        }
+    }
+
+    /// The fix for the bypass above, with every filter an app gets installed
+    /// together: io_uring_setup(2) answers ENOSYS, so there is no ring to
+    /// submit a SOCKET op to; an AF_VSOCK socket is refused with EPERM for
+    /// each type vsock supports; and TCP and Unix sockets still work.
+    ///
+    /// Unlike the positive control, nothing here is skipped where io_uring is
+    /// unavailable: an outer profile answering EPERM instead of ENOSYS is
+    /// exactly what this assertion is there to tell apart from this filter.
+    #[test]
+    fn io_uring_and_vsock_are_refused_while_tcp_and_unix_still_work() {
+        let (via_uring, raw_setup_errno, socket_errnos) = std::thread::spawn(|| {
+            install_no_new_namespaces_filter().expect("namespace filters should install");
+            install_no_udp_no_raw_filter().expect("UDP/raw filter should install");
+            install_no_io_uring_no_vsock_filters().expect("io_uring/vsock filters should install");
+
+            let via_uring = socket_via_io_uring(libc::AF_INET, libc::SOCK_DGRAM);
+
+            // The other two syscalls, each refused in its own right: a ring fd
+            // inherited from before the filter, or passed in over a Unix
+            // socket, must not be usable either.
+            // SAFETY: invalid fds and null pointers; with the filter in place
+            // neither call reaches the kernel's io_uring code at all.
+            let enter = unsafe { libc::syscall(libc::SYS_io_uring_enter, -1, 0u32, 0u32, 0u32, std::ptr::null::<libc::c_void>(), 0usize) };
+            let enter_errno = if enter < 0 { std::io::Error::last_os_error().raw_os_error().unwrap_or(0) } else { 0 };
+            let register = unsafe { libc::syscall(libc::SYS_io_uring_register, -1, 0u32, std::ptr::null::<libc::c_void>(), 0u32) };
+            let register_errno = if register < 0 { std::io::Error::last_os_error().raw_os_error().unwrap_or(0) } else { 0 };
+
+            // (domain, type, expected-to-be-denied)
+            let cases: [(libc::c_int, libc::c_int, bool); 5] = [
+                (libc::AF_VSOCK, libc::SOCK_STREAM, true),
+                (libc::AF_VSOCK, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, true),
+                (libc::AF_VSOCK, libc::SOCK_SEQPACKET, true),
+                (libc::AF_INET, libc::SOCK_STREAM, false),
+                (libc::AF_UNIX, libc::SOCK_STREAM, false),
+            ];
+            let socket_errnos = cases
+                .iter()
+                .map(|&(domain, sock_type, expect_denied)| {
+                    // SAFETY: socket(2) with constant arguments; closed below.
+                    let fd = unsafe { libc::socket(domain, sock_type, 0) };
+                    let errno = if fd < 0 { std::io::Error::last_os_error().raw_os_error().unwrap_or(0) } else { 0 };
+                    if fd >= 0 {
+                        unsafe { libc::close(fd) };
+                    }
+                    (domain, sock_type, expect_denied, fd, errno)
+                })
+                .collect::<Vec<_>>();
+
+            (via_uring, (enter_errno, register_errno), socket_errnos)
+        })
+        .join()
+        .expect("probe thread should not panic");
+
+        assert_eq!(
+            via_uring,
+            UringSocket::SetupRefused(libc::ENOSYS),
+            "io_uring_setup should answer ENOSYS, so no ring exists to create a socket through",
+        );
+        assert_eq!(raw_setup_errno, (libc::ENOSYS, libc::ENOSYS), "io_uring_enter and io_uring_register should answer ENOSYS");
+        for (domain, sock_type, expect_denied, fd, errno) in socket_errnos {
+            if expect_denied {
+                assert!(
+                    fd < 0 && errno == libc::EPERM,
+                    "socket({domain}, {sock_type}) should have been refused with EPERM, got fd={fd} errno={errno}",
+                );
+            } else {
+                assert!(
+                    errno != libc::EPERM,
+                    "socket({domain}, {sock_type}) must not be refused by these filters, got errno={errno}",
+                );
+            }
         }
     }
 
