@@ -20,15 +20,15 @@
 // `SeccompFilter` carries a single match action, and these need different
 // errnos (DENIED_ERRNO vs CLONE3_ERRNO and IO_URING_ERRNO below). The kernel
 // evaluates every installed filter and applies the most restrictive result.
-// Only 2 and 3 both match socket(2), on different address families and with
-// the same EPERM, so no call gets a different answer for being matched by
-// both.
+// Only 2 and 3 both match socket(2), and both answer EPERM, so no call gets a
+// different answer for being matched by both.
 //
 // x86_64 and aarch64 — the only two architectures this image is built for —
 // both dispatch socket(2), clone(2), unshare(2), setns(2), and io_uring's
-// three syscalls as real syscalls with the argument order assumed below. The multiplexed socketcall(2) entry
-// point that would need separate filtering exists only on i386, and the
-// register-swapped clone(2) argument order exists only on s390x and cris.
+// three syscalls as real syscalls with the argument order assumed below. The
+// multiplexed socketcall(2) entry point that would need separate filtering
+// exists only on i386, and the register-swapped clone(2) argument order exists
+// only on s390x and cris.
 use std::collections::BTreeMap;
 
 use seccompiler::{
