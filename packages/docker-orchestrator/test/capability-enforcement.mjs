@@ -494,6 +494,33 @@ async function main() {
     );
     console.log("\nPASS — unshare(CLONE_NEWUSER) was refused, so the capability bounding-set drop is a real ceiling.");
 
+    console.log("\n--- Test 12: a UDP socket through io_uring, which never calls socket(2) ---");
+    // Test 5b's UDP refusal is a seccomp filter on socket(2)'s arguments.
+    // io_uring's IORING_OP_SOCKET (Linux 5.19+) makes the kernel create the
+    // socket from a submission ring, so the only syscalls seccomp sees are
+    // io_uring_setup and io_uring_enter, and the UDP socket comes back
+    // anyway. agent-init refuses the io_uring syscalls for every app.
+    //
+    // Asserted on ENOSYS specifically, not on any failure. Docker's default
+    // seccomp profile also refuses io_uring, with EPERM, so under Docker a
+    // missing agent-init filter would still look like a refusal; ENOSYS is
+    // agent-init's answer (the kernel reports the most recently installed of
+    // two equally strict filters), and it is the only refusal left when the
+    // runtime has no profile of its own, as a Kubernetes pod by default does.
+    // Unconditional, like Test 5b: seccomp works on every kernel this runs on.
+    const uringProbe = await rpc.call({ id: "12", export: "probe_io_uring_socket" });
+    console.log("response:", uringProbe);
+    assert(!uringProbe.error, `probe_io_uring_socket itself errored (unexpected): ${uringProbe.error}`);
+    assert(
+      uringProbe.result?.stage !== "created",
+      `an app with no declared network capability got a UDP socket through io_uring — the socket(2) filter is bypassable: ${JSON.stringify(uringProbe)}`,
+    );
+    assert(
+      uringProbe.result?.stage === "setup" && uringProbe.result?.errno === 38,
+      `io_uring_setup was not refused with ENOSYS, so agent-init's io_uring filter is not what stopped this (EPERM would be Docker's own profile): ${JSON.stringify(uringProbe)}`,
+    );
+    console.log("\nPASS — io_uring_setup answered ENOSYS, so io_uring cannot hand an app the sockets socket(2) refuses.");
+
     rpc.close();
   } finally {
     await containerLog.stop();
