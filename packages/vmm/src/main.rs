@@ -63,6 +63,7 @@ struct Opts {
     cpus: u8,
     mem_mib: u32,
     root: Option<String>,
+    root_ro: bool,
     root_disk: Option<String>,
     root_disk_fstype: String,
     disks: Vec<Disk>,
@@ -85,6 +86,7 @@ const USAGE: &str = "usage: berth-vmm [options] -- <guest-path> [args...]
   --cpus N                  vCPUs (default 1)
   --mem MIB                 guest RAM in MiB (default 512)
   --root DIR                root filesystem: host directory over virtio-fs
+  --root-ro                 expose --root read-only (guest needs tmpfs for writes)
   --root-disk IMG           root filesystem: raw ext4 image (becomes /dev/vda)
   --disk ID:IMG[:ro]        extra raw disk (repeatable; /dev/vdb, ...)
   --share TAG:DIR[:ro]      extra virtio-fs share (repeatable)
@@ -111,6 +113,7 @@ fn parse() -> Opts {
         cpus: 1,
         mem_mib: 512,
         root: None,
+        root_ro: false,
         root_disk: None,
         root_disk_fstype: "ext4".into(),
         disks: vec![],
@@ -134,6 +137,7 @@ fn parse() -> Opts {
             "--cpus" => o.cpus = val().parse().unwrap_or_else(|_| die("bad --cpus")),
             "--mem" => o.mem_mib = val().parse().unwrap_or_else(|_| die("bad --mem")),
             "--root" => o.root = Some(val()),
+            "--root-ro" => o.root_ro = true,
             "--root-disk" => o.root_disk = Some(val()),
             "--root-disk-fstype" => o.root_disk_fstype = val(),
             "--disk" => {
@@ -239,7 +243,12 @@ fn main() {
         }
 
         if let Some(root) = &o.root {
-            check("krun_set_root", krun_set_root(ctx, cs(root).as_ptr()));
+            if o.root_ro {
+                // Same device krun_set_root creates, with the read-only flag set.
+                check("krun_add_virtiofs3(root)", krun_add_virtiofs3(ctx, cs("/dev/root").as_ptr(), cs(root).as_ptr(), 0, true));
+            } else {
+                check("krun_set_root", krun_set_root(ctx, cs(root).as_ptr()));
+            }
         }
         // Disks are attached in order: vda, vdb, ...  A root disk goes first.
         if let Some(img) = &o.root_disk {
@@ -298,12 +307,13 @@ fn main() {
             .map(|s| format!("{{\"tag\":{},\"path\":{},\"readOnly\":{}}}", json_str(&s.tag), json_str(&s.path), s.read_only))
             .collect();
         eprintln!(
-            "{{\"source\":\"berth-vmm\",\"event\":\"vm_config\",\"pid\":{},\"cpus\":{},\"memMiB\":{},\"tsi\":{},\"nics\":0,\"root\":{},\"rootDisk\":{},\"kernel\":{},\"vsock\":[{}],\"shares\":[{}]}}",
+            "{{\"source\":\"berth-vmm\",\"event\":\"vm_config\",\"pid\":{},\"cpus\":{},\"memMiB\":{},\"tsi\":{},\"nics\":0,\"root\":{},\"rootReadOnly\":{},\"rootDisk\":{},\"kernel\":{},\"vsock\":[{}],\"shares\":[{}]}}",
             std::process::id(),
             o.cpus,
             o.mem_mib,
             o.tsi,
             json_str(o.root.as_deref().unwrap_or("")),
+            o.root_ro,
             json_str(o.root_disk.as_deref().unwrap_or("")),
             json_str(o.kernel.as_deref().unwrap_or("libkrunfw")),
             vs.join(","),
