@@ -494,7 +494,7 @@ async function main() {
     );
     console.log("\nPASS — unshare(CLONE_NEWUSER) was refused, so the capability bounding-set drop is a real ceiling.");
 
-    console.log("\n--- Test 12: a UDP socket through io_uring, which never calls socket(2) ---");
+    console.log("\n--- Test 11b: a UDP socket through io_uring, which never calls socket(2) ---");
     // Test 5b's UDP refusal is a seccomp filter on socket(2)'s arguments.
     // io_uring's IORING_OP_SOCKET (Linux 5.19+) makes the kernel create the
     // socket from a submission ring, so the only syscalls seccomp sees are
@@ -508,7 +508,7 @@ async function main() {
     // two equally strict filters), and it is the only refusal left when the
     // runtime has no profile of its own, as a Kubernetes pod by default does.
     // Unconditional, like Test 5b: seccomp works on every kernel this runs on.
-    const uringProbe = await rpc.call({ id: "12", export: "probe_io_uring_socket" });
+    const uringProbe = await rpc.call({ id: "11b", export: "probe_io_uring_socket" });
     console.log("response:", uringProbe);
     assert(!uringProbe.error, `probe_io_uring_socket itself errored (unexpected): ${uringProbe.error}`);
     assert(
