@@ -1,0 +1,17 @@
+[package]
+name = "berth-vmm"
+version = "0.0.1"
+edition = "2021"
+description = "Spike: launch a Berth sandbox in a libkrun microVM (macOS HVF / Linux KVM)"
+license = "Apache-2.0"
+publish = false
+
+[[bin]]
+name = "berth-vmm"
+path = "src/main.rs"
+
+[dependencies]
+
+[profile.release]
+opt-level = "s"
+strip = true
