@@ -7,6 +7,7 @@ This is the consolidated state of Berth's microVM runtime. The three earlier wri
 - [`microvm-spike.md`](microvm-spike.md): the libkrun spike. berth-vmm, our kernel, agent-init in a VM, the first enforcement checks.
 - [`microvm-image.md`](microvm-image.md): the pinned kernel, the content-addressed erofs rootfs, the state disk, and the libkrun truncation bug.
 - [`microvm-guest-init.md`](microvm-guest-init.md): berth-init (PID 1, per-app cgroups, the long-lived relay, the vsock port plan, and the rule for the host side).
+- [`microvm-egress.md`](microvm-egress.md): network access (feat/vm-egress): the egress broker in the guest, the host dialer behind vsock 1026, and its threat model.
 
 Artifacts live in `/Users/ash/berth-wt/vm-runtime-artifacts/` (`$ART`, `BERTH_VMM_ARTIFACTS`). The kernel, the download cache, agent-init and the builder roots are APFS clones (`cp -c`) of the image and guest-init branches' artifacts. Nothing big is committed.
 
@@ -20,6 +21,7 @@ Artifacts live in `/Users/ash/berth-wt/vm-runtime-artifacts/` (`$ART`, `BERTH_VM
 | 3. Boot timing | Measured | Two interleaved benchmark runs. The host was at load 4 to 6 throughout (other work, not ours). Single app: median **367 / 372 ms** to the first RPC. Multi: **422 / 441 ms**. The spike's layout in the same rounds: 431 / 434 ms |
 | 4. One host command | **Done** | `berth-vmm run --app DIR [--app DIR…] [--state DISK]`, plus `scripts/vm.mjs` (status, call, logs, stop) |
 | 5. This document | Done | |
+| Egress (feat/vm-egress) | **Pass, 28/28** | `node scripts/e2e.mjs egress`: an app with `network:host:example.com` fetches https://example.com through the in-guest broker and the host dialer; undeclared hosts and internal addresses are refused by the host even with the broker bypassed by guest root. Rootfs **`5f80e448…`** with berth-init **`c82613e7…`** and the broker, reproduced twice; `e2e.mjs all` still 51/51 on it. Details in [`microvm-egress.md`](microvm-egress.md) |
 
 ## What boots
 
@@ -79,7 +81,7 @@ The measurement line now **measures the disk too**: `chunkedSha256` is SHA-256 o
 
 ### Port plan
 
-1024 control, 1025 logs, 5000+i RPC for app i, all in listen mode. berth-init serves this plan. `berth-vmm run` maps it to `control.sock`, `logs.sock` and `rpc-<i>.sock`, and the shell init's 5001 stop port is gone with the shell init. The e2e and `scripts/vm.mjs` follow the host-side rule from `microvm-guest-init.md`: every line is bounded, parsed as a JSON object and shape-checked, and nothing from the guest picks an action.
+1024 control, 1025 logs, 5000+i RPC for app i, all in listen mode. berth-init serves this plan. **1026 egress** (feat/vm-egress) is the one port where the guest connects out: berth-vmm's egress dialer listens on `<run-dir>/egress.sock`, and the port is mapped only when `run` is given `--egress-allow` ([`microvm-egress.md`](microvm-egress.md)). `berth-vmm run` maps it to `control.sock`, `logs.sock` and `rpc-<i>.sock`, and the shell init's 5001 stop port is gone with the shell init. The e2e and `scripts/vm.mjs` follow the host-side rule from `microvm-guest-init.md`: every line is bounded, parsed as a JSON object and shape-checked, and nothing from the guest picks an action.
 
 ## How to build
 
@@ -102,8 +104,10 @@ After a rootfs change, put the new hash in `rootfs/manifest.toml` (`image_sha256
 | | sha256 | Inputs |
 |---|---|---|
 | kernel `Image` | `8f79e8dae97ebc0ab8fcdc4ad209bb025ec967be82c713503e0612cfdd340ec8` | unchanged: linux 6.12.109 + libkrunfw 5.6.2 + `berth-kernel.config` (`kernel/manifest.toml`) |
-| rootfs | `57e7ef8b56a30280beeb2f96eb77c35b0e2fcd0c585e9259e2899d47e565bf0d` (46,678,016 B, erofs lz4hc, 82.8 MB tree) | Alpine 3.24.2 minirootfs `9bf70a7f…`; `nodejs` 24.18.1-r0, `e2fsprogs` 1.47.4-r0 (+ deps; `inputs.json` has the resolved list); agent-init `9ec8b25e…` (fix/seccomp-io-uring-vsock @ c558ef8); berth-probe `6ec735d8…`; sdk-node bundles from feat/per-app-cgroups @ 28b0999 (`generate-capability-policy.mjs` `17618463…`); epoch 1790812800, fixed UUID |
-| `/sbin/berth-init` | `f00ebfc2bec72c6693f76cbc54a111e4c709cc1afd49a80f4164708707ea50a9` | `packages/vmm/init` at this branch, Alpine's rust, static musl, `Cargo.lock` committed |
+| rootfs (current, feat/vm-egress) | `5f80e448b6658cb14612dcc5534fcf495c6dd31a687822f9234859b1643c9579` (46,727,168 B) | `57e7ef8b…` below plus `/usr/local/bin/berth-egress-broker.cjs` (`4ff162e8…`), with berth-init `c82613e7…` ([`microvm-egress.md`](microvm-egress.md)) |
+| rootfs (feat/vm-runtime) | `57e7ef8b56a30280beeb2f96eb77c35b0e2fcd0c585e9259e2899d47e565bf0d` (46,678,016 B, erofs lz4hc, 82.8 MB tree) | Alpine 3.24.2 minirootfs `9bf70a7f…`; `nodejs` 24.18.1-r0, `e2fsprogs` 1.47.4-r0 (+ deps; `inputs.json` has the resolved list); agent-init `9ec8b25e…` (fix/seccomp-io-uring-vsock @ c558ef8); berth-probe `6ec735d8…`; sdk-node bundles from feat/per-app-cgroups @ 28b0999 (`generate-capability-policy.mjs` `17618463…`); epoch 1790812800, fixed UUID |
+| `/sbin/berth-init` (current) | `c82613e72a1bc0445a18cd2b63822a7aab0f482dbf7ceb574ef0fa0fddf1b572` | feat/vm-egress: the egress broker and the relay to vsock 1026 |
+| `/sbin/berth-init` (feat/vm-runtime) | `f00ebfc2bec72c6693f76cbc54a111e4c709cc1afd49a80f4164708707ea50a9` | `packages/vmm/init` at this branch, Alpine's rust, static musl, `Cargo.lock` committed |
 | `/usr/local/bin/context-bus-daemon` | `1138c3595142a3235145b530d0cf1157b0971aa2230d417befe0a6e783477544` | `packages/context-bus-daemon` at this branch's HEAD |
 
 Before the rootfs, we rebuilt berth-init from the merge commit's source. It came out bit-identical to feat/vm-guest-init's binary (`50940a85…`), so the merge changed nothing in it. The two later commits to `init/` (the boot report and the remount warning) gave `f00ebfc2…`, reproduced twice.
@@ -224,7 +228,7 @@ Ordered by how much each one blocks a `local-vm` adapter in the berth CLI.
 1. **Artifacts have to reach the user.** `berth-vmm run` expects `kernel/sha256/<pin>/Image` and `rootfs/rootfs-<pin>.erofs` under `~/.berth/vm`, and nothing downloads them yet (the plan is in `microvm-image.md`, "Distribution"). berth-vmm itself must be signed with the hypervisor entitlement, and it links Homebrew's `/opt/homebrew/opt/libkrun` at exactly 1.19.6. The adapter needs a fetch step and a decision on how libkrun ships.
 2. **Apps have to be bundled.** An app share is `berth.yml` + `dist/index.mjs` (the app with the SDK and zod inlined) + `runtime.mjs` + `proto/context_bus.proto`. `build-apps.sh` makes these with esbuild from another checkout's `node_modules`. The CLI needs that step for `berth dev`: either bundle at run time, or ship the runtime bundle and bundle only the app.
 3. **Lifecycle and readiness are the adapter's job.** `berth-vmm run` stays in the foreground and gives no ready signal of its own. Readiness is `app_ready` / `boot_complete` on control. libkrun accepts a connection before the guest listens, so every client must use greeting-or-retry (as `vm.mjs` and `e2e.mjs` do). A stop needs the guest to cooperate, with SIGKILL after a timeout (only the ext4 journal protects state then). There is no reattach, pid file or `ps` for a running sandbox, and the sockets stay in the run directory after exit.
-4. **Missing parts of entrypoint.sh** (`microvm-guest-init.md`, open problem 3): no egress broker or host-side dialer, so apps that declare network cannot reach it. Also missing: secrets, governance gate, semantic-fs (`BERTH_NO_SEMANTIC_FS=1`), browser display, and python apps (and python3 is not in the image). An app needing any of these cannot run in a VM yet.
+4. **Missing parts of entrypoint.sh** (`microvm-guest-init.md`, open problem 3). The egress broker and the host-side dialer are done (feat/vm-egress, [`microvm-egress.md`](microvm-egress.md)); the GitHub API broker, upstream proxy chaining and the mesh are not. Also missing: secrets, governance gate, semantic-fs (`BERTH_NO_SEMANTIC_FS=1`), browser display, and python apps (and python3 is not in the image). An app needing any of these cannot run in a VM yet.
 5. **The guest environment is world-readable inside the guest.** It travels on the kernel command line, and the probe app (uid 10002, Landlock read on `/proc`) could read `/proc/cmdline`. Never pass a secret with `--env`. Secrets need their own channel, such as a vsock port or a file on a disk.
 6. **Command-line budget.** At most 20 `--env` entries and 2048 bytes in all. `BERTH_VM_APPS` grows with the tags, so the practical app limit is about 50 with short names (berth-init's own limit is 64). Passing configuration on a small config disk or a vsock handshake would remove both limits.
 7. **`/app` is unmeasured** and shows host uid 501 inside the guest (virtio-fs, no idmap). That is fine for `berth dev`. Attested and deployed runs want a hashed per-app erofs layer, measured like the rootfs.

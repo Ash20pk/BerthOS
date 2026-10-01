@@ -4,7 +4,7 @@ Date: 2026-10-01. Branch `feat/vm-egress`, from main f348469 (feat/vm-runtime me
 
 The microVM has no NIC and TSI is off, so an app that declares `network:host:<pattern>` had no way out at all (`microvm-runtime.md`, open problem 4). This adds one, and only one: the same egress broker the container runs, inside the guest, whose upstream connections leave through a vsock port to a dialer in `berth-vmm` on the host. The dialer enforces the sandbox's allowlist again, on its own, and is the only code that touches the host's network.
 
-Status and evidence are at the end (Results).
+Status and evidence are at the end (Results). berth-vmm does not read manifests: the CLI computes the allowlist and passes it with `--egress-allow`.
 
 ## Design
 
@@ -96,6 +96,9 @@ The dialer never terminates TLS: after `ok` it copies bytes. TLS is between the 
 - **Compromised broker** (code execution as uid 9002): can talk to `dial.sock`, so it can ask the host for any `host:port`. The host refuses everything outside `--egress-allow` and every internal address. It cannot bypass agent-init (no TCP connect, no vsock).
 - **Compromised guest root / kernel**: can open vsock 1026 directly (tested below with a test hook that does exactly that as PID 1). Same outcome as the broker case: gate 2 holds on the host. It can also open as many connections as the cap allows, and it can send what it likes inside an allowed tunnel; the dialer is a TCP pipe, not a content filter, the same property the container broker's CONNECT has.
 - **DNS**: the guest cannot influence resolution except by the name it asks for. A declared name that resolves to an internal address (misconfigured, hijacked, or a rebinding record) is refused on the host, after resolution. Tested with `localhost` declared, and with a public wildcard-DNS name that answers 10.0.0.1.
+- **Read scope.** The broker's Landlock policy restricts writes and network, not reads (`readPaths: []`, as for context-bus-daemon): node needs most of the image. Other apps' private directories are closed to uid 9002 by DAC (`/tmp/<app>` 0700, `/run/berth/<app>` 0711), and the broker is not in the shared `berth` group, so the apps' shared directories are closed to it too.
+- **UDP.** An app that declares any network capability keeps datagram sockets (agent-init leaves them open "for DNS"). With no NIC there is nowhere for them to go but loopback, and nothing listens there for UDP.
+- **The test hook.** `BERTH_VM_TEST_HOOKS=1` (a guest environment variable, so set by the host on the kernel command line) enables one control op, `egress_raw`, which makes PID 1 do what a compromised guest root could do anyway. Production boots never set it.
 - **What is still open**: the dialer runs inside berth-vmm, which is not yet under a Seatbelt profile (`microvm-runtime.md` problem 9); when it is, the profile must allow outbound TCP for this process, and only that. There is no rate limit beyond the concurrency cap, and no bandwidth accounting yet beyond the per-tunnel byte counts in the log.
 
 ### Not in scope
@@ -103,3 +106,53 @@ The dialer never terminates TLS: after `ok` it copies bytes. TLS is between the 
 - **github-api-broker** (TLS interception for `api.github.com`): not started in the VM. It needs a GitHub token, and the VM has no secrets channel yet (`microvm-runtime.md` problem 5); it also needs its CA in the app's trust store. Its upstream would use the same dial socket (it would run as another member of group 9002), and the host allowlist would carry `api.github.com:443`. One consequence to settle then: gate 2 cannot tell the github broker from the egress broker, so `api.github.com` being allowed on the host means a compromised guest root can reach it raw; the path-level policy is a guest-side guarantee only.
 - **The mesh** (WireGuard over UDP, `network:peer:`): out of scope. vsock is a stream transport, so it needs either a datagram relay over a vsock stream or a virtio-net device behind a host userspace stack allowlisted to peer endpoints.
 - **Upstream proxy chaining** in the VM, and IPv6-only remotes through the broker (the broker sends names; the dialer will dial IPv6 if that is all a name has, but nothing has tested it).
+
+## Results
+
+All on kernel `8f79e8da…`, rootfs **`5f80e448…`** (pinned), berth-init **`c82613e7…`**, through `berth-vmm run`. Real outbound network from the host for example.com. Load average 4 to 8 throughout (other work on the host).
+
+| Goal | Result | Evidence |
+|---|---|---|
+| 1. Host dialer in berth-vmm, host-side allowlist, vsock mapping | **Pass** | `src/egress.rs`; `berth-vmm run --egress-allow LIST [--egress-max-conns N]` maps vsock 1026 (non-listen) to `<run-dir>/egress.sock` and reports it in `endpoints` (`"egress":{"port":1026,"socket":…,"allow":[…]}`). Low-level form: `--egress-allow LIST --egress-socket SOCK`; `berth-vmm egress-dialer` runs the dialer alone. 16 Rust unit tests on the host (`cargo test --release` in `packages/vmm`), 10 of them the dialer's: patterns, glob, default ports, the request grammar, IPv4 and IPv6 block lists, any-internal-answer refusal, localhost through the real resolver, the whole dialer over its socket, and the connection cap |
+| 2. Guest side: broker started by berth-init, upstream over vsock, `BERTH_EGRESS_PROXY_URL` | **Pass** | `daemon_started` `egress-broker`: uid 9002, 127.0.0.1:8090, listening 26 to 32 ms after start, `ruleset=FullyEnforced`, in `/berth/daemons`. Rootfs rebuilt twice to the same hash (below) |
+| 3a. `network:host:example.com` app fetches https://example.com from the VM | **Pass** | http-fetch's `fetch_text`: 713 bytes, "Example Domain". Host log: `{"event":"egress","decision":"allowed","host":"example.com","port":443,"address":"104.20.23.154"}`, then `egress_closed` with 1870 bytes up, 6293 down. Plain `http://example.com` through the broker's forward path as well |
+| 3b. Undeclared host: refused by the guest broker, and by the host with the broker bypassed | **Pass** | `https://www.google.com` → `navigate_denied` in the broker, nothing reaches the host. As guest root on vsock 1026 directly: `DIAL www.google.com 443` → `ERR denied not in this sandbox's egress allowlist`; `DIAL example.com 22` (undeclared port) → denied; malformed frames (`GET http://… HTTP/1.1`, `DIAL 127.1 443`) → `bad_request`. The same raw path to a declared host works (`DIAL example.com 80` → `OK`, `HTTP/1.1 200 OK`): guest root gets exactly the host's allowlist, no more |
+| 3c. Internal addresses refused by the host even when declared | **Pass** | Boot 2 declares (in the manifest and so in `--egress-allow`) `localhost:*`, `10.0.0.1.nip.io`, `169.254.169.254.nip.io`, `127.0.0.1:*`. Through the broker and raw from guest root, the host refused every one after its own resolution: `resolves to ::1 (loopback)`, `resolves to 10.0.0.1 (private (10/8))`, `resolves to 169.254.169.254 (link-local and cloud metadata)`, `resolves to 127.0.0.1 (loopback)`; the broker refused the 127.0.0.1 literal itself first. 6 requests, 0 dialled. The address rules are also unit-tested (ULA/`fd00:ec2::254`, mapped and NAT64 forms, CGNAT, …) |
+| 3d. An app with no network capability has no egress | **Pass** | probe, in the same VM as a running broker: connect to 127.0.0.1:8090 `EACCES`, to `dial.sock` `EACCES` (directory 0750 root:9002), to 1.1.1.1:443 `EACCES`, `socket(AF_VSOCK)` `EPERM`, UDP `EPERM` |
+| 3e. No allowlist, no way out | **Pass** | Boot 3: http-fetch without `--egress-allow`: no dialer, 1026 not mapped, the broker's dial fails (`host_dialer_refused`), the fetch fails |
+| 3f. Port plan regression | **Pass** | `node scripts/e2e.mjs all` on the new rootfs: single 18/18, multi 15/15, enforce 12/12, stdio 3/3, exits 3/3 (51/51). In the egress boot itself: control `status`, logs, RPC on 5000 and 5001 next to 1026, all streams well-formed, clean shutdown with `unmountFailed: []` |
+| 4. Docs | Done | This file; `microvm-runtime.md` status and port plan |
+
+`node scripts/e2e.mjs egress`: **28/28**. Results in `$ART/run/e2e-egress.json`, including every host log line.
+
+One defect found on the way and fixed (c0db4f7): the relay's listening socket and every connection accepted on it (Linux gives an accepted Unix socket the listener's path) kept `/run` busy at shutdown, so it was lazily detached. berth-init now closes the relay before unmounting.
+
+### Pinned artifacts
+
+| | sha256 | Inputs |
+|---|---|---|
+| rootfs | `5f80e448b6658cb14612dcc5534fcf495c6dd31a687822f9234859b1643c9579` (46,727,168 B) | as `57e7ef8b…` (same resolved packages: Alpine 3.24.2, nodejs 24.18.1-r0, e2fsprogs 1.47.4-r0; same agent-init, probe, sdk-node bundles), plus the broker; berth-init replaced. The tree listing differs from 57e7ef8b's by one line, `./usr/local/bin/berth-egress-broker.cjs`. Built twice, identical |
+| `/sbin/berth-init` | `c82613e72a1bc0445a18cd2b63822a7aab0f482dbf7ceb574ef0fa0fddf1b572` | `packages/vmm/init` at this branch; 21 unit tests (2 new: the egress plan and identity); built twice, identical |
+| `/usr/local/bin/berth-egress-broker.cjs` | `4ff162e8e2c86cc43a73caa02bd1a78e4fe620c2b18040334b79366402157d89` | `packages/docker-orchestrator/docker/egress-broker.cjs` at this branch |
+| `/usr/local/bin/context-bus-daemon` | `1138c3595142a3235145b530d0cf1157b0971aa2230d417befe0a6e783477544` | unchanged, rebuilt to the same hash |
+
+Artifacts are in `/Users/ash/berth-wt/vm-egress-artifacts/` (kernel, cache, builders, agent-init are APFS clones of `vm-runtime-artifacts`).
+
+### How to run
+
+```sh
+cd packages/vmm
+export BERTH_VMM_ARTIFACTS=/Users/ash/berth-wt/vm-egress-artifacts
+./scripts/build-berth-init.sh && ./scripts/build-rootfs.sh && ./scripts/build-apps.sh
+cargo test --release                      # the dialer's unit tests, on the host
+node scripts/e2e.mjs egress               # 28 checks; needs outbound network
+A=$BERTH_VMM_ARTIFACTS
+./target/release/berth-vmm run --app $A/apps/http-fetch --run-dir $A/run/hf --egress-allow example.com &
+node scripts/vm.mjs call $A/run/hf 0 fetch_text '{"url":"https://example.com/"}'
+```
+
+### Notes for the CLI's local-vm adapter
+
+- Compute `--egress-allow` on the host from the sandbox's manifests: every `network:host:<scope>` and `browser:navigate:<scope>`, verbatim (the dialer parses scopes exactly as the broker does). Pass nothing when there are none; then no port is mapped.
+- Read `endpoints.egress` (null without an allowlist) and the `egress` / `egress_closed` / `egress_dialer` lines on berth-vmm's stderr, which are host output (berth-vmm's own), not guest output. They are the egress audit log.
+- The apps need nothing new: `BERTH_EGRESS_PROXY_URL` is set by berth-init, and `configureEgressProxy()` reads it as in a container. An app still has to declare `network:connect:8090`.
