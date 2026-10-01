@@ -32,6 +32,16 @@ test("a write outside every allowed prefix says no manifest line can grant it", 
   assert.match(out, /\/workspace, \/context, \/tmp, \/app/);
 });
 
+test("an fs error an app quoted inside its own message is still explained, and the app's message kept", () => {
+  const raw =
+    '"../../../etc/x.txt" resolves to /etc/x.txt, which is outside /workspace. ' +
+    "Relative paths are relative to /workspace. (EACCES: permission denied, open '/etc/x.txt')";
+  const out = explainAppError(raw, ctx());
+  assert.match(out, /BERTH CAPABILITY DENIAL/);
+  assert.match(out, /denied: open\(2\) on \/etc\/x\.txt/);
+  assert.match(out, /resolves to \/etc\/x\.txt, which is outside \/workspace/);
+});
+
 test("a write under an allowed but undeclared prefix names the exact line and the restart requirement", () => {
   const out = explainAppError("EACCES: permission denied, mkdir '/tmp/scratch/run-1'", ctx());
   assert.match(out, /- filesystem:write:\/tmp\/scratch/);
