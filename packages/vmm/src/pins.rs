@@ -45,7 +45,10 @@ fn kernel_format(name: &str) -> Result<u32, String> {
     }
 }
 
-pub fn verify_kernel(path: &str) -> Result<Kernel, String> {
+/// `block_root`: the root is the rootfs image (`cmdline`, berth-init as PID 1
+/// straight from the kernel); otherwise a virtio-fs directory
+/// (`cmdline_virtiofs_root`, through libkrun's init.krun).
+pub fn verify_kernel(path: &str, block_root: bool) -> Result<Kernel, String> {
     let m = KERNEL_MANIFEST;
     let need = |k: &str| manifest_get(m, k).ok_or_else(|| format!("kernel manifest has no {k}"));
     let want = need("image_sha256")?;
@@ -64,7 +67,7 @@ pub fn verify_kernel(path: &str) -> Result<Kernel, String> {
         path: path.into(),
         sha256: got,
         format: kernel_format(need("image_format")?)?,
-        cmdline: need("cmdline")?.into(),
+        cmdline: need(if block_root { "cmdline" } else { "cmdline_virtiofs_root" })?.into(),
         linux: need("linux_version")?.into(),
         config_sha256: need("config_sha256")?.into(),
         hash_ms,
@@ -178,8 +181,17 @@ mod tests {
             assert!(manifest_get(KERNEL_MANIFEST, k).is_some(), "{k}");
         }
         assert!(is_hex64(manifest_get(KERNEL_MANIFEST, "image_sha256").unwrap()));
-        let cmdline = manifest_get(KERNEL_MANIFEST, "cmdline").unwrap();
-        assert!(!cmdline.contains("lsm="), "the LSM list is compiled in; the cmdline must not override it");
+        for key in ["cmdline", "cmdline_virtiofs_root"] {
+            let cmdline = manifest_get(KERNEL_MANIFEST, key).unwrap_or_else(|| panic!("{key}"));
+            assert!(!cmdline.contains("lsm="), "the LSM list is compiled in; the cmdline must not override it");
+        }
+        // The sandbox boots the rootfs image as the kernel's root, berth-init
+        // as PID 1, and nothing from libkrun in between.
+        let c = manifest_get(KERNEL_MANIFEST, "cmdline").unwrap();
+        for want in ["root=/dev/vda", "rootfstype=erofs", " ro ", "init=/sbin/berth-init"] {
+            assert!(c.contains(want), "cmdline lacks {want:?}");
+        }
+        assert!(!c.contains("init.krun"));
     }
 
     #[test]

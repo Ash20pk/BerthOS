@@ -265,8 +265,14 @@ fn main() {
     let o = parse();
     preflight(&o);
     // Everything that identifies what is booted is checked before libkrun sees it.
-    let kernel = o.kernel.as_deref().map(|k| pins::verify_kernel(k).unwrap_or_else(|e| die(&e)));
+    let kernel = o.kernel.as_deref().map(|k| pins::verify_kernel(k, o.rootfs.is_some()).unwrap_or_else(|e| die(&e)));
     let rootfs = o.rootfs.as_deref().map(|r| pins::verify_rootfs(r, o.rootfs_sha256.as_deref()).unwrap_or_else(|e| die(&e)));
+    // The pinned kernel mounts the image itself (root=/dev/vda rootfstype=erofs).
+    if let (Some(_), Some(r)) = (&kernel, &rootfs) {
+        if r.fstype != "erofs" {
+            die(&format!("rootfs {} is {}, but the pinned kernel command line mounts an erofs root", r.path, r.fstype));
+        }
+    }
     let state = o.state.as_deref().map(|s| pins::open_state(s, o.state_size_mib).unwrap_or_else(|e| die(&e)));
     unsafe {
         check("krun_init_log", krun_init_log(KRUN_LOG_TARGET_DEFAULT, o.log_level, KRUN_LOG_STYLE_AUTO, 0));
@@ -301,12 +307,16 @@ fn main() {
         if let Some(r) = &rootfs {
             let d = dev();
             check("krun_add_disk(rootfs)", krun_add_disk(ctx, cs("rootfs").as_ptr(), cs(&r.path).as_ptr(), true));
-            // libkrun boots its init from a dummy virtio-fs root, then mounts
-            // this device read-only and switches to it.
-            check(
-                "krun_set_root_disk_remount",
-                krun_set_root_disk_remount(ctx, cs(&d).as_ptr(), cs(r.fstype).as_ptr(), cs("ro").as_ptr()),
-            );
+            if kernel.is_none() {
+                // libkrunfw's kernel (not a sandbox): libkrun boots init.krun
+                // from a dummy virtio-fs root, then mounts this device
+                // read-only and switches to it. The pinned kernel's command
+                // line mounts it directly instead (root=/dev/vda).
+                check(
+                    "krun_set_root_disk_remount",
+                    krun_set_root_disk_remount(ctx, cs(&d).as_ptr(), cs(r.fstype).as_ptr(), cs("ro").as_ptr()),
+                );
+            }
         }
         let mut guest_env: Vec<String> = vec![];
         if let Some(s) = &state {
