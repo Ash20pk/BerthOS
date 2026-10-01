@@ -1,38 +1,53 @@
 #!/usr/bin/env node
-// Boots apps/notes in a berth-vmm microVM, calls add_note + list_notes from the
-// host over the vsock-mapped Unix socket, samples the berth-vmm process RSS,
-// and shuts the VM down. Repeats RUNS times and prints the timings.
+// Boots apps/notes in a berth-vmm microVM (pinned kernel, read-only rootfs
+// image, optional state disk), calls the notes exports from the host over the
+// vsock-mapped Unix socket, samples the berth-vmm process memory, and stops
+// the VM. Repeats RUNS times and prints the timings.
 //
 //   node boot-notes.mjs            one boot, guest console to stderr
 //   RUNS=6 node boot-notes.mjs     first run + 5 repeats, prints median
 //
-// Env: ART (artifacts dir), KRUNFW_DIR (dir holding libkrunfw.5.dylib; default
-// our Berth kernel), CPUS, MEM, SANDBOX_PROFILE (run under sandbox-exec -f).
+// Env: ART (artifacts dir), KERNEL (default: the manifest-pinned Image in
+// $ART/kernel/sha256/), ROOTFS (default: $ART/rootfs/LATEST), STATE (state
+// disk path; none = tmpfs /workspace), ACTIONS (comma list of add,list;
+// default add,list), STOP (graceful = vsock 5001 stop request, the default;
+// kill = SIGKILL berth-vmm), CPUS, MEM, SANDBOX_PROFILE (run under
+// sandbox-exec -f), BERTH_VM_MODE (rpc; inspect/probe just print and exit).
 import { spawn, execFileSync } from "node:child_process";
-import { existsSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import net from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const vmmDir = join(here, "..");
-const ART = process.env.ART ?? join(vmmDir, "..", "..", "..", "libkrun-vm-artifacts");
+const ART = process.env.ART ?? join(vmmDir, "..", "..", "..", "vm-image-artifacts");
 const VMM = join(vmmDir, "target/release/berth-vmm");
-const KRUNFW_DIR = process.env.KRUNFW_DIR ?? join(ART, "kernel/lib");
+const pinnedKernel = /^image_sha256 = "([0-9a-f]{64})"/m.exec(readFileSync(join(vmmDir, "kernel/manifest.toml"), "utf8"))[1];
+const KERNEL = process.env.KERNEL ?? join(ART, "kernel/sha256", pinnedKernel, "Image");
+const ROOTFS = process.env.ROOTFS ?? join(ART, "rootfs", readFileSync(join(ART, "rootfs/LATEST"), "utf8").trim());
+const STATE = process.env.STATE;
+const ACTIONS = (process.env.ACTIONS ?? "add,list").split(",").filter(Boolean);
+const STOP = process.env.STOP ?? "graceful";
+const MODE = process.env.BERTH_VM_MODE ?? "rpc";
 const RUNS = Number(process.env.RUNS ?? 1);
 const runDir = join(ART, "run");
 mkdirSync(runDir, { recursive: true });
 const sock = join(runDir, "notes.sock");
+const ctl = join(runDir, "notes-ctl.sock");
 const noise = [];
 
 function vmArgs() {
   return [
     "--cpus", process.env.CPUS ?? "2",
     "--mem", process.env.MEM ?? "512",
-    "--root", join(ART, "rootfs-notes"), "--root-ro",
+    "--kernel", KERNEL,
+    "--rootfs", ROOTFS,
+    ...(STATE ? ["--state", STATE, "--state-size", process.env.STATE_SIZE ?? "256"] : []),
     "--share", `app:${join(ART, "app-notes")}:ro`,
     "--vsock", `5000:${sock}:listen`,
-    "--env", `BERTH_VM_MODE=${process.env.BERTH_VM_MODE ?? "rpc"}`,
+    "--vsock", `5001:${ctl}:listen`,
+    "--env", `BERTH_VM_MODE=${MODE}`,
     "--", "/sbin/berth-init",
   ];
 }
@@ -53,6 +68,7 @@ function footprintMiB(pid) {
 // Host-clock time at which each guest console marker first arrived.
 const MARKS = {
   guestInit: "[berth:vm-init] init start",
+  stateMounted: "/workspace persistent",
   policyCompiled: "policy compiled for",
   agentInitApplied: "ruleset=FullyEnforced",
   appReady: '[berth:runtime] "notes" ready',
@@ -103,9 +119,13 @@ function rpcOnce(timeoutMs) {
         c.destroy();
         reject(new Error("no answer"));
       }, timeoutMs);
-      const added = await call("1", "add_note", { text: "hello from the host" });
-      const tFirst = performance.now();
-      const listed = await call("2", "list_notes");
+      let tFirst, added, listed;
+      for (const [i, a] of ACTIONS.entries()) {
+        if (a === "add") added = await call(String(i + 1), "add_note", { text: process.env.NOTE ?? "hello from the host" });
+        else if (a === "list") listed = await call(String(i + 1), "list_notes");
+        else throw new Error(`unknown action ${a}`);
+        tFirst ??= performance.now();
+      }
       clearTimeout(timer);
       c.removeAllListeners("close");
       c.end();
@@ -116,6 +136,7 @@ function rpcOnce(timeoutMs) {
 
 async function bootOnce(i) {
   rmSync(sock, { force: true });
+  rmSync(ctl, { force: true });
   const console_ = [];
   const marks = {};
   const cmd = process.env.SANDBOX_PROFILE ? "sandbox-exec" : VMM;
@@ -123,11 +144,11 @@ async function bootOnce(i) {
     ? // sandbox-exec is a platform binary, so dyld drops DYLD_* on the way in;
     // env re-adds it inside. sandbox-exec and env both exec, so vm.pid stays
     // the berth-vmm process.
-    ["-f", process.env.SANDBOX_PROFILE, "-D", `ART=${ART}`, "-D", `VMM_DIR=${vmmDir}`, "/usr/bin/env", `DYLD_LIBRARY_PATH=${KRUNFW_DIR}`, VMM, ...vmArgs()]
+    ["-f", process.env.SANDBOX_PROFILE, "-D", `ART=${ART}`, "-D", `VMM_DIR=${vmmDir}`, VMM, ...vmArgs()]
     : vmArgs();
   const t0 = performance.now();
   const vm = spawn(cmd, args, {
-    env: { DYLD_LIBRARY_PATH: KRUNFW_DIR, PATH: process.env.PATH },
+    env: { PATH: process.env.PATH },
     stdio: ["ignore", "pipe", "pipe"],
   });
   for (const s of [vm.stdout, vm.stderr]) {
@@ -144,6 +165,11 @@ async function bootOnce(i) {
 
   let result;
   const deadline = Date.now() + 30000;
+  if (MODE !== "rpc") {
+    // inspect/probe print to the console and stop on their own.
+    await new Promise((r) => (exited ? r() : vm.on("exit", r)));
+    return { run: i, mode: MODE, exited, console: console_.join("") };
+  }
   for (;;) {
     if (exited) throw new Error(`berth-vmm exited early ${JSON.stringify(exited)}\n${console_.join("")}`);
     if (existsSync(sock)) {
@@ -161,11 +187,28 @@ async function bootOnce(i) {
   const vmmPid = vm.pid;
   const rss = rssKiB(vmmPid);
   const footprint = footprintMiB(vmmPid);
-  vm.kill("SIGTERM");
-  await new Promise((r) => (exited ? r() : vm.on("exit", r)));
+  const tStop = performance.now();
+  if (STOP === "graceful") {
+    // The stop request: berth-init syncs and unmounts the state disk, then exits.
+    await new Promise((r) => {
+      const c = net.createConnection(ctl);
+      c.on("error", r);
+      c.on("close", r);
+      c.end();
+    });
+    const killTimer = setTimeout(() => vm.kill("SIGKILL"), 10000);
+    await new Promise((r) => (exited ? r() : vm.on("exit", r)));
+    clearTimeout(killTimer);
+  } else {
+    vm.kill("SIGKILL");
+    await new Promise((r) => (exited ? r() : vm.on("exit", r)));
+  }
+  const stopMs = Math.round(performance.now() - tStop);
   const text = console_.join("");
   const mem = /guest-mem (.*)/.exec(text)?.[1]?.trim();
-  return { run: i, firstRpcMs: Math.round(firstRpcMs), marksMs: marks, vmmRssMiB: rss ? Math.round(rss / 1024) : null, vmmFootprintMiB: footprint, guestMem: mem, added: result.added, listed: result.listed, console: text };
+  const measLine = text.split("\n").find((l) => l.includes('"event":"measurements"'));
+  const measurements = measLine ? JSON.parse(measLine) : null;
+  return { run: i, firstRpcMs: Math.round(firstRpcMs), stop: STOP, stopMs, exited, marksMs: marks, vmmRssMiB: rss ? Math.round(rss / 1024) : null, vmmFootprintMiB: footprint, guestMem: mem, measurements, added: result.added, listed: result.listed, console: text };
 }
 
 const results = [];
