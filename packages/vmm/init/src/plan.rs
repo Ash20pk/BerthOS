@@ -26,6 +26,19 @@ pub const MAX_APPS: usize = 64;
 pub const CONTROL_PORT: u32 = 1024;
 pub const LOG_PORT: u32 = 1025;
 pub const RPC_PORT_BASE: u32 = 5000;
+/// The one port where the guest connects out: the host's egress dialer
+/// (docs/design/microvm-egress.md). Below RPC_PORT_BASE, so no app index
+/// can ever reach it.
+pub const EGRESS_PORT: u32 = 1026;
+
+/// The egress broker: its uid/gid (`berth-egress`), its loopback port (the
+/// one apps declare as network:connect:8090), and where berth-init serves
+/// the socket it reaches the host through.
+pub const EGRESS_UID: u32 = 9002;
+pub const BROKER_PORT: u16 = 8090;
+pub const EGRESS_DIR: &str = "/run/berth/egress";
+pub const DIAL_SOCKET: &str = "/run/berth/egress/dial.sock";
+pub const EGRESS_POLICY: &str = "/run/berth/egress/policy.json";
 
 /// The cgroup files berth-init will ever write into an app's cgroup, whatever
 /// a policy lists (entrypoint.sh's BERTH_CGROUP_LIMIT_FILES). No memory.high:
@@ -245,6 +258,37 @@ pub fn meminfo_bytes(meminfo: &str, key: &str) -> Option<u64> {
     })
 }
 
+/// Whether an app declares host-scoped egress: the capabilities that make
+/// entrypoint.sh start the egress broker (run-lifecycle.ts's needsEgressBroker).
+pub fn declares_egress(policy: &Policy) -> bool {
+    policy.declared.iter().any(|c| c.starts_with("network:host:") || c.starts_with("browser:navigate:"))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EgressPlan {
+    /// No app declares egress: no broker, no relay.
+    None,
+    /// One app does: the broker enforces that app's declared patterns. The
+    /// value is the app's position in the list given.
+    Broker(usize),
+    /// More than one does. The broker port is one resource for the whole
+    /// sandbox and its pattern list is one app's, so this is refused, as the
+    /// CLI's assertAtMostOneEgressBrokerApp refuses it for a container.
+    Refused(String),
+}
+
+pub fn egress_plan(apps: &[&Policy]) -> EgressPlan {
+    let wanting: Vec<usize> = (0..apps.len()).filter(|i| declares_egress(apps[*i])).collect();
+    match wanting.as_slice() {
+        [] => EgressPlan::None,
+        [one] => EgressPlan::Broker(*one),
+        many => EgressPlan::Refused(format!(
+            "more than one app declares network:host:/browser:navigate: ({}); one egress broker serves one app's patterns, so none is started",
+            many.iter().map(|i| apps[*i].app_name.as_str()).collect::<Vec<_>>().join(", ")
+        )),
+    }
+}
+
 /// The app's own gid, the shared berth group, and tty for terminal:* apps
 /// (entrypoint.sh's addgroup calls, read back by export_app_identity).
 pub fn supplementary_gids(uid: u32, policy: &Policy) -> Vec<u32> {
@@ -296,7 +340,7 @@ pub fn invoke_grants(apps: &[(String, u32, &Policy)]) -> (Vec<InvokeGrant>, Vec<
 /// adduser cannot run. Users join `berth` (9999) and, for terminal:* apps,
 /// `tty` (5); if the image already has a group with that gid its member list
 /// is extended, otherwise the group is added.
-pub fn identity_files(passwd: &str, group: &str, apps: &[(String, u32, Vec<u32>)], with_bus: bool) -> (String, String) {
+pub fn identity_files(passwd: &str, group: &str, apps: &[(String, u32, Vec<u32>)], with_bus: bool, with_egress: bool) -> (String, String) {
     let mut users: Vec<(String, u32, String)> = Vec::new();
     if with_bus {
         users.push(("berth-context-bus".into(), DAEMON_BUS_UID, "berth daemon".into()));
@@ -306,6 +350,11 @@ pub fn identity_files(passwd: &str, group: &str, apps: &[(String, u32, Vec<u32>)
     }
     let mut extra: BTreeMap<u32, Vec<String>> = BTreeMap::new();
     extra.insert(SHARED_GID, users.iter().map(|u| u.0.clone()).collect());
+    // Not in `berth`: the broker has no business in the apps' shared
+    // directories (root:berth 2775).
+    if with_egress {
+        users.push(("berth-egress".into(), EGRESS_UID, "berth egress broker".into()));
+    }
     let tty: Vec<String> = apps.iter().filter(|(_, _, g)| g.contains(&TTY_GID)).map(|(n, _, _)| format!("berth-{n}")).collect();
     if !tty.is_empty() {
         extra.insert(TTY_GID, tty);
@@ -547,6 +596,7 @@ mod tests {
             "root:x:0:root\ntty:x:5:\nberth-p:x:7:\nnotes:x:10001:\n",
             &apps,
             true,
+            false,
         );
         assert_eq!(
             passwd.lines().collect::<Vec<_>>(),
@@ -568,6 +618,30 @@ mod tests {
                 "berth:x:9999:berth-context-bus,berth-t,berth-p",
             ]
         );
+    }
+
+    #[test]
+    fn egress_identity_is_outside_the_shared_group() {
+        let apps = [("a".to_string(), 10000, vec![10000, 9999])];
+        let (passwd, group) = identity_files("root:x:0:0::/:/bin/sh\n", "root:x:0:root\n", &apps, false, true);
+        assert!(passwd.lines().any(|l| l == "berth-egress:x:9002:9002:berth egress broker:/nonexistent:/sbin/nologin"));
+        assert!(group.lines().any(|l| l == "berth-egress:x:9002:"));
+        assert!(group.lines().any(|l| l == "berth:x:9999:berth-a"), "{group}");
+    }
+
+    #[test]
+    fn one_egress_app_at_most() {
+        let fetch = policy("fetch", &[], &["network:host:example.com", "network:connect:8090"], None);
+        let browser = policy("browser", &[], &["browser:navigate:*"], None);
+        let plain = policy("plain", &[], &["network:connect:443", "filesystem:write:/workspace"], None);
+        assert!(declares_egress(&fetch) && declares_egress(&browser) && !declares_egress(&plain));
+        assert_eq!(egress_plan(&[&plain]), EgressPlan::None);
+        assert_eq!(egress_plan(&[&plain, &fetch]), EgressPlan::Broker(1));
+        match egress_plan(&[&fetch, &plain, &browser]) {
+            EgressPlan::Refused(why) => assert!(why.contains("fetch, browser"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert!(EGRESS_PORT < RPC_PORT_BASE && EGRESS_PORT != CONTROL_PORT && EGRESS_PORT != LOG_PORT);
     }
 
     #[test]
