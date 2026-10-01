@@ -7,7 +7,9 @@
 //                                      throughout, logs on their own port
 //   node e2e-guest-init.mjs multi      notes + filesystem, per-app cgroups
 //   node e2e-guest-init.mjs stdio      single, with BERTH_VM_RPC=stdio
+//   node e2e-guest-init.mjs exits      power off when the last app exits, and on a refused boot
 //   RUNS=6 node e2e-guest-init.mjs bench   first boot + 5, median spawn->first RPC
+//                                      (BENCH_APP=notes-plain: no resources block)
 //
 // It is also the reference for the host side of the vsock port plan
 // (docs/design/microvm-guest-init.md): every line read from the guest is
@@ -16,7 +18,7 @@
 //
 // Env: GI_ART (artifacts), ART (spike artifacts: kernel), CPUS, MEM, VERBOSE=1.
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,7 +30,10 @@ const GI_ART = process.env.GI_ART ?? join(wt, "vm-guest-init-artifacts");
 const ART = process.env.ART ?? join(wt, "libkrun-vm-artifacts");
 const VMM = join(vmmDir, "target/release/berth-vmm");
 const KERNEL = join(ART, "kernel/Image");
-const CMDLINE = "reboot=k panic=-1 panic_print=0 nomodule console=hvc0 rootfstype=virtiofs ro quiet no-kvmapf init=/sbin/berth-init";
+// INIT_KRUN=1 boots the way the spike did: libkrun's init.krun first, which
+// mounts /proc, /sys and /dev and then execs berth-init (still PID 1).
+const INIT = process.env.INIT_KRUN === "1" ? "/init.krun" : "/sbin/berth-init";
+const CMDLINE = `reboot=k panic=-1 panic_print=0 nomodule console=hvc0 rootfstype=virtiofs ro quiet no-kvmapf init=${INIT}${process.env.CMDLINE_EXTRA ? " " + process.env.CMDLINE_EXTRA : ""}`;
 const runDir = join(GI_ART, "run");
 mkdirSync(runDir, { recursive: true });
 const VERBOSE = process.env.VERBOSE === "1";
@@ -273,7 +278,7 @@ async function single(rpcMode) {
   await new Promise((res) => setTimeout(res, 200));
   const off = await shutdown(b, s);
 
-  const logLines = s.logs.map((l) => `[${l.src}/${l.stream}] ${l.line}`);
+  const logLines = s.logs.map((l) => `${l.t} [${l.src}/${l.stream}] ${l.line}`);
   check(typeof first?.id === "string", "add_note answered over vsock", results);
   check(listed.notes.length === 6, `list_notes over the same connection sees 6 notes (got ${listed.notes.length})`, results);
   check(listed2.notes.length === 8 && both.every((x) => typeof x.id === "string"), "two concurrent host connections share one app (8 notes)", results);
@@ -325,11 +330,40 @@ async function multi() {
   return { results, status: st, files, events: s.events.map(evSummary), logSample: s.logs.map((l) => `[${l.src}/${l.stream}] ${l.line}`).slice(0, 120), console: b.consoleText.join("") };
 }
 
+/** PID 1's other two ways down: every app exiting, and a refused boot. */
+async function exits() {
+  const results = [];
+  // An app whose code throws at load: the runtime exits, and with it the last app.
+  const broken = join(GI_ART, "apps", "broken");
+  rmSync(broken, { recursive: true, force: true });
+  mkdirSync(join(broken, "dist"), { recursive: true });
+  for (const f of ["berth.yml", "runtime.mjs"]) writeFileSync(join(broken, f), readFileSync(join(GI_ART, "apps", "notes", f)));
+  mkdirSync(join(broken, "proto"), { recursive: true });
+  writeFileSync(join(broken, "dist", "index.mjs"), 'throw new Error("this app fails at load");\n');
+  let b = await boot(["broken"]);
+  let s = await attachStreams(b);
+  let ex = await b.exited;
+  let exited = s.events.find((e) => e.event === "app_exited");
+  let off = s.events.find((e) => e.event === "power_off");
+  check(exited && exited.exit.code !== 0, `app exit recorded: ${JSON.stringify(exited?.exit)}`, results);
+  check(off?.reason === "every app has exited" && off.exitCode === 1 && ex.code === 0, `VM powered off by itself once no app was left (${off?.reason}, exitCode ${off?.exitCode}, ${Math.round(ex.atMs)} ms)`, results);
+  check(s.logs.some((l) => l.src === "notes" && l.line.includes("this app fails at load")), "the app's error is on the log port", results);
+
+  // A configuration berth-init refuses outright.
+  b = await boot(["notes"], { env: { BERTH_VM_RPC: "tcp" } });
+  s = await attachStreams(b);
+  ex = await b.exited;
+  const failed = s.events.find((e) => e.event === "boot_failed");
+  off = s.events.find((e) => e.event === "power_off");
+  check(failed && /BERTH_VM_RPC/.test(failed.reason) && off?.exitCode === 1, `refused boot reported on control, then power off (${failed?.reason})`, results);
+  return { results };
+}
+
 async function bench() {
   const runs = Number(process.env.RUNS ?? 6);
   const out = [];
   for (let i = 0; i < runs; i++) {
-    const b = await boot(["notes"]);
+    const b = await boot([process.env.BENCH_APP ?? "notes"]);
     const s = await attachStreams(b);
     await rpcConnect(RPC_PORT_BASE, (r) => r.call("add_note", { text: "bench" }));
     const ms = Math.round(performance.now() - b.t0);
@@ -345,7 +379,8 @@ async function bench() {
 }
 
 const mode = process.argv[2] ?? "single";
-const res = mode === "multi" ? await multi() : mode === "bench" ? await bench() : await single(mode === "stdio" ? "stdio" : undefined);
+const res =
+  mode === "multi" ? await multi() : mode === "bench" ? await bench() : mode === "exits" ? await exits() : await single(mode === "stdio" ? "stdio" : undefined);
 writeFileSync(join(runDir, `e2e-${mode}.json`), JSON.stringify(res, null, 2));
 const { console: consoleText, logSample, events, ...summary } = res;
 console.log(JSON.stringify(summary, null, 2));

@@ -70,4 +70,8 @@ for app in $(echo "$APPS" | tr ',' ' '); do
     cp "$B/apps/$app.mjs" "$D/dist/index.mjs"
     cp "$REPO/packages/context-bus-daemon/proto/context_bus.proto" "$D/proto/"
 done
+# The benchmark's like-for-like with the spike: notes with no resources block
+# (so no cpu.max throttling its startup).
+rm -rf "$GI_ART/apps/notes-plain" && cp -R "$GI_ART/apps/notes" "$GI_ART/apps/notes-plain"
+cp "$REPO/apps/notes/berth.yml" "$GI_ART/apps/notes-plain/berth.yml"
 du -sh "$R" "$GI_ART/apps"/*
