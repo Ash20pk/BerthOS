@@ -209,6 +209,16 @@ jobs:
         # every binary with an explicit mode anyway.
         run: packages/vmm/scripts/build-rootfs.sh
 
+      # On a hash mismatch, keep what the build produced (the image, its file
+      # listing, inputs and package locks) so it can be compared with a local
+      # build of the same pin.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: rootfs-mismatch
+          path: ${{ env.BERTH_VMM_ARTIFACTS }}/rootfs/
+          if-no-files-found: warn
+
       - name: Collect
         env:
           ROOTFS: ${{ needs.pins.outputs.rootfs }}
