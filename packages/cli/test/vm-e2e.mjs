@@ -14,7 +14,7 @@
 //
 // Usage: node packages/cli/test/vm-e2e.mjs [--from DIR] [--vmm PATH] [--rounds N]
 // Defaults: --from $BERTH_VMM_ARTIFACTS; --vmm whatever `berth doctor` finds.
-// Nothing outside ~/.berth and a temp dir is written; the sandboxes are named
+// Nothing outside ~/.berth (or $BERTH_HOME) and a temp dir is written; the sandboxes are named
 // berth-dev-notes-e2e and stopped at the end.
 import { spawn, spawnSync } from "node:child_process";
 import { cpSync, mkdtempSync, readFileSync, writeFileSync, appendFileSync, existsSync } from "node:fs";
@@ -188,6 +188,9 @@ async function mcpSession(runId, tag) {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [berth, "mcp", "--runtime", "vm", "--app", name, "--app-dir", app, "--audit-file", auditFile, "--run-id", runId],
+    // The SDK passes only a default allowlist (HOME, PATH, ...) unless told;
+    // BERTH_HOME must reach the bridge, or it uses the real ~/.berth.
+    env: Object.fromEntries(Object.entries(process.env).filter(([, v]) => v !== undefined)),
     stderr: "pipe",
   });
   let err = "";

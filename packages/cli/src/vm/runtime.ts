@@ -97,6 +97,9 @@ export async function bootVm(options: BootVmOptions): Promise<{ sandbox: VmSandb
     name: options.name,
     vmm: options.vmm,
     apps: bundles.map((b, i) => ({ name: b.name, share: b.shareDir, appDir: options.apps[i]!.appDir })),
+    // Where ensureArtifacts installed them. berth-vmm's own default is
+    // $HOME/.berth/vm, which is not this when BERTH_HOME moves ~/.berth.
+    artifactsDir: vmHome(),
     ...(options.state === false ? {} : { state: vmStateDisk(primary.name) }),
     ...egressArgs(options.apps.map((a) => a.manifest), options.vmm),
     ...(options.onLog ? { onLog: options.onLog } : {}),
