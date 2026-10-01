@@ -19,5 +19,5 @@ agent_init_ref = "fix/seccomp-io-uring-vsock"
 init_path = "/sbin/berth-init"
 
 # Last verified build (filled in by hand after a build and a boot check).
-image_sha256 = ""
-image_size = 0
+image_sha256 = "42b32ced43f8d431d21106b90182238b5cf6ed10e87ec8f52492420d72d1bdd3"
+image_size = 46362624
