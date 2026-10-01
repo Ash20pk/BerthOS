@@ -1,0 +1,251 @@
+import { spawnSync } from "node:child_process";
+import { accessSync, constants, existsSync, readFileSync, readlinkSync, readdirSync, realpathSync, writeFileSync, mkdirSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { KERNEL_SHA256, LIBKRUN_VERSION, ROOTFS_SHA256 } from "./pins.js";
+import { vmHome } from "./paths.js";
+
+/**
+ * What the host needs before `berth-vmm run` can boot anything: the berth-vmm
+ * binary (with the hypervisor entitlement on macOS), the libkrun it links,
+ * and a hypervisor (HVF or KVM). Each check says what it saw and, when it
+ * fails, the command that fixes it. Nothing here installs or signs anything.
+ */
+
+export type HostCheckStatus = "ok" | "warn" | "fail";
+
+export interface HostCheck {
+  id: "hypervisor" | "berth-vmm" | "codesign" | "pins" | "libkrun" | "artifacts";
+  title: string;
+  status: HostCheckStatus;
+  detail: string;
+  remedy?: string;
+}
+
+/** The entitlements berth-vmm is signed with (packages/vmm/berth-vmm.entitlements). */
+export const VMM_ENTITLEMENTS = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.hypervisor</key>
+	<true/>
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+</dict>
+</plist>
+`;
+
+export function entitlementsPath(): string {
+  return join(vmHome(), "berth-vmm.entitlements");
+}
+
+/** Written next to the artifacts so the codesign remedy is one copy-paste. */
+export function writeEntitlementsFile(): string {
+  const path = entitlementsPath();
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, VMM_ENTITLEMENTS);
+  return path;
+}
+
+function isExecutable(path: string): boolean {
+  try {
+    accessSync(path, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The packages/vmm build in the checkout this CLI runs from, if there is one. */
+function checkoutVmm(): string {
+  const here = dirname(fileURLToPath(import.meta.url));
+  // dist/vm/host.js -> packages/cli -> packages/vmm
+  return resolve(here, "..", "..", "..", "vmm", "target", "release", "berth-vmm");
+}
+
+/**
+ * berth-vmm, in order: BERTH_VMM (or the config file's vm.vmm), the copy
+ * `berth vm install --vmm` made under ~/.berth/vm/bin, PATH, then this
+ * checkout's packages/vmm/target/release.
+ */
+export function vmmCandidates(env = process.env, configured?: string): string[] {
+  const out: string[] = [];
+  if (env.BERTH_VMM) out.push(env.BERTH_VMM);
+  if (configured) out.push(configured);
+  out.push(join(vmHome(), "bin", "berth-vmm"));
+  for (const dir of (env.PATH ?? "").split(":").filter(Boolean)) out.push(join(dir, "berth-vmm"));
+  out.push(checkoutVmm());
+  return out;
+}
+
+export function locateVmm(env = process.env, configured?: string): string | undefined {
+  // An explicit BERTH_VMM that isn't there is an error, not a reason to fall through.
+  if (env.BERTH_VMM) return env.BERTH_VMM;
+  return vmmCandidates(env, configured).find((p) => existsSync(p) && isExecutable(p));
+}
+
+/** `codesign -d --entitlements - --xml`: does the binary carry com.apple.security.hypervisor? */
+export function hasHypervisorEntitlement(path: string, run = spawnSync): { signed: boolean; entitled: boolean; detail: string } {
+  const r = run("codesign", ["-d", "--entitlements", "-", "--xml", path], { encoding: "utf8" });
+  const out = `${r.stdout ?? ""}${r.stderr ?? ""}`;
+  if (r.status !== 0) return { signed: false, entitled: false, detail: out.trim().split("\n").pop() ?? `codesign exited ${r.status}` };
+  const entitled = /<key>com\.apple\.security\.hypervisor<\/key>\s*<true\s*\/>/.test(out);
+  return { signed: true, entitled, detail: entitled ? "signed with com.apple.security.hypervisor" : "signed, without com.apple.security.hypervisor" };
+}
+
+export function codesignRemedy(vmm: string): string {
+  return `codesign --sign - --force --entitlements ${entitlementsPath()} ${vmm}   (the entitlements file is written by \`berth vm install\`)`;
+}
+
+/**
+ * Whether this berth-vmm was built with the same pins as this CLI. The
+ * manifests are compiled into the binary (include_str!), so the pinned
+ * sha256 strings are in it verbatim.
+ */
+export function vmmCarriesPins(path: string): { kernel: boolean; rootfs: boolean } {
+  const bytes = readFileSync(path);
+  return { kernel: bytes.includes(KERNEL_SHA256), rootfs: bytes.includes(ROOTFS_SHA256) };
+}
+
+export interface LibkrunInfo {
+  /** The dylib/so berth-vmm links, as the loader would resolve it. */
+  path?: string;
+  version?: string;
+  found: boolean;
+}
+
+/** macOS: the libkrun berth-vmm links (otool -L), and its version from the Homebrew keg or the dylib's file name. */
+export function libkrunInfo(vmm: string | undefined, platform = process.platform, run = spawnSync): LibkrunInfo {
+  if (platform === "darwin") {
+    let path = "/opt/homebrew/opt/libkrun/lib/libkrun.1.dylib";
+    if (vmm) {
+      const r = run("otool", ["-L", vmm], { encoding: "utf8" });
+      const linked = (r.stdout ?? "").split("\n").map((l) => l.trim().split(" ")[0] ?? "").find((l) => /libkrun\.[0-9.]*dylib$/.test(l));
+      if (linked) path = linked;
+    }
+    if (!existsSync(path)) return { path, found: false };
+    return { path, found: true, version: versionFromLibPath(path) };
+  }
+  for (const dir of ["/usr/local/lib64", "/usr/local/lib", "/usr/lib64", "/usr/lib", "/usr/lib/x86_64-linux-gnu", "/usr/lib/aarch64-linux-gnu"]) {
+    const path = join(dir, "libkrun.so.1");
+    if (existsSync(path)) return { path, found: true, version: versionFromLibPath(path) };
+  }
+  return { found: false };
+}
+
+function versionFromLibPath(path: string): string | undefined {
+  try {
+    const real = realpathSync(path);
+    const keg = /\/Cellar\/libkrun\/([0-9][^/]*)\//.exec(real);
+    if (keg) return keg[1];
+    const named = /libkrun\.(?:so\.)?([0-9]+\.[0-9]+\.[0-9]+)/.exec(real);
+    if (named) return named[1];
+    // Homebrew's opt symlink, when realpath stopped short.
+    const link = readlinkSync(dirname(dirname(path)));
+    return /libkrun\/([0-9][^/]*)$/.exec(link)?.[1];
+  } catch {
+    try {
+      return readdirSync(dirname(path))
+        .map((f) => /^libkrun\.([0-9]+\.[0-9]+\.[0-9]+)\.dylib$/.exec(f)?.[1])
+        .find(Boolean);
+    } catch {
+      return undefined;
+    }
+  }
+}
+
+export function libkrunRemedy(platform = process.platform): string {
+  return platform === "darwin"
+    ? `brew tap libkrun/krun && brew install libkrun   (berth-vmm is built against libkrun ${LIBKRUN_VERSION})`
+    : `install libkrun ${LIBKRUN_VERSION} from your distribution or https://github.com/containers/libkrun`;
+}
+
+export interface HypervisorInfo {
+  name: "hvf" | "kvm" | "none";
+  available: boolean;
+  detail: string;
+}
+
+export function hypervisorInfo(platform = process.platform, run = spawnSync): HypervisorInfo {
+  if (platform === "darwin") {
+    const r = run("sysctl", ["-n", "kern.hv_support"], { encoding: "utf8" });
+    const ok = (r.stdout ?? "").trim() === "1";
+    return { name: "hvf", available: ok, detail: ok ? "Hypervisor.framework available (kern.hv_support=1)" : `kern.hv_support=${(r.stdout ?? "").trim() || "?"}` };
+  }
+  if (platform === "linux") {
+    try {
+      accessSync("/dev/kvm", constants.R_OK | constants.W_OK);
+      return { name: "kvm", available: true, detail: "/dev/kvm is readable and writable" };
+    } catch (err) {
+      return { name: "kvm", available: false, detail: `/dev/kvm: ${(err as NodeJS.ErrnoException).code ?? String(err)}` };
+    }
+  }
+  return { name: "none", available: false, detail: `no supported hypervisor on ${platform}` };
+}
+
+/**
+ * Everything doctor and `berth vm install` report about the host, without the
+ * artifacts (those need hashing, see artifacts.ts). `run` is injectable for tests.
+ */
+export function checkHost(options: { env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform; configuredVmm?: string; run?: typeof spawnSync } = {}): { checks: HostCheck[]; vmm?: string; hypervisor: HypervisorInfo; libkrun: LibkrunInfo } {
+  const platform = options.platform ?? process.platform;
+  const run = options.run ?? spawnSync;
+  const checks: HostCheck[] = [];
+  const hypervisor = hypervisorInfo(platform, run);
+  checks.push({
+    id: "hypervisor",
+    title: `Hypervisor (${hypervisor.name.toUpperCase()})`,
+    status: hypervisor.available ? "ok" : "fail",
+    detail: hypervisor.detail,
+    ...(hypervisor.available
+      ? {}
+      : { remedy: platform === "linux" ? "enable KVM and add yourself to the kvm group: sudo usermod -aG kvm $USER (then log in again)" : "the microVM runtime needs Apple silicon macOS or Linux with KVM; use --runtime docker" }),
+  });
+
+  const vmm = locateVmm(options.env ?? process.env, options.configuredVmm);
+  if (!vmm || !existsSync(vmm)) {
+    checks.push({
+      id: "berth-vmm",
+      title: "berth-vmm",
+      status: "fail",
+      detail: vmm ? `BERTH_VMM=${vmm} does not exist` : `not found: not in BERTH_VMM, ${join(vmHome(), "bin", "berth-vmm")}, PATH, or this checkout's packages/vmm/target/release`,
+      remedy: "build it (cd packages/vmm && cargo build --release) and run `berth vm install --vmm packages/vmm/target/release/berth-vmm`, or set BERTH_VMM",
+    });
+  } else {
+    checks.push({ id: "berth-vmm", title: "berth-vmm", status: "ok", detail: vmm });
+    if (platform === "darwin") {
+      const sig = hasHypervisorEntitlement(vmm, run);
+      checks.push({
+        id: "codesign",
+        title: "berth-vmm hypervisor entitlement",
+        status: sig.entitled ? "ok" : "fail",
+        detail: sig.detail,
+        ...(sig.entitled ? {} : { remedy: codesignRemedy(vmm) }),
+      });
+    }
+    const pins = vmmCarriesPins(vmm);
+    const both = pins.kernel && pins.rootfs;
+    checks.push({
+      id: "pins",
+      title: "berth-vmm pins match this CLI",
+      status: both ? "ok" : "fail",
+      detail: both
+        ? `kernel ${KERNEL_SHA256.slice(0, 12)}…, rootfs ${ROOTFS_SHA256.slice(0, 12)}…`
+        : `berth-vmm was built with ${pins.kernel ? "the same kernel but a different rootfs" : pins.rootfs ? "the same rootfs but a different kernel" : "different pins"} than this CLI expects — it would refuse this CLI's artifacts`,
+      ...(both ? {} : { remedy: "rebuild berth-vmm from the same checkout as the CLI (cd packages/vmm && cargo build --release)" }),
+    });
+  }
+
+  const libkrun = libkrunInfo(vmm && existsSync(vmm) ? vmm : undefined, platform, run);
+  const versionOk = libkrun.version === LIBKRUN_VERSION;
+  checks.push({
+    id: "libkrun",
+    title: "libkrun",
+    status: !libkrun.found ? "fail" : versionOk ? "ok" : libkrun.version ? "fail" : "warn",
+    detail: !libkrun.found
+      ? `not found${libkrun.path ? ` at ${libkrun.path}` : ""}`
+      : `${libkrun.version ?? "unknown version"} at ${libkrun.path}${versionOk || !libkrun.version ? "" : ` (berth-vmm is built against ${LIBKRUN_VERSION})`}`,
+    ...(libkrun.found && versionOk ? {} : { remedy: libkrunRemedy(platform) }),
+  });
+  return { checks, ...(vmm ? { vmm } : {}), hypervisor, libkrun };
+}
