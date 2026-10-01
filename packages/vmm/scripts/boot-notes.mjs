@@ -10,7 +10,7 @@
 // Env: ART (artifacts dir), KERNEL (default: the manifest-pinned Image in
 // $ART/kernel/sha256/), ROOTFS (default: $ART/rootfs/LATEST), STATE (state
 // disk path; none = tmpfs /workspace), ACTIONS (comma list of add,list;
-// default add,list), STOP (graceful = vsock 5001 stop request, the default;
+// default add,list), STOP (graceful = {"op":"shutdown"} on control vsock 1024, the default;
 // kill = SIGKILL berth-vmm), CPUS, MEM, SANDBOX_PROFILE (run under
 // sandbox-exec -f), BERTH_VM_MODE (rpc; inspect/probe just print and exit),
 // ROOT_DIR + APP_DIR (boot a virtio-fs root directory instead, for comparison).
@@ -48,7 +48,7 @@ function vmArgs() {
     ...(STATE ? ["--state", STATE, "--state-size", process.env.STATE_SIZE ?? "256"] : []),
     "--share", `app:${process.env.APP_DIR ?? join(ART, "app-notes")}:ro`,
     "--vsock", `5000:${sock}:listen`,
-    "--vsock", `5001:${ctl}:listen`,
+    "--vsock", `1024:${ctl}:listen`,
     "--env", `BERTH_VM_MODE=${MODE}`,
     "--", "/sbin/berth-init",
   ];
@@ -191,12 +191,13 @@ async function bootOnce(i) {
   const footprint = footprintMiB(vmmPid);
   const tStop = performance.now();
   if (STOP === "graceful") {
-    // The stop request: berth-init syncs and unmounts the state disk, then exits.
+    // The stop request on the control port (feat/vm-guest-init's port plan):
+    // berth-init stops the app, syncs and unmounts the state disk, then exits.
     await new Promise((r) => {
       const c = net.createConnection(ctl);
+      c.on("connect", () => c.end('{"op":"shutdown"}\n'));
       c.on("error", r);
       c.on("close", r);
-      c.end();
     });
     const killTimer = setTimeout(() => vm.kill("SIGKILL"), 10000);
     await new Promise((r) => (exited ? r() : vm.on("exit", r)));

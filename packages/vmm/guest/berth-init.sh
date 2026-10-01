@@ -6,27 +6,63 @@
 # the contract it has to keep is in docs/design/microvm-image.md ("Guest init
 # contract").
 #
-#   BERTH_VM_MODE=rpc      serve the app's stdio RPC on vsock 5000; a connection
-#                          to vsock 5001 stops the VM cleanly (state synced)
+#   BERTH_VM_MODE=rpc      serve the app's stdio RPC on vsock 5000 (app 0)
+#   vsock 1024 (control, all modes): a hello line, then line-JSON ops;
+#                          {"op":"shutdown"} stops the VM cleanly (state synced),
+#                          {"op":"status"} answers with a minimal status.
+#                          The port plan is feat/vm-guest-init's: 1024 control,
+#                          1025 logs (not served by this stand-in), 5000+i RPC.
 #   BERTH_VM_MODE=probe    run the enforcement probe under agent-init and exit
 #   BERTH_VM_MODE=inspect  print mounts and file ownership, then exit
 #   BERTH_STATE_DEV=/dev/vdX  (set by berth-vmm --state) the per-sandbox state
 #                          disk; formatted ext4 on first boot, mounted at /state,
 #                          /state/workspace bound onto /workspace
 set -eu
+
+# Control-port handler: socat runs one of these per host connection on 1024,
+# with the connection as stdin/stdout.
+if [ "${1:-}" = ctl ]; then
+    echo '{"source":"berth-init","event":"hello","protocol":1,"init":"berth-init.sh"}'
+    while IFS= read -r line; do
+        case "$line" in
+        *'"op"'*'"shutdown"'*)
+            echo '{"source":"berth-init","event":"shutting_down"}'
+            echo shutdown > /run/berth/ctl.fifo
+            exit 0 ;;
+        *'"op"'*'"status"'*)
+            echo "{\"source\":\"berth-init\",\"event\":\"status\",\"init\":\"berth-init.sh\",\"uptimeS\":$(cut -d' ' -f1 /proc/uptime)}" ;;
+        *) echo '{"source":"berth-init","event":"error","error":"unknown op"}' ;;
+        esac
+    done
+    exit 0
+fi
+
 log() { echo "[berth:vm-init] $*" >&2; }
 up() { cut -d' ' -f1 /proc/uptime; }
 log "init start uptime=$(up)s kernel=$(uname -r) root=$(awk '$2 == "/" {print $1 " " $3 " " $4}' /proc/mounts | tail -1)"
 
 export BERTH_BOOT_ID="$(cat /proc/sys/kernel/random/uuid)"
 mountpoint -q /sys/kernel/security || mount -t securityfs securityfs /sys/kernel/security 2>/dev/null || true
-mountpoint -q /sys/fs/cgroup || mount -t cgroup2 -o nsdelegate cgroup2 /sys/fs/cgroup
+# favordynmods: each cgroup migration otherwise waits for an RCU grace period
+# (feat/vm-guest-init measured 20-30 ms each); retried without on older kernels.
+# init.krun mounts cgroup2 itself, with neither option, so remount in that case.
+if mountpoint -q /sys/fs/cgroup; then
+    mount -o remount,nsdelegate,favordynmods /sys/fs/cgroup 2>/dev/null \
+        || mount -o remount,nsdelegate /sys/fs/cgroup 2>/dev/null || true
+else
+    mount -t cgroup2 -o nsdelegate,favordynmods cgroup2 /sys/fs/cgroup 2>/dev/null \
+        || mount -t cgroup2 -o nsdelegate cgroup2 /sys/fs/cgroup
+fi
 mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /run
 mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /tmp
+mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /context
 mount -t virtiofs -o ro app /app
-log "lsm=$(cat /sys/kernel/security/lsm 2>/dev/null || echo none) links=$(ls /sys/class/net | tr '\n' ' ')"
+mkdir -p /run/berth
+mkfifo -m 0600 /run/berth/ctl.fifo
+socat VSOCK-LISTEN:1024,reuseaddr,fork EXEC:"/bin/sh /sbin/berth-init ctl" &
+log "lsm=$(cat /sys/kernel/security/lsm 2>/dev/null || echo none) links=$(ls /sys/class/net | tr '\n' ' ') cgroup2=$(awk '$3 == "cgroup2" {print $4}' /proc/mounts)"
 
-# Single-app mode: app index 0, so the baked-in slot berth-app0.
+# Single-app mode: app index 0, so uid/gid 10000 (berth-<app>, written below).
 APP_UID=10000
 APP_GID=10000
 
@@ -55,7 +91,6 @@ else
 fi
 
 POLICY=/run/berth/capability-policy.json
-mkdir -p /run/berth
 cd /app
 
 # Compile berth.yml into agent-init's policy with the sdk-node bundle baked
@@ -65,6 +100,15 @@ env -u NODE_OPTIONS -u NODE_PATH BERTH_CAPABILITY_POLICY="$POLICY" \
 APP_NAME=$(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).appName)" "$POLICY")
 chown 0:$APP_GID "$POLICY"
 chmod 0640 "$POLICY"
+# The app's identity, berth-<app>: the root is read-only, so passwd and group
+# are copied to tmpfs, extended, and bound over /etc (as berth-init does).
+mkdir -p /run/berth/etc
+cp /etc/passwd /etc/group /run/berth/etc/
+echo "berth-$APP_NAME:x:$APP_UID:$APP_GID:berth app $APP_NAME:/nonexistent:/sbin/nologin" >> /run/berth/etc/passwd
+echo "berth-$APP_NAME:x:$APP_GID:" >> /run/berth/etc/group
+sed -i "s/^\(berth:x:9999:.*\)\$/\1,berth-$APP_NAME/" /run/berth/etc/group
+mount --bind /run/berth/etc/passwd /etc/passwd
+mount --bind /run/berth/etc/group /etc/group
 # Per-app run/tmp dirs the compiled baseline grants (entrypoint.sh's provision_app_identity).
 for d in /run/berth/$APP_NAME /tmp/$APP_NAME; do mkdir -p "$d"; chown $APP_UID:$APP_GID "$d"; chmod 0700 "$d"; done
 log "policy compiled for \"$APP_NAME\" uptime=$(up)s"
@@ -104,7 +148,7 @@ probe)
     ;;
 inspect)
     log "mounts:"
-    grep -E ' (/|/app|/state|/workspace) ' /proc/mounts | sed 's/^/[inspect] /' >&2
+    grep -E ' (/|/app|/state|/workspace|/context) ' /proc/mounts | sed 's/^/[inspect] /' >&2
     log "ownership (uid:gid mode path):"
     for p in / /etc /etc/passwd /usr/bin/node /usr/local/bin/agent-init /sbin/berth-init /opt/berth/sdk-node \
         /app /app/berth.yml /app/runtime.mjs /app/dist/index.mjs /state /state/workspace /workspace /workspace/*; do
@@ -112,16 +156,19 @@ inspect)
     done
     log "files under /etc, /usr, /opt not owned by root: $(find /etc /usr /opt /sbin /bin /lib -xdev ! -user 0 2>/dev/null | wc -l)"
     getent passwd 10000 9001 | sed 's/^/[inspect] passwd /' >&2
+    grep '^berth:' /etc/group | sed 's/^/[inspect] group /' >&2
     stop_vm
     ;;
 rpc)
     ( sleep 2; log "guest-mem $(awk '/MemTotal|MemAvailable/ {sub(":", "", $1); printf "%s=%dMiB ", $1, $2/1024}' /proc/meminfo)" ) &
-    log "serving $APP_NAME's stdio RPC on vsock:5000, stop on vsock:5001 uptime=$(up)s"
+    log "serving $APP_NAME's stdio RPC on vsock:5000, control on vsock:1024 uptime=$(up)s"
     # One app process per host connection; its stdio is the RPC stream.
     socat VSOCK-LISTEN:5000,reuseaddr,fork EXEC:"/usr/local/bin/agent-init node /app/runtime.mjs" &
-    # The first connection to 5001 is the stop request.
-    socat -u VSOCK-LISTEN:5001,reuseaddr SYSTEM:"true" >/dev/null 2>&1 || true
-    log "stop requested"
+    # Blocks until the control handler writes a {"op":"shutdown"} into the fifo.
+    # A child exiting (SIGCHLD) interrupts the fifo open with EINTR, which ash
+    # does not retry, so loop until a line actually arrives.
+    until read -r _ 2>/dev/null < /run/berth/ctl.fifo; do :; done
+    log "shutdown requested on vsock:1024"
     stop_vm
     ;;
 esac
