@@ -260,7 +260,19 @@ fn early_mounts() {
     m("devpts", "/dev/pts", "devpts", libc::MS_NOSUID | libc::MS_NOEXEC, Some("newinstance,ptmxmode=0666,mode=0620,gid=5"));
     m("shm", "/dev/shm", "tmpfs", nsd, Some("mode=1777"));
     m("securityfs", "/sys/kernel/security", "securityfs", nsd | libc::MS_NOEXEC, None);
-    m("cgroup2", "/sys/fs/cgroup", "cgroup2", nsd | libc::MS_NOEXEC, Some("nsdelegate"));
+    // favordynmods: moving a process between cgroups otherwise waits for an
+    // RCU grace period (cgroup_threadgroup_rwsem), ~20 ms each time on this
+    // guest, and berth-init moves itself and every app it starts. The cost
+    // moves to fork/exit, which a sandbox does far less of than a host.
+    if !sys::is_mounted("/sys/fs/cgroup") {
+        let _ = std::fs::create_dir_all("/sys/fs/cgroup");
+        if sys::mount("cgroup2", "/sys/fs/cgroup", "cgroup2", nsd | libc::MS_NOEXEC, Some("nsdelegate,favordynmods")).is_err() {
+            m("cgroup2", "/sys/fs/cgroup", "cgroup2", nsd | libc::MS_NOEXEC, Some("nsdelegate"));
+        }
+    } else {
+        // Mounted by init.krun: ask for the option on a remount.
+        let _ = sys::mount("cgroup2", "/sys/fs/cgroup", "cgroup2", libc::MS_REMOUNT | nsd | libc::MS_NOEXEC, Some("nsdelegate,favordynmods"));
+    }
     m("tmpfs", "/run", "tmpfs", nsd, Some("mode=0755"));
     m("tmpfs", "/tmp", "tmpfs", nsd, Some("mode=1777"));
 }
