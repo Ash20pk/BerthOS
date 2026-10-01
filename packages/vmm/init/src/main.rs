@@ -24,6 +24,7 @@
 //!   BERTH_DAEMON_MEMORY_RESERVE_MB  (default 256)
 //!   BERTH_DISABLE_DAEMON_CONFINEMENT 1 = context-bus-daemon as root, unconfined
 //!   BERTH_VM_STOP_GRACE_MS      SIGTERM-to-SIGKILL grace at shutdown (default 3000)
+//!   BERTH_STATE_DEV             per-sandbox state disk (/dev/vdX): ext4 on /state, /state/workspace on /workspace
 
 mod cgroup;
 mod hub;
@@ -174,9 +175,17 @@ fn s(v: impl Into<Value>) -> Value {
 }
 
 fn main() {
-    if std::process::id() != 1 && env("BERTH_INIT_ALLOW_NOT_PID1").as_deref() != Some("1") {
-        eprintln!("berth-init: not PID 1; this is a guest init and does not run on a host");
-        std::process::exit(2);
+    if std::process::id() != 1 {
+        // libkrun's init.krun execs its payload, so berth-init is PID 1 in
+        // every boot tested. Should a libkrun mode ever fork it instead,
+        // become the subreaper so orphans are still ours to reap. Anywhere
+        // else (KRUN_INIT unset) this is not a guest, and it stops here.
+        if env("KRUN_INIT").is_none() && env("BERTH_INIT_ALLOW_NOT_PID1").as_deref() != Some("1") {
+            eprintln!("berth-init: not PID 1; this is a guest init and does not run on a host");
+            std::process::exit(2);
+        }
+        unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) };
+        eprintln!("[berth-init] WARNING: running as pid {}, not 1: acting as child subreaper", std::process::id());
     }
     // A Rust panic in PID 1 would end in a kernel panic; power off instead,
     // having said why.
@@ -294,7 +303,15 @@ fn boot(sup: &'static Supervisor, cfg: &Config) -> Result<(), String> {
 
     // --- Filesystems the apps see. ---
     let mut fresh_mounts: Vec<&str> = Vec::new();
-    sys::ensure_mount("tmpfs", "/workspace", "tmpfs", nsd, Some("mode=0755")).map_err(|e| format!("cannot mount /workspace: {e}"))?;
+    match env("BERTH_STATE_DEV") {
+        // feat/vm-image's per-sandbox state disk: ext4, formatted on first
+        // boot, /state/workspace bound onto /workspace so it survives a reboot.
+        Some(dev) => mount_state(&dev)?,
+        None => {
+            sys::ensure_mount("tmpfs", "/workspace", "tmpfs", nsd, Some("mode=0755")).map_err(|e| format!("cannot mount /workspace: {e}"))?;
+        }
+    }
+    // Either way its root is (re)owned by the precreate pass each boot.
     fresh_mounts.push("/workspace");
     match sys::ensure_mount("tmpfs", "/context", "tmpfs", nsd, Some("mode=0755")) {
         Ok(_) => fresh_mounts.push("/context"),
@@ -443,6 +460,39 @@ fn boot(sup: &'static Supervisor, cfg: &Config) -> Result<(), String> {
         start_app(sup, cfg, &cfg.apps[*i], policy);
     }
     phase("apps_started", json!({}));
+    Ok(())
+}
+
+/// ext2/3/4 superblock magic (0xEF53, little endian) at byte 1080.
+fn has_ext4(dev: &str) -> bool {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut m = [0u8; 2];
+    std::fs::File::open(dev).and_then(|mut f| f.seek(SeekFrom::Start(1080)).and_then(|_| f.read_exact(&mut m))).is_ok() && m == [0x53, 0xef]
+}
+
+fn mount_state(dev: &str) -> Result<(), String> {
+    if !dev.starts_with("/dev/vd") || dev.contains("..") {
+        return Err(format!("BERTH_STATE_DEV={dev:?} is not a virtio block device"));
+    }
+    if !has_ext4(dev) {
+        hub::info(&format!("state disk {dev} is blank: formatting ext4"));
+        // nodiscard: a whole-device discard makes libkrun truncate the image.
+        let st = Command::new("/sbin/mkfs.ext4")
+            .args(["-q", "-L", "berth-state", "-m", "0", "-E", "root_owner=0:0,nodiscard", dev])
+            .env_clear()
+            .env("PATH", PATH)
+            .stdin(Stdio::null())
+            .status()
+            .map_err(|e| format!("cannot run mkfs.ext4 for the state disk: {e}"))?;
+        if !st.success() {
+            return Err(format!("mkfs.ext4 {dev} failed: {st}"));
+        }
+    }
+    let nsd = libc::MS_NOSUID | libc::MS_NODEV;
+    sys::ensure_mount(dev, "/state", "ext4", nsd, None).map_err(|e| format!("cannot mount the state disk {dev} on /state: {e}"))?;
+    std::fs::create_dir_all("/state/workspace").map_err(|e| format!("cannot create /state/workspace: {e}"))?;
+    sys::bind("/state/workspace", "/workspace").map_err(|e| format!("cannot bind /state/workspace onto /workspace: {e}"))?;
+    hub::info(&format!("state disk {dev} on /state, /workspace persistent"));
     Ok(())
 }
 
