@@ -33,27 +33,18 @@ apk --root "$R" info -v 2>/dev/null | sort > /out/packages.lock
 # path that came from /in/files to root.
 cp -a /in/files/. "$R/"
 (cd /in/files && find .) | while read -r p; do chown -h 0:0 "$R/$p"; done
-# The shared group and the daemon/app identities entrypoint.sh creates at boot
-# in the container. The rootfs is read-only, so they are baked in: per-app
-# slots uid/gid 10000+index (index = position in BERTH_APPS, as in Docker),
-# context-bus-daemon at 9001, all in group berth (9999).
-{
-    echo "berth:x:9999:berth-context-bus$(i=0; while [ $i -lt 16 ]; do printf ',berth-app%d' $i; i=$((i+1)); done)"
-    echo "berth-context-bus:x:9001:"
-    i=0; while [ $i -lt 16 ]; do echo "berth-app$i:x:$((10000+i)):"; i=$((i+1)); done
-} >> "$R/etc/group"
-{
-    echo "berth-context-bus:x:9001:9001:berth context-bus daemon:/nonexistent:/sbin/nologin"
-    i=0; while [ $i -lt 16 ]; do echo "berth-app$i:x:$((10000+i)):$((10000+i)):berth app slot $i:/nonexistent:/sbin/nologin"; i=$((i+1)); done
-} >> "$R/etc/passwd"
-# shadow entries keep busybox tools quiet; "!" = no password login.
-{
-    echo "berth-context-bus:!::0:::::"
-    i=0; while [ $i -lt 16 ]; do echo "berth-app$i:!::0:::::"; i=$((i+1)); done
-} >> "$R/etc/shadow"
+# Static system identities only: group berth (9999) and context-bus-daemon
+# (9001), as entrypoint.sh creates them in the container. Per-app users
+# (berth-<app>, uid 10000+index) are NOT baked in: the guest init writes them
+# at boot onto a tmpfs copy of passwd/group bound over /etc (the root is
+# read-only), because context-bus-daemon names peers by those names.
+echo "berth:x:9999:berth-context-bus" >> "$R/etc/group"
+echo "berth-context-bus:x:9001:" >> "$R/etc/group"
+echo "berth-context-bus:x:9001:9001:berth context-bus daemon:/nonexistent:/sbin/nologin" >> "$R/etc/passwd"
+echo "berth-context-bus:!::0:::::" >> "$R/etc/shadow"   # "!" = no password login
 # Mount points the guest init uses; the image itself is never written.
-mkdir -p "$R/app" "$R/workspace" "$R/state"
-chmod 0755 "$R/app" "$R/workspace" "$R/state"
+mkdir -p "$R/app" "$R/workspace" "$R/state" "$R/context"
+chmod 0755 "$R/app" "$R/workspace" "$R/state" "$R/context"
 : > "$R/etc/resolv.conf"        # no network in a sandbox VM
 echo berth > "$R/etc/hostname"
 # apk.log carries the wall-clock install time; the image must not.

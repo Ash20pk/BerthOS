@@ -16,8 +16,9 @@ packages = "rootfs/packages.txt"
 # makes the image a function of its inputs.
 source_date_epoch = 1790812800
 agent_init_ref = "fix/seccomp-io-uring-vsock"
+policy_compiler_ref = "feat/per-app-cgroups"
 init_path = "/sbin/berth-init"
 
 # Last verified build (filled in by hand after a build and a boot check).
-image_sha256 = "42b32ced43f8d431d21106b90182238b5cf6ed10e87ec8f52492420d72d1bdd3"
-image_size = 46362624
+image_sha256 = "2eaa3e0afc4597ad084d74df1d4fe37e7cc9aa1ddbd35051357d7ffab2142414"
+image_size = 46366720

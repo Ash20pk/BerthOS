@@ -2,7 +2,8 @@
 # One per line; versions resolved at build time are recorded in the image's
 # build-inputs.json (and the apk database inside the image).
 nodejs
-# The guest init's vsock relay (until the Rust init replaces it).
+# Only for guest/berth-init.sh's vsock relay; drop it when the Rust
+# berth-init (feat/vm-guest-init) becomes the default init.
 socat
 # mkfs.ext4 for the per-sandbox state disk on first boot.
 e2fsprogs
