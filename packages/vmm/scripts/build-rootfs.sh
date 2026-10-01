@@ -11,8 +11,8 @@
 #
 # Image contents: Alpine minirootfs + rootfs/packages.txt (node, e2fsprogs;
 # python3 with PYTHON=1), agent-init + probe (build-agent-init.sh), the
-# sdk-node tools (from rootfs/manifest.toml's policy_compiler_commit),
-# berth-init at /sbin/berth-init and
+# sdk-node tools (bundle-sdk-node.mjs, from rootfs/manifest.toml's
+# policy_compiler_commit), berth-init at /sbin/berth-init and
 # context-bus-daemon (both from build-berth-init.sh), and the egress broker
 # (docker-orchestrator/docker/egress-broker.cjs from this tree, no npm
 # dependencies) at /usr/local/bin/berth-egress-broker.cjs.
@@ -28,7 +28,8 @@
 # (default: build-berth-init.sh's). See docs/design/microvm-runtime.md.
 #
 # NODE_MODULES_FROM: a checkout with installed node_modules (esbuild, yaml,
-# zod), read only. Default: this checkout if it has them, else ~/agentOS.
+# zod), read only. Default: this checkout if it has them, else ~/agentOS. The
+# versions are the lockfile's; which ones went in is recorded in the image.
 set -eu
 . "$(dirname "$0")/common.sh"
 min_free_gb 10
@@ -83,9 +84,8 @@ id -u > "$B/in/HOST_UID"
 mkdir -p "$B/policy-src"
 git -C "$REPO_DIR" archive --format=tar "$POLICY_REF" packages/sdk/src packages/manifest-schema/src | tar -x -C "$B/policy-src"
 policy_commit=$(git -C "$REPO_DIR" rev-parse "$POLICY_REF^{commit}")
-BERTH_POLICY_SRC="$B/policy-src" node "$VMM_DIR/scripts/bundle-notes.mjs" "$B/bundle" \
-    "$NM/packages/sdk/node_modules" "$NM/packages/manifest-schema/node_modules" \
-    "$NM/apps/notes/node_modules" "$NM/node_modules" >/dev/null
+bundled=$(node "$VMM_DIR/scripts/bundle-sdk-node.mjs" "$B/sdk-stage" "$B/bundle" "$B/policy-src" \
+    "$NM/packages/sdk/node_modules" "$NM/packages/manifest-schema/node_modules" "$NM/node_modules")
 mkdir -p "$F/sbin" "$F/usr/local/bin" "$F/opt/berth/sdk-node" "$F/etc/berth"
 install -m 0755 "$INIT" "$F/sbin/berth-init"
 install -m 0755 "$AI/agent-init" "$F/usr/local/bin/agent-init"
@@ -117,6 +117,7 @@ cat > "$F/etc/berth/build-inputs.json" <<EOF
   "egressBroker": {"path": "/usr/local/bin/berth-egress-broker.cjs", "sha256": "$(sha "$BROKER")"},
   "sdkNode": {
     "sourceRef": "$(pin policy_compiler_ref)", "sourceCommit": "$policy_commit",
+    "bundle": $bundled,
     "generate-capability-policy.mjs": "$(sha "$B/bundle/generate-capability-policy.mjs")",
     "run-lifecycle.mjs": "$(sha "$B/bundle/run-lifecycle.mjs")"
   },
