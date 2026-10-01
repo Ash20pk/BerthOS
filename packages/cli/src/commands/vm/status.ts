@@ -25,13 +25,14 @@ export default class VmStatus extends Command {
       }
       found++;
       const status = await sandbox.status().catch((err: Error) => ({ error: err.message }) as Record<string, unknown>);
+      const bootId = sandbox.bootId;
       sandbox.detach();
       if (flags.json) {
-        this.log(JSON.stringify({ name, pid: sandbox.pid, runDir: sandbox.runDir, bootId: sandbox.bootId, status }, null, 2));
+        this.log(JSON.stringify({ name, pid: sandbox.pid, runDir: sandbox.runDir, bootId, status }, null, 2));
         continue;
       }
       const apps = (Array.isArray(status.apps) ? status.apps : []) as { name?: string; state?: string; pid?: number; uid?: number; cgroup?: { limits?: Record<string, string> } | null }[];
-      this.log(`${name}  berth-vmm pid ${sandbox.pid}  boot ${sandbox.bootId}  started ${sandbox.record.startedAt}`);
+      this.log(`${name}  berth-vmm pid ${sandbox.pid}  boot ${bootId}  started ${sandbox.record.startedAt}`);
       this.log(`  run dir ${sandbox.runDir}`);
       for (const a of apps) {
         const limits = a.cgroup?.limits ? Object.entries(a.cgroup.limits).map(([k, v]) => `${k}=${v.replace(" ", "/")}`).join(" ") : "no cgroup";
