@@ -133,9 +133,10 @@ fn log_caps_dropped_event(app_name: &str, dropped: bool) {
 }
 
 /// Structured line for the seccomp filters in seccomp.rs — the UDP/raw-socket
-/// half of deny-by-default network access, and the namespace-creation refusal
-/// that keeps the capability drop below irreversible. `event` names which one,
-/// so the two are independently greppable. Separate from log_audit_event for
+/// half of deny-by-default network access, the namespace-creation refusal
+/// that keeps the capability drop below irreversible, and the io_uring/vsock
+/// refusal that keeps socket(2) the only way to get a socket. `event` names
+/// which one, so each is independently greppable. Separate from log_audit_event for
 /// the same reason log_caps_dropped_event is: they happen in main(), after
 /// apply_policy() has returned.
 fn log_seccomp_event(event: &str, app_name: &str, applied: bool, detail: &str) {
@@ -432,6 +433,30 @@ fn main() {
         }
     }
 
+    // Also for every app. io_uring creates sockets without calling socket(2),
+    // so the UDP/raw filter below would be decoration without this, and
+    // AF_VSOCK reaches a microVM's host whatever the app's network
+    // capabilities say. See seccomp.rs's section 3.
+    match seccomp::install_no_io_uring_no_vsock_filters() {
+        Ok(()) => {
+            eprintln!("[agent-init] io_uring and AF_VSOCK sockets refused by seccomp for \"{app_name}\"");
+            log_seccomp_event("io_uring_vsock_seccomp_filter", &app_name, true, "io_uring_and_vsock_denied");
+        }
+        Err(err) => {
+            let detail = format!("could not install io_uring/vsock seccomp filter ({err})");
+            if require_enforcement {
+                eprintln!(
+                    "[agent-init] FATAL: BERTH_REQUIRE_ENFORCEMENT is set but {detail} for \"{app_name}\" — refusing to exec, since io_uring would reach around every socket(2) rule."
+                );
+                log_seccomp_event("io_uring_vsock_seccomp_filter", &app_name, false, &detail);
+                log_enforcement_refused_event(&app_name, &detail);
+                std::process::exit(1);
+            }
+            eprintln!("[agent-init] WARNING: {detail} — continuing with io_uring and AF_VSOCK available.");
+            log_seccomp_event("io_uring_vsock_seccomp_filter", &app_name, false, &detail);
+        }
+    }
+
     // Last thing before exec, and deliberately after the capability drop:
     // installing this filter sets PR_SET_NO_NEW_PRIVS, and capset(2) is not
     // in the filter's denied set either way, but ordering the irrevocable
@@ -463,8 +488,8 @@ fn main() {
         log_seccomp_event("network_seccomp_filter", &app_name, false, "network capability declared — datagram sockets left open for DNS");
     }
 
-    // Genuinely last, after Landlock, the capability drop, and both seccomp
-    // filters — every one of those needs root, and none of them can be
+    // Genuinely last, after Landlock, the capability drop, and every seccomp
+    // filter — every one of those needs root, and none of them can be
     // reapplied once this returns. Landlock's domain is inode-based and seccomp's filter is
     // process-wide; neither cares about the uid change, and both survive it
     // and the exec() below.
@@ -1080,6 +1105,27 @@ mod tests {
         }
         for path in ["/dev", "/dev/sda", "/dev/mem", "/dev/pts/0", "/dev/null/x", "/dev/kmsg", "/dev/tty"] {
             assert!(!is_allowed_write_path(path, "my-app"), "{path} must not be grantable — the device allowance is exact-match, not a prefix");
+        }
+    }
+
+    // An app's cgroup is where entrypoint.sh put it, and its limits are what
+    // entrypoint.sh wrote. Neither may be something the app's own policy can
+    // grant it the right to change: a write to its cgroup.procs, or to any
+    // ancestor's, is the app leaving its limits, and DAC (root-owned files)
+    // must not be the only thing saying no.
+    #[test]
+    fn write_path_allowlist_never_grants_the_cgroup_filesystem() {
+        for path in [
+            "/sys",
+            "/sys/fs",
+            "/sys/fs/cgroup",
+            "/sys/fs/cgroup/cgroup.procs",
+            "/sys/fs/cgroup/berth",
+            "/sys/fs/cgroup/berth/apps/my-app",
+            "/sys/fs/cgroup/berth/apps/my-app/cgroup.procs",
+            "/sys/fs/cgroup/berth/apps/my-app/memory.max",
+        ] {
+            assert!(!is_allowed_write_path(path, "my-app"), "{path} must not be grantable");
         }
     }
 

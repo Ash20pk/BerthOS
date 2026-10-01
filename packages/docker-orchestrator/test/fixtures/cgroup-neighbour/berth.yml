@@ -1,0 +1,9 @@
+name: cgroup-neighbour
+version: 0.1.0
+description: "resource-limits-milestone.mjs's bystander: declares no resources, and must keep answering while cgroup-hog misbehaves."
+runtime: python
+governance: { exempt: true }
+exports:
+  - name: ping
+  - name: whereami
+  - name: bus_roundtrip

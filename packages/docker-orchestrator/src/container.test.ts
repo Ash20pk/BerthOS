@@ -4,13 +4,13 @@ import { mkdtemp, stat, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type Docker from "dockerode";
-import { BerthManifestSchema } from "@berthos/manifest-schema";
+import { BerthManifestSchema, DAEMON_RESERVE, DEFAULT_APP_PIDS } from "@berthos/manifest-schema";
 import {
   declaresBrowserCapability,
   declaresTerminalCapability,
   needsBrowserPorts,
   needsTerminalPort,
-  maxResources,
+  containerResources,
   startContainer,
 } from "./container.js";
 import { CONTAINER_SECRETS_PATH, containerSecretsDir } from "./secrets.js";
@@ -19,7 +19,7 @@ function manifest(capabilities: string[], expose?: { browser?: boolean; terminal
   return BerthManifestSchema.parse({ name: "app", version: "1.0.0", capabilities, expose });
 }
 
-function manifestWithResources(resources: { cpu?: number; memory_mb?: number; gpu?: number }) {
+function manifestWithResources(resources: { cpu?: number; memory_mb?: number; gpu?: number; pids?: number }) {
   return BerthManifestSchema.parse({ name: "app", version: "1.0.0", resources });
 }
 
@@ -49,22 +49,33 @@ test("needsTerminalPort follows the same rule as needsBrowserPorts", () => {
   assert.equal(declaresTerminalCapability(hidden), true);
 });
 
-test("maxResources returns nothing declared when no manifest sets resources", () => {
-  assert.deepEqual(maxResources([manifestWithResources({})]), {});
+test("containerResources caps only pids when no app declares anything", () => {
+  assert.deepEqual(containerResources([manifestWithResources({})]), { pids: DEFAULT_APP_PIDS + DAEMON_RESERVE.pids });
 });
 
-test("maxResources passes through a single app's declared limits", () => {
-  assert.deepEqual(maxResources([manifestWithResources({ cpu: 1, memory_mb: 512, gpu: 1 })]), {
-    cpu: 1,
-    memoryMb: 512,
+test("containerResources sizes a single app's sandbox as its limits plus the daemon reserve", () => {
+  assert.deepEqual(containerResources([manifestWithResources({ cpu: 1, memory_mb: 512, gpu: 1, pids: 100 })]), {
+    cpu: 1 + DAEMON_RESERVE.cpu,
+    memoryMb: 512 + DAEMON_RESERVE.memoryMb,
+    pids: 100 + DAEMON_RESERVE.pids,
     gpu: 1,
   });
 });
 
-test("maxResources takes the max across companion apps sharing one container, per field independently", () => {
+test("containerResources sums companion apps instead of taking the max, and leaves a key uncapped when any app omits it", () => {
   const primary = manifestWithResources({ cpu: 0.5, memory_mb: 256 });
   const companion = manifestWithResources({ cpu: 2, gpu: 1 });
-  assert.deepEqual(maxResources([primary, companion]), { cpu: 2, memoryMb: 256, gpu: 1 });
+  assert.deepEqual(containerResources([primary, companion]), {
+    cpu: 2.5 + DAEMON_RESERVE.cpu,
+    pids: 2 * DEFAULT_APP_PIDS + DAEMON_RESERVE.pids,
+    gpu: 1,
+  });
+});
+
+test("containerResources clamps the CPU sum to the host's CPU count, which Docker would otherwise refuse", () => {
+  const apps = [manifestWithResources({ cpu: 4 }), manifestWithResources({ cpu: 4 })];
+  assert.equal(containerResources(apps, 6).cpu, 6);
+  assert.equal(containerResources(apps).cpu, 8 + DAEMON_RESERVE.cpu);
 });
 
 /**
@@ -340,4 +351,161 @@ test("a failed sidecar boots without /context instead of handing SYS_ADMIN to th
     (created.Env ?? []).includes("BERTH_NO_SEMANTIC_FS=1"),
     `the entrypoint must be told /context is off, or it waits on a mount nobody makes, got: ${JSON.stringify(created.Env)}`,
   );
+});
+
+/**
+ * Per-app cgroups need the sandbox's cgroup namespace to be writable, which is
+ * granted only when the kernel probe saw cgroup v2 mounted with nsdelegate —
+ * the one configuration where root in the sandbox still cannot raise the
+ * container's own caps. The probe's answer comes from the per-kernel cache
+ * here, seeded under a throwaway BERTH_HOME so no probe container runs.
+ */
+async function startWithCgroupProbe(
+  cgroup: { v2: boolean; nsdelegate: boolean } | undefined,
+  opts: { rejectWritableCgroups?: boolean; name: string; env?: Record<string, string>; imageEnv?: string[] },
+): Promise<Docker.ContainerCreateOptions[]> {
+  const home = await mkdtemp(join(tmpdir(), "berth-cgroup-home-"));
+  const { writeFile } = await import("node:fs/promises");
+  await writeFile(
+    join(home, "enforcement-cache.json"),
+    JSON.stringify({ "6.8.0-test|x86_64": { status: "enforcing", abi: 6, ...(cgroup ? { cgroup } : {}), probedAt: new Date().toISOString() } }),
+  );
+  const creates: Docker.ContainerCreateOptions[] = [];
+  const docker = {
+    info: async () => ({ KernelVersion: "6.8.0-test", Architecture: "x86_64", NCPU: 4 }),
+    createContainer: async (o: Docker.ContainerCreateOptions) => {
+      creates.push(structuredClone(o));
+      if (opts.rejectWritableCgroups && (o.HostConfig?.SecurityOpt ?? []).includes("writable-cgroups=true")) {
+        throw new Error('(HTTP code 400) unexpected - invalid --security-opt 2: "writable-cgroups=true"');
+      }
+      return { start: async () => {}, inspect: async () => ({ NetworkSettings: { Ports: {} } }) };
+    },
+    // cgroup probe results that need no re-probe never reach this.
+    listImages: async () => [],
+    getImage: () => ({ inspect: async () => ({ Config: { Env: opts.imageEnv ?? [] } }) }),
+  } as unknown as Docker;
+  const prev = { home: process.env.BERTH_HOME, banner: process.env.BERTH_NO_ENFORCEMENT_BANNER, semfs: process.env.BERTH_NO_SEMANTIC_FS };
+  process.env.BERTH_HOME = home;
+  process.env.BERTH_NO_ENFORCEMENT_BANNER = "1";
+  process.env.BERTH_NO_SEMANTIC_FS = "1";
+  try {
+    await startContainer({
+      image: "berth/test:dev",
+      name: opts.name,
+      manifest: manifestWithResources({ memory_mb: 128 }),
+      secretsRunDir: home,
+      env: opts.env,
+      docker,
+    });
+  } finally {
+    for (const [key, value] of [["BERTH_HOME", prev.home], ["BERTH_NO_ENFORCEMENT_BANNER", prev.banner], ["BERTH_NO_SEMANTIC_FS", prev.semfs]] as const) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+  return creates;
+}
+
+test("every sandbox gets a PidsLimit, and memory is the app's plus the daemon reserve", async () => {
+  const created = (await startWithCgroupProbe({ v2: true, nsdelegate: false }, { name: "berth-test-caps" })).at(-1);
+  assert.equal(created!.HostConfig?.PidsLimit, DEFAULT_APP_PIDS + DAEMON_RESERVE.pids);
+  assert.equal(created!.HostConfig?.Memory, (128 + DAEMON_RESERVE.memoryMb) * 1024 * 1024);
+  assert.ok((created!.Env ?? []).includes(`BERTH_DAEMON_MEMORY_RESERVE_MB=${DAEMON_RESERVE.memoryMb}`));
+});
+
+test("a cgroup v2 host with nsdelegate gets a writable cgroup namespace, and the entrypoint is told", async () => {
+  const [created] = await startWithCgroupProbe({ v2: true, nsdelegate: true }, { name: "berth-test-cg-delegated" });
+  assert.ok((created!.HostConfig?.SecurityOpt ?? []).includes("writable-cgroups=true"), JSON.stringify(created!.HostConfig?.SecurityOpt));
+  assert.ok((created!.Env ?? []).includes("BERTH_APP_CGROUPS=delegated"));
+  assert.ok(!(created!.HostConfig?.CapAdd ?? []).includes("SYS_ADMIN"), "delegation must not come with a capability");
+  assert.ok(!created!.HostConfig?.Privileged);
+});
+
+test("without nsdelegate, or without a probe answer, no writable cgroups are requested", async () => {
+  for (const [cgroup, name] of [
+    [{ v2: true, nsdelegate: false }, "berth-test-cg-no-nsdelegate"],
+    [{ v2: false, nsdelegate: false }, "berth-test-cg-v1"],
+    [undefined, "berth-test-cg-unknown"],
+  ] as const) {
+    const creates = await startWithCgroupProbe(cgroup, { name });
+    // An old cache entry with no cgroup answer re-probes. The fake daemon's
+    // probe container (the first create) yields nothing, so the answer stays
+    // unknown and nothing is asked of the sandbox (the last create).
+    const created = creates.at(-1)!;
+    assert.ok(!(created.HostConfig?.SecurityOpt ?? []).includes("writable-cgroups=true"), `${name}: ${JSON.stringify(created.HostConfig?.SecurityOpt)}`);
+    assert.ok((created.Env ?? []).some((e) => e.startsWith("BERTH_APP_CGROUPS=off: ")), `${name}: ${JSON.stringify(created.Env)}`);
+  }
+});
+
+test("a daemon that refuses writable-cgroups gets the same sandbox without it, not a failed boot", async () => {
+  const creates = await startWithCgroupProbe({ v2: true, nsdelegate: true }, { name: "berth-test-cg-old-docker", rejectWritableCgroups: true });
+  assert.equal(creates.length, 2, "one refused create, one retry");
+  const retry = creates[1]!;
+  assert.ok(!(retry.HostConfig?.SecurityOpt ?? []).includes("writable-cgroups=true"));
+  assert.equal(retry.HostConfig?.PidsLimit, DEFAULT_APP_PIDS + DAEMON_RESERVE.pids, "the container-level caps survive the retry");
+  assert.ok((retry.Env ?? []).some((e) => e.startsWith("BERTH_APP_CGROUPS=off: ")));
+});
+
+// BERTH_REQUIRE_APP_CGROUPS: the host half of strict mode. entrypoint.sh
+// refuses the same boot from inside; this one refuses before anything exists.
+
+test("strict mode refuses to create a sandbox the host cannot delegate a cgroup to", async () => {
+  for (const [cgroup, name] of [
+    [{ v2: true, nsdelegate: false }, "berth-test-strict-no-nsdelegate"],
+    [{ v2: false, nsdelegate: false }, "berth-test-strict-v1"],
+  ] as const) {
+    let creates: Docker.ContainerCreateOptions[] | undefined;
+    await assert.rejects(
+      async () => {
+        creates = await startWithCgroupProbe(cgroup, { name, env: { BERTH_REQUIRE_APP_CGROUPS: "1" } });
+      },
+      /BERTH_REQUIRE_APP_CGROUPS is set but per-app cgroups are unavailable/,
+    );
+    assert.equal(creates, undefined, "no container is created");
+  }
+});
+
+test("a production image's own BERTH_REQUIRE_APP_CGROUPS=1 is strict too, and the caller's env can turn it off", async () => {
+  await assert.rejects(
+    () => startWithCgroupProbe({ v2: true, nsdelegate: false }, { name: "berth-test-strict-image", imageEnv: ["BERTH_REQUIRE_APP_CGROUPS=1"] }),
+    /BERTH_REQUIRE_APP_CGROUPS is set/,
+  );
+  const creates = await startWithCgroupProbe(
+    { v2: true, nsdelegate: false },
+    { name: "berth-test-strict-image-off", imageEnv: ["BERTH_REQUIRE_APP_CGROUPS=1"], env: { BERTH_REQUIRE_APP_CGROUPS: "0" } },
+  );
+  assert.equal(creates.length, 1);
+});
+
+test("strict mode refuses, instead of retrying without, when the daemon rejects writable-cgroups", async () => {
+  let creates: Docker.ContainerCreateOptions[] | undefined;
+  await assert.rejects(
+    async () => {
+      creates = await startWithCgroupProbe(
+        { v2: true, nsdelegate: true },
+        { name: "berth-test-strict-rejected", rejectWritableCgroups: true, env: { BERTH_REQUIRE_APP_CGROUPS: "1" } },
+      );
+    },
+    /BERTH_REQUIRE_APP_CGROUPS is set .*does not support --security-opt writable-cgroups=true/,
+  );
+  assert.equal(creates, undefined);
+});
+
+test("strict mode boots normally where delegation is available", async () => {
+  const [created] = await startWithCgroupProbe({ v2: true, nsdelegate: true }, { name: "berth-test-strict-ok", env: { BERTH_REQUIRE_APP_CGROUPS: "1" } });
+  assert.ok((created!.HostConfig?.SecurityOpt ?? []).includes("writable-cgroups=true"));
+  assert.ok((created!.Env ?? []).includes("BERTH_REQUIRE_APP_CGROUPS=1"), "the entrypoint makes the same check from inside");
+});
+
+test("without strict mode, a host that cannot delegate still boots, with a warning", async () => {
+  const warnings: string[] = [];
+  const original = console.warn;
+  console.warn = (...args: unknown[]) => void warnings.push(args.join(" "));
+  try {
+    const creates = await startWithCgroupProbe({ v2: true, nsdelegate: false }, { name: "berth-test-permissive" });
+    assert.equal(creates.length, 1);
+  } finally {
+    console.warn = original;
+  }
+  assert.ok(warnings.some((w) => /per-app cgroups are off/.test(w) && /BERTH_REQUIRE_APP_CGROUPS=1/.test(w)), JSON.stringify(warnings));
 });

@@ -210,6 +210,12 @@ COPY berth-runtime /etc/berth/runtime
 # VM (Mac) never enforces Landlock at all, and failing dev boots over that
 # would make local iteration impossible.
 ENV BERTH_REQUIRE_ENFORCEMENT=1
+# The same posture for resource limits: a production image refuses to boot
+# its apps without a cgroup each, rather than run them bounded only by the
+# container's caps, when the host can't delegate a cgroup subtree (see
+# docs/resource-limits.md). container.ts refuses before creating anything and
+# entrypoint.sh again from inside. Dev images leave this unset and warn.
+ENV BERTH_REQUIRE_APP_CGROUPS=1
 COPY . /app
 # Same build-time on_install as the dev stage above, but run in place: a
 # production image already holds the app's real source and node_modules at

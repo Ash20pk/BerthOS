@@ -48,5 +48,18 @@
     { "appName": "a", "env": { "BERTH_HTTP_RPC_PORT": "7777", "BERTH_HTTP_RPC_APP": "a" }, "capabilities": ["terminal:attach:*"] },
     { "appName": "a", "env": { "BERTH_HTTP_RPC_PORT": "7777", "BERTH_HTTP_RPC_APP": "b" }, "capabilities": ["terminal:attach:*"] },
     { "appName": "a", "env": { "BERTH_HTTP_RPC_PORT": "7681" }, "capabilities": ["terminal:attach:*"] }
+  ],
+  "cgroupLimitCases": [
+    {},
+    { "cpu": 0.5 },
+    { "cpu": 2 },
+    { "cpu": 0.123455 },
+    { "cpu": 0.000001 },
+    { "cpu": 1.5, "memory_mb": 256 },
+    { "memory_mb": 1 },
+    { "memory_mb": 3000, "pids": 64 },
+    { "pids": 1 },
+    { "gpu": 1 },
+    { "cpu": 3, "memory_mb": 1024, "gpu": 2, "pids": 4096 }
   ]
 }

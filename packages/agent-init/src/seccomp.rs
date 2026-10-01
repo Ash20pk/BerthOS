@@ -1,28 +1,34 @@
-// Two seccomp-bpf filters, installed by main() immediately before exec().
+// Three sets of seccomp-bpf filters, installed by main() immediately before
+// exec().
 //
 //   1. no_new_namespaces. Installed for every app,
 //      unconditionally. Without it, the capability bounding-set drop in
 //      main.rs's drop_all_capabilities() is reversible by the app itself.
 //   2. no_udp_no_raw. Installed only for apps that
 //      declared no network capability at all.
+//   3. no_io_uring_no_vsock. Installed for every app. io_uring would
+//      otherwise create the sockets 2 refuses without calling socket(2), and
+//      AF_VSOCK reaches a microVM's host without touching AF_INET at all.
 //
-// Both are allow-by-default: they remove specific syscalls that neither
+// All are allow-by-default: they remove specific syscalls that neither
 // Landlock nor the capability model can express, rather than acting as a
 // syscall allowlist. An allowlist here would be a second, divergent copy of
 // "what a Node runtime needs to run," and would break on the next Node release
 // rather than on the next security review.
 //
-// They are installed as two filters rather than one because a seccompiler
+// They are installed as several filters rather than one because a seccompiler
 // `SeccompFilter` carries a single match action, and these need different
-// errnos (DENIED_ERRNO vs CLONE3_ERRNO below). The kernel evaluates every
-// installed filter and applies the most restrictive result; these two cover
-// disjoint syscall sets, so there is no interaction between them.
+// errnos (DENIED_ERRNO vs CLONE3_ERRNO and IO_URING_ERRNO below). The kernel
+// evaluates every installed filter and applies the most restrictive result.
+// Only 2 and 3 both match socket(2), and both answer EPERM, so no call gets a
+// different answer for being matched by both.
 //
 // x86_64 and aarch64 — the only two architectures this image is built for —
-// both dispatch socket(2), clone(2), unshare(2), and setns(2) as real syscalls
-// with the argument order assumed below. The multiplexed socketcall(2) entry
-// point that would need separate filtering exists only on i386, and the
-// register-swapped clone(2) argument order exists only on s390x and cris.
+// both dispatch socket(2), clone(2), unshare(2), setns(2), and io_uring's
+// three syscalls as real syscalls with the argument order assumed below. The
+// multiplexed socketcall(2) entry point that would need separate filtering
+// exists only on i386, and the register-swapped clone(2) argument order exists
+// only on s390x and cris.
 use std::collections::BTreeMap;
 
 use seccompiler::{
@@ -234,10 +240,24 @@ pub fn install_no_new_namespaces_filter() -> Result<(), Box<dyn std::error::Erro
 // can also build TCP in userspace over AF_PACKET and never call connect(2) at
 // all, which is the one syscall Landlock watches.
 //
-// The filter refuses socket(2) for the datagram and raw families rather than
-// trying to police send/recv, so there is no fd to smuggle and no per-call
-// check to race — an app with no declared network capability cannot obtain a
-// UDP or raw socket in the first place.
+// The filter refuses socket(2) for everything except TCP rather than trying to
+// police send/recv, so there is no fd to smuggle and no per-call check to race
+// — an app with no declared network capability cannot obtain a UDP or raw
+// socket in the first place.
+//
+// "Everything except TCP" is stated as what stays open rather than as a list
+// of what is refused, because the list kept being incomplete. It used to name
+// UDP, raw and AF_PACKET, and SCTP walked straight past it: Linux loads the
+// sctp module on demand for an unprivileged socket(AF_INET, SOCK_SEQPACKET,
+// IPPROTO_SCTP), whose one-to-many form sends with sendmsg(2) and never calls
+// the connect(2) Landlock checks, and whose STREAM form is not TCP, which is
+// all Landlock's rules cover. DCCP, MPTCP, RDS (which can make its own TCP
+// connections from inside the kernel), TIPC and vsock are the same shape of
+// problem. So, for an app with this filter, socket(2) succeeds only for:
+//
+//   - AF_INET/AF_INET6 with SOCK_STREAM and protocol 0 or IPPROTO_TCP, which
+//     is TCP, and which Landlock polices per port;
+//   - AF_UNIX, and AF_NETLINK (see 2 and 3 below).
 //
 // Deliberately narrow, in three ways worth stating plainly:
 //
@@ -254,14 +274,22 @@ pub fn install_no_new_namespaces_filter() -> Result<(), Box<dyn std::error::Erro
 //   3. AF_NETLINK is untouched — it is how a process reads its own interface
 //      list, and it is not routable off-box.
 
-// From <bits/socket.h>, spelled out for the same reason the clone flags above
-// are.
+// From <bits/socket.h> and <netinet/in.h>, spelled out for the same reason the
+// clone flags above are.
+const AF_UNIX: u64 = 1;
 const AF_INET: u64 = 2;
 const AF_INET6: u64 = 10;
-const AF_PACKET: u64 = 17;
+const AF_NETLINK: u64 = 16;
 
-const SOCK_DGRAM: u64 = 2;
-const SOCK_RAW: u64 = 3;
+const IPPROTO_IP: u64 = 0;
+const IPPROTO_TCP: u64 = 6;
+
+const SOCK_STREAM: u64 = 1;
+/// Every other type the kernel accepts for socket(2): SOCK_DGRAM, SOCK_RAW,
+/// SOCK_RDM, SOCK_SEQPACKET, SOCK_DCCP and SOCK_PACKET. seccomp-bpf has a
+/// masked-equal comparison but no masked-not-equal, so "not SOCK_STREAM" is
+/// spelled out as each of these instead.
+const NON_STREAM_SOCK_TYPES: [u64; 6] = [2, 3, 4, 5, 6, 10];
 // socket(2)'s `type` argument carries SOCK_NONBLOCK (0o4000) and SOCK_CLOEXEC
 // (0o2000000) OR'd into the low bits' actual type. Comparing the whole
 // argument for equality would be trivially bypassed by passing
@@ -273,37 +301,45 @@ const SOCK_TYPE_MASK: u64 = 0xf;
 /// behaviour — without this process having to permanently constrain itself.
 pub fn compile_no_udp_no_raw_filter() -> Result<BpfProgram, Box<dyn std::error::Error>> {
     let mut rules: BTreeMap<i64, Vec<SeccompRule>> = BTreeMap::new();
+    let domain_is = |domain| SeccompCondition::new(0, SeccompCmpArgLen::Dword, SeccompCmpOp::Eq, domain);
+    let domain_is_not = |domain| SeccompCondition::new(0, SeccompCmpArgLen::Dword, SeccompCmpOp::Ne, domain);
+    let type_is = |sock_type| {
+        SeccompCondition::new(1, SeccompCmpArgLen::Dword, SeccompCmpOp::MaskedEq(SOCK_TYPE_MASK), sock_type)
+    };
+    let protocol_is_not = |protocol| SeccompCondition::new(2, SeccompCmpArgLen::Dword, SeccompCmpOp::Ne, protocol);
 
-    let mut socket_rules = Vec::new();
+    // Rules are OR'd, conditions within one AND'd; a socket(2) call matching
+    // any rule is refused.
+    let mut socket_rules = vec![
+        // Any family but the four this filter leaves open. AF_PACKET, AF_VSOCK,
+        // AF_XDP, AF_RDS, AF_TIPC, and whatever a future kernel adds.
+        SeccompRule::new(vec![
+            domain_is_not(AF_UNIX)?,
+            domain_is_not(AF_NETLINK)?,
+            domain_is_not(AF_INET)?,
+            domain_is_not(AF_INET6)?,
+        ])?,
+    ];
     for domain in [AF_INET, AF_INET6] {
-        for sock_type in [SOCK_DGRAM, SOCK_RAW] {
-            socket_rules.push(SeccompRule::new(vec![
-                SeccompCondition::new(0, SeccompCmpArgLen::Dword, SeccompCmpOp::Eq, domain)?,
-                SeccompCondition::new(
-                    1,
-                    SeccompCmpArgLen::Dword,
-                    SeccompCmpOp::MaskedEq(SOCK_TYPE_MASK),
-                    sock_type,
-                )?,
-            ])?);
+        // IP, but not a stream: UDP, ICMP, raw, SCTP's one-to-many form, DCCP.
+        for sock_type in NON_STREAM_SOCK_TYPES {
+            socket_rules.push(SeccompRule::new(vec![domain_is(domain)?, type_is(sock_type)?])?);
         }
+        // IP and a stream, but not TCP: SCTP's one-to-one form, MPTCP.
+        socket_rules.push(SeccompRule::new(vec![
+            domain_is(domain)?,
+            type_is(SOCK_STREAM)?,
+            protocol_is_not(IPPROTO_IP)?,
+            protocol_is_not(IPPROTO_TCP)?,
+        ])?);
     }
-    // AF_PACKET has no legitimate use for a resident app and every type it
-    // supports is a link-layer escape hatch, so it's refused whole rather
-    // than per-type.
-    socket_rules.push(SeccompRule::new(vec![SeccompCondition::new(
-        0,
-        SeccompCmpArgLen::Dword,
-        SeccompCmpOp::Eq,
-        AF_PACKET,
-    )?])?);
 
     rules.insert(libc::SYS_socket, socket_rules);
 
     let filter = SeccompFilter::new(
         rules,
-        // Allow-by-default: this filter's whole job is to remove the two
-        // socket families Landlock can't see. Everything else the app does
+        // Allow-by-default: this filter's whole job is to remove the
+        // sockets Landlock can't see. Everything else the app does
         // is already governed by the Landlock domain and the capability
         // bounding set, and a syscall allowlist here would be a second,
         // divergent copy of "what a Node runtime needs to run."
@@ -326,9 +362,109 @@ pub fn install_no_udp_no_raw_filter() -> Result<(), Box<dyn std::error::Error>> 
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// 3. Ways around socket(2): io_uring and AF_VSOCK
+// ---------------------------------------------------------------------------
+//
+// Installed for every app, whatever it declared.
+//
+// io_uring. The filter in section 2 works by matching socket(2)'s arguments,
+// and seccomp only ever sees syscalls. io_uring moves the operation into a
+// submission ring the kernel executes on the caller's behalf, so the syscalls
+// seccomp sees are io_uring_setup and io_uring_enter, never socket(2). Since
+// Linux 5.19 IORING_OP_SOCKET creates a socket that way, and
+// `io_uring_creates_the_udp_socket_the_socket_filter_alone_refuses` below gets
+// a UDP socket through it with section 2's filter installed. The same goes for
+// anything else a future filter here might match on: seccomp cannot inspect a
+// ring. So the three io_uring syscalls are refused outright.
+//
+// Docker's default seccomp profile has refused io_uring since 25.0, but that
+// is not something to rely on: Kubernetes runs pods Unconfined unless told
+// otherwise, and a microVM runtime brings its own profile or none.
+//
+// ENOSYS rather than EPERM, for the same reason as clone3: it is the answer a
+// runtime reads as "this kernel has no io_uring" and falls back from. libuv
+// (Node's event loop) probes with io_uring_setup and uses epoll and its
+// threadpool when that fails; Python, musl and glibc never call it. The file
+// and socket I/O an app does still works, through the ordinary syscalls every
+// other filter here already governs.
+//
+// AF_VSOCK. vsock connects a guest to its hypervisor, addressed by context id
+// and port rather than by IP. It is not AF_INET, so Landlock's TCP rules never
+// apply to it, and section 2 only refuses it for apps that declared no network
+// capability. Under Docker it goes nowhere,
+// but in a microVM it reaches every port the host maps to the guest, from an
+// app whatever its network capabilities say. Nothing in a resident app needs
+// it. Refused for every socket type, for every app.
+//
+// Considered and left alone:
+//   - socketpair(2) hands back two ends already connected to each other.
+//     AF_INET, AF_INET6 and AF_VSOCK refuse it (EOPNOTSUPP), so neither end
+//     can have a remote peer.
+//   - AF_NETLINK stays open, as section 2 explains. Changing routes or
+//     interfaces through it needs CAP_NET_ADMIN, which drop_all_capabilities()
+//     removes and section 1 keeps removed. mesh-daemon, the one process that
+//     does need netlink write access, is not started through agent-init.
+//   - AF_PACKET and AF_XDP both need CAP_NET_RAW, which is likewise gone.
+//     Section 2 refuses both anyway for no-network apps, with every other
+//     family that isn't IP, Unix or netlink.
+
+const AF_VSOCK: u64 = 40;
+
+/// io_uring's three syscalls, refused whole: a ring's contents are behind
+/// pointers seccomp cannot follow, so there is no argument to match on.
+const IO_URING_SYSCALLS: [i64; 3] = [libc::SYS_io_uring_setup, libc::SYS_io_uring_enter, libc::SYS_io_uring_register];
+
+/// Returned for the io_uring syscalls. See the section header.
+const IO_URING_ERRNO: u32 = libc::ENOSYS as u32;
+
+/// Returns two programs, for the same reason as section 1: the ENOSYS one
+/// (io_uring) and the EPERM one (AF_VSOCK).
+pub fn compile_no_io_uring_no_vsock_filters() -> Result<[BpfProgram; 2], Box<dyn std::error::Error>> {
+    let mut io_uring_rules: BTreeMap<i64, Vec<SeccompRule>> = BTreeMap::new();
+    for syscall in IO_URING_SYSCALLS {
+        io_uring_rules.insert(syscall, vec![]);
+    }
+    let deny_io_uring = SeccompFilter::new(
+        io_uring_rules,
+        SeccompAction::Allow,
+        SeccompAction::Errno(IO_URING_ERRNO),
+        std::env::consts::ARCH.try_into()?,
+    )?;
+
+    let mut vsock_rules: BTreeMap<i64, Vec<SeccompRule>> = BTreeMap::new();
+    vsock_rules.insert(
+        libc::SYS_socket,
+        vec![SeccompRule::new(vec![SeccompCondition::new(
+            0,
+            SeccompCmpArgLen::Dword,
+            SeccompCmpOp::Eq,
+            AF_VSOCK,
+        )?])?],
+    );
+    let deny_vsock = SeccompFilter::new(
+        vsock_rules,
+        SeccompAction::Allow,
+        SeccompAction::Errno(DENIED_ERRNO),
+        std::env::consts::ARCH.try_into()?,
+    )?;
+
+    Ok([deny_io_uring.try_into()?, deny_vsock.try_into()?])
+}
+
+/// Installs both filters on the calling thread. Inherited across the execve()
+/// that follows in main(), and irrevocable from that point on.
+pub fn install_no_io_uring_no_vsock_filters() -> Result<(), Box<dyn std::error::Error>> {
+    for program in compile_no_io_uring_no_vsock_filters()? {
+        seccompiler::apply_filter(&program)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU32, Ordering};
 
     #[test]
     fn both_filter_sets_compile_to_non_empty_bpf_programs() {
@@ -337,6 +473,9 @@ mod tests {
         }
         let program = compile_no_udp_no_raw_filter().expect("filter should compile");
         assert!(!program.is_empty(), "an empty program would be silently refused by apply_filter()");
+        for program in compile_no_io_uring_no_vsock_filters().expect("io_uring/vsock filters should compile") {
+            assert!(!program.is_empty(), "an empty program would be silently refused by apply_filter()");
+        }
     }
 
     /// CLONE_NEWTIME's value collides with clone(2)'s CSIGNAL mask, so it
@@ -406,6 +545,288 @@ mod tests {
         );
     }
 
+    // A minimal io_uring client, just enough to submit one IORING_OP_SOCKET
+    // and read its completion — the smallest demonstration of the bypass the
+    // io_uring filter exists for. Hand-rolled against the kernel ABI rather
+    // than pulled in as a dependency, for a test's worth of use. Layouts are
+    // from <linux/io_uring.h>, and identical on x86_64 and aarch64.
+    #[repr(C)]
+    #[derive(Default)]
+    struct SqringOffsets {
+        head: u32,
+        tail: u32,
+        ring_mask: u32,
+        ring_entries: u32,
+        flags: u32,
+        dropped: u32,
+        array: u32,
+        resv1: u32,
+        user_addr: u64,
+    }
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct CqringOffsets {
+        head: u32,
+        tail: u32,
+        ring_mask: u32,
+        ring_entries: u32,
+        overflow: u32,
+        cqes: u32,
+        flags: u32,
+        resv1: u32,
+        user_addr: u64,
+    }
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct IoUringParams {
+        sq_entries: u32,
+        cq_entries: u32,
+        flags: u32,
+        sq_thread_cpu: u32,
+        sq_thread_idle: u32,
+        features: u32,
+        wq_fd: u32,
+        resv: [u32; 3],
+        sq_off: SqringOffsets,
+        cq_off: CqringOffsets,
+    }
+
+    const IORING_OFF_SQ_RING: libc::off_t = 0;
+    const IORING_OFF_CQ_RING: libc::off_t = 0x0800_0000;
+    const IORING_OFF_SQES: libc::off_t = 0x1000_0000;
+    const IORING_OP_SOCKET: u8 = 45;
+    const IORING_ENTER_GETEVENTS: u32 = 1;
+    const SQE_SIZE: usize = 64;
+    const CQE_SIZE: usize = 16;
+
+    /// How far an io_uring socket attempt got.
+    #[derive(Debug, PartialEq)]
+    enum UringSocket {
+        /// io_uring_setup(2) itself failed with this errno.
+        SetupRefused(i32),
+        /// The ring worked and the SOCKET op completed with this errno
+        /// (EINVAL on a kernel older than 5.19, which has no such op).
+        OpFailed(i32),
+        /// The kernel handed back a socket fd without socket(2) ever being
+        /// called. Already closed by the time this is returned; carries the
+        /// socket's SO_TYPE, read back from the fd before closing it.
+        Created { so_type: i32 },
+    }
+
+    /// Asks the kernel for a socket through io_uring instead of socket(2).
+    fn socket_via_io_uring(domain: i32, sock_type: i32) -> UringSocket {
+        let mut params = IoUringParams::default();
+        // SAFETY: io_uring_setup(2) writes only into `params`, which lives for
+        // the duration of the call.
+        let ring = unsafe { libc::syscall(libc::SYS_io_uring_setup, 1u32, &mut params as *mut IoUringParams) };
+        if ring < 0 {
+            return UringSocket::SetupRefused(std::io::Error::last_os_error().raw_os_error().unwrap_or(0));
+        }
+        let ring = ring as i32;
+
+        let sq_len = params.sq_off.array as usize + params.sq_entries as usize * 4;
+        let cq_len = params.cq_off.cqes as usize + params.cq_entries as usize * CQE_SIZE;
+        let sqes_len = params.sq_entries as usize * SQE_SIZE;
+        let map = |len: usize, offset: libc::off_t| {
+            // SAFETY: a fresh shared mapping of the ring fd at one of the
+            // kernel-defined offsets; the result is checked against MAP_FAILED.
+            let ptr = unsafe {
+                libc::mmap(
+                    std::ptr::null_mut(),
+                    len,
+                    libc::PROT_READ | libc::PROT_WRITE,
+                    libc::MAP_SHARED | libc::MAP_POPULATE,
+                    ring,
+                    offset,
+                )
+            };
+            assert_ne!(ptr, libc::MAP_FAILED, "mmap of the io_uring ring at {offset:#x} failed");
+            ptr as *mut u8
+        };
+        let sq = map(sq_len, IORING_OFF_SQ_RING);
+        let cq = map(cq_len, IORING_OFF_CQ_RING);
+        let sqes = map(sqes_len, IORING_OFF_SQES);
+
+        // SAFETY: every offset below comes from the kernel's own io_uring_params
+        // and stays within the mappings sized from those same values. The ring
+        // indices the kernel also touches are accessed through atomics.
+        let outcome = unsafe {
+            // io_uring_prep_socket(): fd = domain, off = type, len = protocol.
+            std::ptr::write_bytes(sqes, 0, SQE_SIZE);
+            *sqes = IORING_OP_SOCKET;
+            *(sqes.add(4) as *mut i32) = domain;
+            *(sqes.add(8) as *mut u64) = sock_type as u64;
+
+            let sq_mask = *(sq.add(params.sq_off.ring_mask as usize) as *const u32);
+            let sq_tail = &*(sq.add(params.sq_off.tail as usize) as *const AtomicU32);
+            let tail = sq_tail.load(Ordering::Acquire);
+            *(sq.add(params.sq_off.array as usize) as *mut u32).add((tail & sq_mask) as usize) = 0;
+            sq_tail.store(tail.wrapping_add(1), Ordering::Release);
+
+            let entered = libc::syscall(
+                libc::SYS_io_uring_enter,
+                ring,
+                1u32,
+                1u32,
+                IORING_ENTER_GETEVENTS,
+                std::ptr::null::<libc::c_void>(),
+                0usize,
+            );
+            assert!(entered >= 0, "io_uring_enter failed: {}", std::io::Error::last_os_error());
+
+            let cq_mask = *(cq.add(params.cq_off.ring_mask as usize) as *const u32);
+            let cq_head = &*(cq.add(params.cq_off.head as usize) as *const AtomicU32);
+            let head = cq_head.load(Ordering::Acquire);
+            let cqe = cq.add(params.cq_off.cqes as usize + (head & cq_mask) as usize * CQE_SIZE);
+            let res = *(cqe.add(8) as *const i32);
+            cq_head.store(head.wrapping_add(1), Ordering::Release);
+
+            if res < 0 {
+                UringSocket::OpFailed(-res)
+            } else {
+                let mut so_type: libc::c_int = 0;
+                let mut len = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+                libc::getsockopt(
+                    res,
+                    libc::SOL_SOCKET,
+                    libc::SO_TYPE,
+                    &mut so_type as *mut libc::c_int as *mut libc::c_void,
+                    &mut len,
+                );
+                libc::close(res);
+                UringSocket::Created { so_type }
+            }
+        };
+
+        // SAFETY: unmapping exactly the regions mapped above, then closing
+        // the ring fd they belong to.
+        unsafe {
+            libc::munmap(sq as *mut libc::c_void, sq_len);
+            libc::munmap(cq as *mut libc::c_void, cq_len);
+            libc::munmap(sqes as *mut libc::c_void, sqes_len);
+            libc::close(ring);
+        }
+        outcome
+    }
+
+    /// The positive control for the io_uring filter, and the demonstration of
+    /// the hole it closes: with only the socket(2) filter installed, a UDP
+    /// socket that socket(2) refuses comes straight back from io_uring's
+    /// IORING_OP_SOCKET. If this ever stops producing a socket on a kernel
+    /// that has the op, the refusal test below has stopped proving anything,
+    /// because the probe itself has broken.
+    ///
+    /// Skipped, loudly, where io_uring is unavailable to begin with: Docker's
+    /// default seccomp profile refuses it, and so does a host with
+    /// kernel.io_uring_disabled set. Run the crate's tests under
+    /// `--security-opt seccomp=unconfined` to see it.
+    #[test]
+    fn io_uring_creates_the_udp_socket_the_socket_filter_alone_refuses() {
+        let (direct_errno, via_uring) = std::thread::spawn(|| {
+            install_no_udp_no_raw_filter().expect("seccomp filter should install");
+            // SAFETY: socket(2) with constant arguments; closed if it succeeds.
+            let fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_DGRAM, 0) };
+            let errno = if fd < 0 { std::io::Error::last_os_error().raw_os_error().unwrap_or(0) } else { 0 };
+            if fd >= 0 {
+                unsafe { libc::close(fd) };
+            }
+            (errno, socket_via_io_uring(libc::AF_INET, libc::SOCK_DGRAM))
+        })
+        .join()
+        .expect("probe thread should not panic");
+
+        assert_eq!(direct_errno, libc::EPERM, "socket(AF_INET, SOCK_DGRAM) should be refused by the UDP filter");
+        match via_uring {
+            UringSocket::SetupRefused(errno) => {
+                eprintln!("SKIPPED: io_uring_setup is unavailable in this environment (errno {errno}), so the bypass cannot be shown here");
+            }
+            UringSocket::OpFailed(libc::EINVAL) => {
+                eprintln!("SKIPPED: this kernel has no IORING_OP_SOCKET (added in Linux 5.19)");
+            }
+            other => assert_eq!(
+                other,
+                UringSocket::Created { so_type: libc::SOCK_DGRAM },
+                "expected io_uring to hand back the UDP socket socket(2) refused",
+            ),
+        }
+    }
+
+    /// The fix for the bypass above, with every filter an app gets installed
+    /// together: io_uring_setup(2) answers ENOSYS, so there is no ring to
+    /// submit a SOCKET op to; an AF_VSOCK socket is refused with EPERM for
+    /// each type vsock supports; and TCP and Unix sockets still work.
+    ///
+    /// Unlike the positive control, nothing here is skipped where io_uring is
+    /// unavailable: an outer profile answering EPERM instead of ENOSYS is
+    /// exactly what this assertion is there to tell apart from this filter.
+    #[test]
+    fn io_uring_and_vsock_are_refused_while_tcp_and_unix_still_work() {
+        let (via_uring, raw_setup_errno, socket_errnos) = std::thread::spawn(|| {
+            install_no_new_namespaces_filter().expect("namespace filters should install");
+            install_no_udp_no_raw_filter().expect("UDP/raw filter should install");
+            install_no_io_uring_no_vsock_filters().expect("io_uring/vsock filters should install");
+
+            let via_uring = socket_via_io_uring(libc::AF_INET, libc::SOCK_DGRAM);
+
+            // The other two syscalls, each refused in its own right: a ring fd
+            // inherited from before the filter, or passed in over a Unix
+            // socket, must not be usable either.
+            // SAFETY: invalid fds and null pointers; with the filter in place
+            // neither call reaches the kernel's io_uring code at all.
+            let enter = unsafe { libc::syscall(libc::SYS_io_uring_enter, -1, 0u32, 0u32, 0u32, std::ptr::null::<libc::c_void>(), 0usize) };
+            let enter_errno = if enter < 0 { std::io::Error::last_os_error().raw_os_error().unwrap_or(0) } else { 0 };
+            let register = unsafe { libc::syscall(libc::SYS_io_uring_register, -1, 0u32, std::ptr::null::<libc::c_void>(), 0u32) };
+            let register_errno = if register < 0 { std::io::Error::last_os_error().raw_os_error().unwrap_or(0) } else { 0 };
+
+            // (domain, type, expected-to-be-denied)
+            let cases: [(libc::c_int, libc::c_int, bool); 5] = [
+                (libc::AF_VSOCK, libc::SOCK_STREAM, true),
+                (libc::AF_VSOCK, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, true),
+                (libc::AF_VSOCK, libc::SOCK_SEQPACKET, true),
+                (libc::AF_INET, libc::SOCK_STREAM, false),
+                (libc::AF_UNIX, libc::SOCK_STREAM, false),
+            ];
+            let socket_errnos = cases
+                .iter()
+                .map(|&(domain, sock_type, expect_denied)| {
+                    // SAFETY: socket(2) with constant arguments; closed below.
+                    let fd = unsafe { libc::socket(domain, sock_type, 0) };
+                    let errno = if fd < 0 { std::io::Error::last_os_error().raw_os_error().unwrap_or(0) } else { 0 };
+                    if fd >= 0 {
+                        unsafe { libc::close(fd) };
+                    }
+                    (domain, sock_type, expect_denied, fd, errno)
+                })
+                .collect::<Vec<_>>();
+
+            (via_uring, (enter_errno, register_errno), socket_errnos)
+        })
+        .join()
+        .expect("probe thread should not panic");
+
+        assert_eq!(
+            via_uring,
+            UringSocket::SetupRefused(libc::ENOSYS),
+            "io_uring_setup should answer ENOSYS, so no ring exists to create a socket through",
+        );
+        assert_eq!(raw_setup_errno, (libc::ENOSYS, libc::ENOSYS), "io_uring_enter and io_uring_register should answer ENOSYS");
+        for (domain, sock_type, expect_denied, fd, errno) in socket_errnos {
+            if expect_denied {
+                assert!(
+                    fd < 0 && errno == libc::EPERM,
+                    "socket({domain}, {sock_type}) should have been refused with EPERM, got fd={fd} errno={errno}",
+                );
+            } else {
+                assert!(
+                    errno != libc::EPERM,
+                    "socket({domain}, {sock_type}) must not be refused by these filters, got errno={errno}",
+                );
+            }
+        }
+    }
+
     /// The behavioural test: install the filter on a
     /// scratch thread and make the actual socket(2) calls an app would make.
     ///
@@ -417,24 +838,39 @@ mod tests {
         let outcome = std::thread::spawn(|| {
             install_no_udp_no_raw_filter().expect("seccomp filter should install");
 
-            // (domain, type, expected-to-be-denied)
-            let cases: [(libc::c_int, libc::c_int, bool); 6] = [
-                (libc::AF_INET, libc::SOCK_DGRAM, true),
-                (libc::AF_INET, libc::SOCK_DGRAM | libc::SOCK_CLOEXEC, true),
-                (libc::AF_INET6, libc::SOCK_DGRAM, true),
-                (libc::AF_PACKET, libc::SOCK_RAW, true),
+            // (domain, type, protocol, expected-to-be-denied)
+            let cases: [(libc::c_int, libc::c_int, libc::c_int, bool); 15] = [
+                (libc::AF_INET, libc::SOCK_DGRAM, 0, true),
+                (libc::AF_INET, libc::SOCK_DGRAM | libc::SOCK_CLOEXEC, 0, true),
+                (libc::AF_INET6, libc::SOCK_DGRAM, 0, true),
+                (libc::AF_INET, libc::SOCK_RAW, libc::IPPROTO_ICMP, true),
+                (libc::AF_PACKET, libc::SOCK_RAW, 0, true),
+                // SCTP, both ways it can be asked for. The one-to-many
+                // SEQPACKET form sends with sendmsg(2) and never calls
+                // connect(2), so Landlock has nothing to check; the STREAM
+                // form is not TCP, which is all Landlock's rules cover.
+                (libc::AF_INET, libc::SOCK_SEQPACKET, libc::IPPROTO_SCTP, true),
+                (libc::AF_INET6, libc::SOCK_SEQPACKET | libc::SOCK_NONBLOCK, libc::IPPROTO_SCTP, true),
+                (libc::AF_INET, libc::SOCK_STREAM, libc::IPPROTO_SCTP, true),
+                (libc::AF_INET, libc::SOCK_STREAM, libc::IPPROTO_MPTCP, true),
+                // Families other than IP that can carry traffic off the box.
+                (libc::AF_VSOCK, libc::SOCK_STREAM, 0, true),
+                (libc::AF_TIPC, libc::SOCK_RDM, 0, true),
                 // Still permitted: TCP is Landlock's to police per-port, and
                 // AF_UNIX is how every local RPC path in the container works.
-                (libc::AF_INET, libc::SOCK_STREAM, false),
-                (libc::AF_UNIX, libc::SOCK_DGRAM, false),
+                // AF_NETLINK is how a runtime reads its own interface list.
+                (libc::AF_INET, libc::SOCK_STREAM, 0, false),
+                (libc::AF_INET6, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, libc::IPPROTO_TCP, false),
+                (libc::AF_UNIX, libc::SOCK_DGRAM, 0, false),
+                (libc::AF_NETLINK, libc::SOCK_RAW, libc::NETLINK_ROUTE, false),
             ];
 
             cases
                 .iter()
-                .map(|&(domain, sock_type, expect_denied)| {
+                .map(|&(domain, sock_type, protocol, expect_denied)| {
                     // SAFETY: socket(2) with constant arguments; the returned
                     // fd (when there is one) is closed immediately below.
-                    let fd = unsafe { libc::socket(domain, sock_type, 0) };
+                    let fd = unsafe { libc::socket(domain, sock_type, protocol) };
                     // Only meaningful on failure — errno is not cleared by a
                     // successful call, so reading it unconditionally would
                     // carry the previous case's EPERM forward.
@@ -447,18 +883,18 @@ mod tests {
                         // SAFETY: fd was just returned by socket(2).
                         unsafe { libc::close(fd) };
                     }
-                    (domain, sock_type, expect_denied, fd, errno)
+                    (domain, sock_type, protocol, expect_denied, fd, errno)
                 })
                 .collect::<Vec<_>>()
         })
         .join()
         .expect("probe thread should not panic");
 
-        for (domain, sock_type, expect_denied, fd, errno) in outcome {
+        for (domain, sock_type, protocol, expect_denied, fd, errno) in outcome {
             if expect_denied {
                 assert!(
                     fd < 0 && errno == libc::EPERM,
-                    "socket({domain}, {sock_type}) should have been refused with EPERM, got fd={fd} errno={errno}",
+                    "socket({domain}, {sock_type}, {protocol}) should have been refused with EPERM, got fd={fd} errno={errno}",
                 );
             } else {
                 // AF_PACKET aside, a permitted case can still fail for
@@ -466,7 +902,7 @@ mod tests {
                 // must never happen is this filter being the reason.
                 assert!(
                     errno != libc::EPERM,
-                    "socket({domain}, {sock_type}) must not be refused by this filter, got errno={errno}",
+                    "socket({domain}, {sock_type}, {protocol}) must not be refused by this filter, got errno={errno}",
                 );
             }
         }

@@ -45,10 +45,15 @@ export interface BootComputerOptions {
    * `"required"` (the default) keeps the production image's own posture: if
    * the kernel didn't fully enforce the compiled Landlock policy, agent-init
    * exits rather than exec-ing the app — see packages/agent-init/src/main.rs.
+   * It also sets BERTH_REQUIRE_APP_CGROUPS=1, so a host that can't give each
+   * app its own cgroup (docs/resource-limits.md) fails the boot rather than
+   * running the apps bounded only by the container's caps. A caller's own
+   * `env` may still set BERTH_REQUIRE_APP_CGROUPS=0 to keep Landlock strict
+   * while relaxing only that.
    *
-   * `"warn"` sets BERTH_REQUIRE_ENFORCEMENT=0 in the container instead, so
-   * the app runs with whatever the kernel managed to apply (possibly
-   * nothing) and a warning is printed. This exists for one reason: Docker
+   * `"warn"` sets BERTH_REQUIRE_ENFORCEMENT=0 and BERTH_REQUIRE_APP_CGROUPS=0
+   * in the container instead, so the app runs with whatever the kernel
+   * managed to apply (possibly nothing) and a warning is printed. This exists for one reason: Docker
    * Desktop's linuxkit VM returns ENOSYS for landlock_create_ruleset, so on
    * macOS and Windows *every* Computer.boot() otherwise fails, taking the
    * README quickstart and all of experimental/agents/test with it. It is a local
@@ -75,6 +80,18 @@ export interface BootComputerOptions {
 function enforcementRelaxed(option: BootComputerOptions["enforcement"]): boolean {
   if (option) return option === "warn";
   return process.env.BERTH_ALLOW_UNENFORCED === "1" || process.env.BERTH_ALLOW_UNENFORCED === "true";
+}
+
+/**
+ * The container env Computer.boot() passes for its enforcement posture. Strict
+ * by default on both counts: the production image already sets both
+ * variables, and BERTH_REQUIRE_APP_CGROUPS is set here as well so the host
+ * half of that check (container.ts) sees it without inspecting the image. The
+ * caller's `env` may relax it. Relaxed mode turns both off, over the caller's.
+ */
+export function computerEnforcementEnv(relaxed: boolean, env?: Record<string, string>): Record<string, string> {
+  if (relaxed) return { ...env, BERTH_REQUIRE_ENFORCEMENT: "0", BERTH_REQUIRE_APP_CGROUPS: "0" };
+  return { BERTH_REQUIRE_APP_CGROUPS: "1", ...env };
 }
 
 export interface ConnectComputerOptions {
@@ -267,7 +284,7 @@ export class Computer implements ComputerHandle {
     if (relaxed) {
       console.warn(
         `[berth] WARNING: booting ${containerName} with capability enforcement DISABLED (enforcement: "warn"). ` +
-          `The resident app runs with whatever the kernel applied, possibly nothing — this is a local-iteration mode, not an isolation boundary.`,
+          `The resident app runs with whatever the kernel applied, possibly nothing, and per-app cgroups are not required — this is a local-iteration mode, not an isolation boundary.`,
       );
     }
 
@@ -280,7 +297,7 @@ export class Computer implements ComputerHandle {
           ? apps.map((a) => ({ name: a.name, workingDir: `/app/apps/${a.name}`, manifest: a.manifest }))
           : undefined,
       network: options.network,
-      env: relaxed ? { ...options.env, BERTH_REQUIRE_ENFORCEMENT: "0" } : options.env,
+      env: computerEnforcementEnv(relaxed, options.env),
       httpRpc: httpRpcRequested ? { authToken: httpRpcAuthToken!, appName: httpRpcAppName } : undefined,
       docker,
     });

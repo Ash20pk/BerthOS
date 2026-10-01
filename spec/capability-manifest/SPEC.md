@@ -1,6 +1,6 @@
 # The Capability Manifest Specification
 
-**Version 1.1.0** — status: **stable**. Versioned independently of any
+**Version 1.2.0** — status: **stable**. Versioned independently of any
 implementation; see [§10 Versioning](#10-versioning-of-this-specification).
 
 A capability manifest is a declarative document in which an *application* —
@@ -344,9 +344,18 @@ gate is not a gate.
 ### 4.9 `resources` (default `{}`)
 
 Optional sizing hints: `cpu` (a positive number of fractional cores),
-`memory_mb` (a positive integer, MiB), `gpu` (a positive integer count). Each
-key is independent; an absent key requests nothing, which is not the same as
-requesting zero.
+`memory_mb` (a positive integer, MiB), `gpu` (a positive integer count), and,
+since 1.2.0, `pids` (a positive integer: the most tasks, processes and threads
+together, the application may have at once). Each key is independent; an
+absent key requests nothing, which is not the same as requesting zero. A
+non-positive or non-integer `pids` is invalid, at path `["resources", "pids"]`.
+
+Each key describes the application that declares it, not whatever it happens to
+share a sandbox with. An implementation that runs several applications in one
+sandbox MUST state whether it enforces each key per application or only in
+aggregate over the sandbox, and MUST NOT describe an aggregate limit as a
+per-application one. It MAY apply its own default to an absent key, and MUST
+say so.
 
 Enforcement is best-effort and target-dependent. An implementation MUST state,
 per target, whether each key becomes a hard limit or is passed through
@@ -569,7 +578,7 @@ is judged against its own declaration rather than against the reference one.
   every listed tier is one of the four words, and every namespace/action listed
   answers `tier` consistently with `describe`.
 - **Extended** (OPTIONAL) — cases tagged `extended`: governance, exports
-  cross-checks, exposure defaults, resources, and (since 1.1.0) `runtime`. An implementation that does
+  cross-checks, exposure defaults, resources (with `pids` since 1.2.0), and (since 1.1.0) `runtime`. An implementation that does
   not support a field MAY skip its extended cases, and MUST say so in its
   conformance report; it may not skip a `core` case for the same reason.
 

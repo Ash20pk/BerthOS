@@ -57,7 +57,7 @@ const TIERS = [
 
 const DESCRIBE = {
   implementation: "@berthos/manifest-schema (Berth reference implementation)",
-  specVersion: "1.1.0",
+  specVersion: "1.2.0",
   filesystemAllowlist: ALLOWED_FILESYSTEM_SCOPE_PREFIXES,
   schemaVersion: CURRENT_SCHEMA_VERSION,
   tiers: TIERS,
