@@ -659,7 +659,9 @@ function hostAndVmFacts() {
 function imageSizes(apps) {
   const out = {};
   for (const a of apps) {
-    for (const ref of [`berth/${a}:dev`, `berth-build-cache:dev-berth_${a}`]) {
+    // Tags and cache refs are per checkout, so derive them the way the build does.
+    const appDir = join(REPO, "apps", a);
+    for (const ref of [orchestrator.checkoutTag(`berth/${a}:dev`, appDir), orchestrator.buildCacheRef(`berth/${a}:dev`, "dev", appDir)]) {
       const info = shOk("docker", ["image", "inspect", "--format", "{{.Size}}", ref]);
       if (info) out[ref] = Number(info);
     }

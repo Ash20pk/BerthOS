@@ -19,7 +19,7 @@ import { dirname, join } from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { loadManifest } from "@berthos/manifest-schema";
-import { buildImage, startContainer, stopContainer } from "../dist/index.js";
+import { buildImage, checkoutTag, startContainer, stopContainer } from "../dist/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");
@@ -44,7 +44,7 @@ async function main() {
     for (const key of ["planner", "browser", "intruder"]) {
       const { dir, name } = FIXTURES[key];
       console.log(`\n--- Building ${name}'s dev image ---`);
-      await buildImage({ appDir: dir, tag: `berth/${name}:dev`, target: "dev", docker });
+      await buildImage({ appDir: dir, tag: checkoutTag(`berth/${name}:dev`, dir), target: "dev", docker });
     }
 
     // Registration order matters not at all for correctness (mutual-match is
@@ -55,7 +55,7 @@ async function main() {
       const manifest = await loadManifest(join(dir, "berth.yml"));
       console.log(`\n--- Booting "${name}" — no shared Docker network passed ---`);
       const container = await startContainer({
-        image: `berth/${name}:dev`,
+        image: checkoutTag(`berth/${name}:dev`, dir),
         name,
         manifest,
         bindMount: { hostPath: REPO_ROOT, containerPath: "/workspace" },

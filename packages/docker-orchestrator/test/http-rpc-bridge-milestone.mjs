@@ -16,13 +16,13 @@ import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { loadManifest } from "@berthos/manifest-schema";
-import { buildImage, startContainer, stopContainer } from "../dist/index.js";
+import { buildImage, checkoutTag, startContainer, stopContainer } from "../dist/index.js";
 import Docker from "dockerode";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");
 const APP_DIR = join(REPO_ROOT, "apps", "filesystem");
-const IMAGE_TAG = "berth/filesystem-http-rpc-milestone:dev";
+const IMAGE_TAG = checkoutTag("berth/filesystem-http-rpc-milestone:dev", APP_DIR);
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);

@@ -34,11 +34,11 @@ import Docker from "dockerode";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { loadManifest } from "@berthos/manifest-schema";
-import { buildImage, startContainer, stopContainer, restartContainer, createStdioRpcClient } from "../dist/index.js";
+import { buildImage, checkoutTag, startContainer, stopContainer, restartContainer, createStdioRpcClient } from "../dist/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_DIR = join(__dirname, "fixtures", "on-install-probe");
-const TAG = "berth/on-install-probe:test";
+const TAG = checkoutTag("berth/on-install-probe:test", FIXTURE_DIR);
 const CONTAINER_NAME = "berth-test-on-install";
 
 const PROOF_PATH = "/etc/berth-on-install-proof";

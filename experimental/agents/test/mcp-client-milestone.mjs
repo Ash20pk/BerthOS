@@ -13,7 +13,7 @@ import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { loadManifest } from "@berthos/manifest-schema";
-import { buildImage, startContainer, stopContainer } from "@berthos/docker-orchestrator";
+import { buildImage, checkoutTag, startContainer, stopContainer } from "@berthos/docker-orchestrator";
 import { Agent, createMcpClientTools } from "../dist/index.js";
 import { resolveDevBindMount } from "../../../packages/cli/dist/util/workspace.js";
 
@@ -49,7 +49,7 @@ async function main() {
   const manifest = await loadManifest(join(FILESYSTEM_APP_DIR, "berth.yml"));
 
   console.log("Building filesystem's dev image...");
-  await buildImage({ appDir: FILESYSTEM_APP_DIR, tag: "berth/filesystem:dev", target: "dev", docker });
+  await buildImage({ appDir: FILESYSTEM_APP_DIR, tag: checkoutTag("berth/filesystem:dev", FILESYSTEM_APP_DIR), target: "dev", docker });
 
   // `berth dev`'s real mount layout, via the CLI's own helper. This was a
   // read-WRITE bind of the repository root, which stopped working once apps
@@ -65,7 +65,7 @@ async function main() {
 
   console.log("Starting filesystem's sandbox as berth-dev-filesystem (matches `berth mcp`'s default container naming)...");
   const running = await startContainer({
-    image: "berth/filesystem:dev",
+    image: checkoutTag("berth/filesystem:dev", FILESYSTEM_APP_DIR),
     name: "berth-dev-filesystem",
     manifest,
     bindMount,

@@ -12,7 +12,7 @@ export default class Doctor extends Command {
   static override examples = [
     "<%= config.bin %> doctor",
     "<%= config.bin %> doctor --json",
-    "<%= config.bin %> doctor --image berth/filesystem:dev",
+    "<%= config.bin %> doctor --image berth/filesystem:dev-1a2b3c4d",
     "<%= config.bin %> doctor --no-probe",
     "<%= config.bin %> doctor --runtime runsc",
     "<%= config.bin %> doctor --fix",

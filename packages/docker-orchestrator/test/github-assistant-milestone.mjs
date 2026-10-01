@@ -30,7 +30,7 @@ import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { loadManifest } from "@berthos/manifest-schema";
-import { buildImage, startContainer, stopContainer } from "../dist/index.js";
+import { buildImage, checkoutTag, startContainer, stopContainer } from "../dist/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");
@@ -216,11 +216,11 @@ async function runBypassScenario() {
 
   try {
     console.log("\n--- Building github-assistant's dev image ---");
-    await buildImage({ appDir: APP_DIR, tag: "berth/github-assistant:dev", target: "dev", docker });
+    await buildImage({ appDir: APP_DIR, tag: checkoutTag("berth/github-assistant:dev", APP_DIR), target: "dev", docker });
 
     console.log("\n--- Booting github-assistant's sandbox, pointed at the mock GitHub ---");
     const running = await startContainer({
-      image: "berth/github-assistant:dev",
+      image: checkoutTag("berth/github-assistant:dev", APP_DIR),
       name: "berth-github-assistant-milestone",
       manifest,
       bindMount: { hostPath: REPO_ROOT, containerPath: "/workspace" },
@@ -296,11 +296,11 @@ async function runBrokerScenario() {
     const mockUpstream = await startMockUpstreamHttps(BROKER_UPSTREAM_MOCK_PORT, certDir);
 
     console.log("\n--- Building github-assistant's dev image ---");
-    await buildImage({ appDir: APP_DIR, tag: "berth/github-assistant:dev", target: "dev", docker });
+    await buildImage({ appDir: APP_DIR, tag: checkoutTag("berth/github-assistant:dev", APP_DIR), target: "dev", docker });
 
     console.log("\n--- Booting github-assistant's sandbox with the real GitHub API broker active ---");
     const running = await startContainer({
-      image: "berth/github-assistant:dev",
+      image: checkoutTag("berth/github-assistant:dev", APP_DIR),
       name: "berth-github-assistant-broker-milestone",
       manifest,
       bindMount: { hostPath: REPO_ROOT, containerPath: "/workspace" },

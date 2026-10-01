@@ -214,7 +214,7 @@ export async function findProbeImage(docker: Docker): Promise<string | undefined
   // A Berth app image is the safest bet: it is the thing that will actually be
   // booted, so probing it answers the question about the image in play, not
   // about some other image that happens to be lying around.
-  // Both prefixes Berth tags with: `berth/<app>:dev` from `berth dev`, and
+  // Both prefixes Berth tags with: `berth/<app>:dev-<hash>` from `berth dev`, and
   // `berth-agent/<app>:<ts>` from a Computer/demo boot. Missing the second
   // meant a user who had just run the hero demo still got UNKNOWN.
   return (
