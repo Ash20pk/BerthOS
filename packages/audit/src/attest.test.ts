@@ -88,3 +88,30 @@ describe("finalizeAttestation + verifyAttestation", () => {
     assert.ok(v.problems.some((p) => p.message.includes("run.records")));
   });
 });
+
+describe("boot.isolation (microVM extension)", () => {
+  const isolation = {
+    kind: "microvm" as const,
+    engine: "libkrun",
+    hypervisor: "hvf",
+    kernel: { sha256: "8".repeat(64), pinned: true, linux: "6.12.109" },
+    rootfs: { sha256: "5".repeat(64), pinned: true, fstype: "erofs" },
+    tsi: false,
+    nics: 0,
+  };
+
+  it("a record carrying it verifies, and the field is inside the digest", () => {
+    const base = baseInput();
+    const record = finalizeAttestation({ ...base, boot: { ...base.boot, isolation } });
+    assert.equal(verifyAttestation(record).valid, true);
+    const tampered = { ...record, boot: { ...record.boot, isolation: { ...isolation, nics: 1 } } };
+    assert.equal(verifyAttestation(tampered).valid, false);
+    assert.notEqual(record.recordSha256, finalizeAttestation(base).recordSha256);
+  });
+
+  it("never changes the verdict", () => {
+    const base = baseInput({ enforcement: { rulesetReports: [], doctorProbe: { status: "enforcing" } } });
+    const record = finalizeAttestation({ ...base, boot: { ...base.boot, isolation } });
+    assert.equal(record.enforcement.status, "UNDETERMINED");
+  });
+});

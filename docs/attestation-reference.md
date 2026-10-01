@@ -24,7 +24,7 @@ Where the boot evidence comes from:
 Recorded evidence is bound to the session that recorded it. A run id reused with `--run-id` across sessions that ran in different boots can't be attested from its records, because an attestation names one boot: `berth attest` refuses it, as it does a run where some session's calls have no recorded boot. Sessions that attached to the same running sandbox share its boot and attest together.
 
 ```
-berth attest <runId> [--os <name>] [--container <name>] [--image <tag>]
+berth attest <runId> [--os <name>] [--container <name>] [--vm <name>] [--image <tag>]
                      [--file <audit.jsonl>] [--out <path>]
 ```
 
@@ -32,6 +32,7 @@ berth attest <runId> [--os <name>] [--container <name>] [--image <tag>]
 |---|---|
 | `--os <name>` | Which `berth os up` instance the run happened in, read live. Not needed for a `berth mcp` session. Otherwise defaults to the only recorded one. |
 | `--container <name>` | Read boot evidence from this container instead of looking it up with `--os`. Needs `--image`. |
+| `--vm <name>` | Read boot evidence from this running microVM sandbox (see `berth vm status`). See [A microVM boot](#a-microvm-boot). |
 | `--image <tag>` | Image tag for the enforcement probe. Defaults to the instance's recorded image. |
 | `--file <path>` | Audit file. Default `~/.berth/audit/audit.jsonl`. |
 | `--out <path>` | Write the record here (mode 0600). Without it, the record prints to stdout. |
@@ -68,6 +69,7 @@ The same checks are available as `verifyAttestation()` in `@berthos/audit`. Each
 | `boot.bootId` | The sandbox's per-boot ID, from the container log. |
 | `boot.imageDigest` | The image's identity from Docker. |
 | `boot.runtime` | The container runtime, if one was set (for example gVisor). |
+| `boot.isolation` | Only for a [microVM boot](#a-microvm-boot): what was booted, by hash, and that the guest had no network device. |
 | `enforcement.rulesetReports` | What the kernel reported when each app's Landlock policy was applied at this boot: `FullyEnforced`, `PartiallyEnforced` or `NotEnforced`. |
 | `enforcement.doctorProbe` | A fresh run of the `berth doctor` probe for this image and runtime: `enforcing`, `present_not_enforcing`, `unsupported` or `unknown`. |
 | `enforcement.status` | The verdict, computed from the two measurements above. |
@@ -85,6 +87,23 @@ The boot evidence `berth attest` gathers (and `berth mcp` records with a run) al
 | `UNDETERMINED` | A measurement is missing: the probe returned `unknown`, or no app reported for this boot. |
 
 On a host without Landlock, such as Docker Desktop, the same policy attests `NOT_ENFORCED`. Under gVisor, the probe measures gVisor's kernel, not the host's; see [enforcement](./kernel-enforcement.md#optional-hardened-runtime-gvisor--berth_runtime).
+
+## A microVM boot
+
+A session run with `--runtime vm` (the [local microVM runtime](local-vm.md)) produces the same record from the VM's own sources:
+
+| Field | In a VM boot |
+|---|---|
+| `boot.bootId` | berth-init's boot id, from its control port |
+| `boot.imageDigest` | `sha256:<rootfs>`, the content-addressed base image the VM booted |
+| `boot.imageTag` | `rootfs-<first 12 hex>.erofs` |
+| `boot.runtime` | `berth-vmm` |
+| `boot.isolation` | `{ kind: "microvm", engine: "libkrun", hypervisor, kernel: { sha256, pinned, linux, configSha256, cmdline }, rootfs: { sha256, pinned, fstype, readOnly }, state: { chunkedSha256, sizeBytes, created }, tsi, nics, vcpus, memMiB }`, from berth-vmm's measurement and `vm_config` lines |
+| `enforcement.rulesetReports` | agent-init's `capability_policy_applied` lines on the guest log port, for this boot. Only the first per app, and only from that app's own stream |
+| `enforcement.doctorProbe` | `enforcing` when the measured kernel is berth-vmm's pinned one and the running kernel lists `landlock` among its LSMs (berth-init's `boot_start`); `unsupported` when it doesn't; `unknown` for an unpinned kernel. Its `reason` says this is derived from the kernel's identity, not a behavioural probe run at this boot |
+| `policies` | empty: the policy is compiled inside the guest, and berth-init doesn't report its sha256 yet |
+
+`boot.isolation` is an extension field (spec §2.2). It is covered by `recordSha256`, older verifiers pass it through, and it never changes the verdict. `berth attest --vm <name>` reads a running VM sandbox live, as `--container` does for Docker.
 
 ## The spec
 

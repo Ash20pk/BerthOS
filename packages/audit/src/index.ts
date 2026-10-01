@@ -30,6 +30,7 @@ export {
   type AttestationProblemCode,
   type AttestationRecord,
   type AttestationVerification,
+  type BootIsolation,
   type DoctorProbeResult,
   type EnforcementStatus,
   type PolicyDigest,

@@ -10,6 +10,7 @@ import { createFileAuditSink, defaultAuditPath, tryAcquireFileLock } from "@bert
 import {
   createStdioRpcClient,
   gatherBootEvidence,
+  type BootEvidence,
   removeContainerSecretsDir,
   stopContainer,
   stopSemanticFsSidecar,
@@ -22,6 +23,17 @@ import { explainAppError, enforcementFromContainerLogs, type EnforcementStatus }
 import { createRunAudit, newRunId, type RunAudit } from "../util/run-audit.js";
 import { createInFlightCalls, createShutdown, describeReportedDenials, exportReportsDenials, handleToolCall, onClientPipesClosed } from "../util/mcp-call.js";
 import { startBackgroundSandbox, type SandboxSteps } from "../util/mcp-sandbox.js";
+import { resolveSandbox } from "../vm/config.js";
+import { vmSandboxSteps } from "../vm/mcp.js";
+import { VmSandbox } from "../vm/sandbox.js";
+
+/** What a tool call needs from the session's sandbox, Docker or microVM. */
+interface ConnectedSandbox {
+  enforcement: EnforcementStatus;
+  rpc?: StdioRpcClient;
+  /** The boot evidence, read while the sandbox runs. */
+  evidence(): Promise<BootEvidence>;
+}
 
 /**
  * Bridges one resident app's already-declared exports to MCP tools, so an
@@ -68,10 +80,16 @@ export default class Mcp extends Command {
     "<%= config.bin %> mcp --app filesystem --app-dir apps/filesystem --run-id nightly-2026-09-28",
     "<%= config.bin %> mcp --app filesystem --app-dir apps/filesystem --only write_file,read_file",
     "<%= config.bin %> mcp --app filesystem --app-dir apps/filesystem --no-boot",
+    "<%= config.bin %> mcp --app notes --app-dir apps/notes --runtime vm",
   ];
   static override flags = {
     app: Flags.string({ required: true, description: "the app's name (as declared in its berth.yml)" }),
-    container: Flags.string({ description: "container name to reach (defaults to berth-dev-<app>)" }),
+    container: Flags.string({ description: "container (or microVM sandbox) name to reach (defaults to berth-dev-<app>)" }),
+    runtime: Flags.string({
+      description:
+        "where the sandbox runs: docker (default) or vm, a local microVM (docs/local-vm.md). Defaults to BERTH_SANDBOX, then \"sandbox\" in ~/.berth/config.json",
+      options: ["docker", "vm"],
+    }),
     "app-dir": Flags.string({ description: "path to the app's directory (defaults to the current directory)", default: "." }),
     only: Flags.string({
       description:
@@ -138,15 +156,36 @@ export default class Mcp extends Command {
       );
     }
 
+    let runtime;
+    try {
+      runtime = resolveSandbox(flags.runtime);
+    } catch (err) {
+      this.error(errorMessage(err));
+    }
     const docker = new Docker();
+    const steps = (attachRpc: boolean): SandboxSteps<unknown, ConnectedSandbox> =>
+      runtime === "vm"
+        ? (vmSandboxSteps({
+            name: containerName,
+            appName,
+            appDir,
+            manifest,
+            readyTimeoutMs: flags["boot-timeout"] * 1000,
+            attachRpc,
+            log: (message) => this.logStderr(message),
+          }) as SandboxSteps<unknown, ConnectedSandbox>)
+        : (this.sandboxSteps(docker, containerName, manifest, appDir, flags, { attachRpc }) as SandboxSteps<unknown, ConnectedSandbox>);
 
-    const noBootMessage = `no running container named "${containerName}" and --no-boot was passed — start it with \`berth dev\` in ${appDir}, or drop --no-boot to let this command boot it (pass --container if it runs under a different name)`;
+    const noBootMessage =
+      runtime === "vm"
+        ? `no running microVM sandbox named "${containerName}" and --no-boot was passed — start it with \`berth dev --runtime vm\` in ${appDir}, or drop --no-boot to let this command boot it`
+        : `no running container named "${containerName}" and --no-boot was passed — start it with \`berth dev\` in ${appDir}, or drop --no-boot to let this command boot it (pass --container if it runs under a different name)`;
 
     if (flags.warm) {
       // Deliberately symmetric with the serving path's ownership rule: a
       // container this command booted is one it stops. An already-running
       // `berth dev` container is left exactly as it was found.
-      const sandbox = startBackgroundSandbox(this.sandboxSteps(docker, containerName, manifest, appDir, flags, { attachRpc: false }), {
+      const sandbox = startBackgroundSandbox(steps(false), {
         allowBoot: flags.boot,
         noBootMessage,
       });
@@ -161,7 +200,15 @@ export default class Mcp extends Command {
 
     // --no-boot with nothing to attach to is a setup error, reported before
     // serving rather than on the first tool call.
-    if (!flags.boot && !(await docker.getContainer(containerName).inspect().then(() => true, () => false))) {
+    const exists =
+      runtime === "vm"
+        ? () =>
+            VmSandbox.find(containerName).then(
+              (s) => (s?.detach(), s !== undefined),
+              () => true,
+            )
+        : () => docker.getContainer(containerName).inspect().then(() => true, () => false);
+    if (!flags.boot && !(await exists())) {
       this.error(noBootMessage);
     }
 
@@ -190,7 +237,7 @@ export default class Mcp extends Command {
     // need nothing running. A first boot builds an image and can take
     // minutes, longer than an MCP client waits for a server to answer
     // `initialize` (about 60 s); tool calls wait for it instead.
-    const sandbox = startBackgroundSandbox(this.sandboxSteps(docker, containerName, manifest, appDir, flags, { attachRpc: true }), {
+    const sandbox = startBackgroundSandbox(steps(true), {
       allowBoot: flags.boot,
       noBootMessage,
     });
@@ -261,7 +308,7 @@ export default class Mcp extends Command {
     await server.connect(transport);
     if (runAudit) {
       bootEvidence = sandbox.ready.then(
-        ({ container }) => this.recordBootEvidence(runAudit, docker, container, containerName),
+        (ready) => this.recordBootEvidence(runAudit, ready),
         () => undefined,
       );
     }
@@ -282,7 +329,7 @@ export default class Mcp extends Command {
     appDir: string,
     flags: { "boot-timeout": number },
     options: { attachRpc: boolean },
-  ): SandboxSteps<Docker.Container, { container: Docker.Container; enforcement: EnforcementStatus; rpc?: StdioRpcClient }> {
+  ): SandboxSteps<Docker.Container, ConnectedSandbox & { container: Docker.Container }> {
     let toldWaiting = false;
     return {
       find: async () => {
@@ -316,7 +363,12 @@ export default class Mcp extends Command {
         // where nothing was enforced (`berth doctor` is the host-level version).
         const enforcement = await this.readEnforcement(container);
         this.logStderr(`kernel enforcement in this container: ${enforcement}${enforcement === "enforced" ? "" : " — run `berth doctor`"}`);
-        return { container, enforcement, ...(options.attachRpc ? { rpc: await createStdioRpcClient(container, docker) } : {}) };
+        return {
+          container,
+          enforcement,
+          evidence: async () => gatherBootEvidence(docker, containerName, (await container.inspect()).Config.Image),
+          ...(options.attachRpc ? { rpc: await createStdioRpcClient(container, docker) } : {}),
+        };
       },
       stopByName: async () => {
         this.logStderr(`stopping the sandbox this session booted ("${containerName}")`);
@@ -333,10 +385,9 @@ export default class Mcp extends Command {
    * trail. A failure is reported and the session carries on: an unattestable
    * run is still a usable one.
    */
-  private async recordBootEvidence(runAudit: RunAudit, docker: Docker, container: Docker.Container, containerName: string): Promise<void> {
+  private async recordBootEvidence(runAudit: RunAudit, sandbox: ConnectedSandbox): Promise<void> {
     try {
-      const image = (await container.inspect()).Config.Image;
-      const evidence = await gatherBootEvidence(docker, containerName, image);
+      const evidence = await sandbox.evidence();
       await runAudit.sandboxBoot(evidence);
       this.logStderr(`recorded boot evidence for run ${runAudit.runId} (boot ${evidence.bootId})`);
     } catch (err) {

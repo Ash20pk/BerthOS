@@ -12,6 +12,8 @@ import {
 } from "@berthos/audit";
 import { gatherBootEvidence, listOsNames, readOsState, type BootEvidence } from "@berthos/docker-orchestrator";
 import { recordedBootEvidence } from "../util/run-audit.js";
+import { vmEvidence } from "../vm/mcp.js";
+import { VmSandbox } from "../vm/sandbox.js";
 
 /** Rotated segments oldest-first — same walk as `berth audit verify`. */
 function segmentsFor(path: string, maxFiles = 50): string[] {
@@ -47,6 +49,7 @@ export default class Attest extends Command {
         "which `berth os up` instance the run happened in, read live. Not needed for a run that recorded its own boot evidence (`berth mcp` does); defaults to the only recorded instance otherwise.",
     }),
     container: Flags.string({ description: "container name to read boot evidence from (overrides --os lookup)" }),
+    vm: Flags.string({ description: "a running microVM sandbox to read boot evidence from, e.g. berth-dev-notes (see `berth vm status`)" }),
     image: Flags.string({ description: "image tag for the enforcement probe (defaults to the instance's recorded image)" }),
     file: Flags.string({ description: "audit file to cite (defaults to ~/.berth/audit/audit.jsonl)" }),
     out: Flags.string({ description: "write the record to this path instead of stdout" }),
@@ -109,6 +112,7 @@ export default class Attest extends Command {
         imageTag: evidence.imageTag,
         imageDigest: evidence.imageDigest,
         ...(evidence.runtime ? { runtime: evidence.runtime } : {}),
+        ...(evidence.isolation ? { isolation: evidence.isolation } : {}),
       },
       enforcement: { rulesetReports: evidence.rulesetReports, doctorProbe: evidence.doctorProbe },
       policies: evidence.policies,
@@ -142,7 +146,16 @@ export default class Attest extends Command {
    * and a run whose sessions ran in different boots is refused rather than
    * attested against the latest one (see recordedBootEvidence).
    */
-  private async bootEvidence(runRecords: AuditRecord[], flags: { os?: string; container?: string; image?: string }): Promise<BootEvidence> {
+  private async bootEvidence(runRecords: AuditRecord[], flags: { os?: string; container?: string; image?: string; vm?: string }): Promise<BootEvidence> {
+    if (flags.vm) {
+      const sandbox = await VmSandbox.find(flags.vm).catch((err: Error) => this.error(err.message));
+      if (!sandbox) this.error(`no running microVM sandbox named "${flags.vm}" — attest reads live boot evidence, not history`);
+      try {
+        return vmEvidence(sandbox);
+      } finally {
+        sandbox.detach();
+      }
+    }
     if (!flags.os && !flags.container) {
       const recorded = recordedBootEvidence(runRecords);
       if (recorded && "problem" in recorded) this.error(`can't attest this run from its recorded boot evidence: ${recorded.problem}`);

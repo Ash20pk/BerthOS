@@ -3,6 +3,8 @@ import { Command, Flags } from "@oclif/core";
 import Docker from "dockerode";
 import { runDoctor, type CheckStatus, type DoctorReport } from "@berthos/docker-orchestrator";
 import { planMacEnforcementFix, type MacFixFacts } from "../util/doctor-fix.js";
+import { resolveSandbox } from "../vm/config.js";
+import { vmDoctor, type VmDoctorReport } from "../vm/doctor.js";
 
 const GLYPH: Record<CheckStatus, string> = { ok: "✔", warn: "!", fail: "✘", unknown: "?" };
 
@@ -16,6 +18,7 @@ export default class Doctor extends Command {
     "<%= config.bin %> doctor --no-probe",
     "<%= config.bin %> doctor --runtime runsc",
     "<%= config.bin %> doctor --fix",
+    "<%= config.bin %> doctor --sandbox vm",
   ];
   static override flags = {
     json: Flags.boolean({
@@ -33,6 +36,11 @@ export default class Doctor extends Command {
       description: "skip the container probe; kernel checks report `unknown` rather than being guessed at",
       default: false,
     }),
+    sandbox: Flags.string({
+      description:
+        "which sandbox to check for: docker (the container checks, plus the microVM section for information) or vm (only the microVM runtime; Docker isn't contacted, and the exit code is the VM's). Defaults to BERTH_SANDBOX, then \"sandbox\" in ~/.berth/config.json",
+      options: ["docker", "vm"],
+    }),
     fix: Flags.boolean({
       description:
         "on macOS, provision the enforcing host doctor knows how to verify (a Colima VM per docs/mac-enforcement.md) and re-check against it",
@@ -42,13 +50,31 @@ export default class Doctor extends Command {
 
   async run(): Promise<void> {
     const { flags } = await this.parse(Doctor);
+    let sandbox;
+    try {
+      sandbox = resolveSandbox(flags.sandbox);
+    } catch (err) {
+      this.error(err instanceof Error ? err.message : String(err));
+    }
+
+    if (sandbox === "vm") {
+      const vm = await vmDoctor();
+      if (flags.json) this.log(JSON.stringify({ schemaVersion: 1, sandbox: "vm", vm }, null, 2));
+      else this.printVm(vm, true);
+      if (!vm.ready) this.exit(1);
+      return;
+    }
+
     const report = await runDoctor({ image: flags.image, skipProbe: flags["no-probe"], runtime: flags.runtime });
+    const vm = await vmDoctor().catch(() => undefined);
 
     if (flags.json) {
       // Only the JSON, so `berth doctor --json | jq` works without a filter.
-      this.log(JSON.stringify(report, null, 2));
+      // `vm` is additive: consumers of the container checks can ignore it.
+      this.log(JSON.stringify({ ...report, ...(vm ? { vm } : {}) }, null, 2));
     } else {
       this.printHuman(report);
+      if (vm) this.printVm(vm, false);
     }
 
     if (flags.fix && !report.enforcementActive) {
@@ -128,6 +154,23 @@ export default class Doctor extends Command {
     this.log("");
     this.log(`  ${plan.exportLine}`);
     return true;
+  }
+
+  private printVm(vm: VmDoctorReport, selected: boolean): void {
+    this.log("");
+    this.log(`microVM runtime (berth dev --runtime vm)${selected ? "" : ", for information; it doesn't change this exit code"}:`);
+    for (const check of vm.checks) {
+      this.log(`  ${GLYPH[check.status]} ${check.title}`);
+      this.log(`      ${check.detail}`);
+      if (check.remedy) this.log(`      → ${check.remedy}`);
+    }
+    if (vm.features) this.log(`  egress: ${vm.features.egress ? "this berth-vmm has the host egress dialer (--egress-allow)" : "this berth-vmm has no egress dialer; apps that declare network:* can't run in the VM"}`);
+    this.log("");
+    this.log(
+      vm.ready
+        ? "The microVM runtime can boot here: Berth's own pinned kernel (Landlock built in), so enforcement doesn't depend on this host's kernel."
+        : "The microVM runtime can't boot here yet; fix the ✘ lines above.",
+    );
   }
 
   private printHuman(report: DoctorReport): void {

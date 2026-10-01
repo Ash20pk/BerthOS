@@ -9,6 +9,7 @@ berth doctor --fix
 berth doctor --runtime runsc
 berth doctor --image berth/filesystem:dev-1a2b3c4d
 berth doctor --no-probe
+berth doctor --sandbox vm
 ```
 
 ## Flags
@@ -20,6 +21,7 @@ berth doctor --no-probe
 | `--runtime=<name>` | Check a container runtime, e.g. `runsc` for gVisor, and run the kernel probe under it. Defaults to `BERTH_RUNTIME` |
 | `--image=<image>` | Image to run the kernel probe in. Defaults to a local Berth image |
 | `--no-probe` | Skip the container probe. The kernel checks then report `unknown` |
+| `--sandbox=<docker\|vm>` | Which sandbox to check for. `docker` (the default, or `BERTH_SANDBOX`, or `"sandbox"` in `~/.berth/config.json`) runs the container checks and adds the microVM section for information. `vm` checks only the [local microVM runtime](local-vm.md), never contacts Docker, and exits with the VM's verdict. See [The microVM section](#the-microvm-section) |
 
 ## Exit codes
 
@@ -28,7 +30,7 @@ berth doctor --no-probe
 | `0` | Enforcement is active |
 | `1` | Enforcement is off, or couldn't be established. `unknown` fails too: a check that didn't run hasn't passed |
 
-With `--fix`, the exit code reflects the re-check against the new VM.
+With `--fix`, the exit code reflects the re-check against the new VM. With `--sandbox vm`, `0` means every microVM check passed and `1` means at least one failed.
 
 ## Which kernel it checks
 
@@ -132,6 +134,21 @@ How to read it:
 - **`unknown` never means "probably fine".** `--no-probe`, an unreachable daemon, and a probe that failed to start all report `unknown`.
 - **Read `enforcementActive` with `enforcementDetermined`.** `false`/`true` means enforcement is off. `false`/`false` means the check couldn't be completed. The verdict says `NOT ACTIVE` or `UNKNOWN` to match.
 - **Only the `landlock` check decides the verdict.** `seccomp`, `fuse` and `cgroups` warnings are real losses but not the capability boundary. A `runtime` fail stops the probe, so `landlock` is `unknown`, the verdict is `UNKNOWN`, and the runtime failure appears in `reasons`.
+
+## The microVM section
+
+The [local microVM runtime](local-vm.md) brings its own kernel, so the question is different: not whether this host's kernel enforces, but whether this host can boot Berth's. `berth doctor` checks:
+
+| `id` | Check | Fails when |
+|---|---|---|
+| `hypervisor` | HVF (`kern.hv_support`) on macOS, `/dev/kvm` on Linux | no hypervisor is available to this user |
+| `berth-vmm` | the launcher, from `BERTH_VMM`, `~/.berth/vm/bin`, `PATH` or the checkout | it isn't found |
+| `codesign` | macOS: berth-vmm carries `com.apple.security.hypervisor` | unsigned, or signed without it; the remedy is the `codesign` command |
+| `pins` | the kernel and rootfs pins compiled into berth-vmm | they can't be read. It warns if they differ from the CLI's built-in copy, and uses berth-vmm's |
+| `libkrun` | the libkrun berth-vmm links, and its version | missing, or not 1.19.6 |
+| `artifacts` | the pinned kernel and rootfs in `~/.berth/vm`, hashed | missing, or not matching the pin; the remedy is `berth vm install` |
+
+It also says whether this berth-vmm has the host egress dialer (`--egress-allow`). In `--json` the section is an extra `vm` key, `{ "ready": bool, "checks": [...], "vmm": path, "features": { "egress": bool } }`, alongside the container report. With `--sandbox vm` it is `{ "schemaVersion": 1, "sandbox": "vm", "vm": { ... } }`.
 
 ## The probe image
 

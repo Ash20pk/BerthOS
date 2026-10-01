@@ -18,7 +18,8 @@ berth mcp --app filesystem --app-dir apps/filesystem --run-id nightly-2026-09-28
 |---|---|---|
 | `--app=<name>` | required | The app's name, as declared in its `berth.yml`. A mismatch with the manifest's name prints a warning and uses `--app` |
 | `--app-dir=<path>` | `.` | The app's directory, where `berth.yml` lives |
-| `--container=<name>` | `berth-dev-<app>` | The container to attach to or boot |
+| `--container=<name>` | `berth-dev-<app>` | The container (or microVM sandbox) to attach to or boot |
+| `--runtime=<docker\|vm>` | `docker` | Where the sandbox runs. `vm` is the [local microVM runtime](local-vm.md): the bridge attaches to a running `berth dev --runtime vm` sandbox or boots its own. Defaults to `BERTH_SANDBOX`, then `"sandbox"` in `~/.berth/config.json` |
 | `--only=<a>,<b>` | every export | Bridge only these exports. A name not in the manifest is an error |
 | `--no-boot` | boots | Attach to a running container only; fail if there isn't one |
 | `--warm` | off | Build the image, boot the sandbox, wait for the app to report ready, stop it, exit 0. Doesn't serve MCP. Makes the first tool call of the next session fast |

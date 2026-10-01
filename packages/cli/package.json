@@ -65,6 +65,7 @@
     "@modelcontextprotocol/sdk": "^1.30.1",
     "@oclif/core": "^5.0.1",
     "dockerode": "^5.0.1",
+    "esbuild": "^0.28.2",
     "tar-fs": "^3.0.6",
     "yaml": "^2.9.1",
     "zod": "^4.6.5",

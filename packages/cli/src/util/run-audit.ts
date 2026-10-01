@@ -219,7 +219,7 @@ const LEGACY_SESSION = "(unrecorded)";
 
 /** What must match for two records to describe the same boot. The doctor probe is re-run per session and may differ. */
 function bootIdentity(evidence: BootEvidence): string {
-  return JSON.stringify([evidence.bootId, evidence.containerName, evidence.imageTag, evidence.imageDigest, evidence.policies, evidence.rulesetReports]);
+  return JSON.stringify([evidence.bootId, evidence.containerName, evidence.imageTag, evidence.imageDigest, evidence.policies, evidence.rulesetReports, evidence.isolation ?? null]);
 }
 
 function isBootEvidence(value: unknown): value is BootEvidence {

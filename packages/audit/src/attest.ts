@@ -62,6 +62,32 @@ export interface PolicyDigest {
   sha256: string;
 }
 
+/**
+ * How the attested boot was isolated from its host, when that is more than a
+ * container on the host's (or Docker's VM's) kernel. An extension of `boot`
+ * (SPEC.md §2.2: unknown fields travel through, inside the digest, and never
+ * change a verdict). Today only the local microVM runtime writes it, from
+ * berth-vmm's measurement line: what was booted, by hash, and that the guest
+ * had no network device and no TSI.
+ */
+export interface BootIsolation {
+  kind: "microvm";
+  /** The VMM library: "libkrun". */
+  engine: string;
+  /** "hvf" (macOS Hypervisor.framework) or "kvm". */
+  hypervisor: string;
+  kernel: { sha256: string; pinned: boolean; linux?: string; configSha256?: string; cmdline?: string };
+  rootfs: { sha256: string; pinned: boolean; fstype?: string; readOnly?: boolean };
+  /** The state disk as this boot started from it (chunked sha256), when the sandbox has one. */
+  state?: { chunkedSha256: string; sizeBytes: number; created: boolean };
+  /** libkrun's transparent socket impersonation: the guest's AF_INET as host sockets. Off for a sandbox. */
+  tsi: boolean;
+  /** virtio-net devices given to the guest. */
+  nics: number;
+  vcpus?: number;
+  memMiB?: number;
+}
+
 export interface AttestationRecord {
   schemaVersion: number;
   kind: string;
@@ -92,6 +118,8 @@ export interface AttestationRecord {
     imageDigest: string;
     /** HostConfig.Runtime when set (M1.4 hardened runtime); absent means the daemon default. */
     runtime?: string;
+    /** Present for a boot in Berth's local microVM; see BootIsolation. */
+    isolation?: BootIsolation;
   };
   enforcement: {
     status: EnforcementStatus;
