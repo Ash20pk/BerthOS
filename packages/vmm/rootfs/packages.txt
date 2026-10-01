@@ -1,0 +1,8 @@
+# apk packages added to the Alpine 3.24.2 minirootfs for the Berth base rootfs.
+# One per line; versions resolved at build time are recorded in the image's
+# build-inputs.json (and the apk database inside the image).
+nodejs
+# The guest init's vsock relay (until the Rust init replaces it).
+socat
+# mkfs.ext4 for the per-sandbox state disk on first boot.
+e2fsprogs

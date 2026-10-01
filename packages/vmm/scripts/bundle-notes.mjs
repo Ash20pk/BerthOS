@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Bundles what the guest needs to run apps/notes without a node_modules tree:
-//   generate-capability-policy.mjs  - the same root-run policy compiler bundle
-//                                     entrypoint.sh runs (bundle-daemons.mjs)
+//   generate-capability-policy.mjs  - the root-run sdk-node tools the image
+//   run-lifecycle.mjs                 carries at /opt/berth/sdk-node, built as
+//                                     bundle-daemons.mjs builds them
 //   runtime.mjs                     - @berthos/sdk's resident-app runtime
 //   notes.mjs                       - apps/notes with @berthos/sdk and zod inlined
 //
@@ -50,6 +51,7 @@ const result = await esbuild.build({
   ...common,
   entryPoints: {
     "generate-capability-policy": join(repo, "packages/sdk/src/generate-capability-policy.ts"),
+    "run-lifecycle": join(repo, "packages/sdk/src/run-lifecycle.ts"),
     runtime: join(repo, "packages/sdk/src/runtime.ts"),
     notes: join(repo, "apps/notes/src/index.ts"),
   },

@@ -1,46 +1,117 @@
 #!/bin/sh
-# Assembles the guest root filesystem and the read-only app directory:
-#   $ART/rootfs-notes : Alpine + node + socat + agent-init + probe + berth-init
-#   $ART/app-notes    : berth.yml + bundled notes app + bundled SDK runtime
-# Needs build-agent-init.sh to have run. NODE_MODULES_FROM points at a checkout
-# with installed node_modules (esbuild, yaml, zod), read only.
+# Builds the Berth base rootfs as a content-addressed, read-only erofs image,
+# inside a libkrun builder VM, plus the notes app directory:
+#
+#   $ART/rootfs/rootfs-<sha256>.erofs          the image, named by its sha256
+#   $ART/rootfs/rootfs-<sha256>.inputs.json    what went into it
+#   $ART/rootfs/LATEST                         file name of the last build
+#   $ART/app-notes/                            berth.yml + bundled app + SDK runtime
+#                                              (shared read-only at /app; not in the image)
+#
+# Image contents: Alpine minirootfs + rootfs/packages.txt (node, socat,
+# e2fsprogs; python3 with PYTHON=1), agent-init + probe (build-agent-init.sh),
+# the sdk-node tools, and the guest init at /sbin/berth-init.
+#
+# The guest init seam: BERTH_INIT=<file> places that file at /sbin/berth-init
+# (default guest/berth-init.sh). A static Rust init binary drops in the same
+# way; nothing else in the image changes. See docs/design/microvm-image.md for
+# the contract it must meet.
+#
+# NODE_MODULES_FROM points at a checkout with installed node_modules (esbuild,
+# yaml, zod), read only; this worktree has none.
 set -eu
 . "$(dirname "$0")/common.sh"
 min_free_gb 10
 build_vmm
-R="$ART/rootfs-notes"
-APP="$ART/app-notes"
-AGENT_INIT_OUT="$ART/agent-init-build/out"
+AI="$ART/agent-init"
+INIT=${BERTH_INIT:-$VMM_DIR/guest/berth-init.sh}
 NM=${NODE_MODULES_FROM:-$HOME/agentOS}
-[ -f "$AGENT_INIT_OUT/agent-init" ] || { echo "run build-agent-init.sh first" >&2; exit 1; }
+EPOCH=$(manifest_get "$ROOTFS_MANIFEST" source_date_epoch)
+[ -f "$AI/agent-init" ] || { echo "run build-agent-init.sh first" >&2; exit 1; }
+[ -f "$INIT" ] || { echo "BERTH_INIT=$INIT does not exist" >&2; exit 1; }
 
-if [ ! -x "$R/usr/bin/node" ]; then
-    alpine_tree "$R"
-    mkdir -p "$R/berth" && cp "$VMM_DIR/guest/prep-rootfs-in-vm.sh" "$R/berth/"
-    DYLD_LIBRARY_PATH="$STOCK_KRUNFW_DIR" "$VMM" --tsi --cpus 4 --mem 1024 --root "$R" \
-        -- /bin/sh /berth/prep-rootfs-in-vm.sh </dev/null
-    rm -rf "$R/berth"
-    : > "$R/etc/resolv.conf"   # no network in the sandbox VM; nothing to resolve with
-fi
+B="$ART/rootfs-build"
+rm -rf "$B" && mkdir -p "$B/in/files" "$B/out" "$B/bundle"
+F="$B/in/files"
 
-grep -q '^notes:' "$R/etc/passwd" || {
-    echo "notes:x:10000:10000:berth app:/nonexistent:/sbin/nologin" >> "$R/etc/passwd"
-    echo "notes:x:10000:" >> "$R/etc/group"
-}
-mkdir -p "$R/workspace" "$R/app" "$R/usr/local/bin" "$R/opt/berth/sdk-node"
-install -m 0755 "$AGENT_INIT_OUT/agent-init" "$R/usr/local/bin/agent-init"
-install -m 0755 "$AGENT_INIT_OUT/probe" "$R/usr/local/bin/berth-probe"
-install -m 0755 "$VMM_DIR/guest/berth-init.sh" "$R/sbin/berth-init"
-install -m 0755 "$VMM_DIR/guest/net-probe.sh" "$R/usr/local/bin/net-probe"
-install -m 0755 "$VMM_DIR/guest/leak-probe.sh" "$R/usr/local/bin/leak-probe"
+# Host-side inputs, all into /in (read-only in the builder).
+fetch_alpine
+ln "$ALPINE_TGZ" "$B/in/alpine-minirootfs.tar.gz"
+cp "$VMM_DIR/rootfs/packages.txt" "$B/in/"
+if [ "${PYTHON:-0}" = 1 ]; then echo python3 > "$B/in/extra-packages"; else : > "$B/in/extra-packages"; fi
+echo "$EPOCH" > "$B/in/SOURCE_DATE_EPOCH"
 
-B="$ART/notes-bundle"
-node "$VMM_DIR/scripts/bundle-notes.mjs" "$B" \
+node "$VMM_DIR/scripts/bundle-notes.mjs" "$B/bundle" \
     "$NM/packages/sdk/node_modules" "$NM/packages/manifest-schema/node_modules" \
-    "$NM/apps/notes/node_modules" "$NM/node_modules"
-install -m 0644 "$B/generate-capability-policy.mjs" "$R/opt/berth/sdk-node/"
+    "$NM/apps/notes/node_modules" "$NM/node_modules" >/dev/null
+mkdir -p "$F/sbin" "$F/usr/local/bin" "$F/opt/berth/sdk-node" "$F/etc/berth"
+install -m 0755 "$INIT" "$F/sbin/berth-init"
+install -m 0755 "$AI/agent-init" "$F/usr/local/bin/agent-init"
+install -m 0755 "$AI/probe" "$F/usr/local/bin/berth-probe"
+install -m 0755 "$VMM_DIR/guest/net-probe.sh" "$F/usr/local/bin/net-probe"
+install -m 0755 "$VMM_DIR/guest/leak-probe.sh" "$F/usr/local/bin/leak-probe"
+install -m 0644 "$B/bundle/generate-capability-policy.mjs" "$B/bundle/run-lifecycle.mjs" "$F/opt/berth/sdk-node/"
+
+sha() { shasum -a 256 "$1" | cut -d' ' -f1; }
+src_rev=$(git -C "$REPO_DIR" rev-parse HEAD)
+src_dirty=$(git -C "$REPO_DIR" status --porcelain -- packages/vmm packages/sdk packages/manifest-schema | grep -q . && echo true || echo false)
+# Recorded inside the image too (/etc/berth/build-inputs.json), minus the
+# image's own hash, which cannot be inside itself.
+cat > "$F/etc/berth/build-inputs.json" <<EOF
+{
+  "schema": 1,
+  "alpine": {"version": "$ALPINE_VER", "minirootfsSha256": "$ALPINE_SHA256"},
+  "packages": $(sed -e 's/#.*//' "$B/in/packages.txt" "$B/in/extra-packages" | awk 'NF {printf "%s\"%s\"", (n++ ? ", " : "["), $1} END {print "]"}'),
+  "agentInit": {"sha256": "$(sha "$AI/agent-init")", "sourceRef": "${AGENT_INIT_REF:-fix/seccomp-io-uring-vsock}", "sourceCommit": "$(cat "$AI/agent-init.ref")"},
+  "probeSha256": "$(sha "$AI/probe")",
+  "berthInit": {"path": "/sbin/berth-init", "source": "$(basename "$INIT")", "sha256": "$(sha "$INIT")"},
+  "sdkNode": {
+    "generate-capability-policy.mjs": "$(sha "$B/bundle/generate-capability-policy.mjs")",
+    "run-lifecycle.mjs": "$(sha "$B/bundle/run-lifecycle.mjs")"
+  },
+  "sourceCommit": "$src_rev",
+  "sourceDirty": $src_dirty,
+  "sourceDateEpoch": $EPOCH,
+  "identities": {"berth": 9999, "berth-context-bus": 9001, "appSlots": "berth-app0..15 = 10000..10015"}
+}
+EOF
+
+[ -d "$IMAGE_BUILDER_ROOT" ] || alpine_tree "$IMAGE_BUILDER_ROOT"
+mkdir -p "$IMAGE_BUILDER_ROOT/berth"
+cp "$VMM_DIR/rootfs/build-in-vm.sh" "$IMAGE_BUILDER_ROOT/berth/"
+mkfile -n 4g "$B/build.img"
+builder_vm "$IMAGE_BUILDER_ROOT" "${CPUS:-4}" "${MEM:-2048}" \
+    --disk build:"$B/build.img" --share in:"$B/in":ro --share out:"$B/out" \
+    -- /bin/sh /berth/build-in-vm.sh
+rm -f "$B/build.img"
+
+h=$(sha "$B/out/rootfs.erofs")
+name="rootfs-$h.erofs"
+D="$ART/rootfs"
+mkdir -p "$D"
+mv "$B/out/rootfs.erofs" "$D/$name"
+chmod 0444 "$D/$name"
+node -e '
+const fs = require("fs");
+const [inputs, lock, mkfs, treeKiB, tree, sha, size] = process.argv.slice(1);
+const out = {
+  image: { sha256: sha, sizeBytes: Number(size), fstype: "erofs", compression: "lz4hc", treeKiB: Number(fs.readFileSync(treeKiB, "utf8")) },
+  ...JSON.parse(fs.readFileSync(inputs, "utf8")),
+  resolvedPackages: fs.readFileSync(lock, "utf8").trim().split("\n"),
+  mkfs: fs.readFileSync(mkfs, "utf8").trim().split("\n")[0],
+  treeListingSha256: require("crypto").createHash("sha256").update(fs.readFileSync(tree)).digest("hex"),
+};
+process.stdout.write(JSON.stringify(out, null, 2) + "\n");
+' "$F/etc/berth/build-inputs.json" "$B/out/packages.lock" "$B/out/mkfs.txt" "$B/out/tree-kib.txt" "$B/out/tree.txt" "$h" "$(stat -f %z "$D/$name")" \
+    > "$D/rootfs-$h.inputs.json"
+cp "$B/out/tree.txt" "$D/rootfs-$h.tree.txt"
+echo "$name" > "$D/LATEST"
+
+# The app directory, shared read-only into the guest at /app.
+APP="$ART/app-notes"
 rm -rf "$APP" && mkdir -p "$APP/dist"
-cp "$VMM_DIR/../../apps/notes/berth.yml" "$APP/"
-cp "$B/runtime.mjs" "$APP/runtime.mjs"
-cp "$B/notes.mjs" "$APP/dist/index.mjs"
-du -sh "$R" "$APP"
+cp "$REPO_DIR/apps/notes/berth.yml" "$APP/"
+cp "$B/bundle/runtime.mjs" "$APP/runtime.mjs"
+cp "$B/bundle/notes.mjs" "$APP/dist/index.mjs"
+rm -rf "$B"
+echo "rootfs $D/$name ($(stat -f %z "$D/$name") bytes)"
