@@ -13,6 +13,8 @@ exports:
     output: { uid: number }
   - name: received
     output: { events: array }
+  - name: net
+    output: { broker: string }
 
 on_install: []
 on_agent_ready:

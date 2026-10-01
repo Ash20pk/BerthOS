@@ -407,6 +407,9 @@ const server = http.createServer(
   if (DIALER_SOCKET) {
     if (IPV4_LITERAL.test(target.hostname) && isBlockedAddress(target.hostname)) {
       logDecision("denied", target.hostname, targetPort);
+      console.error(
+        `[egress-broker] {"event":"blocked_address","host":${JSON.stringify(target.hostname)},"address":${JSON.stringify(target.hostname)},"port":${targetPort}}`,
+      );
       res.writeHead(403, { "content-type": "text/plain" }).end(`egress denied: ${target.hostname} is loopback, private, link-local, or otherwise internal`);
       return;
     }
