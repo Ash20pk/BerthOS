@@ -32,6 +32,11 @@ cp /etc/resolv.conf "$R/etc/resolv.conf"
 apk --root "$R" --keys-dir "$R/etc/apk/keys" --repositories-file "$R/etc/apk/repositories" \
     --no-cache --update-cache add $PKGS >/dev/null
 apk --root "$R" info -v 2>/dev/null | sort > /out/packages.lock
+# Package scripts run chrooted into "$R", and where the builder gives that
+# root no /dev (a container, unlike the VM), a script's `>/dev/null` creates
+# a plain file there. The image's /dev holds no files of its own: the guest
+# kernel mounts devtmpfs over it.
+find "$R/dev" -mindepth 1 ! -type c ! -type b ! -type d -exec rm -f {} +
 
 # Berth's files (agent-init, berth-init, sdk-node, ...), then identities.
 # cp -a keeps modes; the owner it keeps is the host user's (virtio-fs, or a
