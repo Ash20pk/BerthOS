@@ -62,20 +62,22 @@ export const GovernanceSpec = z
   .default({ exempt: false });
 
 /**
- * All optional and unset by default (`{}`) — an app declaring none of these
- * keeps today's behavior exactly (an unbounded local container, no resource
- * fields sent to a cloud adapter). `cpu` is fractional cores (`0.5` = half a
- * core), `memory_mb` is MiB, `gpu` is a GPU *count* request, not a specific
- * model — best-effort everywhere it's wired (docker-orchestrator, adapter-k8s
- * as of this schema addition; see gap #30 in gaps.md and each consumer's own
- * docs for exactly which enforce it as a hard limit vs. pass it through
- * unenforced).
+ * All optional and unset by default (`{}`). `cpu` is fractional cores (`0.5`
+ * = half a core), `memory_mb` is MiB, `gpu` is a GPU *count* request, not a
+ * specific model, and `pids` is the most tasks (processes and threads) the
+ * app may have at once. Each is a limit on *this app*: in a local sandbox
+ * they become the app's own cgroup (see resources.ts and
+ * docs/resource-limits.md), not a limit on the container it shares with
+ * other apps. An app declaring none of them still gets a default task limit
+ * and an equal CPU share, never nothing. Other consumers (adapter-k8s) state
+ * in their own docs which keys they enforce and which they pass through.
  */
 export const ResourcesSpec = z
   .object({
     cpu: z.number().positive().optional(),
     memory_mb: z.number().int().positive().optional(),
     gpu: z.number().int().positive().optional(),
+    pids: z.number().int().positive().optional(),
   })
   .default({});
 

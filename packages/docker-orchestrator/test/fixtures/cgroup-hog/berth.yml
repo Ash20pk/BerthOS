@@ -1,0 +1,21 @@
+name: cgroup-hog
+version: 0.1.0
+description: "resource-limits-milestone.mjs's greedy app: forks, allocates and spins past the limits below, and tries to leave its cgroup."
+runtime: python
+governance: { exempt: true }
+resources:
+  cpu: 0.5
+  memory_mb: 96
+  pids: 64
+exports:
+  - name: ping
+  - name: whereami
+  - name: fork_bomb
+    input: { count: number, hold: number }
+  - name: alloc
+    input: { mb: number, timeout: number }
+  - name: alive
+    input: { pid: number }
+  - name: spin
+    input: { workers: number, seconds: number }
+  - name: escape_cgroup

@@ -1108,6 +1108,27 @@ mod tests {
         }
     }
 
+    // An app's cgroup is where entrypoint.sh put it, and its limits are what
+    // entrypoint.sh wrote. Neither may be something the app's own policy can
+    // grant it the right to change: a write to its cgroup.procs, or to any
+    // ancestor's, is the app leaving its limits, and DAC (root-owned files)
+    // must not be the only thing saying no.
+    #[test]
+    fn write_path_allowlist_never_grants_the_cgroup_filesystem() {
+        for path in [
+            "/sys",
+            "/sys/fs",
+            "/sys/fs/cgroup",
+            "/sys/fs/cgroup/cgroup.procs",
+            "/sys/fs/cgroup/berth",
+            "/sys/fs/cgroup/berth/apps/my-app",
+            "/sys/fs/cgroup/berth/apps/my-app/cgroup.procs",
+            "/sys/fs/cgroup/berth/apps/my-app/memory.max",
+        ] {
+            assert!(!is_allowed_write_path(path, "my-app"), "{path} must not be grantable");
+        }
+    }
+
     // The socket directory the app RPC socket lives in.
     // Scoped to this app's own name rather than allowed as a /run/berth prefix:
     // a prefix would let a policy file grant write access to every sibling's

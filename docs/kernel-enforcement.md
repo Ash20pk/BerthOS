@@ -67,6 +67,10 @@ Set `BERTH_RUNTIME=runsc` (or pass `runtime` to `startContainer()`) to run sandb
 
 gVisor doesn't implement Landlock, so under `runsc` you lose the kernel level entirely: agent-init reports `ruleset=NotEnforced` and a production image refuses to boot. Today you choose between escape protection and capability enforcement. `berth doctor --runtime runsc` checks the daemon has the runtime and runs the kernel probe under it, so run it again if you switch to a runtime whose kernel has Landlock (such as Kata).
 
+## Resource limits
+
+Each app runs in its own cgroup v2 with the `cpu`, `memory_mb` and `pids` its manifest declares, next to a reserved cgroup for the daemons and brokers. So one app that fork-bombs, leaks memory or spins can't starve its neighbours or the daemons. The app can't leave its cgroup or change its limits: the files are root's, the app has no capabilities, and `agent-init` never grants a Landlock write under `/sys`. This needs a host whose cgroup2 mount has `nsdelegate` (Docker 28+); `berth doctor`'s `cgroups` check says whether yours does. Production images set `BERTH_REQUIRE_APP_CGROUPS=1` and refuse to boot on a host that can't. Details are in [resource limits](./resource-limits.md).
+
 ## Limits
 
 - Full enforcement needs Linux 6.7+ (Landlock ABI 4, which adds network rules). On 5.13 to 6.6 the policy is only partly applied, and a production image refuses to start. `berth doctor` reports `NOT ACTIVE` there, naming the kernel's ABI, and `berth dev` prints a partial-enforcement banner.
