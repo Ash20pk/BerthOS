@@ -7,6 +7,7 @@
 //                                      throughout, logs on their own port
 //   node e2e-guest-init.mjs multi      notes + filesystem, per-app cgroups
 //   node e2e-guest-init.mjs stdio      single, with BERTH_VM_RPC=stdio
+//   node e2e-guest-init.mjs state      /workspace on a state disk (BERTH_STATE_DEV) across two boots
 //   node e2e-guest-init.mjs exits      power off when the last app exits, and on a refused boot
 //   RUNS=6 node e2e-guest-init.mjs bench   first boot + 5, median spawn->first RPC
 //                                      (BENCH_APP=notes-plain: no resources block)
@@ -18,7 +19,7 @@
 //
 // Env: GI_ART (artifacts), ART (spike artifacts: kernel), CPUS, MEM, VERBOSE=1.
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, truncateSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -186,7 +187,7 @@ async function rpcConnect(port, firstCall) {
   }
 }
 
-async function boot(apps, { env = {}, mem } = {}) {
+async function boot(apps, { env = {}, mem, extra = [] } = {}) {
   const tags = apps.length === 1 ? ["app"] : apps;
   const ports = [CONTROL_PORT, LOG_PORT, ...apps.map((_, i) => RPC_PORT_BASE + i)];
   for (const p of ports) rmSync(sockPath(p), { force: true });
@@ -197,6 +198,7 @@ async function boot(apps, { env = {}, mem } = {}) {
     "--root", join(GI_ART, "rootfs"), "--root-ro",
     ...apps.flatMap((a, i) => ["--share", `${tags[i]}:${join(GI_ART, "apps", a)}:ro`]),
     ...ports.flatMap((p) => ["--vsock", `${p}:${sockPath(p)}:listen`]),
+    ...extra,
     "--env", `BERTH_VM_APPS=${tags.join(",")}`,
     ...Object.entries(env).flatMap(([k, v]) => ["--env", `${k}=${v}`]),
     "--", "/sbin/berth-init",
@@ -359,6 +361,38 @@ async function exits() {
   return { results };
 }
 
+/** feat/vm-image's state disk: /workspace survives a reboot of the same sandbox. */
+async function state() {
+  const results = [];
+  const img = join(GI_ART, "run", "state.img");
+  rmSync(img, { force: true });
+  writeFileSync(img, "");
+  truncateSync(img, 64 * 1024 * 1024);
+  const opts = { extra: ["--disk", `state:${img}`], env: { BERTH_STATE_DEV: "/dev/vda" } };
+  let b = await boot(["notes"], opts);
+  let s = await attachStreams(b);
+  let { r } = await rpcConnect(RPC_PORT_BASE, (x) => x.call("add_note", { text: "survives a reboot" }));
+  await shutdown(b, s);
+  const formatted = s.logs.some((l) => l.line.includes("formatting ext4"));
+  const off1 = s.events.find((e) => e.event === "power_off");
+  // libkrun 1.19.6 truncates a raw image when the guest write-zeroes its last
+  // blocks (mkfs.ext4 does): feat/vm-image's berth-vmm --state restores the
+  // size before boot (b5cecef); this branch's berth-vmm predates that, so the
+  // test does the same here.
+  const truncatedTo = statSync(img).size;
+  truncateSync(img, 64 * 1024 * 1024);
+  b = await boot(["notes"], opts);
+  s = await attachStreams(b);
+  ({ r } = await rpcConnect(RPC_PORT_BASE, (x) => x.call("list_notes")));
+  const listed = await r.call("list_notes");
+  const off2 = await shutdown(b, s);
+  check(formatted, "first boot formats the blank state disk", results);
+  check(!s.logs.some((l) => l.line.includes("formatting ext4")), "second boot reuses it", results);
+  check(listed.notes.some((n) => n.text === "survives a reboot"), `the note from the first boot is there after the second (${listed.notes.length} notes)`, results);
+  check(off1?.unmountFailed.length === 0 && off2.powerOff?.unmountFailed.length === 0, "state disk unmounted cleanly at both power offs", results);
+  return { results, truncatedTo };
+}
+
 async function bench() {
   const runs = Number(process.env.RUNS ?? 6);
   const out = [];
@@ -380,7 +414,7 @@ async function bench() {
 
 const mode = process.argv[2] ?? "single";
 const res =
-  mode === "multi" ? await multi() : mode === "bench" ? await bench() : mode === "exits" ? await exits() : await single(mode === "stdio" ? "stdio" : undefined);
+  mode === "multi" ? await multi() : mode === "bench" ? await bench() : mode === "exits" ? await exits() : mode === "state" ? await state() : await single(mode === "stdio" ? "stdio" : undefined);
 writeFileSync(join(runDir, `e2e-${mode}.json`), JSON.stringify(res, null, 2));
 const { console: consoleText, logSample, events, ...summary } = res;
 console.log(JSON.stringify(summary, null, 2));

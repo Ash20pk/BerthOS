@@ -19,6 +19,7 @@
 set -eu
 . "$(dirname "$0")/common.sh"
 min_free_gb 10
+build_vmm
 GI_ART=${GI_ART:-$(cd "$VMM_DIR/../../.." && pwd)/vm-guest-init-artifacts}
 R="$GI_ART/rootfs"
 OUT="$GI_ART/berth-init-build/out"
@@ -37,7 +38,14 @@ if [ -f "$OUT/context-bus-daemon" ]; then
 else
     rm -f "$R/usr/local/bin/context-bus-daemon"
 fi
-mkdir -p "$R/context" "$R/workspace" "$R/app"
+mkdir -p "$R/context" "$R/workspace" "$R/app" "$R/state"
+# mkfs.ext4 for the state disk (feat/vm-image's image carries e2fsprogs too).
+if [ ! -e "$R/sbin/mkfs.ext4" ]; then
+    echo "nameserver 1.1.1.1" > "$R/etc/resolv.conf"
+    DYLD_LIBRARY_PATH="$STOCK_KRUNFW_DIR" "$VMM" --tsi --cpus 2 --mem 512 --root "$R" \
+        -- /sbin/apk add --no-cache e2fsprogs </dev/null
+    : > "$R/etc/resolv.conf"
+fi
 
 PSRC="$GI_ART/policy-src"
 rm -rf "$PSRC" && mkdir -p "$PSRC"
