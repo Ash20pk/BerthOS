@@ -18,13 +18,15 @@ source_date_epoch = 1790812800
 agent_init_ref = "fix/seccomp-io-uring-vsock"
 # /sbin/berth-init and /usr/local/bin/context-bus-daemon: build-berth-init.sh,
 # from this tree (packages/vmm/init, packages/context-bus-daemon).
-berth_init_sha256 = "f00ebfc2bec72c6693f76cbc54a111e4c709cc1afd49a80f4164708707ea50a9"
+berth_init_sha256 = "c82613e72a1bc0445a18cd2b63822a7aab0f482dbf7ceb574ef0fa0fddf1b572"
 context_bus_daemon_sha256 = "1138c3595142a3235145b530d0cf1157b0971aa2230d417befe0a6e783477544"
+# /usr/local/bin/berth-egress-broker.cjs: packages/docker-orchestrator/docker/egress-broker.cjs.
+egress_broker_sha256 = "4ff162e8e2c86cc43a73caa02bd1a78e4fe620c2b18040334b79366402157d89"
 policy_compiler_ref = "feat/per-app-cgroups"
 init_path = "/sbin/berth-init"
 
 # Last verified build (filled in by hand after a build and a boot check):
 # rebuilt twice to the same hash, scripts/e2e.mjs all passing. berth-vmm
 # compiles this in; berth-vmm run boots it by default.
-image_sha256 = "57e7ef8b56a30280beeb2f96eb77c35b0e2fcd0c585e9259e2899d47e565bf0d"
-image_size = 46678016
+image_sha256 = "5f80e448b6658cb14612dcc5534fcf495c6dd31a687822f9234859b1643c9579"
+image_size = 46727168

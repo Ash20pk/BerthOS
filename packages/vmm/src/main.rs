@@ -9,6 +9,8 @@
 //   - NO network interface and TSI explicitly disabled, unless --tsi is passed
 //     (only the rootfs/kernel *builder* VMs use --tsi, to reach the Alpine mirror),
 //   - vsock ports mapped to host Unix sockets (the only way in or out),
+//   - optionally the egress dialer (--egress-allow): the host half of the
+//     guest's network access, behind vsock 1026 (egress.rs),
 //   - optional extra virtio-fs shares and disks.
 //
 // libkrun's API is plain C; the handful of functions used here are declared by
@@ -20,6 +22,7 @@ use std::ffi::CString;
 use std::os::raw::{c_char, c_int};
 use std::process::exit;
 
+mod egress;
 mod pins;
 mod run;
 mod sha256;
@@ -87,10 +90,12 @@ struct Opts {
     tsi: bool,
     log_level: u32,
     exec: Vec<String>,
+    egress: Option<egress::Config>,
 }
 
 const USAGE: &str = "usage: berth-vmm run --app DIR [--app DIR...] [--state DISK] [run options]
        berth-vmm [options] [-- <guest-path> [args...]]
+       berth-vmm egress-dialer --egress-allow LIST --egress-socket SOCK   (the dialer alone, no VM)
 
 `berth-vmm run` boots a sandbox from the pinned artifacts; see `berth-vmm run --help`.
 The low-level form below is what it expands to (and what builder VMs use).
@@ -123,6 +128,12 @@ The low-level form below is what it expands to (and what builder VMs use).
   --workdir DIR             guest working directory
   --console-output FILE     write the guest console to FILE, ignore stdin
   --tsi                     ENABLE TSI (guest AF_INET = host sockets). Builder VMs only.
+  --egress-allow LIST       start the egress dialer: the guest may reach these
+                            host[:port|:*] patterns (comma separated, repeatable;
+                            no port = 80 and 443) through vsock 1026, at public
+                            addresses only. See docs/design/microvm-egress.md
+  --egress-socket SOCK      the host socket vsock 1026 is mapped to (with --egress-allow)
+  --egress-max-conns N      concurrent egress tunnels (default 64)
   --log-level N             libkrun log level 0-5 (default 1)";
 
 fn die(msg: &str) -> ! {
@@ -152,7 +163,11 @@ fn parse(argv: Vec<String>) -> Opts {
         tsi: false,
         log_level: 1,
         exec: vec![],
+        egress: None,
     };
+    let mut egress_allow: Vec<String> = vec![];
+    let mut egress_socket: Option<String> = None;
+    let mut egress_max: Option<usize> = None;
     let mut args = argv.into_iter();
     while let Some(a) = args.next() {
         let mut val = || args.next().unwrap_or_else(|| die(&format!("{a} needs a value")));
@@ -201,6 +216,9 @@ fn parse(argv: Vec<String>) -> Opts {
             "--console-output" => o.console_output = Some(val()),
             "--tsi" => o.tsi = true,
             "--log-level" => o.log_level = val().parse().unwrap_or_else(|_| die("bad --log-level")),
+            "--egress-allow" => egress_allow.push(val()),
+            "--egress-socket" => egress_socket = Some(val()),
+            "--egress-max-conns" => egress_max = Some(val().parse().unwrap_or_else(|_| die("bad --egress-max-conns"))),
             "-h" | "--help" => {
                 println!("{USAGE}");
                 exit(0);
@@ -234,7 +252,45 @@ fn parse(argv: Vec<String>) -> Opts {
     if o.state_size_mib == 0 {
         die("--state-size must be > 0");
     }
+    match (egress_allow.is_empty(), egress_socket) {
+        (true, None) => {}
+        (false, Some(socket)) => o.egress = Some(egress_config(&egress_allow, socket.into(), egress_max)),
+        _ => die("--egress-allow and --egress-socket go together"),
+    }
     o
+}
+
+fn egress_dialer_only(argv: &[String]) -> ! {
+    let (mut allow, mut socket, mut max) = (vec![], None, None);
+    let mut args = argv.iter().cloned();
+    while let Some(a) = args.next() {
+        let mut val = || args.next().unwrap_or_else(|| die(&format!("{a} needs a value")));
+        match a.as_str() {
+            "--egress-allow" => allow.push(val()),
+            "--egress-socket" => socket = Some(val()),
+            "--egress-max-conns" => max = Some(val().parse().unwrap_or_else(|_| die("bad --egress-max-conns"))),
+            _ => die("usage: berth-vmm egress-dialer --egress-allow LIST --egress-socket SOCK [--egress-max-conns N]"),
+        }
+    }
+    let socket = socket.unwrap_or_else(|| die("egress-dialer: --egress-socket SOCK"));
+    egress::start(&egress_config(&allow, socket.into(), max)).unwrap_or_else(|e| die(&e));
+    loop {
+        std::thread::park();
+    }
+}
+
+/// The egress dialer's configuration, and the refusals that apply to every
+/// way of starting it (the low-level flags and `run`).
+pub fn egress_config(allow: &[String], socket: std::path::PathBuf, max_conns: Option<usize>) -> egress::Config {
+    let allow = egress::parse_allowlist(allow).unwrap_or_else(|e| die(&e));
+    if allow.is_empty() {
+        die("--egress-allow names no pattern");
+    }
+    let max_conns = max_conns.unwrap_or(egress::DEFAULT_MAX_CONNS);
+    if max_conns == 0 || max_conns > 1024 {
+        die("--egress-max-conns must be 1-1024");
+    }
+    egress::Config { socket, allow, max_conns }
 }
 
 fn cs(s: &str) -> CString {
@@ -310,6 +366,9 @@ fn main() {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let o = match argv.first().map(String::as_str) {
         Some("run") => run::opts(&argv[1..]),
+        // The dialer alone, in the foreground, with no VM: for testing the
+        // broker's host path and the allowlist on the host.
+        Some("egress-dialer") => egress_dialer_only(&argv[1..]),
         _ => parse(argv),
     };
     check_guest_env(&o.env);
@@ -335,6 +394,19 @@ fn main() {
         }
     }
     let state = o.state.as_deref().map(|s| pins::open_state(s, o.state_size_mib).unwrap_or_else(|e| die(&e)));
+    let mut o = o;
+    if let Some(e) = &o.egress {
+        if o.tsi {
+            die("--egress-allow with --tsi: TSI is a second way out that nothing filters");
+        }
+        if o.vsocks.iter().any(|v| v.port == egress::EGRESS_PORT) {
+            die(&format!("vsock port {} is the egress dialer's", egress::EGRESS_PORT));
+        }
+        // Listening before the guest exists: libkrun connects here when the
+        // guest connects out on the port (a non-listen mapping).
+        egress::start(e).unwrap_or_else(|err| die(&err));
+        o.vsocks.push(Vsock { port: egress::EGRESS_PORT, path: e.socket.display().to_string(), listen: false });
+    }
     unsafe {
         check("krun_init_log", krun_init_log(KRUN_LOG_TARGET_DEFAULT, o.log_level, KRUN_LOG_STYLE_AUTO, 0));
         let ctx = krun_create_ctx();

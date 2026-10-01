@@ -26,7 +26,11 @@ const fs = require("node:fs");
 const dns = require("node:dns").promises;
 
 const PORT = Number(process.env.BERTH_EGRESS_BROKER_PORT || 8090);
-const POLICY_PATH = process.env.BERTH_CAPABILITY_POLICY || `${process.cwd()}/.berth/capability-policy.json`;
+// BERTH_EGRESS_POLICY first: in the microVM the broker itself runs under
+// agent-init, which reads BERTH_CAPABILITY_POLICY for the broker's OWN
+// confinement, so the egress app's policy comes in under its own name.
+const POLICY_PATH =
+  process.env.BERTH_EGRESS_POLICY || process.env.BERTH_CAPABILITY_POLICY || `${process.cwd()}/.berth/capability-policy.json`;
 
 // Optional: chain an *allowed* CONNECT through a further upstream proxy
 // (e.g. a residential/rotating proxy provider) instead of connecting to the
@@ -43,7 +47,21 @@ const POLICY_PATH = process.env.BERTH_CAPABILITY_POLICY || `${process.cwd()}/.be
 // logs) — only host:port ever gets logged. Any provider that speaks plain
 // HTTP CONNECT + optional Proxy-Authorization: Basic works here; that's the
 // standard interface Bright Data/Oxylabs/Smartproxy/etc. all expose.
-const UPSTREAM_PROXY_URL = process.env.BERTH_EGRESS_UPSTREAM_PROXY ? new URL(process.env.BERTH_EGRESS_UPSTREAM_PROXY) : null;
+// The microVM: no NIC in the guest, so an allowed connection is not dialled
+// here at all. It is asked of the host's egress dialer through this Unix
+// socket (berth-init relays it to vsock port 1026), which checks the request
+// again against the host's own copy of the allowlist, resolves the name
+// itself and refuses internal addresses after resolution. The guest has no
+// resolver, so in this mode names are never resolved here; IP literals are
+// still checked against isBlockedAddress() below. See
+// docs/design/microvm-egress.md.
+const DIALER_SOCKET = process.env.BERTH_EGRESS_DIALER_SOCKET || null;
+
+const UPSTREAM_PROXY_URL =
+  process.env.BERTH_EGRESS_UPSTREAM_PROXY && !DIALER_SOCKET ? new URL(process.env.BERTH_EGRESS_UPSTREAM_PROXY) : null;
+if (process.env.BERTH_EGRESS_UPSTREAM_PROXY && DIALER_SOCKET) {
+  console.error("[egress-broker] WARNING: BERTH_EGRESS_UPSTREAM_PROXY is ignored with BERTH_EGRESS_DIALER_SOCKET: chaining would have to happen on the host");
+}
 // The "Basic <base64>" value only — callers add whichever header-name/CRLF
 // shape their own protocol (raw CONNECT vs. Node's http.request headers) needs.
 const UPSTREAM_PROXY_AUTH_VALUE = UPSTREAM_PROXY_URL?.username
@@ -145,6 +163,9 @@ console.error(
 if (DEDICATED_BROKER_HOSTS.size > 0) {
   console.error(`[egress-broker] refusing hosts owned by a dedicated broker: ${[...DEDICATED_BROKER_HOSTS].join(", ")}`);
 }
+if (DIALER_SOCKET) {
+  console.error(`[egress-broker] upstream connections go through the host dialer at ${DIALER_SOCKET}`);
+}
 if (UPSTREAM_PROXY_URL) {
   console.error(`[egress-broker] chaining allowed CONNECTs through upstream proxy ${UPSTREAM_PROXY_URL.hostname}:${UPSTREAM_PROXY_URL.port || 80}`);
 }
@@ -223,6 +244,68 @@ async function resolvePinnedAddress(host) {
   ]);
   if (!addresses || addresses.length === 0) throw new Error(`no A record for ${host}`);
   return addresses[0];
+}
+
+const IPV4_LITERAL = /^\d{1,3}(\.\d{1,3}){3}$/;
+
+/**
+ * Asks the host's egress dialer for a connection to host:port and resolves
+ * with the raw socket once the host answers `OK <address>`. Rejects with an
+ * Error whose `code` is the host's (denied, unresolved, unreachable, busy,
+ * bad_request) or "dialer" when the dialer could not be reached at all.
+ *
+ * The host's answer is one line of at most 1 KiB; anything after it is
+ * already tunnel payload and is pushed back onto the socket.
+ */
+function dialViaHost(host, port) {
+  return new Promise((resolve, reject) => {
+    const sock = net.connect({ path: DIALER_SOCKET });
+    let buf = Buffer.alloc(0);
+    let done = false;
+    const finish = (err, value) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      sock.off("data", onData);
+      if (err) {
+        sock.destroy();
+        reject(err);
+      } else {
+        resolve(value);
+      }
+    };
+    const fail = (code, message) => finish(Object.assign(new Error(message), { code }));
+    // The host allows 5 s to resolve and 10 s to connect.
+    const timer = setTimeout(() => fail("dialer", `no answer from the host dialer for ${host}:${port}`), 20000);
+    const onData = (chunk) => {
+      buf = Buffer.concat([buf, chunk]);
+      const nl = buf.indexOf("\n");
+      if (nl === -1) {
+        if (buf.length > 1024) fail("dialer", "host dialer answer too long");
+        return;
+      }
+      const line = buf.subarray(0, nl).toString("utf8");
+      const rest = buf.subarray(nl + 1);
+      const ok = /^OK (\S+)$/.exec(line);
+      if (ok) {
+        if (rest.length > 0) sock.unshift(rest);
+        finish(null, { socket: sock, address: ok[1] });
+        return;
+      }
+      const err = /^ERR (\S+) ?(.*)$/.exec(line);
+      fail(err ? err[1] : "dialer", err ? err[2] : "unrecognised answer from the host dialer");
+    };
+    sock.on("data", onData);
+    sock.once("connect", () => sock.write(`DIAL ${host} ${port}\n`));
+    sock.on("error", (e) => fail("dialer", `host dialer: ${e.message}`));
+    sock.once("close", () => fail("dialer", "host dialer closed the connection"));
+  });
+}
+
+function logHostRefusal(host, port, err) {
+  console.error(
+    `[egress-broker] {"event":"host_dialer_refused","host":${JSON.stringify(host)},"port":${port},"code":${JSON.stringify(err.code ?? "dialer")},"reason":${JSON.stringify(err.message)}}`,
+  );
 }
 
 // Connection-scoped headers, which belong to the hop they arrived on and
@@ -321,6 +404,47 @@ const server = http.createServer(
     return;
   }
 
+  if (DIALER_SOCKET) {
+    if (IPV4_LITERAL.test(target.hostname) && isBlockedAddress(target.hostname)) {
+      logDecision("denied", target.hostname, targetPort);
+      console.error(
+        `[egress-broker] {"event":"blocked_address","host":${JSON.stringify(target.hostname)},"address":${JSON.stringify(target.hostname)},"port":${targetPort}}`,
+      );
+      res.writeHead(403, { "content-type": "text/plain" }).end(`egress denied: ${target.hostname} is loopback, private, link-local, or otherwise internal`);
+      return;
+    }
+    let tunnel;
+    try {
+      tunnel = await dialViaHost(target.hostname.toLowerCase(), targetPort);
+    } catch (err) {
+      logDecision("denied", target.hostname, targetPort);
+      logHostRefusal(target.hostname, targetPort, err);
+      const status = err.code === "denied" ? 403 : 502;
+      res.writeHead(status, { "content-type": "text/plain" }).end(`egress ${status === 403 ? "denied" : "failed"} by the host: ${err.code} ${err.message}`);
+      return;
+    }
+    logDecision("allowed", target.hostname, targetPort);
+    const upstream = http.request(
+      {
+        host: target.hostname,
+        port: targetPort,
+        path: `${target.pathname}${target.search}`,
+        method: req.method,
+        headers: sanitizeForwardedHeaders(req.headers, target.host),
+        createConnection: () => tunnel.socket,
+        timeout: 10000,
+      },
+      (upstreamRes) => {
+        res.writeHead(upstreamRes.statusCode, upstreamRes.headers);
+        upstreamRes.pipe(res);
+      },
+    );
+    req.pipe(upstream);
+    upstream.on("timeout", () => upstream.destroy(new Error("upstream timed out")));
+    upstream.on("error", (err) => res.destroy(err));
+    return;
+  }
+
   // Same pinning as the CONNECT path, and skipped for the same reason when an
   // upstream proxy is doing the resolving.
   let address = null;
@@ -412,6 +536,33 @@ server.on(
   if (!host || !isHostAllowed(host, port)) {
     logDecision("denied", host, port);
     clientSocket.end("HTTP/1.1 403 Forbidden\r\n\r\n");
+    return;
+  }
+
+  if (DIALER_SOCKET) {
+    if (IPV4_LITERAL.test(host) && isBlockedAddress(host)) {
+      logDecision("denied", host, port);
+      console.error(`[egress-broker] {"event":"blocked_address","host":${JSON.stringify(host)},"address":${JSON.stringify(host)},"port":${port}}`);
+      clientSocket.end("HTTP/1.1 403 Forbidden\r\n\r\n");
+      return;
+    }
+    let tunnel;
+    try {
+      tunnel = await dialViaHost(host.toLowerCase(), port);
+    } catch (err) {
+      logDecision("denied", host, port);
+      logHostRefusal(host, port, err);
+      clientSocket.end(err.code === "denied" ? "HTTP/1.1 403 Forbidden\r\n\r\n" : "HTTP/1.1 502 Bad Gateway\r\n\r\n");
+      return;
+    }
+    logDecision("allowed", host, port);
+    const upstream = tunnel.socket;
+    clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+    if (head && head.length > 0) upstream.write(head);
+    upstream.pipe(clientSocket);
+    clientSocket.pipe(upstream);
+    upstream.on("error", () => clientSocket.destroy());
+    clientSocket.on("error", () => upstream.destroy());
     return;
   }
 

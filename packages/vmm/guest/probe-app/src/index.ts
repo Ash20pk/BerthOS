@@ -7,10 +7,24 @@
 //   inspect   ids, cgroup, mounts and ownership of the paths that matter
 //   received  context-bus events on fs.* topics delivered to this app (the
 //             e2e publishes them from the filesystem app)
+//   net       what this app (no network capability) can reach: the egress
+//             broker's port, the broker's dial socket, a TCP connect out, and
+//             whether it was handed BERTH_EGRESS_PROXY_URL
 import { defineApp } from "@berthos/sdk";
 import { z } from "zod";
 import { execFileSync } from "node:child_process";
 import { readFileSync, statSync } from "node:fs";
+import net from "node:net";
+
+/** "connected" or the error code a connect attempt ends with (2 s at most). */
+function tryConnect(opts: net.NetConnectOpts): Promise<string> {
+  return new Promise((resolve) => {
+    const s = net.connect(opts);
+    const t = setTimeout(() => (s.destroy(), resolve("timeout")), 2000);
+    s.once("connect", () => (clearTimeout(t), s.destroy(), resolve("connected")));
+    s.once("error", (e: NodeJS.ErrnoException) => (clearTimeout(t), resolve(e.code ?? e.message)));
+  });
+}
 
 const PATHS = ["/", "/etc", "/etc/passwd", "/usr/bin/node", "/usr/local/bin/agent-init", "/sbin/berth-init",
   "/usr/local/bin/context-bus-daemon", "/opt/berth/sdk-node", "/app", "/app/berth.yml", "/state", "/workspace", "/context", "/tmp"];
@@ -69,6 +83,24 @@ export default defineApp((app) => {
         cmdlineReadable: !read("/proc/cmdline").startsWith("error"),
       };
     },
+  });
+
+  app.export({
+    name: "net",
+    output: z.object({ broker: z.string() }).passthrough(),
+    handler: async () => ({
+      broker: await tryConnect({ host: "127.0.0.1", port: 8090 }),
+      dialSocket: await tryConnect({ path: "/run/berth/egress/dial.sock" }),
+      outbound: await tryConnect({ host: "1.1.1.1", port: 443 }),
+      proxyUrl: process.env.BERTH_EGRESS_PROXY_URL ?? null,
+      dialDir: (() => {
+        try {
+          return `${statSync("/run/berth/egress").mode.toString(8)}`;
+        } catch (err) {
+          return `error: ${(err as NodeJS.ErrnoException).code}`;
+        }
+      })(),
+    }),
   });
 
   app.export({

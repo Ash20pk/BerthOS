@@ -236,6 +236,33 @@ pub fn vsock_listen(port: u32) -> io::Result<OwnedFd> {
     }
 }
 
+/// A connected AF_VSOCK stream socket to `cid`:`port`. With libkrun, CID 2
+/// (the host) on a port mapped without `listen` reaches the host Unix socket
+/// berth-vmm listens on.
+pub fn vsock_connect(cid: u32, port: u32) -> io::Result<OwnedFd> {
+    unsafe {
+        let fd = libc::socket(libc::AF_VSOCK, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0);
+        if fd < 0 {
+            return Err(errno());
+        }
+        let fd = OwnedFd::from_raw_fd(fd);
+        use std::os::fd::AsRawFd;
+        let mut addr: libc::sockaddr_vm = std::mem::zeroed();
+        addr.svm_family = libc::AF_VSOCK as _;
+        addr.svm_port = port;
+        addr.svm_cid = cid;
+        loop {
+            if libc::connect(fd.as_raw_fd(), (&addr as *const libc::sockaddr_vm).cast(), std::mem::size_of::<libc::sockaddr_vm>() as _) == 0 {
+                return Ok(fd);
+            }
+            let e = errno();
+            if e.kind() != io::ErrorKind::Interrupted {
+                return Err(e);
+            }
+        }
+    }
+}
+
 pub fn accept(listener: RawFd) -> io::Result<OwnedFd> {
     loop {
         let fd = unsafe { libc::accept4(listener, std::ptr::null_mut(), std::ptr::null_mut(), libc::SOCK_CLOEXEC) };
@@ -254,6 +281,14 @@ pub fn set_send_timeout(fd: RawFd, t: Duration) {
     let tv = libc::timeval { tv_sec: t.as_secs() as _, tv_usec: t.subsec_micros() as _ };
     unsafe {
         libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_SNDTIMEO, (&tv as *const libc::timeval).cast(), std::mem::size_of::<libc::timeval>() as _);
+    }
+}
+
+/// SO_RCVTIMEO.
+pub fn set_recv_timeout(fd: RawFd, t: Duration) {
+    let tv = libc::timeval { tv_sec: t.as_secs() as _, tv_usec: t.subsec_micros() as _ };
+    unsafe {
+        libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_RCVTIMEO, (&tv as *const libc::timeval).cast(), std::mem::size_of::<libc::timeval>() as _);
     }
 }
 

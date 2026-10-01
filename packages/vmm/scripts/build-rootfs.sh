@@ -9,7 +9,9 @@
 # Image contents: Alpine minirootfs + rootfs/packages.txt (node, e2fsprogs;
 # python3 with PYTHON=1), agent-init + probe (build-agent-init.sh), the
 # sdk-node tools (from POLICY_REF), berth-init at /sbin/berth-init and
-# context-bus-daemon (both from build-berth-init.sh).
+# context-bus-daemon (both from build-berth-init.sh), and the egress broker
+# (docker-orchestrator/docker/egress-broker.cjs from this tree, no npm
+# dependencies) at /usr/local/bin/berth-egress-broker.cjs.
 #
 # The guest init seam: BERTH_INIT=<file> places that file at /sbin/berth-init
 # (default: the Rust berth-init from build-berth-init.sh). The pinned kernel
@@ -61,10 +63,13 @@ install -m 0755 "$VMM_DIR/guest/leak-probe.sh" "$F/usr/local/bin/leak-probe"
 # berth-init starts it confined (uid 9001) before any app.
 install -m 0755 "$BUS" "$F/usr/local/bin/context-bus-daemon"
 install -m 0644 "$B/bundle/generate-capability-policy.mjs" "$B/bundle/run-lifecycle.mjs" "$F/opt/berth/sdk-node/"
+# berth-init starts it confined (uid 9002) when one app declares network:host:.
+BROKER="$REPO_DIR/packages/docker-orchestrator/docker/egress-broker.cjs"
+install -m 0644 "$BROKER" "$F/usr/local/bin/berth-egress-broker.cjs"
 
 sha() { shasum -a 256 "$1" | cut -d' ' -f1; }
 src_rev=$(git -C "$REPO_DIR" rev-parse HEAD)
-src_dirty=$(git -C "$REPO_DIR" status --porcelain -- packages/vmm packages/sdk packages/manifest-schema | grep -q . && echo true || echo false)
+src_dirty=$(git -C "$REPO_DIR" status --porcelain -- packages/vmm packages/sdk packages/manifest-schema packages/docker-orchestrator/docker/egress-broker.cjs | grep -q . && echo true || echo false)
 # Recorded inside the image too (/etc/berth/build-inputs.json), minus the
 # image's own hash, which cannot be inside itself, and minus the git commit,
 # so that an unrelated commit does not change the image. The commit is in the
@@ -78,13 +83,14 @@ cat > "$F/etc/berth/build-inputs.json" <<EOF
   "probeSha256": "$(sha "$AI/probe")",
   "berthInit": {"path": "/sbin/berth-init", "source": "$(basename "$INIT")", "sha256": "$(sha "$INIT")"},
   "contextBusDaemon": {"path": "/usr/local/bin/context-bus-daemon", "sha256": "$(sha "$BUS")"},
+  "egressBroker": {"path": "/usr/local/bin/berth-egress-broker.cjs", "sha256": "$(sha "$BROKER")"},
   "sdkNode": {
     "sourceRef": "$POLICY_REF", "sourceCommit": "$policy_commit",
     "generate-capability-policy.mjs": "$(sha "$B/bundle/generate-capability-policy.mjs")",
     "run-lifecycle.mjs": "$(sha "$B/bundle/run-lifecycle.mjs")"
   },
   "sourceDateEpoch": $EPOCH,
-  "identities": {"berth": 9999, "berth-context-bus": 9001, "apps": "berth-<app> = 10000+index, written by the guest init at boot"}
+  "identities": {"berth": 9999, "berth-context-bus": 9001, "berth-egress": 9002, "apps": "berth-<app> = 10000+index, written by the guest init at boot"}
 }
 EOF
 

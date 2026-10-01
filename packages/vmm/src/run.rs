@@ -10,6 +10,8 @@
 //                            {"op":"shutdown"}
 //   <run-dir>/logs.sock      vsock 1025: app and init log lines
 //   <run-dir>/rpc-<i>.sock   vsock 5000+i: app i's RPC (line JSON)
+//   <run-dir>/egress.sock    vsock 1026, guest connects out: the egress dialer
+//                            (only with --egress-allow; egress.rs)
 //   <run-dir>/console.log    the guest console (hvc0)
 //
 // Before the VM starts it prints one `endpoints` line on stderr with these
@@ -52,7 +54,13 @@ until the guest powers off ({\"op\":\"shutdown\"} on control.sock, or every app 
   --console-stderr      the guest console on stderr instead of console.log
   --env K=V             extra guest environment for berth-init (repeatable), e.g.
                         BERTH_VM_RPC=stdio. Ends up on the kernel command line
-  --log-level N         libkrun log level 0-5 (default 1)";
+  --log-level N         libkrun log level 0-5 (default 1)
+  --egress-allow LIST   the hosts this sandbox may reach: the network:host: and
+                        browser:navigate: scopes of its apps' manifests, as
+                        host[:port|:*] patterns, comma separated (repeatable).
+                        Starts the egress dialer on <run-dir>/egress.sock behind
+                        vsock 1026. Without it the guest has no way out at all
+  --egress-max-conns N  concurrent egress tunnels (default 64)";
 
 fn home() -> String {
     std::env::var("HOME").unwrap_or_else(|_| die("HOME is not set; pass --artifacts"))
@@ -88,6 +96,8 @@ pub fn opts(argv: &[String]) -> Opts {
     let mut console_stderr = false;
     let mut env: Vec<String> = vec![];
     let mut log_level = 1;
+    let mut egress_allow: Vec<String> = vec![];
+    let mut egress_max: Option<usize> = None;
     let mut args = argv.iter().cloned();
     while let Some(a) = args.next() {
         let mut val = || args.next().unwrap_or_else(|| die(&format!("{a} needs a value")));
@@ -103,6 +113,8 @@ pub fn opts(argv: &[String]) -> Opts {
             "--console-stderr" => console_stderr = true,
             "--env" => env.push(val()),
             "--log-level" => log_level = val().parse().unwrap_or_else(|_| die("bad --log-level")),
+            "--egress-allow" => egress_allow.push(val()),
+            "--egress-max-conns" => egress_max = Some(val().parse().unwrap_or_else(|_| die("bad --egress-max-conns"))),
             "-h" | "--help" => {
                 println!("{RUN_USAGE}");
                 std::process::exit(0);
@@ -180,6 +192,8 @@ pub fn opts(argv: &[String]) -> Opts {
         vsocks.push(Vsock { port: RPC_PORT_BASE + i as u32, path: p.clone(), listen: true });
     }
     let console = (!console_stderr).then(|| run_dir.join("console.log").display().to_string());
+    // The dialer itself is started (and vsock 1026 mapped) by main, from this.
+    let egress = (!egress_allow.is_empty()).then(|| crate::egress_config(&egress_allow, sock("egress.sock".into()).into(), egress_max));
 
     let mut guest_env = vec![format!("BERTH_VM_APPS={}", tags.join(","))];
     guest_env.extend(env);
@@ -192,12 +206,18 @@ pub fn opts(argv: &[String]) -> Opts {
         .map(|(i, tag)| format!("{{\"index\":{i},\"tag\":{},\"app\":{},\"port\":{},\"socket\":{}}}", j(tag), j(&shares[i].path), RPC_PORT_BASE + i as u32, j(&rpc[i])))
         .collect();
     eprintln!(
-        "{{\"source\":\"berth-vmm\",\"event\":\"endpoints\",\"runDir\":{},\"control\":{},\"logs\":{},\"rpc\":[{}],\"console\":{}}}",
+        "{{\"source\":\"berth-vmm\",\"event\":\"endpoints\",\"runDir\":{},\"control\":{},\"logs\":{},\"rpc\":[{}],\"console\":{},\"egress\":{}}}",
         j(&run_dir.display().to_string()),
         j(&control),
         j(&logs),
         rpc_json.join(","),
-        console.as_deref().map_or("null".into(), j)
+        console.as_deref().map_or("null".into(), j),
+        egress.as_ref().map_or("null".into(), |e| format!(
+            "{{\"port\":{},\"socket\":{},\"allow\":[{}]}}",
+            crate::egress::EGRESS_PORT,
+            j(&e.socket.display().to_string()),
+            e.allow.iter().map(|p| j(&p.display())).collect::<Vec<_>>().join(",")
+        ))
     );
 
     Opts {
@@ -221,6 +241,7 @@ pub fn opts(argv: &[String]) -> Opts {
         tsi: false,
         log_level,
         exec: vec![GUEST_INIT.into()],
+        egress,
     }
 }
 

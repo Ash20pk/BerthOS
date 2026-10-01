@@ -20,6 +20,11 @@
 //   node e2e.mjs bench     boot timing, interleaved rounds: single (tmpfs and
 //                          state disk), multi, and the spike's layout as a control
 //   node e2e.mjs all       single, multi, enforce, stdio, exits
+//   node e2e.mjs egress    network:host: through the in-guest broker and the
+//                          host dialer on vsock 1026 (real network: fetches
+//                          example.com); the guest-root bypass, internal
+//                          addresses behind declared names, an app with no
+//                          network capability (docs/design/microvm-egress.md)
 //
 // The host side follows the rule in docs/design/microvm-guest-init.md: every
 // line from the guest is bounded, parsed as a JSON object and checked for the
@@ -172,7 +177,7 @@ async function rpcConnect(path, firstCall) {
 }
 
 /** Starts `berth-vmm run` and collects its own structured lines (endpoints, measurements). */
-async function run(name, apps, { state, env = {}, mem } = {}) {
+async function run(name, apps, { state, env = {}, mem, extra = [] } = {}) {
   const runDir = join(RUN, name);
   const args = [
     "run", "--artifacts", ART, ...(ROOTFS ? ["--rootfs", ROOTFS] : []), "--run-dir", runDir,
@@ -181,6 +186,7 @@ async function run(name, apps, { state, env = {}, mem } = {}) {
     ...apps.flatMap((a) => ["--app", join(APPS, a)]),
     ...(state ? ["--state", state, "--state-size", "256"] : []),
     ...Object.entries(env).flatMap(([k, v]) => ["--env", `${k}=${v}`]),
+    ...extra,
   ];
   const t0 = performance.now();
   const vm = spawn(VMM, args, { env: { PATH: process.env.PATH, TMPDIR: os.tmpdir() }, stdio: ["ignore", "pipe", "pipe"] });
@@ -461,8 +467,131 @@ async function bench() {
   return { summary, loadAvg1m: loads, cpus: os.cpus().length, runs: out };
 }
 
+/**
+ * What the CLI hands berth-vmm: the network:host: and browser:navigate:
+ * scopes of the sandbox's manifests, read on the host (never from the guest).
+ */
+function egressAllow(apps) {
+  const scopes = [];
+  for (const a of apps) {
+    for (const m of readFileSync(join(APPS, a, "berth.yml"), "utf8").matchAll(/^\s*-\s*["']?(?:network:host|browser:navigate):([^\s"'#]+)/gm)) scopes.push(m[1]);
+  }
+  return scopes.join(",");
+}
+
+/** An app directory like http-fetch's, declaring these capabilities instead. */
+function fetchAppWith(name, caps) {
+  const dir = join(APPS, name);
+  rmSync(dir, { recursive: true, force: true });
+  execFileSync("cp", ["-R", join(APPS, "http-fetch"), dir]);
+  const yml = readFileSync(join(APPS, "http-fetch", "berth.yml"), "utf8").replace(/^capabilities:[\s\S]*?^exports:/m, `capabilities:\n${caps.map((c) => `  - ${c}`).join("\n")}\n\nexports:`);
+  writeFileSync(join(dir, "berth.yml"), yml.replace(/^name: http-fetch$/m, `name: ${name}`));
+  return name;
+}
+
+async function egress() {
+  const results = [];
+  const egressLines = (b) => b.stderr.join("").split("\n").filter((l) => l.startsWith('{"source":"berth-vmm","event":"egress')).map((l) => JSON.parse(l));
+  const raw = async (s, request, send) => {
+    s.ctl.write(JSON.stringify({ op: "egress_raw", request, ...(send ? { send } : {}) }) + "\n");
+    return s.waitEvent((v) => v.event === "egress_raw" && v.request === request && !v._seen && (v._seen = true), 40000);
+  };
+  const fetchText = (r, url) => r.call("fetch_text", { url }, 40000).then((x) => ({ ok: true, text: x.text }), (e) => ({ ok: false, error: e.message }));
+  // The first call on a new connection: a close before the answer means the
+  // app was not serving yet (libkrun accepts first), so rpcConnect retries.
+  const fetchFirst = (url) => async (r) => {
+    const res = await fetchText(r, url);
+    if (!res.ok && /connection closed/.test(res.error)) throw new Error(res.error);
+    return res;
+  };
+
+  // Boot 1: http-fetch (network:host:example.com, network:connect:8090) and
+  // probe (no network capability), the allowlist from their manifests.
+  const apps = ["http-fetch", "probe"];
+  const allow = egressAllow(apps);
+  let b = await run("egress", apps, { env: { BERTH_VM_TEST_HOOKS: "1" }, extra: ["--egress-allow", allow] });
+  let s = await attach(b);
+  const { r: hf, result: https } = await rpcConnect(rpcPath(b, 0), fetchFirst("https://example.com/"));
+  const http = await fetchText(hf, "http://example.com/");
+  const undeclared = await fetchText(hf, "https://www.google.com/");
+  const { r: probe, result: pnet } = await rpcConnect(rpcPath(b, 1), (r) => r.call("net"));
+  const pchecks = (await probe.call("probe", { dir: "/workspace" })).checks;
+  const bypassUndeclared = await raw(s, "DIAL www.google.com 443");
+  const bypassMetadata = await raw(s, "DIAL 169.254.169.254 80");
+  const bypassPort = await raw(s, "DIAL example.com 22");
+  const bypassGarbage = await raw(s, "GET http://example.com/ HTTP/1.1");
+  const bypassShorthand = await raw(s, "DIAL 127.1 443");
+  const bypassDeclared = await raw(s, "DIAL example.com 80", "GET / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n");
+  const st = await s.status();
+  await sleep(200);
+  const off = await shutdown(b, s);
+  const host = egressLines(b);
+  const started = s.events.find((e) => e.event === "daemon_started" && e.daemon === "egress-broker");
+  const vsock1026 = b.vmm.vm_config?.vsock?.find((v) => v.port === 1026);
+  check(results, b.ep.egress?.port === 1026 && b.ep.egress.allow.join(",") === "example.com" && vsock1026 && vsock1026.listen === false, `endpoints: egress on vsock 1026 (guest connects out) -> ${b.ep.egress?.socket?.split("/").pop()}, allow ${JSON.stringify(b.ep.egress?.allow)} (from the manifests: ${allow})`);
+  check(results, started?.listening && started.uid === 9002 && started.port === 8090, `egress broker started for http-fetch: uid ${started?.uid}, 127.0.0.1:${started?.port}, ${started?.waitMs} ms`);
+  check(results, s.logs.some((l) => l.src === "egress-broker" && l.line.includes("ruleset=FullyEnforced")), "egress broker confined by agent-init: FullyEnforced");
+  check(results, st.daemons.some((d) => d.name === "egress-broker") && st.daemonsCgroup.procs.includes(started?.pid), "egress broker in /berth/daemons");
+  check(results, https.ok && /Example Domain/.test(https.text), `https://example.com through broker + host dialer: ${https.ok ? `${https.text.length} bytes, "Example Domain"` : https.error}`);
+  check(results, http.ok && /Example Domain/.test(http.text), `http://example.com (plain-http forward) through the host dialer: ${http.ok ? "ok" : http.error}`);
+  check(results, host.some((e) => e.event === "egress" && e.decision === "allowed" && e.host === "example.com" && e.port === 443) && host.some((e) => e.event === "egress_closed" && e.host === "example.com" && e.bytesDown > 0), `host dialer logged example.com:443 allowed (${host.find((e) => e.decision === "allowed")?.address}) and the tunnel's bytes`);
+  check(results, !undeclared.ok && s.logs.some((l) => l.src === "egress-broker" && l.line.includes('"navigate_denied","host":"www.google.com"')) && !host.some((e) => e.host === "www.google.com" && e.id && e.decision === "allowed"), `undeclared www.google.com refused by the guest broker (${undeclared.error?.slice(0, 80)})`);
+  check(results, bypassUndeclared.reply?.startsWith("ERR denied not in this sandbox's egress allowlist"), `guest root on vsock 1026, bypassing the broker: DIAL www.google.com 443 -> ${bypassUndeclared.reply}`);
+  check(results, bypassMetadata.reply?.startsWith("ERR denied"), `guest root: DIAL 169.254.169.254 80 -> ${bypassMetadata.reply}`);
+  check(results, bypassPort.reply?.startsWith("ERR denied"), `guest root: DIAL example.com 22 (undeclared port) -> ${bypassPort.reply}`);
+  check(results, bypassGarbage.reply?.startsWith("ERR bad_request") && bypassShorthand.reply?.startsWith("ERR bad_request"), `guest root: malformed frames refused (${bypassGarbage.reply}; ${bypassShorthand.reply})`);
+  check(results, bypassDeclared.reply?.startsWith("OK ") && /^HTTP\/1\.1 \d{3}/.test(bypassDeclared.data ?? ""), `guest root gets only what the host allows: DIAL example.com 80 -> ${bypassDeclared.reply}, ${JSON.stringify((bypassDeclared.data ?? "").split("\r\n")[0])}`);
+  check(results, host.filter((e) => e.event === "egress" && e.decision === "denied").length >= 5, `every refusal is on the host log (${host.filter((e) => e.decision === "denied").map((e) => `${e.host || "-"}:${e.port} ${e.code}`).join(", ")})`);
+  check(results, pnet.broker === "EACCES" && pnet.outbound === "EACCES" && pnet.dialSocket === "EACCES", `probe (no network capability): broker port ${pnet.broker}, dial socket ${pnet.dialSocket}, 1.1.1.1:443 ${pnet.outbound}`);
+  check(results, pchecks.socket_af_vsock === "EPERM" && pchecks.socket_udp === "EPERM", `probe: socket(AF_VSOCK) ${pchecks.socket_af_vsock}, UDP ${pchecks.socket_udp}`);
+  check(results, st.apps.every((a) => a.state === "ready") && s.bad.control.length + s.bad.logs.length === 0 && hf.bad.length + probe.bad.length === 0, "port plan: control (status), logs and rpc 5000/5001 alongside 1026, streams well-formed");
+  check(results, off.exit.code === 0 && off.powerOff?.unmountFailed?.length === 0, `clean shutdown (${off.ms} ms), relay closed before the unmounts (unmountFailed ${JSON.stringify(off.powerOff?.unmountFailed)})`);
+
+  // Boot 2: declared names that resolve to internal addresses. The guest
+  // broker allows them (they are declared), the host refuses them after its
+  // own resolution. 10.0.0.1.nip.io and 169.254.169.254.nip.io are public
+  // wildcard DNS (they answer the address in the name).
+  const tricked = fetchAppWith("egress-tricked", [
+    "network:host:localhost:*", "network:host:10.0.0.1.nip.io", "network:host:169.254.169.254.nip.io", "network:host:127.0.0.1:*", "network:connect:8090",
+  ]);
+  b = await run("egress-tricked", [tricked], { env: { BERTH_VM_TEST_HOOKS: "1" }, extra: ["--egress-allow", egressAllow([tricked])] });
+  s = await attach(b);
+  const { r: tr, result: viaLocalhost } = await rpcConnect(rpcPath(b, 0), fetchFirst("http://localhost:8090/"));
+  const viaNip = await fetchText(tr, "https://10.0.0.1.nip.io/");
+  const viaNipMeta = await fetchText(tr, "http://169.254.169.254.nip.io/latest/meta-data/");
+  const viaLiteral = await fetchText(tr, "http://127.0.0.1:8090/");
+  const rawLocal = await raw(s, "DIAL localhost 1024");
+  const rawLiteral = await raw(s, "DIAL 127.0.0.1 22");
+  const rawNip = await raw(s, "DIAL 169.254.169.254.nip.io 80");
+  const off2 = await shutdown(b, s);
+  const host2 = egressLines(b);
+  // A plain-http request the broker refuses is still an HTTP answer (403/502
+  // with the reason as its body), so fetch() resolves with it.
+  const refused = (x) => !x.ok || /^egress (denied|failed)/.test(x.text);
+  const refusedAfterResolve = (h) => host2.find((e) => e.host === h && e.decision === "denied" && /^resolves to /.test(e.reason ?? ""));
+  check(results, refused(viaLocalhost) && refusedAfterResolve("localhost"), `declared localhost: the host resolved it and refused (${refusedAfterResolve("localhost")?.reason})`);
+  check(results, refused(viaNip) && (refusedAfterResolve("10.0.0.1.nip.io") || host2.some((e) => e.host === "10.0.0.1.nip.io" && e.code === "unresolved")), `declared 10.0.0.1.nip.io: ${refusedAfterResolve("10.0.0.1.nip.io")?.reason ?? host2.find((e) => e.host === "10.0.0.1.nip.io")?.reason}`);
+  check(results, refused(viaNipMeta) && !host2.some((e) => e.host === "169.254.169.254.nip.io" && e.decision === "allowed"), `declared 169.254.169.254.nip.io (metadata by DNS): ${refusedAfterResolve("169.254.169.254.nip.io")?.reason ?? host2.find((e) => e.host === "169.254.169.254.nip.io")?.reason}`);
+  check(results, refused(viaLiteral) && s.logs.some((l) => l.src === "egress-broker" && l.line.includes('"blocked_address","host":"127.0.0.1"')), "declared 127.0.0.1:*: the guest broker refuses the literal itself");
+  check(results, rawLocal.reply?.startsWith("ERR denied resolves to") && rawLiteral.reply?.startsWith("ERR denied resolves to 127.0.0.1") && rawNip.reply?.startsWith("ERR denied resolves to 169.254.169.254"), `guest root, same names: ${rawLocal.reply} | ${rawLiteral.reply} | ${rawNip.reply}`);
+  check(results, !host2.some((e) => e.decision === "allowed"), `nothing was dialled (${host2.filter((e) => e.event === "egress").length} requests, 0 allowed)`);
+  check(results, off2.exit.code === 0, `clean shutdown (${off2.ms} ms)`);
+  rmSync(join(APPS, tricked), { recursive: true, force: true });
+
+  // Boot 3: an app declares network:host:, but the host was given no
+  // allowlist: vsock 1026 is not mapped and there is no way out.
+  b = await run("egress-none", ["http-fetch"]);
+  s = await attach(b);
+  const { result: none } = await rpcConnect(rpcPath(b, 0), fetchFirst("https://example.com/"));
+  const off3 = await shutdown(b, s);
+  check(results, b.ep.egress === null && !b.vmm.vm_config.vsock.some((v) => v.port === 1026), "no --egress-allow: no dialer, vsock 1026 not mapped");
+  check(results, !none.ok && s.logs.some((l) => l.src === "egress-broker" && l.line.includes('"host_dialer_refused","host":"example.com"')), `and https://example.com fails in the guest (${none.error?.slice(0, 80)})`);
+  check(results, off3.exit.code === 0, `clean shutdown (${off3.ms} ms)`);
+  return { results, host: { boot1: host, boot2: host2 }, tricked: { viaLocalhost, viaNip, viaNipMeta, viaLiteral }, probeNet: pnet, raw: { bypassUndeclared, bypassMetadata, bypassPort, bypassGarbage, bypassShorthand, bypassDeclared: { reply: bypassDeclared.reply, firstLine: (bypassDeclared.data ?? "").split("\r\n")[0] }, rawLocal, rawLiteral, rawNip } };
+}
+
 const mode = process.argv[2] ?? "all";
-const modes = { single, multi, enforce, stdio, exits, bench };
+const modes = { single, multi, enforce, stdio, exits, bench, egress };
 const todo = mode === "all" ? ["single", "multi", "enforce", "stdio", "exits"] : [mode];
 let failed = false;
 const report = {};
