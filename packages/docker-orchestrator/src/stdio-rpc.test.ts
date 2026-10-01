@@ -153,3 +153,24 @@ test("line client: without failPendingOnClose a close leaves the call to its tim
   fake.opened[0]!.onClose();
   await assert.rejects(call, /timed out/);
 });
+
+test("line client: a write refused by a connection that already closed is sent once on a new one", async () => {
+  const fake = fakeConnections();
+  let refuse = true;
+  const rpc = await createLineRpcClient({
+    target: "a socket",
+    connect: async (onLine, onClose) => {
+      if (!refuse) return fake.connect(onLine, onClose);
+      refuse = false;
+      // Open when handed over, gone by the time the first request is written.
+      let open = true;
+      return { write: () => ((open = false), false), open: () => open, close: () => {} };
+    },
+  });
+  const call = rpc.call({ id: "1", export: "ping" });
+  for (let i = 0; i < 10 && fake.opened.length === 0; i++) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(fake.opened.length, 1, "reconnected");
+  assert.deepEqual(fake.opened[0]!.written, [`${JSON.stringify({ id: "1", export: "ping" })}\n`]);
+  fake.opened[0]!.onLine(JSON.stringify({ id: "1", result: "pong" }));
+  assert.deepEqual(await call, { id: "1", result: "pong" });
+});

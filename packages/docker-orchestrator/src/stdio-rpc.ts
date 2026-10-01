@@ -139,7 +139,29 @@ export async function createLineRpcClient(options: LineRpcClientOptions): Promis
         // Reported rather than ignored: a false here means the write was
         // dropped, which used to be indistinguishable from an app that never
         // answered.
-        if (!target.write(JSON.stringify(request) + "\n")) {
+        const line = JSON.stringify(request) + "\n";
+        if (!target.write(line)) {
+          // A connection that went away before the write (a socket the peer
+          // closed straight after accepting it) took nothing: reconnect once
+          // and send it there.
+          if (!target.open() && !closedByCaller) {
+            void live().then(
+              (again) => {
+                const w = pending.get(request.id);
+                if (!w) return;
+                w.conn = again;
+                if (!again.write(line)) {
+                  settle();
+                  reject(new Error(`could not write ${which} to ${options.target} — it is not accepting writes`));
+                }
+              },
+              (err: unknown) => {
+                settle();
+                reject(new Error(`could not write ${which} to ${options.target}: ${err instanceof Error ? err.message : String(err)}`));
+              },
+            );
+            return;
+          }
           settle();
           reject(new Error(`could not write ${which} to ${options.target} — it is not accepting writes`));
         }
