@@ -1,0 +1,19 @@
+name: probe
+version: 0.1.0
+description: "Test app for the microVM runtime: runs the enforcement probe inside a real app sandbox and reports what it sees"
+
+capabilities:
+  - filesystem:write:/workspace
+
+exports:
+  - name: probe
+    input: { dir: string }
+    output: { checks: object }
+  - name: inspect
+    output: { uid: number }
+  - name: received
+    output: { events: array }
+
+on_install: []
+on_agent_ready:
+  - "register_with_context_bus"

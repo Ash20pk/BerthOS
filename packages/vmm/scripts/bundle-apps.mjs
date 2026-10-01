@@ -10,7 +10,7 @@
 //   <out>/runtime.mjs                      @berthos/sdk's resident-app runtime
 //   <out>/apps/<app>.mjs                   apps/<app> with the SDK and zod inlined
 //
-// Usage: node bundle-apps.mjs <out> <repo> <policy-repo> <app,app,...> <node_modules dir>...
+// Usage: node bundle-apps.mjs <out> <repo> <policy-repo> <app[=dir],...> <node_modules dir>...
 // esbuild, yaml, zod and protobufjs are resolved from the given node_modules
 // directories (an existing checkout's installed tree, read only).
 import { createRequire, builtinModules } from "node:module";
@@ -59,5 +59,12 @@ const check = (result) => {
 
 check(await esbuild.build(options(policyRepo, { "generate-capability-policy": join(policyRepo, "packages/sdk/src/generate-capability-policy.ts") }, outDir)));
 check(await esbuild.build(options(repo, { runtime: join(repo, "packages/sdk/src/runtime.ts") }, outDir)));
-const apps = Object.fromEntries(appList.split(",").map((a) => [a, join(repo, "apps", a, "src/index.ts")]));
+// "<app>" is apps/<app>; "<app>=<dir>" is an app directory elsewhere in the repo
+// (the e2e's test app: probe=packages/vmm/guest/probe-app).
+const apps = Object.fromEntries(
+  appList.split(",").map((a) => {
+    const [name, dir] = a.split("=");
+    return [name, join(repo, dir ?? join("apps", name), "src/index.ts")];
+  }),
+);
 check(await esbuild.build(options(repo, apps, join(outDir, "apps"))));
