@@ -48,7 +48,9 @@ mkdirSync(RUN, { recursive: true });
 const MAX_LINE = 1 << 20;
 const pinned = (file, key) => new RegExp(`^${key} = "([0-9a-f]{64})"`, "m").exec(readFileSync(join(vmmDir, file), "utf8"))[1];
 const KERNEL_PIN = pinned("kernel/manifest.toml", "image_sha256");
-const ROOTFS = process.env.ROOTFS ?? join(ART, "rootfs", readFileSync(join(ART, "rootfs/LATEST"), "utf8").trim());
+// Default: the rootfs pinned in rootfs/manifest.toml, as berth-vmm run picks it.
+const ROOTFS_PIN = pinned("rootfs/manifest.toml", "image_sha256");
+const ROOTFS = process.env.ROOTFS;
 
 const fail = (m) => {
   throw new Error(m);
@@ -173,7 +175,7 @@ async function rpcConnect(path, firstCall) {
 async function run(name, apps, { state, env = {}, mem } = {}) {
   const runDir = join(RUN, name);
   const args = [
-    "run", "--artifacts", ART, "--rootfs", ROOTFS, "--run-dir", runDir,
+    "run", "--artifacts", ART, ...(ROOTFS ? ["--rootfs", ROOTFS] : []), "--run-dir", runDir,
     "--cpus", process.env.CPUS ?? "2",
     ...(mem ?? process.env.MEM ? ["--mem", mem ?? process.env.MEM] : []),
     ...apps.flatMap((a) => ["--app", join(APPS, a)]),
@@ -280,7 +282,7 @@ async function single() {
   check(results, /nsdelegate/.test(boot1?.cgroup2) && /favordynmods/.test(boot1?.cgroup2), `cgroup2 mounted ${boot1?.cgroup2}`);
   check(results, s.logs.some((l) => l.line.includes("formatting ext4")), "boot 1 formats the blank state disk");
   check(results, m1?.kernel?.sha256 === KERNEL_PIN && m1.kernel.pinned, `measurements: kernel ${m1?.kernel?.sha256?.slice(0, 12)} (pinned)`);
-  check(results, hex64(m1?.rootfs?.sha256) && ROOTFS.includes(m1.rootfs.sha256), `measurements: rootfs ${m1?.rootfs?.sha256?.slice(0, 12)} (pinned: ${m1?.rootfs?.pinned})`);
+  check(results, hex64(m1?.rootfs?.sha256) && (ROOTFS ? ROOTFS.includes(m1.rootfs.sha256) : m1.rootfs.pinned && m1.rootfs.sha256 === ROOTFS_PIN), `measurements: rootfs ${m1?.rootfs?.sha256?.slice(0, 12)} (pinned: ${m1?.rootfs?.pinned})`);
   check(results, hex64(m1?.state?.chunkedSha256) && m1.state.created, `measurements: state ${m1?.state?.chunkedSha256?.slice(0, 12)} (new disk, ${m1?.state?.hashMs} ms)`);
   check(results, off1.exit.code === 0 && off1.powerOff?.unmountFailed?.length === 0, `shutdown via control: exit ${off1.exit.code}, ${off1.ms} ms, unmountFailed ${JSON.stringify(off1.powerOff?.unmountFailed)}`);
 
