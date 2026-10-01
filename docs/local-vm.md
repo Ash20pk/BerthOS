@@ -8,7 +8,7 @@ Docker is still the default. The VM runtime runs filesystem-only Node apps today
 |---|---|---|
 | Kernel that enforces the policy | the Docker host's (Docker Desktop: no Landlock; Colima: yes) | Berth's pinned kernel 6.12.109, Landlock built in |
 | What runs your app | an image built from your project | your bundled app on a read-only share, in a pinned erofs rootfs |
-| Network | the egress broker | none yet (no network device). Egress through a host dialer arrives with `feat/vm-egress` |
+| Network | the egress broker | the egress broker in the guest, plus a host-side dialer that enforces the `network:host:` allowlist again on the host. The VM itself has no network device |
 | First `tools/call` after `berth mcp` starts | about 1.6 s with a warm image | about 0.7 s |
 | Reload after a code change | container restart | VM reboot, about 0.55 s |
 
@@ -103,7 +103,7 @@ The variable is `BERTH_SANDBOX`, not `BERTH_RUNTIME`. `BERTH_RUNTIME` already se
 
 An app whose `berth.yml` needs something the VM doesn't have yet is refused before boot, with the reason and a pointer back to `--runtime docker`:
 
-- **Network.** The VM has no network device, and TSI is off. An app that declares `network:*` has no way out, so it's refused. `feat/vm-egress` adds egress through the in-guest egress broker and a host-side dialer that enforces the `network:host:` allowlist again on the host. Once that branch has landed and your berth-vmm has it, the CLI passes your app's `network:host:` and `browser:navigate:` scopes to berth-vmm as `--egress-allow`, and allows `network:host` and `network:connect` apps. `berth doctor --sandbox vm` says whether your berth-vmm has the dialer. One app per sandbox may declare egress, as with containers.
+- **Network.** The VM has no network device, and TSI is off. An app that declares `network:host:` or `browser:navigate:` reaches those hosts through the egress broker inside the guest, which dials out over vsock to a dialer in berth-vmm. The CLI passes your apps' scopes to berth-vmm as `--egress-allow`, and the dialer enforces that allowlist again on the host: it resolves names itself and refuses private, loopback, link-local and metadata addresses. One app per sandbox may declare egress, as with containers. See [the egress design](./design/microvm-egress.md).
 - **Secrets.** There is no secrets channel yet. The guest's environment is passed on the kernel command line, which every process in the guest can read.
 - **semantic-fs and `/context`.** Not in the VM yet (`BERTH_NO_SEMANTIC_FS=1`).
 - **Python apps.** The image has no `python3` or `berthos-sdk` yet.
