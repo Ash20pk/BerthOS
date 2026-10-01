@@ -40,5 +40,5 @@ init_path = "/sbin/berth-init"
 # builder.apk.lock the builder's (erofs-utils). .github/workflows/vm-artifacts.yml
 # rebuilds it on a Linux runner and fails on any other hash. berth-vmm
 # compiles this in; berth-vmm run boots it by default.
-image_sha256 = "47e1ea51bb54411e8a5ff9ec37296f254cd84d3c12ad7d0d12c0d9c2b6fe7e23"
-image_size = 46723072
+image_sha256 = "5f696a92de7284e9221412bc6f00e2bbc579f2efbd27825ee5102c3375928ad6"
+image_size = 46706688

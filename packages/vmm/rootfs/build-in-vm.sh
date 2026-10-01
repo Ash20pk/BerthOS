@@ -32,6 +32,11 @@ cp /etc/resolv.conf "$R/etc/resolv.conf"
 apk --root "$R" --keys-dir "$R/etc/apk/keys" --repositories-file "$R/etc/apk/repositories" \
     --no-cache --update-cache add $PKGS >/dev/null
 apk --root "$R" info -v 2>/dev/null | sort > /out/packages.lock
+# Package scripts run chrooted into "$R", and where the builder gives that
+# root no /dev (a container, unlike the VM), a script's `>/dev/null` creates
+# a plain file there. The image's /dev holds no files of its own: the guest
+# kernel mounts devtmpfs over it.
+find "$R/dev" -mindepth 1 ! -type c ! -type b ! -type d -exec rm -f {} +
 
 # Berth's files (agent-init, berth-init, sdk-node, ...), then identities.
 # cp -a keeps modes; the owner it keeps is the host user's (virtio-fs, or a
@@ -66,9 +71,14 @@ fi
 du -sk "$R" | cut -f1 > /out/tree-kib.txt
 
 # Reproducible erofs: fixed timestamp on every inode, fixed UUID, lz4hc.
+# SOURCE_DATE_EPOCH is unset for mkfs.erofs: when set, erofs-utils (1.9.1)
+# only clamps newer mtimes to it and ignores --all-time, so a directory that
+# kept an older mtime in one builder (the minirootfs's /dev and lib/apk/exec in
+# the VM) but was touched during the build in another (the container) got a
+# different timestamp and inode size, and the images differed.
 rm -f /out/rootfs.erofs
 mkfs.erofs --version > /out/mkfs.txt 2>&1 || true
-mkfs.erofs -zlz4hc -T"$EPOCH" --all-time -U 6b3a5e2c-0d4f-4c8e-9a1b-be27f1a5e0c1 \
+env -u SOURCE_DATE_EPOCH mkfs.erofs -zlz4hc -T"$EPOCH" --all-time -U 6b3a5e2c-0d4f-4c8e-9a1b-be27f1a5e0c1 \
     /out/rootfs.erofs "$R" >> /out/mkfs.txt 2>&1 || { cat /out/mkfs.txt; exit 1; }
 ls -l /out/rootfs.erofs
 echo "rootfs build ok"

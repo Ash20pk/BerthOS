@@ -35,10 +35,10 @@ By default, from the GitHub release that [`.github/workflows/vm-artifacts.yml`](
 | File | Asset | sha256 (this CLI) | Size |
 |---|---|---|---|
 | `~/.berth/vm/kernel/sha256/<sha>/Image` | `Image-<sha>` | `8f79e8dae97ebc0ab8fcdc4ad209bb025ec967be82c713503e0612cfdd340ec8` | 23,668,744 B |
-| `~/.berth/vm/rootfs/rootfs-<sha>.erofs` | `rootfs-<sha>.erofs` | `47e1ea51bb54411e8a5ff9ec37296f254cd84d3c12ad7d0d12c0d9c2b6fe7e23` | 46,723,072 B |
+| `~/.berth/vm/rootfs/rootfs-<sha>.erofs` | `rootfs-<sha>.erofs` | `5f696a92de7284e9221412bc6f00e2bbc579f2efbd27825ee5102c3375928ad6` | 46,706,688 B |
 | `~/.berth/vm/bin/berth-vmm` | `berth-vmm-darwin-arm64-<sha>` | `VMM_PINS` in `packages/cli/src/vm/pins.ts` | about 600 KB |
 
-That is `https://github.com/Ash20pk/BerthOS/releases/download/vm-artifacts-8f79e8da-47e1ea51/`. CI rebuilt the kernel and rootfs there from source on GitHub's arm64 Linux runners, and they matched the pins bit for bit before the release was published. The release also carries `SHA256SUMS`, each rootfs's input record, berth-vmm's build record, and the kernel's GPL sources (the exact linux and libkrunfw tarballs, the config delta, the resolved config and the build script; see `SOURCES.md` there).
+That is `https://github.com/Ash20pk/BerthOS/releases/download/vm-artifacts-8f79e8da-5f696a92/`. CI rebuilds the kernel and rootfs for it from source on GitHub's arm64 Linux runners, and publishes the release only if they match the pins bit for bit. The release also carries `SHA256SUMS`, each rootfs's input record, berth-vmm's build record, and the kernel's GPL sources (the exact linux and libkrunfw tarballs, the config delta, the resolved config and the build script; see `SOURCES.md` there).
 
 berth-vmm is downloaded only when the CLI pins its sha256 for your platform (macOS arm64 is the only published one). A build from CI can't be pinned until CI has built it, so a CLI released before the first artifacts release has no pin, and says so. Then build berth-vmm and pass `--vmm`, or download it by hand (below).
 
@@ -64,7 +64,7 @@ If the kernel and rootfs aren't installed, `berth dev --runtime vm` installs the
 ### Verifying by hand
 
 ```bash
-tag=vm-artifacts-8f79e8da-47e1ea51
+tag=vm-artifacts-8f79e8da-5f696a92
 gh release download "$tag" -R Ash20pk/BerthOS -p 'Image-*' -p 'rootfs-*.erofs' -p 'berth-vmm-darwin-arm64-*' -p SHA256SUMS
 shasum -a 256 -c --ignore-missing SHA256SUMS     # each asset against the list
 shasum -a 256 Image-* rootfs-*.erofs              # and against the pins above, which are also in

@@ -18,8 +18,13 @@ export interface ExplainContext {
   enforcement: EnforcementStatus;
 }
 
-/** Node's fs errors: "EACCES: permission denied, open '/etc/x.txt'" (with an optional " -> '<dest>'"). */
-const FS_ERROR = /^(E[A-Z]+): ([^,]+), ([a-z0-9_]+) '([^']+)'(?: -> '([^']+)')?/;
+/**
+ * Node's fs errors: "EACCES: permission denied, open '/etc/x.txt'" (with an
+ * optional " -> '<dest>'"), either as the whole message or quoted in
+ * parentheses at the end of an app's own explanation, as apps/filesystem does
+ * for a path that resolved outside its root.
+ */
+const FS_ERROR = /(?:^|\()(E[A-Z]+): ([^,]+), ([a-z0-9_]+) '([^']+)'(?: -> '([^']+)')?/;
 
 /**
  * Syscalls that need write access to the target path. Anything not listed is
