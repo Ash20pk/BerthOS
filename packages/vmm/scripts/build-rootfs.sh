@@ -56,7 +56,9 @@ sha() { shasum -a 256 "$1" | cut -d' ' -f1; }
 src_rev=$(git -C "$REPO_DIR" rev-parse HEAD)
 src_dirty=$(git -C "$REPO_DIR" status --porcelain -- packages/vmm packages/sdk packages/manifest-schema | grep -q . && echo true || echo false)
 # Recorded inside the image too (/etc/berth/build-inputs.json), minus the
-# image's own hash, which cannot be inside itself.
+# image's own hash, which cannot be inside itself, and minus the git commit,
+# so that an unrelated commit does not change the image. The commit is in the
+# outer inputs.json.
 cat > "$F/etc/berth/build-inputs.json" <<EOF
 {
   "schema": 1,
@@ -69,8 +71,6 @@ cat > "$F/etc/berth/build-inputs.json" <<EOF
     "generate-capability-policy.mjs": "$(sha "$B/bundle/generate-capability-policy.mjs")",
     "run-lifecycle.mjs": "$(sha "$B/bundle/run-lifecycle.mjs")"
   },
-  "sourceCommit": "$src_rev",
-  "sourceDirty": $src_dirty,
   "sourceDateEpoch": $EPOCH,
   "identities": {"berth": 9999, "berth-context-bus": 9001, "appSlots": "berth-app0..15 = 10000..10015"}
 }
@@ -91,7 +91,7 @@ D="$ART/rootfs"
 mkdir -p "$D"
 mv "$B/out/rootfs.erofs" "$D/$name"
 chmod 0444 "$D/$name"
-node -e '
+SRC_REV=$src_rev SRC_DIRTY=$src_dirty node -e '
 const fs = require("fs");
 const [inputs, lock, mkfs, treeKiB, tree, sha, size] = process.argv.slice(1);
 const out = {
@@ -99,6 +99,8 @@ const out = {
   ...JSON.parse(fs.readFileSync(inputs, "utf8")),
   resolvedPackages: fs.readFileSync(lock, "utf8").trim().split("\n"),
   mkfs: fs.readFileSync(mkfs, "utf8").trim().split("\n")[0],
+  sourceCommit: process.env.SRC_REV,
+  sourceDirty: process.env.SRC_DIRTY === "true",
   treeListingSha256: require("crypto").createHash("sha256").update(fs.readFileSync(tree)).digest("hex"),
 };
 process.stdout.write(JSON.stringify(out, null, 2) + "\n");
