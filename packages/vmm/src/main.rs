@@ -440,15 +440,25 @@ fn main() {
             )
         });
         let rootfs_json = rootfs.as_ref().map_or("null".to_string(), |r| {
-            format!("{{\"sha256\":{},\"fstype\":{},\"readOnly\":true,\"hashMs\":{}}}", json_str(&r.sha256), json_str(r.fstype), r.hash_ms)
+            format!(
+                "{{\"sha256\":{},\"pinned\":{},\"fstype\":{},\"readOnly\":true,\"hashMs\":{}}}",
+                json_str(&r.sha256),
+                r.sha256 == pins::rootfs_pin(),
+                json_str(r.fstype),
+                r.hash_ms
+            )
         });
         let state_json = state.as_ref().map_or("null".to_string(), |s| {
             format!(
-                "{{\"path\":{},\"sizeBytes\":{},\"created\":{},\"restoredBytes\":{}}}",
+                "{{\"chunkedSha256\":{},\"chunkBytes\":{},\"path\":{},\"sizeBytes\":{},\"created\":{},\"restoredBytes\":{},\"hashMs\":{},\"hashedBytes\":{}}}",
+                json_str(&s.digest),
+                pins::STATE_DIGEST_CHUNK,
                 json_str(&s.path),
                 s.size,
                 s.created,
-                s.restored
+                s.restored,
+                s.hash_ms,
+                s.hashed_bytes
             )
         });
         eprintln!(
