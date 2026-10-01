@@ -22,7 +22,8 @@
 //               (a `git archive` of the pinned policy compiler commit)
 //   node_modules dirs: where esbuild, yaml, zod, ... are resolved from (read only)
 // Prints a JSON record of the packages inlined and the esbuild version.
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { builtinModules, createRequire } from "node:module";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
@@ -45,9 +46,17 @@ for (const p of nodePaths) {
 }
 if (!esbuild) throw new Error("esbuild not found in the given node_modules paths");
 
-for (const pkg of ["sdk", "manifest-schema"]) {
-  cpSync(join(srcArg, "packages", pkg, "src"), join(stage, "packages", pkg, "src"), { recursive: true });
-}
+// esbuild also reads the nearest package.json above each source file (its
+// "type" and "sideEffects" change how modules are wrapped), so an empty one
+// at the root keeps it from finding one in a parent directory: an empty
+// package.json means the same as none.
+const copySources = (root) => {
+  for (const pkg of ["sdk", "manifest-schema"]) {
+    cpSync(join(srcArg, "packages", pkg, "src"), join(root, "packages", pkg, "src"), { recursive: true });
+  }
+  writeFileSync(join(root, "package.json"), "{}\n");
+};
+copySources(stage);
 
 const entryPoints = {
   "generate-capability-policy": "packages/sdk/src/generate-capability-policy.ts",
@@ -74,11 +83,23 @@ const options = (absWorkingDir, searchPaths, outdir) => ({
 });
 
 // Pass 1, from the given node_modules: only to learn which packages are used.
-const probe = await esbuild.build(options(stage, nodePaths, join(stage, ".probe")));
+// esbuild looks in every node_modules above the importing file before it
+// tries nodePaths, so a stage under a directory with its own node_modules
+// (a home directory with a package.json, say) would pick up whatever
+// versions live there. The probe therefore runs from a fresh directory under
+// the system temp dir, and every package it resolves must come from one of
+// the node_modules directories given on the command line.
+const probeRoot = realpathSync(mkdtempSync(join(tmpdir(), "berth-sdk-probe-")));
+copySources(probeRoot);
+const probe = await esbuild.build(options(probeRoot, nodePaths, join(probeRoot, ".probe")));
+const allowed = nodePaths.map((p) => realpathSync(p) + sep);
 const packages = new Map(); // name -> real package directory
 for (const input of Object.keys(probe.metafile.inputs)) {
-  const abs = realpathSync(isAbsolute(input) ? input : join(stage, input));
-  if (abs.startsWith(stage + sep)) continue;
+  const abs = realpathSync(isAbsolute(input) ? input : join(probeRoot, input));
+  if (abs.startsWith(probeRoot + sep)) continue;
+  if (!allowed.some((a) => abs.startsWith(a)) && !nodePaths.some((p) => abs.startsWith(p + sep))) {
+    throw new Error(`${abs} was resolved from outside the given node_modules directories (${nodePaths.join(", ")})`);
+  }
   // The package root: the nearest directory above the file with a package.json
   // that names a package and sits directly under a node_modules directory.
   let dir = dirname(abs);
@@ -98,7 +119,7 @@ for (const input of Object.keys(probe.metafile.inputs)) {
 for (const [name, { dir }] of packages) cpSync(dir, join(stage, "node_modules", name), { recursive: true, dereference: true });
 
 // Pass 2, from the stage only: the output.
-rmSync(join(stage, ".probe"), { recursive: true, force: true });
+rmSync(probeRoot, { recursive: true, force: true });
 mkdirSync(outDir, { recursive: true });
 const built = await esbuild.build(options(stage, [join(stage, "node_modules")], outDir));
 const builtin = (p) => p.startsWith("node:") || builtinModules.includes(p);
