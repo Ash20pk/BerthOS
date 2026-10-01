@@ -1,5 +1,6 @@
 import Docker from "dockerode";
 import { appCgroupsRefusal, appCgroupsRequired, cgroupDelegationForBoot, warnIfEnforcementInactive } from "./doctor.js";
+import { phaseTimer } from "./timing.js";
 import {
   CONTAINER_APP_SECRETS_DIR,
   CONTAINER_SECRETS_PATH,
@@ -279,6 +280,7 @@ function resolveRuntime(explicit: string | undefined): string | undefined {
 export async function startContainer(options: StartContainerOptions): Promise<RunningContainer> {
   const docker = options.docker ?? new Docker();
   const runtime = resolveRuntime(options.runtime);
+  const mark = phaseTimer();
 
   // Before anything else, because a banner printed after a screenful of app
   // logs is a banner nobody reads. Cached per kernel (and per runtime — under
@@ -287,6 +289,7 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
   // nothing after that. Best-effort by construction: it never throws and
   // never blocks a boot.
   await warnIfEnforcementInactive(docker, options.image, runtime);
+  mark("start.enforcement-probe");
 
   // Whether this sandbox's apps can each get a cgroup of their own, decided
   // here, before the sidecar or any secrets file exists, so that a strict
@@ -494,6 +497,7 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
       );
     }
   }
+  mark("start.semantic-fs-sidecar");
   if (sidecar) {
     binds.push(...sidecar.sandboxBinds);
   } else if (semanticFsDisabled) {
@@ -663,7 +667,9 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
     container = await docker.createContainer(createOptions);
   }
 
+  mark("start.container-create");
   await container.start();
+  mark("start.container-start");
 
   let ports: RunningContainer["ports"] = {};
   if (wantsBrowserPorts || wantsTerminalPort || wantsHttpRpc) {
