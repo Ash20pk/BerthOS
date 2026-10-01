@@ -26,11 +26,12 @@ berth mcp --app my-app    # serve its exports as MCP tools over stdio
 | Command | What it does |
 |---|---|
 | `berth init [name]` | Scaffold a resident app (`--template`, `--registry`) |
-| `berth dev` | Boot the app in a local sandbox with hot reload (`--apps` adds companion apps) |
+| `berth dev` | Boot the app in a local sandbox with hot reload (`--apps` adds companion apps, `--runtime vm` uses a local microVM) |
 | `berth test` | Build the production image, check export contracts, run the app's tests (`--json`) |
 | `berth doctor` | Check whether this machine can enforce capabilities |
 | `berth mcp --app <name>` | Expose an app's exports as MCP tools (`--only`, `--warm`, `--no-boot`) |
 | `berth rpc <app> --export <name>` | Call one export directly (`--input` takes JSON) |
+| `berth vm install\|status\|stop\|logs` | Install and manage the local microVM runtime ([docs](https://github.com/Ash20pk/BerthOS/blob/main/docs/local-vm.md)) |
 | `berth os up\|down\|status` | Keep a sandbox running so code can reconnect to it instantly |
 | `berth attest <runId>` | Produce an attestation record for a run |
 | `berth audit list\|verify` | Show the audit trail, or check its hash chain |
