@@ -241,6 +241,33 @@ fn json_str(s: &str) -> String {
     format!("{s:?}")
 }
 
+/// libkrun puts the guest environment on the kernel command line, after the
+/// pinned one, as K="V". A `"` in a value ends the quoting, and the rest
+/// becomes kernel parameters of the caller's choosing: `--env 'X=1" lsm="yama'`
+/// booted with Landlock off (a later lsm= or init= wins). The kernel also
+/// turns at most 31 K=V words into PID 1's environment before it panics. So:
+/// names are identifiers, values have no whitespace, quotes, backslashes or
+/// control characters, and the count is bounded.
+fn check_guest_env(env: &[String]) {
+    // The kernel's MAX_INIT_ENVS (32) less HOME and TERM, less what libkrun
+    // and berth-vmm add (KRUN_INIT, KRUN_WORKDIR, PATH, BERTH_STATE_DEV) and
+    // some headroom.
+    const MAX_GUEST_ENV: usize = 20;
+    if env.len() > MAX_GUEST_ENV {
+        die(&format!("at most {MAX_GUEST_ENV} --env entries (they become kernel command line words)"));
+    }
+    for e in env {
+        let Some((k, v)) = e.split_once('=') else { die(&format!("--env {e:?} is not K=V")) };
+        let ident = !k.is_empty() && !k.starts_with(|c: char| c.is_ascii_digit()) && k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_');
+        if !ident {
+            die(&format!("--env name {k:?} must be [A-Za-z_][A-Za-z0-9_]*"));
+        }
+        if v.bytes().any(|b| b <= b' ' || b == b'"' || b == b'\'' || b == b'\\' || b == 0x7f) {
+            die(&format!("--env {k}: the value may not contain whitespace, quotes, backslashes or control characters (it goes on the kernel command line)"));
+        }
+    }
+}
+
 /// libkrun opens virtio-fs directories only when the guest activates the
 /// device; a failure there panics a vCPU thread and leaves the VM hung. Check
 /// up front (this is also where a host sandbox profile's denial shows up).
@@ -263,10 +290,22 @@ fn preflight(o: &Opts) {
 
 fn main() {
     let o = parse();
+    check_guest_env(&o.env);
     preflight(&o);
     // Everything that identifies what is booted is checked before libkrun sees it.
     let kernel = o.kernel.as_deref().map(|k| pins::verify_kernel(k, o.rootfs.is_some()).unwrap_or_else(|e| die(&e)));
     let rootfs = o.rootfs.as_deref().map(|r| pins::verify_rootfs(r, o.rootfs_sha256.as_deref()).unwrap_or_else(|e| die(&e)));
+    // COMMAND_LINE_SIZE is 2048 on arm64; past it the kernel truncates. libkrun
+    // appends each env entry as ` K="V"`, plus its own KRUN_INIT/KRUN_WORKDIR
+    // (about 40 bytes; measured: 301 bytes in /proc/cmdline for a 159-byte
+    // pinned line and three env entries totalling 105). 160 bytes cover
+    // libkrun's words, PATH and BERTH_STATE_DEV.
+    if let Some(k) = &kernel {
+        let est = k.cmdline.len() + o.env.iter().map(|e| e.len() + 3).sum::<usize>() + 160;
+        if est > 2048 {
+            die(&format!("the guest environment does not fit on the kernel command line ({est} of 2048 bytes)"));
+        }
+    }
     // The pinned kernel mounts the image itself (root=/dev/vda rootfstype=erofs).
     if let (Some(_), Some(r)) = (&kernel, &rootfs) {
         if r.fstype != "erofs" {
