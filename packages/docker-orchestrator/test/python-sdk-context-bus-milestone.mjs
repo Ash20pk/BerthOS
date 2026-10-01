@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { rm } from "node:fs/promises";
 import { loadManifest } from "@berthos/manifest-schema";
-import { buildImage, startContainer, stopContainer } from "../dist/index.js";
+import { buildImage, checkoutTag, startContainer, stopContainer } from "../dist/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");
@@ -39,11 +39,11 @@ async function main() {
   await rm(join(APP_DIR, ".berth"), { recursive: true, force: true });
 
   console.log("--- Building hello-world-py's dev image ---");
-  await buildImage({ appDir: APP_DIR, tag: "berth/hello-world-py:dev", target: "dev", docker });
+  await buildImage({ appDir: APP_DIR, tag: checkoutTag("berth/hello-world-py:dev", APP_DIR), target: "dev", docker });
 
   console.log("\n--- Starting hello-world-py's sandbox (runtime: python) ---");
   const running = await startContainer({
-    image: "berth/hello-world-py:dev",
+    image: checkoutTag("berth/hello-world-py:dev", APP_DIR),
     name: "berth-python-context-bus-milestone",
     manifest,
     bindMount: { hostPath: REPO_ROOT, containerPath: "/workspace" },

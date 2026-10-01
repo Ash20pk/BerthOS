@@ -29,7 +29,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { loadManifest } from "@berthos/manifest-schema";
 import Docker from "dockerode";
-import { buildImage, startContainer, stopContainer } from "../dist/index.js";
+import { buildImage, checkoutTag, startContainer, stopContainer } from "../dist/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");
@@ -37,7 +37,7 @@ const APP_A_DIR = join(__dirname, "fixtures", "boundary-app-a");
 const APP_B_DIR = join(__dirname, "fixtures", "boundary-app-b");
 const APP_A_CONTAINER_DIR = "/workspace/packages/docker-orchestrator/test/fixtures/boundary-app-a";
 const APP_B_CONTAINER_DIR = "/workspace/packages/docker-orchestrator/test/fixtures/boundary-app-b";
-const IMAGE_TAG = "berth/boundary-app-a:dev";
+const IMAGE_TAG = checkoutTag("berth/boundary-app-a:dev", APP_A_DIR);
 const CONTAINER_NAME = "berth-per-app-secrets-milestone";
 const DEV_WORKSPACE = "/workspace/.berth/dev-workspace";
 const DEV_WORKSPACE_HOST_DIR = join(REPO_ROOT, ".berth", "dev-workspace");

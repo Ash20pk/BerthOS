@@ -28,7 +28,7 @@ Three layers, from strongest to softest. Where a capability is enforced is the r
 
 | Layer | What it is | What it covers |
 |---|---|---|
-| **Kernel** | Landlock and seccomp rules, applied before the app starts and impossible to undo from inside | File reads and writes, outbound TCP by port, UDP and raw sockets, namespace creation, and privileges dropped for every app |
+| **Kernel** | Landlock and seccomp rules, applied before the app starts and impossible to undo from inside | File reads and writes, outbound TCP by port, every other kind of socket (UDP, raw, vsock and the rest), io_uring, namespace creation, and privileges dropped for every app |
 | **Proxy** | A proxy the app's traffic has to pass through | Browsing by hostname, and GitHub API calls by method and path |
 | **Host** | How Berth sets up the container and the files around it | Loopback-only ports with per-boot passwords, credentials delivered by private file, read-only project mounts |
 

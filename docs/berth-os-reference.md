@@ -89,7 +89,7 @@ Across the loaded apps, at most one may declare each of `browser:*`, `terminal:*
 
 `berth os status [<name>]` lists each recorded instance with `running` or `stopped`, its container, its apps and, if set, its HTTP bridge URL. A container that stopped on its own keeps its record until you run `down`.
 
-`berth os down <name>` stops and removes the container, removes the image's tag, and deletes the record. The image itself stays as build cache, tagged `berth-build-cache:production-berth-os_<name>`, so the next `berth os up` of the same apps doesn't rebuild from the base; the next build that replaces it removes it. Every image Berth builds carries the label `io.berthos.build-cache`, which is how to find them: `docker images --filter label=io.berthos.build-cache`.
+`berth os down <name>` stops and removes the container, removes the image's tag, and deletes the record. The image itself stays as build cache, tagged `berth-build-cache:production-berth-os_<name>-<hash>` (`<hash>` is 8 hex digits derived from the primary app's directory, so each checkout keeps its own), so the next `berth os up` of the same apps doesn't rebuild from the base; the next build that replaces it removes it. Every image Berth builds carries the label `io.berthos.build-cache`, which is how to find them: `docker images --filter label=io.berthos.build-cache`. A `berth/<name>:dev` or `berth/<name>:<version>` left by `berth dev` or `berth test` from before their tags were per checkout isn't removed for you, since a checkout still on that Berth may be using it; `docker rmi` it once none is.
 
 ## The HTTP bridge
 

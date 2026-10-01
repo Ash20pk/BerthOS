@@ -40,6 +40,10 @@ exports:
   # dropped, so this exercises the seccomp filter that refuses it.
   - name: probe_user_namespace
     output: { created: boolean, regainedCaps: boolean }
+  # A UDP socket through io_uring's IORING_OP_SOCKET, which never calls the
+  # socket(2) the UDP filter matches on. Exercises agent-init's io_uring filter.
+  - name: probe_io_uring_socket
+    output: { stage: string }
 
 on_install: []
 on_agent_ready: []

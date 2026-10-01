@@ -31,12 +31,12 @@ import { tmpdir } from "node:os";
 import { mkdtemp } from "node:fs/promises";
 import { loadManifest } from "@berthos/manifest-schema";
 import Docker from "dockerode";
-import { buildImage, startContainer, stopContainer, createSnapshot, containerSecretsDir, CONTAINER_SECRETS_PATH } from "../dist/index.js";
+import { buildImage, checkoutTag, startContainer, stopContainer, createSnapshot, containerSecretsDir, CONTAINER_SECRETS_PATH } from "../dist/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");
 const APP_DIR = join(REPO_ROOT, "apps", "filesystem");
-const IMAGE_TAG = "berth/filesystem-secrets-milestone:dev";
+const IMAGE_TAG = checkoutTag("berth/filesystem-secrets-milestone:dev", APP_DIR);
 const CONTAINER_NAME = "berth-secrets-milestone";
 
 // Distinctive enough to grep for in a whole image tarball without false hits.

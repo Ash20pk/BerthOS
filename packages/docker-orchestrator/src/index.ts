@@ -10,7 +10,7 @@ export {
   describeDockerHost,
   type DockerHostResolution,
 } from "./docker-host.js";
-export { buildImage, removeImageKeepingCache, type BuildImageOptions, type BuildTarget } from "./image.js";
+export { buildCacheRef, buildImage, checkoutId, checkoutTag, removeImageKeepingCache, type BuildImageOptions, type BuildTarget } from "./image.js";
 export {
   startContainer,
   stopContainer,
@@ -22,6 +22,7 @@ export {
   needsTerminalPort,
   describeContainerFailure,
   formatContainerFailure,
+  containerResources,
   type ContainerFailure,
   type StartContainerOptions,
   type RunningContainer,
@@ -37,6 +38,11 @@ export {
   type RunDoctorOptions,
   type LandlockProbeResult,
   enforcementStatusForBoot,
+  cgroupDelegationVerdict,
+  cgroupDelegationForBoot,
+  appCgroupsRequired,
+  appCgroupsRefusal,
+  type CgroupProbe,
   warnIfEnforcementInactive,
   unenforcedBanner,
   resetBannerState,
@@ -47,7 +53,9 @@ export {
   parseBootId,
   parsePolicyLines,
   parseRulesetReports,
+  parseResourceLimits,
   type BootEvidence,
+  type ResourceLimitsEvidence,
 } from "./attest.js";
 export { watchApp, type WatchHandle } from "./watch.js";
 export { invokeAppExport, rpcSocketPathFor, RPC_SOCKET_DIR, type RpcRequest, type RpcResponse } from "./relay.js";

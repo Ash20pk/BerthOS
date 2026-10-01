@@ -21,12 +21,12 @@ import Docker from "dockerode";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { loadManifest } from "@berthos/manifest-schema";
-import { buildImage, startContainer, stopContainer, restartContainer, invokeAppExport } from "../dist/index.js";
+import { buildImage, checkoutTag, startContainer, stopContainer, restartContainer, invokeAppExport } from "../dist/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");
 const FIXTURES = join(__dirname, "fixtures");
-const IMAGE_TAG = "berth/python-multi-app-milestone:test";
+const IMAGE_TAG = checkoutTag("berth/python-multi-app-milestone:test", join(FIXTURES, "python-worker"));
 
 const docker = new Docker();
 
@@ -147,7 +147,7 @@ async function main() {
       `cd ${shadowRoot}/@berthos/manifest-schema`,
       `printf '%s' '{"name":"@berthos/manifest-schema","type":"module","main":"index.js"}' > package.json`,
       // Every name the compiler imports, so the import links and the module body runs.
-      `printf '%s\\n' 'import { writeFileSync } from "node:fs";' 'writeFileSync("/tmp/berth-node-planted-ran-as-uid-" + process.getuid(), "");' 'export const loadManifest = async () => { throw new Error("planted"); };' 'export const parseCapability = () => {};' 'export const capabilityIssue = () => undefined;' 'export const CapabilityString = {};' 'export const ALLOWED_FILESYSTEM_SCOPE_PREFIXES = [];' > index.js`,
+      `printf '%s\\n' 'import { writeFileSync } from "node:fs";' 'writeFileSync("/tmp/berth-node-planted-ran-as-uid-" + process.getuid(), "");' 'export const loadManifest = async () => { throw new Error("planted"); };' 'export const parseCapability = () => {};' 'export const capabilityIssue = () => undefined;' 'export const CapabilityString = {};' 'export const ALLOWED_FILESYSTEM_SCOPE_PREFIXES = [];' 'export const ResourcesSpec = {};' 'export const appCgroupLimits = () => ({});' > index.js`,
       "echo planted",
     ].join(" && ");
     const planting = await exec(container, plant, notesUid);

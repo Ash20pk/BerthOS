@@ -1,5 +1,6 @@
 import Docker from "dockerode";
-import { warnIfEnforcementInactive } from "./doctor.js";
+import { appCgroupsRefusal, appCgroupsRequired, cgroupDelegationForBoot, warnIfEnforcementInactive } from "./doctor.js";
+import { phaseTimer } from "./timing.js";
 import {
   CONTAINER_APP_SECRETS_DIR,
   CONTAINER_SECRETS_PATH,
@@ -16,7 +17,7 @@ import {
   type RunningSidecar,
 } from "./semantic-fs-sidecar.js";
 import { randomBytes } from "node:crypto";
-import type { BerthManifest } from "@berthos/manifest-schema";
+import { DAEMON_RESERVE, DEFAULT_APP_PIDS, sandboxResources, type BerthManifest } from "@berthos/manifest-schema";
 
 /**
  * CDP (9222) is deliberately absent. Chromium binds its debugging port to
@@ -63,24 +64,45 @@ function declaresMeshCapability(manifest: BerthManifest): boolean {
 }
 
 /**
- * A resource limit applies to the whole container, but a multi-app container
- * shares one container across several manifests — takes the max of each
- * field across every app sharing it, so no app's declared need for CPU/
- * memory/GPU is silently capped below what it actually asked for just
- * because a companion app in the same container declared less (or nothing).
- * Undefined stays undefined (no field declared by anyone => no limit set),
- * distinct from `0` (which the schema already rejects as non-positive).
+ * The container-level half of per-app resource limits: the cap around every
+ * app's own cgroup, sized as the sum of the apps plus the daemons' reserve
+ * (see @berthos/manifest-schema's sandboxResources()). Each app's own limit is
+ * applied inside the sandbox by entrypoint.sh, which is also where it would be
+ * applied in a Berth-owned microVM's guest; this is only the outer bound, and
+ * the whole bound when Docker cannot delegate a cgroup subtree to the sandbox.
+ *
+ * `hostCpus` clamps the CPU cap, since Docker refuses a NanoCpus above the
+ * host's count — which a sum reaches much sooner than the max this replaced.
  */
-export function maxResources(manifests: BerthManifest[]): { cpu?: number; memoryMb?: number; gpu?: number } {
-  const result: { cpu?: number; memoryMb?: number; gpu?: number } = {};
-  for (const manifest of manifests) {
-    const r = manifest.resources;
-    if (r.cpu !== undefined) result.cpu = Math.max(result.cpu ?? 0, r.cpu);
-    if (r.memory_mb !== undefined) result.memoryMb = Math.max(result.memoryMb ?? 0, r.memory_mb);
-    if (r.gpu !== undefined) result.gpu = Math.max(result.gpu ?? 0, r.gpu);
-  }
-  return result;
+export function containerResources(manifests: BerthManifest[], hostCpus?: number): { cpu?: number; memoryMb?: number; pids: number; gpu?: number } {
+  const sandbox = sandboxResources(manifests);
+  if (sandbox.cpu !== undefined && hostCpus !== undefined && hostCpus > 0) sandbox.cpu = Math.min(sandbox.cpu, hostCpus);
+  return sandbox;
 }
+
+/** The daemon's CPU count, for containerResources()'s clamp. Undefined when the daemon won't say. */
+async function hostCpuCount(docker: Docker): Promise<number | undefined> {
+  try {
+    const info = (await docker.info()) as { NCPU?: number };
+    return typeof info.NCPU === "number" ? info.NCPU : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** One variable from an image's own `ENV`, e.g. a production image's BERTH_REQUIRE_APP_CGROUPS=1. Undefined when unset or the image can't be inspected. */
+async function imageEnvValue(docker: Docker, image: string, name: string): Promise<string | undefined> {
+  try {
+    const info = (await docker.getImage(image).inspect()) as { Config?: { Env?: string[] } };
+    const entry = info.Config?.Env?.find((e) => e.startsWith(`${name}=`));
+    return entry?.slice(name.length + 1);
+  } catch {
+    return undefined;
+  }
+}
+
+/** The security option that makes a container's own cgroup namespace writable to root in it. Docker 28+. */
+const WRITABLE_CGROUPS_OPT = "writable-cgroups=true";
 
 export interface StartContainerOptions {
   image: string;
@@ -258,6 +280,7 @@ function resolveRuntime(explicit: string | undefined): string | undefined {
 export async function startContainer(options: StartContainerOptions): Promise<RunningContainer> {
   const docker = options.docker ?? new Docker();
   const runtime = resolveRuntime(options.runtime);
+  const mark = phaseTimer();
 
   // Before anything else, because a banner printed after a screenful of app
   // logs is a banner nobody reads. Cached per kernel (and per runtime — under
@@ -266,6 +289,25 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
   // nothing after that. Best-effort by construction: it never throws and
   // never blocks a boot.
   await warnIfEnforcementInactive(docker, options.image, runtime);
+  mark("start.enforcement-probe");
+
+  // Whether this sandbox's apps can each get a cgroup of their own, decided
+  // here, before the sidecar or any secrets file exists, so that a strict
+  // boot (BERTH_REQUIRE_APP_CGROUPS, which production images set) that
+  // cannot have them is refused with nothing to clean up. The caller's env
+  // wins over the image's, as it does in the container.
+  const delegation = await cgroupDelegationForBoot(docker, options.image, runtime);
+  const cgroupsRequired = appCgroupsRequired(
+    options.env?.BERTH_REQUIRE_APP_CGROUPS ?? (await imageEnvValue(docker, options.image, "BERTH_REQUIRE_APP_CGROUPS")),
+  );
+  const cgroupsRefused = appCgroupsRefusal(cgroupsRequired, delegation);
+  if (cgroupsRefused) throw new Error(cgroupsRefused);
+  if (!delegation.delegate) {
+    console.warn(
+      `[berth] per-app cgroups are off for ${options.name}: ${delegation.reason}. Each app is bounded only by the sandbox's container-level caps. ` +
+        "Set BERTH_REQUIRE_APP_CGROUPS=1 to refuse such a boot instead; see docs/resource-limits.md.",
+    );
+  }
   const wantsBrowserPorts =
     options.apps && options.apps.length > 0
       ? options.apps.some((a) => needsBrowserPorts(a.manifest))
@@ -455,6 +497,7 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
       );
     }
   }
+  mark("start.semantic-fs-sidecar");
   if (sidecar) {
     binds.push(...sidecar.sandboxBinds);
   } else if (semanticFsDisabled) {
@@ -481,13 +524,25 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
     capAdd.push("NET_ADMIN");
   }
 
-  // Unset (the default) leaves every sandbox exactly as unbounded as it's
-  // always been — this only ever narrows behavior for an app that opts in
-  // via berth.yml's `resources:`, never for one that doesn't.
-  const resources = maxResources(options.apps?.map((a) => a.manifest) ?? [options.manifest]);
+  // Per-app resource limits. Every sandbox now has a task cap (an app that
+  // declares no `pids` still gets DEFAULT_APP_PIDS), while CPU and memory
+  // are capped at the container only when every app declares them — see
+  // containerResources(). Inside, entrypoint.sh gives each app its own
+  // cgroup when this container is handed a writable cgroup namespace, which
+  // happens only where the host makes that safe (cgroupDelegationForBoot).
+  const manifests = options.apps?.map((a) => a.manifest) ?? [options.manifest];
+  const needsCpuClamp = manifests.every((m) => m.resources.cpu !== undefined);
+  const resources = containerResources(manifests, needsCpuClamp ? await hostCpuCount(docker) : undefined);
   const deviceRequests: Docker.DeviceRequest[] | undefined = resources.gpu
     ? [{ Driver: "nvidia", Count: resources.gpu, Capabilities: [["gpu"]] }]
     : undefined;
+  if (delegation.delegate) securityOpt.push(WRITABLE_CGROUPS_OPT);
+  // What entrypoint.sh reserves for the daemons inside the sandbox, and the
+  // default it applies to an app whose policy it cannot read — the same
+  // numbers the caps above were computed from, so the two cannot disagree.
+  env.BERTH_DAEMON_MEMORY_RESERVE_MB = String(DAEMON_RESERVE.memoryMb);
+  env.BERTH_DEFAULT_APP_PIDS = String(DEFAULT_APP_PIDS);
+  env.BERTH_APP_CGROUPS = delegation.delegate ? "delegated" : `off: ${delegation.reason}`;
 
   // The 5.5 split. Everything a name marks as a credential — the RPC bearer
   // token and the terminal/VNC passwords generated above, plus whatever the
@@ -534,7 +589,7 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
   }
   if (sidecar) Object.assign(plain, sidecar.sandboxEnv);
 
-  const container = await docker.createContainer({
+  const createOptions: Docker.ContainerCreateOptions = {
     name: options.name,
     Image: options.image,
     WorkingDir: workingDir,
@@ -569,6 +624,7 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
       ...(capAdd.length > 0 ? { CapAdd: capAdd } : {}),
       ...(resources.cpu !== undefined ? { NanoCpus: Math.round(resources.cpu * 1e9) } : {}),
       ...(resources.memoryMb !== undefined ? { Memory: resources.memoryMb * 1024 * 1024 } : {}),
+      PidsLimit: resources.pids,
       ...(deviceRequests ? { DeviceRequests: deviceRequests } : {}),
       ...(securityOpt.length > 0 ? { SecurityOpt: securityOpt } : {}),
       // The hardened-runtime opt-in. Only the sandbox gets
@@ -579,9 +635,41 @@ export async function startContainer(options: StartContainerOptions): Promise<Ru
     ...(options.network
       ? { NetworkingConfig: { EndpointsConfig: { [options.network]: {} } } }
       : {}),
-  });
+  };
+  let container: Docker.Container;
+  try {
+    container = await docker.createContainer(createOptions);
+  } catch (err) {
+    // A daemon older than Docker 28 doesn't know the option and refuses the
+    // whole create. The probe can't tell us that in advance, so this is where
+    // it's learned: boot again without it, with the container-level caps
+    // only, and say so — in the log here and in the sandbox's own boot log.
+    if (!delegation.delegate || !/writable-cgroups/i.test((err as Error).message ?? "")) throw err;
+    const refused = appCgroupsRefusal(cgroupsRequired, {
+      delegate: false,
+      reason: `this Docker daemon does not support --security-opt ${WRITABLE_CGROUPS_OPT} (Docker 28+)`,
+    });
+    if (refused) {
+      // Nothing was created, but the sidecar and the secrets files were.
+      if (sidecar) await stopSemanticFsSidecar(options.name, docker).catch(() => {});
+      await removeContainerSecretsDir(options.name, options.secretsRunDir).catch(() => {});
+      throw new Error(refused);
+    }
+    console.warn(
+      `[berth] this Docker daemon does not support --security-opt ${WRITABLE_CGROUPS_OPT} (Docker 28+), so apps in this sandbox get no cgroup of their own — only the sandbox's container-level caps apply.`,
+    );
+    const host = createOptions.HostConfig!;
+    host.SecurityOpt = (host.SecurityOpt ?? []).filter((o: string) => o !== WRITABLE_CGROUPS_OPT);
+    if (host.SecurityOpt.length === 0) delete host.SecurityOpt;
+    createOptions.Env = (createOptions.Env ?? []).map((e) =>
+      e.startsWith("BERTH_APP_CGROUPS=") ? "BERTH_APP_CGROUPS=off: this Docker daemon does not support writable-cgroups" : e,
+    );
+    container = await docker.createContainer(createOptions);
+  }
 
+  mark("start.container-create");
   await container.start();
+  mark("start.container-start");
 
   let ports: RunningContainer["ports"] = {};
   if (wantsBrowserPorts || wantsTerminalPort || wantsHttpRpc) {

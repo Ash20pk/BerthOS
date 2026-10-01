@@ -20,7 +20,12 @@ from pathlib import Path
 
 import pytest
 
-from berth_sdk.generate_capability_policy import compile_capability_policy, compute_bind_ports, http_rpc_tls_read_paths
+from berth_sdk.generate_capability_policy import (
+    compile_capability_policy,
+    compile_cgroup_limits,
+    compute_bind_ports,
+    http_rpc_tls_read_paths,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TS_COMPILER = REPO_ROOT / "packages" / "sdk" / "dist" / "generate-capability-policy.js"
@@ -28,14 +33,15 @@ FIXTURES = json.loads((Path(__file__).parent / "fixtures" / "policy-parity.json"
 CONFORMANCE = REPO_ROOT / "spec" / "capability-manifest" / "conformance" / "cases.json"
 
 _NODE_DRIVER = """
-const { compileCapabilityPolicy, computeBindPorts, httpRpcTlsReadPaths } = await import(process.argv[1]);
+const { compileCapabilityPolicy, compileCgroupLimits, computeBindPorts, httpRpcTlsReadPaths } = await import(process.argv[1]);
 let input = "";
 for await (const chunk of process.stdin) input += chunk;
-const { policies, bindPorts, tlsReadPaths = [] } = JSON.parse(input);
+const { policies, bindPorts, tlsReadPaths = [], cgroupLimits = [] } = JSON.parse(input);
 process.stdout.write(JSON.stringify({
   policies: policies.map((c) => compileCapabilityPolicy(c.appName, c.capabilities)),
   bindPorts: bindPorts.map((c) => computeBindPorts(c.appName, c.env, c.capabilities)),
   tlsReadPaths: tlsReadPaths.map((c) => httpRpcTlsReadPaths(c.appName, c.env)),
+  cgroupLimits: cgroupLimits.map((r) => compileCgroupLimits(r)),
 }));
 """
 
@@ -51,7 +57,9 @@ def _policy_cases() -> list[dict]:
     return cases
 
 
-def _typescript(policies: list[dict], bind_ports: list[dict], cwd: Path, tls_read_paths: list[dict] = ()) -> dict:
+def _typescript(
+    policies: list[dict], bind_ports: list[dict], cwd: Path, tls_read_paths: list[dict] = (), cgroup_limits: list[dict] = ()
+) -> dict:
     node = shutil.which("node")
     if node is None or not TS_COMPILER.exists():
         if os.environ.get("BERTH_POLICY_PARITY_REQUIRED") == "1":
@@ -60,7 +68,9 @@ def _typescript(policies: list[dict], bind_ports: list[dict], cwd: Path, tls_rea
     env = {k: v for k, v in os.environ.items() if k != "BERTH_MESH_COORDINATOR_PORT"}
     completed = subprocess.run(
         [node, "--input-type=module", "-e", _NODE_DRIVER, TS_COMPILER.as_uri()],
-        input=json.dumps({"policies": policies, "bindPorts": bind_ports, "tlsReadPaths": list(tls_read_paths)}),
+        input=json.dumps(
+            {"policies": policies, "bindPorts": bind_ports, "tlsReadPaths": list(tls_read_paths), "cgroupLimits": list(cgroup_limits)}
+        ),
         capture_output=True,
         text=True,
         cwd=cwd,
@@ -113,3 +123,14 @@ def test_both_compilers_grant_the_same_tls_directories(short_tmp, clean_env):
     assert expected[0] == [str(root / "mounted"), str(secret)]
     for case, want in zip(cases, expected):
         assert http_rpc_tls_read_paths(case["appName"], case["env"]) == want, case
+
+
+def test_both_compilers_write_the_same_cgroup_limits(short_tmp, clean_env):
+    # The limits land in the same policy file, so they are held to the same
+    # byte-for-byte standard — including the rounding of a fractional cpu,
+    # which is where a float formatted differently would show.
+    cases = FIXTURES["cgroupLimitCases"]
+    expected = _typescript([], [], short_tmp.resolve(), cgroup_limits=cases)["cgroupLimits"]
+    assert len(expected) == len(cases)
+    for case, want in zip(cases, expected):
+        assert json.dumps(compile_cgroup_limits(case)) == json.dumps(want), case

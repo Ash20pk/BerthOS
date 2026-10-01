@@ -7,7 +7,7 @@ berth doctor
 berth doctor --json
 berth doctor --fix
 berth doctor --runtime runsc
-berth doctor --image berth/filesystem:dev
+berth doctor --image berth/filesystem:dev-1a2b3c4d
 berth doctor --no-probe
 ```
 
@@ -36,7 +36,7 @@ On macOS and Windows your apps run inside Docker's Linux VM, so the kernel that 
 
 ```
 Kernel that runs Berth's apps: 6.10.14-linuxkit (Docker Desktop)
-Probed in: berth/filesystem:dev
+Probed in: berth/filesystem:dev-1a2b3c4d
 
   ✔ Docker daemon reachable
       Docker Desktop (28.0.1), kernel 6.10.14-linuxkit on aarch64
@@ -59,6 +59,7 @@ Each check prints `✔` ok, `!` warn, `✘` fail or `?` unknown, with what was o
 | Docker's default seccomp profile | `seccomp` | A `warn` isn't fatal: `agent-init` installs its own seccomp filters regardless. You lose Docker's extra layer |
 | Container runtime for sandboxes | `runtime` | Which runtime sandboxes boot with (`--runtime` or `BERTH_RUNTIME`, else the daemon default) and whether the daemon has it. A requested runtime the daemon lacks is a `fail`, and the kernel probe is skipped |
 | `/dev/fuse` available | `fuse` | Probed with the same device and capability settings a real boot uses. Semantic FS needs it to mount `/context` |
+| Per-app resource limits | `cgroups` | Whether the container's cgroup2 mount has `nsdelegate`, which is what makes it safe to give each sandbox a writable cgroup namespace. `ok` means each app gets its own cgroup and limits. `warn` means only the sandbox's container-level caps apply. See [resource limits](./resource-limits.md) |
 
 ### How the Landlock check works
 
@@ -108,7 +109,7 @@ Schema version `1`. New checks and new optional fields keep version `1`; anythin
   "reasons": ["the Landlock syscalls are not available in this kernel (Function not implemented)"],
   "checks": [
     {
-      "id": "landlock",                   // "docker" | "landlock" | "seccomp" | "fuse" | "runtime" — stable; readers must tolerate new ids
+      "id": "landlock",                   // "docker" | "landlock" | "seccomp" | "fuse" | "runtime" | "cgroups" — stable; readers must tolerate new ids
       "title": "Landlock enforcement in the container kernel",
       "status": "fail",                   // "ok" | "warn" | "fail" | "unknown"
       "detail": "…what was observed…",
@@ -122,7 +123,7 @@ Schema version `1`. New checks and new optional fields keep version `1`; anythin
     "arch": "aarch64",
     "securityOptions": ["name=seccomp,profile=unconfined", "name=cgroupns"]
   },
-  "probeImage": "berth/filesystem:dev"    // omitted when the probe didn't run
+  "probeImage": "berth/filesystem:dev-1a2b3c4d"    // omitted when the probe didn't run
 }
 ```
 
@@ -130,7 +131,7 @@ How to read it:
 
 - **`unknown` never means "probably fine".** `--no-probe`, an unreachable daemon, and a probe that failed to start all report `unknown`.
 - **Read `enforcementActive` with `enforcementDetermined`.** `false`/`true` means enforcement is off. `false`/`false` means the check couldn't be completed. The verdict says `NOT ACTIVE` or `UNKNOWN` to match.
-- **Only the `landlock` check decides the verdict.** `seccomp` and `fuse` warnings are real losses but not the capability boundary. A `runtime` fail stops the probe, so `landlock` is `unknown`, the verdict is `UNKNOWN`, and the runtime failure appears in `reasons`.
+- **Only the `landlock` check decides the verdict.** `seccomp`, `fuse` and `cgroups` warnings are real losses but not the capability boundary. A `runtime` fail stops the probe, so `landlock` is `unknown`, the verdict is `UNKNOWN`, and the runtime failure appears in `reasons`.
 
 ## The probe image
 

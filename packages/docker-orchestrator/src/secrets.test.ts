@@ -57,6 +57,7 @@ test("isSecretEnvName leaves Berth's own non-credential env alone", () => {
     "BERTH_HTTP_RPC_PORT",
     "BERTH_HTTP_RPC_APP",
     "BERTH_REQUIRE_ENFORCEMENT",
+    "BERTH_REQUIRE_APP_CGROUPS",
     "BERTH_MESH_COORDINATOR_URL",
     "BERTH_BOOT_ID",
     "PATH",

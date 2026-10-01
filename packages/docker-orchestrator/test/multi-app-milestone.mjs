@@ -13,7 +13,7 @@ import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { loadManifest } from "@berthos/manifest-schema";
-import { buildImage, startContainer, stopContainer, invokeAppExport } from "../dist/index.js";
+import { buildImage, checkoutTag, startContainer, stopContainer, invokeAppExport } from "../dist/index.js";
 import { resolveDevBindMount } from "../../cli/dist/util/workspace.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -28,7 +28,7 @@ async function main() {
   const codeEditorManifest = await loadManifest(join(CODE_EDITOR_APP_DIR, "berth.yml"));
 
   console.log("Building filesystem's dev image (shared by both apps in this container)...");
-  await buildImage({ appDir: FILESYSTEM_APP_DIR, tag: "berth/filesystem:dev", target: "dev", docker });
+  await buildImage({ appDir: FILESYSTEM_APP_DIR, tag: checkoutTag("berth/filesystem:dev", FILESYSTEM_APP_DIR), target: "dev", docker });
 
   const apps = [
     { name: "filesystem", workingDir: "/workspace/apps/filesystem", manifest: filesystemManifest },
@@ -63,7 +63,7 @@ async function main() {
 
   console.log("Starting a real multi-app sandbox (filesystem + code-editor)...");
   const running = await startContainer({
-    image: "berth/filesystem:dev",
+    image: checkoutTag("berth/filesystem:dev", FILESYSTEM_APP_DIR),
     name: "berth-multi-app-milestone",
     manifest: filesystemManifest,
     bindMount,

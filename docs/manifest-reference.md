@@ -46,11 +46,11 @@ on_install:
 | [`expose`](#expose-default-browser-true-terminal-true-preview-false) | object | `{browser: true, terminal: true, preview: false}` | Whether a human can watch the browser or terminal |
 | [`governs`](#governs-default-false) | boolean | `false` | Makes this app the governance authority |
 | [`governance`](#governance-default-exempt-false) | object | `{exempt: false}` | Opts this app out of governance |
-| [`resources`](#resources-default-) | object | `{}` | CPU, memory and GPU limits |
+| [`resources`](#resources-default-) | object | `{}` | This app's CPU, memory, task and GPU limits |
 
 ### `name` (required)
 
-Lowercase letters, digits and dashes. Berth uses it as the image name (`berth/<name>:<version>`), the app's identity on the context bus, and the name other apps use in `app:invoke:<name>`.
+Lowercase letters, digits and dashes. Berth uses it as the image name (`berth/<name>:<version>` for `berth publish` and `berth deploy`; `berth/<name>:dev-<hash>` for `berth dev` and `berth/<name>:<version>-<hash>` for `berth test`, where `<hash>` is 8 hex digits derived from the app directory's path, so two checkouts of an app with the same name don't share an image), the app's identity on the context bus, and the name other apps use in `app:invoke:<name>`.
 
 ### `version` (required)
 
@@ -167,15 +167,16 @@ Opts this app out of the governing app's checks. Has no effect when no app decla
 resources:
   cpu: 0.5        # cores, fractional allowed
   memory_mb: 512  # MiB, integer
+  pids: 256       # most processes + threads at once, integer
   gpu: 1          # GPU count, integer
 ```
 
-All three keys are optional positive numbers. Leave `resources` out and the sandbox has no limits.
+All four keys are optional positive numbers, and each is a limit on this app, not on the sandbox it shares with other apps. An app that leaves `resources` out still gets a default: an equal CPU share and 1024 tasks.
 
 | Where it runs | What happens |
 |---|---|
-| `berth dev`, `berth test` (local Docker) | `cpu` and `memory_mb` become Docker CPU and memory limits. `gpu` requests NVIDIA GPUs, which needs the NVIDIA Container Toolkit on the host. Several apps in one container get the largest value of each key across them. |
-| `berth deploy --fleet=k8s` | Each declared key becomes both the Pod's request and its limit (`cpu`, `${memory_mb}Mi`, `nvidia.com/gpu`), giving Guaranteed QoS. `gpu` needs the NVIDIA device plugin on the cluster. |
+| `berth dev`, `berth test` (local Docker) | Each app runs in its own cgroup: `cpu` becomes `cpu.max`, `memory_mb` becomes `memory.max` (with no swap, so an app past it is OOM-killed), and `pids` becomes `pids.max` (1024 if unset). The container is capped at the sum of its apps plus a reserve for the Berth daemons. Per-app cgroups need a host that can delegate them (cgroup v2 with `nsdelegate`, Docker 28+), and `berth doctor` says whether yours can. Elsewhere `berth dev` warns and applies only the container-level caps, and a production image (`berth test`, `Computer.boot()`) refuses to boot. See [resource limits](./resource-limits.md). `gpu` requests NVIDIA GPUs for the whole container (the largest count any app asks for), which needs the NVIDIA Container Toolkit on the host. |
+| `berth deploy --fleet=k8s` | Each declared key becomes both the Pod's request and its limit (`cpu`, `${memory_mb}Mi`, `nvidia.com/gpu`), giving Guaranteed QoS. `gpu` needs the NVIDIA device plugin on the cluster. `pids` is ignored: a Pod's task limit is kubelet configuration, not a Pod field. |
 | `berth deploy --fleet=e2b` or `daytona` | Ignored. Sizing comes from the provider's template or plan. |
 
 ## Capabilities

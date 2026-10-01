@@ -12,6 +12,9 @@ import {
   unenforcedBanner,
   partialEnforcementBanner,
   enforcementStatusForBoot,
+  appCgroupsRefusal,
+  appCgroupsRequired,
+  cgroupDelegationVerdict,
   MIN_LANDLOCK_ABI,
   type LandlockProbeResult,
 } from "./doctor.js";
@@ -476,4 +479,72 @@ test("fresh: true does not invent enforcement either — an enforcing kernel sti
   const { home, docker } = cacheHarness("unsupported", "enforcing");
   const result = await withBerthHome(home, () => enforcementStatusForBoot(docker, "img", undefined, { fresh: true }));
   assert.equal(result.status, "enforcing");
+});
+
+// --- per-app cgroups ---------------------------------------------------------
+
+test("cgroup v2 with nsdelegate reports per-app cgroups ok, without touching the enforcement verdict", async () => {
+  const report = await runDoctor({
+    docker: fakeDocker(),
+    probe: probeReturning({ status: "enforcing", abi: 5, fuse: true, cgroup: { v2: true, nsdelegate: true } }),
+  });
+  assert.equal(report.checks.find((c) => c.id === "cgroups")?.status, "ok");
+  assert.equal(report.verdict, "enforcement: ACTIVE");
+});
+
+test("no nsdelegate warns and says why delegation would be unsafe; enforcement is still ACTIVE", async () => {
+  const report = await runDoctor({
+    docker: fakeDocker(),
+    probe: probeReturning({ status: "enforcing", abi: 5, fuse: true, cgroup: { v2: true, nsdelegate: false } }),
+  });
+  const cgroups = report.checks.find((c) => c.id === "cgroups");
+  assert.equal(cgroups?.status, "warn");
+  assert.match(cgroups?.detail ?? "", /nsdelegate/);
+  assert.match(cgroups?.detail ?? "", /container-level caps/);
+  assert.equal(report.enforcementActive, true);
+});
+
+test("a probe that did not report cgroups is unknown, not ok", async () => {
+  const report = await runDoctor({ docker: fakeDocker(), probe: probeReturning({ status: "enforcing", abi: 5, fuse: true }) });
+  assert.equal(report.checks.find((c) => c.id === "cgroups")?.status, "unknown");
+  const skipped = await runDoctor({ docker: fakeDocker(), skipProbe: true });
+  assert.equal(skipped.checks.find((c) => c.id === "cgroups")?.status, "unknown");
+});
+
+// --- BERTH_REQUIRE_APP_CGROUPS -------------------------------------------------
+
+test("BERTH_REQUIRE_APP_CGROUPS is on for 1 or true, as BERTH_REQUIRE_ENFORCEMENT is, and off otherwise", () => {
+  assert.equal(appCgroupsRequired("1"), true);
+  assert.equal(appCgroupsRequired("true"), true);
+  for (const value of [undefined, "", "0", "false", "yes", "TRUE"]) assert.equal(appCgroupsRequired(value), false, JSON.stringify(value));
+});
+
+test("strict mode refuses a boot without delegation, naming the reason and the way out", () => {
+  for (const cgroup of [{ v2: true, nsdelegate: false }, { v2: false, nsdelegate: false }, undefined]) {
+    const verdict = cgroupDelegationVerdict(cgroup);
+    const refusal = appCgroupsRefusal(true, verdict);
+    assert.ok(refusal, JSON.stringify(cgroup));
+    assert.match(refusal!, /BERTH_REQUIRE_APP_CGROUPS is set/);
+    assert.ok(refusal!.includes(verdict.reason), refusal);
+    assert.match(refusal!, /BERTH_REQUIRE_APP_CGROUPS=0/);
+  }
+  const rejected = appCgroupsRefusal(true, { delegate: false, reason: "this Docker daemon does not support --security-opt writable-cgroups=true (Docker 28+)" });
+  assert.match(rejected ?? "", /Docker 28/);
+});
+
+test("strict mode lets a delegated boot through, and permissive mode never refuses", () => {
+  assert.equal(appCgroupsRefusal(true, cgroupDelegationVerdict({ v2: true, nsdelegate: true })), undefined);
+  assert.equal(appCgroupsRefusal(false, cgroupDelegationVerdict({ v2: true, nsdelegate: false })), undefined);
+  assert.equal(appCgroupsRefusal(false, cgroupDelegationVerdict(undefined)), undefined);
+});
+
+test("strict mode refuses when per-app cgroups were turned off on the host", () => {
+  const prev = process.env.BERTH_DISABLE_APP_CGROUPS;
+  process.env.BERTH_DISABLE_APP_CGROUPS = "1";
+  try {
+    assert.match(appCgroupsRefusal(true, cgroupDelegationVerdict({ v2: true, nsdelegate: true })) ?? "", /BERTH_DISABLE_APP_CGROUPS=1/);
+  } finally {
+    if (prev === undefined) delete process.env.BERTH_DISABLE_APP_CGROUPS;
+    else process.env.BERTH_DISABLE_APP_CGROUPS = prev;
+  }
 });

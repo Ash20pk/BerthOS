@@ -40,13 +40,13 @@ import { PassThrough } from "node:stream";
 import { loadManifest } from "@berthos/manifest-schema";
 import { createFileAuditSink, readAuditFile, verifyAuditChain, attestationDigest } from "@berthos/audit";
 import Docker from "dockerode";
-import { buildImage, startContainer, stopContainer, probeKernel } from "../dist/index.js";
+import { buildImage, checkoutTag, startContainer, stopContainer, probeKernel } from "../dist/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");
 const APP_DIR = join(__dirname, "fixtures", "boundary-app-a");
 const APP_CONTAINER_DIR = "/workspace/packages/docker-orchestrator/test/fixtures/boundary-app-a";
-const IMAGE_TAG = "berth/boundary-app-a:dev";
+const IMAGE_TAG = checkoutTag("berth/boundary-app-a:dev", APP_DIR);
 const CONTAINER_NAME = "berth-attestation-milestone";
 const DEV_WORKSPACE = "/workspace/.berth/dev-workspace";
 const DEV_WORKSPACE_HOST_DIR = join(REPO_ROOT, ".berth", "dev-workspace");

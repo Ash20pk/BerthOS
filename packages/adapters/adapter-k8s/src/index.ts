@@ -76,6 +76,17 @@ function resourcesFor(manifest: BerthManifest): { requests: Record<string, strin
   return { requests: quantities, limits: quantities };
 }
 
+/**
+ * A production image sets BERTH_REQUIRE_APP_CGROUPS=1 and refuses to boot
+ * when it can't give each app a cgroup of its own (docs/resource-limits.md).
+ * A Pod never can: the kubelet owns the cgroup tree and mounts
+ * /sys/fs/cgroup read-only in the container. And a Pod holds one app, whose
+ * own `resources:` are the Pod's limits (resourcesFor), so what strict mode
+ * protects, apps from each other, has no second app to protect here. Off by
+ * default, then; a caller's own `env` can still turn it back on.
+ */
+const POD_DEFAULT_ENV: Record<string, string> = { BERTH_REQUIRE_APP_CGROUPS: "0" };
+
 function podSpecFor(manifest: BerthManifest, image: string, instanceId: string, env?: Record<string, string>, region?: string): Record<string, unknown> {
   const name = manifest.name;
   const resources = resourcesFor(manifest);
@@ -90,7 +101,7 @@ function podSpecFor(manifest: BerthManifest, image: string, instanceId: string, 
         {
           name,
           image,
-          env: Object.entries(env ?? {}).map(([envName, value]) => ({ name: envName, value })),
+          env: Object.entries({ ...POD_DEFAULT_ENV, ...env }).map(([envName, value]) => ({ name: envName, value })),
           securityContext: { capabilities: { add: ["SYS_ADMIN"] } },
           volumeMounts: [{ name: "dev-fuse", mountPath: "/dev/fuse" }],
           ...(resources ? { resources } : {}),

@@ -20,7 +20,7 @@ import { dirname, join } from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { loadManifest } from "@berthos/manifest-schema";
-import { buildImage, startContainer, stopContainer } from "../dist/index.js";
+import { buildImage, checkoutTag, startContainer, stopContainer } from "../dist/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");
@@ -44,7 +44,7 @@ async function main() {
     for (const key of ["planner", "browser"]) {
       const { dir, name } = FIXTURES[key];
       console.log(`\n--- Building ${name}'s dev image ---`);
-      await buildImage({ appDir: dir, tag: `berth/${name}:dev`, target: "dev", docker });
+      await buildImage({ appDir: dir, tag: checkoutTag(`berth/${name}:dev`, dir), target: "dev", docker });
     }
 
     for (const key of ["planner", "browser"]) {
@@ -52,7 +52,7 @@ async function main() {
       const manifest = await loadManifest(join(dir, "berth.yml"));
       console.log(`\n--- Booting "${name}" ---`);
       const container = await startContainer({
-        image: `berth/${name}:dev`,
+        image: checkoutTag(`berth/${name}:dev`, dir),
         // Deliberately NOT suffixed (e.g. "-resilience"): this becomes
         // BERTH_MESH_PEER_NAME, which mutual-match compares against the
         // OTHER fixture's hardcoded `network:peer:mesh-echo-<name>`

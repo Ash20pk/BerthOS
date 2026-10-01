@@ -4,6 +4,7 @@ import { truncate } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { createSocket } from "node:dgram";
 import { execFile } from "node:child_process";
+import { fileURLToPath } from "node:url";
 // apps/filesystem's own path handling, not a copy of it: the traversal,
 // absolute-path and symlink checks then test what the shipped app does.
 import { readFileUnder, resolveUnder, writeFileUnder } from "filesystem/dist/paths.js";
@@ -177,6 +178,37 @@ export default defineApp((app) => {
             resolve(created ? { created, regainedCaps } : { created, regainedCaps, error: (stderr || err?.message || "").trim() });
           },
         );
+      }),
+  });
+
+  // Diagnostic export for capability-enforcement.mjs's io_uring check. Since
+  // Linux 5.19 io_uring can create a socket itself (IORING_OP_SOCKET), without
+  // the socket(2) call the UDP filter above matches on, so an app with that
+  // filter could still get a UDP socket this way. agent-init refuses the
+  // io_uring syscalls for every app, answering ENOSYS.
+  //
+  // Driven from python3 (io_uring_socket.py, beside this package's berth.yml)
+  // because Node has no io_uring binding and the base image already ships
+  // Python. The seccomp filter is inherited across fork and execve, so the
+  // child is bound by exactly the filter this process carries.
+  app.export({
+    name: "probe_io_uring_socket",
+    output: z.object({
+      stage: z.string(),
+      errno: z.number().optional(),
+      soType: z.number().optional(),
+      error: z.string().optional(),
+    }),
+    handler: () =>
+      new Promise((resolve) => {
+        const script = fileURLToPath(new URL("../io_uring_socket.py", import.meta.url));
+        execFile("python3", [script], { timeout: 5000 }, (err, stdout, stderr) => {
+          try {
+            resolve(JSON.parse(stdout.trim()));
+          } catch {
+            resolve({ stage: "probe-failed", error: (stderr || err?.message || stdout).trim() });
+          }
+        });
       }),
   });
 });

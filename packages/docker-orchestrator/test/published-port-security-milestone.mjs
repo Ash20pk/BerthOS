@@ -22,7 +22,7 @@ import Docker from "dockerode";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { loadManifest } from "@berthos/manifest-schema";
-import { buildImage, startContainer, stopContainer, createStdioRpcClient } from "../dist/index.js";
+import { buildImage, checkoutTag, startContainer, stopContainer, createStdioRpcClient } from "../dist/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");
@@ -45,11 +45,11 @@ async function main() {
   const manifest = await loadManifest(join(TERMINAL_APP_DIR, "berth.yml"));
 
   console.log("Building terminal's dev image...");
-  await buildImage({ appDir: TERMINAL_APP_DIR, tag: "berth/terminal:dev", target: "dev", docker });
+  await buildImage({ appDir: TERMINAL_APP_DIR, tag: checkoutTag("berth/terminal:dev", TERMINAL_APP_DIR), target: "dev", docker });
 
   console.log("Starting terminal's sandbox...");
   const running = await startContainer({
-    image: "berth/terminal:dev",
+    image: checkoutTag("berth/terminal:dev", TERMINAL_APP_DIR),
     name: "berth-test-published-port-security",
     manifest,
     bindMount: { hostPath: REPO_ROOT, containerPath: "/workspace" },
@@ -212,11 +212,11 @@ async function checkVnc() {
   const manifest = await loadManifest(join(BROWSER_APP_DIR, "berth.yml"));
 
   console.log("\nBuilding browser-native's dev image...");
-  await buildImage({ appDir: BROWSER_APP_DIR, tag: "berth/browser-native:dev", target: "dev", docker });
+  await buildImage({ appDir: BROWSER_APP_DIR, tag: checkoutTag("berth/browser-native:dev", BROWSER_APP_DIR), target: "dev", docker });
 
   console.log("Starting browser-native's sandbox (NOT in test mode, so the display stack really starts)...");
   const running = await startContainer({
-    image: "berth/browser-native:dev",
+    image: checkoutTag("berth/browser-native:dev", BROWSER_APP_DIR),
     name: "berth-test-published-port-security-vnc",
     manifest,
     bindMount: { hostPath: REPO_ROOT, containerPath: "/workspace" },

@@ -2,7 +2,7 @@ import { Command, Flags } from "@oclif/core";
 import Docker from "dockerode";
 import { PassThrough } from "node:stream";
 import { loadManifestOrExit } from "../util/manifest.js";
-import { buildProductionImage, productionImageTag } from "../util/build.js";
+import { buildProductionImage, testImageTag } from "../util/build.js";
 import { resolveApps, assertAtMostOneBrowserApp, type AppSpec } from "../util/multi-app.js";
 import { startContainer, stopContainer } from "@berthos/docker-orchestrator";
 import type { BerthManifest } from "@berthos/manifest-schema";
@@ -34,8 +34,7 @@ export default class Test extends Command {
     const companions = apps.slice(1);
 
     if (!flags.json) this.log(`Building test image for "${manifest.name}"...`);
-    await buildProductionImage(appDir, manifest, companions);
-    const image = productionImageTag(manifest);
+    const image = await buildProductionImage(appDir, manifest, companions, testImageTag(manifest, appDir));
 
     const exportCheck = await this.runInContainer(docker, image, apps, exportCheckCommand(manifest.runtime));
     const appTestCheck = await this.maybeRunAppTests(docker, image, appDir, apps, manifest.runtime);

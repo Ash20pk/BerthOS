@@ -25,12 +25,12 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { rm } from "node:fs/promises";
 import { loadManifest } from "@berthos/manifest-schema";
-import { buildImage, startContainer, stopContainer } from "../dist/index.js";
+import { buildImage, checkoutTag, startContainer, stopContainer } from "../dist/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");
 const APP_DIR = join(REPO_ROOT, "apps", "hello-world-py");
-const IMAGE_TAG = "berth/hello-world-py:dev";
+const IMAGE_TAG = checkoutTag("berth/hello-world-py:dev", APP_DIR);
 
 const docker = new Docker();
 

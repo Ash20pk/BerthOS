@@ -35,9 +35,10 @@ For each app, before its code starts:
    - listening only on declared bind ports.
 3. **Drop Linux capabilities.** `CAP_SYS_ADMIN`, `CAP_NET_ADMIN` and `CAP_NET_RAW` are removed from the bounding, inheritable and ambient sets. The container holds the first two for Berth's own daemons; `CAP_NET_RAW` would let an app build TCP from raw packets and skip the port rules. `ping` doesn't work inside a sandbox as a result.
 4. **Block namespace creation (seccomp), for every app.** `unshare(2)` and `clone(2)` with any `CLONE_NEW*` flag fail with `EPERM`, `setns(2)` fails with `EPERM`, and `clone3(2)` returns `ENOSYS` so libc falls back to `clone(2)`. Without this, creating a user namespace would hand the app back the capabilities step 3 removed.
-5. **Block UDP and raw sockets (seccomp), for apps that declared no network capability.** `socket(2)` for `AF_INET`/`AF_INET6` datagram or raw sockets, and any `AF_PACKET` socket, fails with `EPERM`. Landlock has no rule for UDP, so this is what makes "no network" mean no network. Unix sockets and netlink are unaffected.
-6. **Switch to the app's own uid.** Each app runs as uid and gid `10000 + its index` in the sandbox (10000 for a single app), irreversibly. This is what keeps apps sharing a sandbox out of each other's files, sockets and processes.
-7. **Start the app.** `agent-init` `exec()`s the app. Landlock rules and seccomp filters are inherited by every process the app starts and can't be removed.
+5. **Block io_uring and vsock (seccomp), for every app.** `io_uring_setup(2)`, `io_uring_enter(2)` and `io_uring_register(2)` return `ENOSYS`, so runtimes that try io_uring (Node's libuv) fall back to ordinary syscalls. io_uring can create sockets without calling `socket(2)`, which would get around step 6. `socket(2)` for `AF_VSOCK` fails with `EPERM`: Landlock's rules are for TCP only, and in a microVM vsock reaches the host.
+6. **Block every socket but TCP (seccomp), for apps that declared no network capability.** `socket(2)` succeeds only for `AF_INET`/`AF_INET6` TCP, `AF_UNIX` and `AF_NETLINK`. Anything else fails with `EPERM`: UDP, ICMP, raw sockets, SCTP, MPTCP, and any other address family, including `AF_PACKET`. Landlock's network rules cover TCP only, so this is what makes "no network" mean no network.
+7. **Switch to the app's own uid.** Each app runs as uid and gid `10000 + its index` in the sandbox (10000 for a single app), irreversibly. This is what keeps apps sharing a sandbox out of each other's files, sockets and processes.
+8. **Start the app.** `agent-init` `exec()`s the app. Landlock rules and seccomp filters are inherited by every process the app starts and can't be removed.
 
 `requestCapability(appName, capability)` in `@berthos/sdk` returns `{ granted: boolean }`: whether the capability matches one the app declared. It doesn't grant anything; the kernel already decided at boot.
 
@@ -45,7 +46,7 @@ For each app, before its code starts:
 
 By default `agent-init` fails open: if Landlock isn't applied (or the policy can't be read), it prints a warning and starts the app unrestricted. That keeps `berth dev` working on Docker Desktop.
 
-With `BERTH_REQUIRE_ENFORCEMENT=1` (or `true`) it fails closed instead. It refuses to start the app unless the ruleset status is exactly `FullyEnforced`, and also refuses if either seccomp filter or the uid switch fails. It logs a `capability_enforcement_refused` event and exits non-zero. Production images, which `Computer.boot()` uses, set this. See [Enforcement, by platform](./kernel-enforcement.md#kernel-enforcement-by-platform) for turning it off locally.
+With `BERTH_REQUIRE_ENFORCEMENT=1` (or `true`) it fails closed instead. It refuses to start the app unless the ruleset status is exactly `FullyEnforced`, and also refuses if any seccomp filter or the uid switch fails. It logs a `capability_enforcement_refused` event and exits non-zero. Production images, which `Computer.boot()` uses, set this. See [Enforcement, by platform](./kernel-enforcement.md#kernel-enforcement-by-platform) for turning it off locally.
 
 ## Reference
 
@@ -71,6 +72,7 @@ Declared filesystem paths must be `/workspace`, `/context`, `/tmp`, `/app` or be
 | Variable | Effect |
 |---|---|
 | `BERTH_REQUIRE_ENFORCEMENT` | `1` or `true`: refuse to start an app that isn't fully enforced. Set in production images. |
+| `BERTH_REQUIRE_APP_CGROUPS` | `1` or `true`: refuse to boot apps that wouldn't each get their own cgroup and limits. Set in production images. See [resource limits](./resource-limits.md#requiring-them). |
 | `BERTH_CAPABILITY_POLICY` | Path of the policy file. Default `.berth/capability-policy.json`. |
 | `BERTH_MANIFEST_PATH` | Manifest the policy is compiled from. Default `./berth.yml`. |
 | `BERTH_APP_UID`, `BERTH_APP_GID`, `BERTH_APP_SUPPLEMENTARY_GIDS` | The identity `agent-init` switches to. Set by the container's entrypoint; without them the app stays root. |
@@ -84,7 +86,8 @@ Declared filesystem paths must be `/workspace`, `/context`, `/tmp`, `/app` or be
 | `capability_policy_applied` | The policy applied, with its paths, ports and the ruleset status (`FullyEnforced`, `PartiallyEnforced` or `NotEnforced`) |
 | `capabilities_dropped` | Whether the capability drop succeeded |
 | `namespace_seccomp_filter` | Whether namespace creation was blocked |
-| `network_seccomp_filter` | Whether UDP and raw sockets were blocked, or why not |
+| `io_uring_vsock_seccomp_filter` | Whether io_uring and vsock sockets were blocked |
+| `network_seccomp_filter` | Whether sockets other than TCP were blocked, or why not |
 | `app_uid_applied` | The uid and gid the app runs as, or why it stayed root |
 | `capability_enforcement_refused` | `BERTH_REQUIRE_ENFORCEMENT` stopped the boot, with the reason |
 

@@ -38,7 +38,7 @@ import { fileURLToPath } from "node:url";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { loadManifest } from "@berthos/manifest-schema";
-import { buildImage, startContainer, stopContainer, invokeAppExport } from "../dist/index.js";
+import { buildImage, checkoutTag, startContainer, stopContainer, invokeAppExport } from "../dist/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");
@@ -79,11 +79,11 @@ async function main() {
   const manifest = await loadManifest(join(PROBE_APP_DIR, "berth.yml"));
 
   console.log("Building enforcement-probe's dev image...");
-  await buildImage({ appDir: PROBE_APP_DIR, tag: "berth/enforcement-probe:dev", target: "dev", docker });
+  await buildImage({ appDir: PROBE_APP_DIR, tag: checkoutTag("berth/enforcement-probe:dev", PROBE_APP_DIR), target: "dev", docker });
 
   console.log("Starting enforcement-probe's sandbox...");
   const running = await startContainer({
-    image: "berth/enforcement-probe:dev",
+    image: checkoutTag("berth/enforcement-probe:dev", PROBE_APP_DIR),
     name: "berth-capability-enforcement-probe",
     manifest,
     bindMount: { hostPath: REPO_ROOT, containerPath: "/workspace" },
@@ -494,6 +494,33 @@ async function main() {
     );
     console.log("\nPASS — unshare(CLONE_NEWUSER) was refused, so the capability bounding-set drop is a real ceiling.");
 
+    console.log("\n--- Test 11b: a UDP socket through io_uring, which never calls socket(2) ---");
+    // Test 5b's UDP refusal is a seccomp filter on socket(2)'s arguments.
+    // io_uring's IORING_OP_SOCKET (Linux 5.19+) makes the kernel create the
+    // socket from a submission ring, so the only syscalls seccomp sees are
+    // io_uring_setup and io_uring_enter, and the UDP socket comes back
+    // anyway. agent-init refuses the io_uring syscalls for every app.
+    //
+    // Asserted on ENOSYS specifically, not on any failure. Docker's default
+    // seccomp profile also refuses io_uring, with EPERM, so under Docker a
+    // missing agent-init filter would still look like a refusal; ENOSYS is
+    // agent-init's answer (the kernel reports the most recently installed of
+    // two equally strict filters), and it is the only refusal left when the
+    // runtime has no profile of its own, as a Kubernetes pod by default does.
+    // Unconditional, like Test 5b: seccomp works on every kernel this runs on.
+    const uringProbe = await rpc.call({ id: "11b", export: "probe_io_uring_socket" });
+    console.log("response:", uringProbe);
+    assert(!uringProbe.error, `probe_io_uring_socket itself errored (unexpected): ${uringProbe.error}`);
+    assert(
+      uringProbe.result?.stage !== "created",
+      `an app with no declared network capability got a UDP socket through io_uring — the socket(2) filter is bypassable: ${JSON.stringify(uringProbe)}`,
+    );
+    assert(
+      uringProbe.result?.stage === "setup" && uringProbe.result?.errno === 38,
+      `io_uring_setup was not refused with ENOSYS, so agent-init's io_uring filter is not what stopped this (EPERM would be Docker's own profile): ${JSON.stringify(uringProbe)}`,
+    );
+    console.log("\nPASS — io_uring_setup answered ENOSYS, so io_uring cannot hand an app the sockets socket(2) refuses.");
+
     rpc.close();
   } finally {
     await containerLog.stop();
@@ -505,7 +532,7 @@ async function main() {
   // agent-init's fail-closed gate (packages/agent-init/src/main.rs) without
   // touching the container Test 1-7 already tore down.
   const enforcedRunning = await startContainer({
-    image: "berth/enforcement-probe:dev",
+    image: checkoutTag("berth/enforcement-probe:dev", PROBE_APP_DIR),
     name: "berth-capability-enforcement-probe-require-enforcement",
     manifest,
     bindMount: { hostPath: REPO_ROOT, containerPath: "/workspace" },
@@ -559,7 +586,7 @@ async function main() {
   const boundaryCManifest = await loadManifest(join(BOUNDARY_APP_C_DIR, "berth.yml"));
 
   console.log("Building boundary-app-a's dev image (shared by both apps in this container)...");
-  await buildImage({ appDir: BOUNDARY_APP_A_DIR, tag: "berth/boundary-app-a:dev", target: "dev", docker });
+  await buildImage({ appDir: BOUNDARY_APP_A_DIR, tag: checkoutTag("berth/boundary-app-a:dev", BOUNDARY_APP_A_DIR), target: "dev", docker });
 
   const BOUNDARY_APP_A_CONTAINER_DIR = "/workspace/packages/docker-orchestrator/test/fixtures/boundary-app-a";
   const BOUNDARY_APP_B_CONTAINER_DIR = "/workspace/packages/docker-orchestrator/test/fixtures/boundary-app-b";
@@ -581,7 +608,7 @@ async function main() {
   }
 
   const boundaryRunning = await startContainer({
-    image: "berth/boundary-app-a:dev",
+    image: checkoutTag("berth/boundary-app-a:dev", BOUNDARY_APP_A_DIR),
     name: "berth-capability-enforcement-boundary",
     manifest: boundaryAManifest,
     bindMount: { hostPath: REPO_ROOT, containerPath: "/workspace" },
