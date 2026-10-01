@@ -12,6 +12,8 @@ import {
 } from "@berthos/docker-orchestrator";
 import type { BerthManifest } from "@berthos/manifest-schema";
 import { loadManifestOrExit } from "../util/manifest.js";
+import { resolveSandbox } from "../vm/config.js";
+import { runDevVm } from "../vm/dev.js";
 import { bootDevContainer } from "../util/dev-boot.js";
 import {
   resolveApps,
@@ -25,6 +27,10 @@ export default class Dev extends Command {
   static override description = "Boot the resident app in a local Agent OS instance, with hot reload";
   static override flags = {
     apps: Flags.string({ description: "comma-separated workspace-relative paths of companion resident apps to run alongside this one" }),
+    runtime: Flags.string({
+      description: "where the sandbox runs: docker (default) or vm, a local microVM (see docs/local-vm.md). Defaults to BERTH_SANDBOX, then \"sandbox\" in ~/.berth/config.json",
+      options: ["docker", "vm"],
+    }),
     "mesh-coordinator": Flags.string({
       description: "berth-mesh-coordinator URL for network:peer:* apps, e.g. http://localhost:4875 (see docs/mesh-reference.md)",
     }),
@@ -34,9 +40,26 @@ export default class Dev extends Command {
     const { flags } = await this.parse(Dev);
     const appDir = process.cwd();
     const manifest = await loadManifestOrExit(appDir);
-    const docker = new Docker();
+    let sandbox;
+    try {
+      sandbox = resolveSandbox(flags.runtime);
+    } catch (err) {
+      this.error(err instanceof Error ? err.message : String(err));
+    }
 
     const apps = await resolveApps(appDir, flags.apps, manifest);
+    if (sandbox === "vm") {
+      if (flags["mesh-coordinator"]) this.error("--mesh-coordinator needs network:peer, which the microVM runtime doesn't have; use --runtime docker");
+      assertAtMostOneEgressBrokerApp(apps);
+      if (apps.length > 1) this.log(`Running with companion apps: ${apps.slice(1).map((a) => a.name).join(", ")}`);
+      try {
+        await runDevVm({ apps, log: (m) => this.log(m), error: (m) => this.error(m, { exit: false }) });
+      } catch (err) {
+        this.error(err instanceof Error ? err.message : String(err));
+      }
+      return;
+    }
+    const docker = new Docker();
     assertAtMostOneBrowserApp(apps);
     assertAtMostOneTerminalApp(apps);
     assertAtMostOneMeshApp(apps);

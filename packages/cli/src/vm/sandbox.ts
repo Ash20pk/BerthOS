@@ -144,6 +144,8 @@ export class VmSandbox {
   private pumping = false;
   private exited: Promise<void>;
   private child?: ChildProcess;
+  /** True once stop() has been called: the VM exiting after that was asked for. */
+  stopping = false;
 
   private constructor(
     readonly record: VmRecord,
@@ -467,6 +469,7 @@ export class VmSandbox {
    */
   async stop(options: { timeoutMs?: number } = {}): Promise<{ clean: boolean; killed: boolean; powerOff?: ControlEvent }> {
     const timeoutMs = options.timeoutMs ?? 10_000;
+    this.stopping = true;
     for (const c of this.rpcClients.values()) c.close();
     this.rpcClients.clear();
     let powerOff: ControlEvent | undefined;

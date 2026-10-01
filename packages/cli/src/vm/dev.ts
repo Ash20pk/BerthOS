@@ -1,0 +1,117 @@
+import { watchApp, type WatchHandle } from "@berthos/docker-orchestrator";
+import { printable, type GuestLogLine } from "./guest-lines.js";
+import { devSandboxName } from "./paths.js";
+import { assertSupported, bootVm, bundleApps, ensureArtifacts, requireHost, type VmAppInput } from "./runtime.js";
+import { pidAlive, VmSandbox } from "./sandbox.js";
+
+/**
+ * `berth dev --runtime vm`: the app in a local microVM, rebooted on change.
+ *
+ * Why a VM restart and not an app restart: the app share is a read-only
+ * virtio-fs mount of the host's bundle directory, so the guest would see a
+ * new bundle, but berth-init has no op to restart one app (control takes
+ * status and shutdown only), and adding one means a new berth-init, a new
+ * rootfs and a new pin. A fresh boot is ~0.4 s, recompiles the capability
+ * policy (so a berth.yml change takes effect, which an app restart would
+ * not do), and keeps /workspace on the state disk. So: rebundle (cached by
+ * content, so a save that changes nothing doesn't reboot), then stop the old
+ * VM and boot the new bundle.
+ */
+
+export interface DevVmOptions {
+  apps: VmAppInput[];
+  log: (message: string) => void;
+  error: (message: string) => void;
+}
+
+export async function runDevVm(options: DevVmOptions): Promise<void> {
+  const { apps, log } = options;
+  const primary = apps[0]!;
+  const vmm = requireHost();
+  await ensureArtifacts(log, vmm);
+  assertSupported(apps, vmm);
+  const name = devSandboxName(primary.name);
+
+  const existing = await VmSandbox.find(name, { onStale: (why) => log(`a stale "${name}" was left behind (${why}); cleaned it up`) }).catch(() => undefined);
+  if (existing) {
+    if (existing.record.owner !== process.pid && pidAlive(existing.record.owner)) {
+      existing.detach();
+      throw new Error(`"${name}" is already running, started by pid ${existing.record.owner} (another \`berth dev\`?). Stop it there, or with \`berth vm stop ${name}\`.`);
+    }
+    log(`stopping the "${name}" VM left running by an earlier session (pid ${existing.pid})`);
+    await existing.stop();
+  }
+
+  const printLog = (l: GuestLogLine) => {
+    process.stdout.write(`[berth:dev] [${printable(l.src)}] ${printable(l.line)}\n`);
+  };
+  const printVmm = (e: Record<string, unknown>) => {
+    if (e.event === "egress") log(`[berth:dev] egress ${String(e.decision)}: ${String(e.host)}:${String(e.port)}${e.reason ? ` (${String(e.reason)})` : ""}`);
+    else if (e.event === "egress_closed") log(`[berth:dev] egress closed: ${String(e.host)}:${String(e.port)}, ${String(e.bytesUp ?? "?")} B up, ${String(e.bytesDown ?? "?")} B down, ${String(e.ms ?? "?")} ms`);
+  };
+
+  log(`Booting "${primary.name}" in a microVM (berth-vmm ${vmm})...`);
+  let current = await bootVm({ name, apps, vmm, log, onLog: printLog });
+  let stopVmmEvents = current.sandbox.onVmmEvent(printVmm);
+  const t = current.timings;
+  log(
+    `VM ready in ${t.bundleMs + t.readyMs} ms (bundle ${t.bundleMs} ms${current.bundles.every((b) => b.cached) ? ", cached" : ""}, boot ${t.readyMs} ms). boot ${current.ready.bootId}, berth-vmm pid ${current.sandbox.pid}`,
+  );
+  log(`[berth:dev] run dir ${current.sandbox.runDir}; call it with \`berth rpc ${primary.name} --runtime vm --export <name>\` or \`berth mcp --runtime vm --app ${primary.name}\``);
+  watchExit(current.sandbox, log);
+
+  let reloading: Promise<void> = Promise.resolve();
+  const reload = () => {
+    reloading = reloading.then(async () => {
+      const t0 = Date.now();
+      let bundles;
+      try {
+        bundles = await bundleApps(apps);
+      } catch (err) {
+        options.error(`reload skipped: ${err instanceof Error ? err.message : String(err)}`);
+        return;
+      }
+      const bundleMs = Date.now() - t0;
+      if (current.sandbox.isRunning() && bundles.every((b, i) => b.hash === current.bundles[i]?.hash)) {
+        log(`Change detected; the bundle is unchanged (${bundleMs} ms), so the VM keeps running.`);
+        return;
+      }
+      log("Change detected, rebooting the VM with the new bundle...");
+      const s0 = Date.now();
+      stopVmmEvents();
+      await current.sandbox.stop();
+      const stopMs = Date.now() - s0;
+      try {
+        current = await bootVm({ name, apps, vmm, log, onLog: printLog, bundles });
+      } catch (err) {
+        options.error(`the new bundle didn't boot: ${err instanceof Error ? err.message : String(err)} — fix it and save again`);
+        return;
+      }
+      stopVmmEvents = current.sandbox.onVmmEvent(printVmm);
+      watchExit(current.sandbox, log);
+      log(`Reloaded in ${Date.now() - t0} ms (bundle ${bundleMs} ms, stop ${stopMs} ms, boot ${current.timings.readyMs} ms). boot ${current.ready.bootId}`);
+    });
+  };
+  const watchers: WatchHandle[] = apps.map((a) => watchApp(a.appDir, reload));
+  log(`Watching ${apps.map((a) => `${a.appDir}/src`).join(", ")} and berth.yml for changes...`);
+
+  const shutdown = async () => {
+    log("\nShutting down...");
+    for (const w of watchers) await w.close();
+    await reloading.catch(() => {});
+    const r = await current.sandbox.stop();
+    log(r.killed ? "the VM didn't power off in time; berth-vmm was killed" : "VM stopped.");
+    process.exit(0);
+  };
+  process.on("SIGINT", () => void shutdown());
+  process.on("SIGTERM", () => void shutdown());
+  process.on("SIGHUP", () => void shutdown());
+}
+
+function watchExit(sandbox: VmSandbox, log: (m: string) => void): void {
+  void sandbox.whenExited().then(() => {
+    // A stop we asked for removes the record first; anything else is the guest powering off by itself.
+    if (sandbox.stopping) return;
+    log(`[berth:dev] the VM powered off by itself (every app exited, or the guest failed); \`berth vm logs\` won't have it now, see ${sandbox.runDir}/console.log. Save a file to boot it again.`);
+  });
+}
