@@ -26,7 +26,11 @@ const fs = require("node:fs");
 const dns = require("node:dns").promises;
 
 const PORT = Number(process.env.BERTH_EGRESS_BROKER_PORT || 8090);
-const POLICY_PATH = process.env.BERTH_CAPABILITY_POLICY || `${process.cwd()}/.berth/capability-policy.json`;
+// BERTH_EGRESS_POLICY first: in the microVM the broker itself runs under
+// agent-init, which reads BERTH_CAPABILITY_POLICY for the broker's OWN
+// confinement, so the egress app's policy comes in under its own name.
+const POLICY_PATH =
+  process.env.BERTH_EGRESS_POLICY || process.env.BERTH_CAPABILITY_POLICY || `${process.cwd()}/.berth/capability-policy.json`;
 
 // Optional: chain an *allowed* CONNECT through a further upstream proxy
 // (e.g. a residential/rotating proxy provider) instead of connecting to the
