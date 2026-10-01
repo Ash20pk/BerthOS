@@ -32,7 +32,9 @@ config_sha256 = "e3f33c2bd4bffa16e52a066c325967e4bde091f20063e6eb5b81e8a2efac4dc
 image_format = "raw"
 image_size = 23668744
 image_sha256 = "8f79e8dae97ebc0ab8fcdc4ad209bb025ec967be82c713503e0612cfdd340ec8"
-cmdline = "reboot=k panic=-1 panic_print=0 nomodule console=hvc0 rootfstype=virtiofs rw quiet no-kvmapf init=/init.krun"
+# rcupdate.rcu_expedited=1 shortens RCU grace periods (cgroup migrations wait
+# on them); about 60 ms off a berth-init boot (feat/vm-guest-init).
+cmdline = "reboot=k panic=-1 panic_print=0 nomodule console=hvc0 rootfstype=virtiofs rw quiet no-kvmapf rcupdate.rcu_expedited=1 init=/init.krun"
 
 # Distribution (planned, not live): the Image, its config and this manifest are
 # published under their sha256, so a user downloads and verifies, never builds.
