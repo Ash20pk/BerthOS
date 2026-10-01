@@ -1068,6 +1068,7 @@ fn shutdown(sup: &Supervisor, sigs: &libc::sigset_t, reason: &str, grace: Durati
         sys::wait_signal(sigs, Duration::from_millis(10));
     }
     reap_and_record(sup);
+    egress::stop_relay();
     unsafe { libc::sync() };
     let mut unmounted = Vec::new();
     let mut failed = Vec::new();
