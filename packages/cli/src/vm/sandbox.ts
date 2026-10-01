@@ -347,6 +347,27 @@ export class VmSandbox {
     }
   }
 
+  /**
+   * Stops the sandbox `name` whatever state it is in: through control when it
+   * answers, else by SIGKILL to the pid in its run dir (a VM still booting
+   * has a pid file before its control port is up). Never throws.
+   */
+  static async stopByName(name: string, options: { runDir?: string; timeoutMs?: number } = {}): Promise<void> {
+    const runDir = options.runDir ?? vmRunDir(name);
+    const found = await VmSandbox.find(name, { runDir }).catch(() => undefined);
+    if (found) {
+      await found.stop(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}).catch(() => {});
+      return;
+    }
+    const pid = Number(readText(join(runDir, PID_FILE)).trim());
+    if (Number.isInteger(pid) && pid > 0 && pidAlive(pid) && isVmmFor(pid, runDir)) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {}
+    }
+    cleanRunDir(runDir);
+  }
+
   async waitReady(timeoutMs: number, signal?: AbortSignal): Promise<ReadyResult> {
     if (!this.control) throw new Error("not connected");
     return waitForReady(this.control, this.record.apps.length, timeoutMs, signal);
