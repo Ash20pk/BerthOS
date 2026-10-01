@@ -32,9 +32,22 @@ config_sha256 = "e3f33c2bd4bffa16e52a066c325967e4bde091f20063e6eb5b81e8a2efac4dc
 image_format = "raw"
 image_size = 23668744
 image_sha256 = "8f79e8dae97ebc0ab8fcdc4ad209bb025ec967be82c713503e0612cfdd340ec8"
+# The command line for a sandbox: the read-only erofs rootfs is the kernel's
+# own root (/dev/vda, the first disk berth-vmm attaches) and berth-init is
+# PID 1, with no init.krun in between. So every instruction the guest runs
+# comes from the pinned kernel or the hashed rootfs; init.krun is code inside
+# the host's libkrun, unmeasured, and over a disk root it forks its payload
+# instead of exec'ing it (berth-init would not be PID 1). See
+# docs/design/microvm-runtime.md.
 # rcupdate.rcu_expedited=1 shortens RCU grace periods (cgroup migrations wait
 # on them); about 60 ms off a berth-init boot (feat/vm-guest-init).
-cmdline = "reboot=k panic=-1 panic_print=0 nomodule console=hvc0 rootfstype=virtiofs rw quiet no-kvmapf rcupdate.rcu_expedited=1 init=/init.krun"
+# libkrun appends berth-vmm's guest environment (--env, BERTH_STATE_DEV) after
+# this; the kernel hands every unknown K=V to PID 1 as its environment.
+cmdline = "reboot=k panic=-1 panic_print=0 nomodule console=hvc0 root=/dev/vda rootfstype=erofs ro rootwait quiet no-kvmapf rcupdate.rcu_expedited=1 init=/sbin/berth-init"
+# Only for a virtio-fs root directory (--root DIR) on the pinned kernel: the
+# spike's layout, kept as a benchmark control. libkrun's init.krun mounts
+# /proc, /sys, /dev and runs the guest command.
+cmdline_virtiofs_root = "reboot=k panic=-1 panic_print=0 nomodule console=hvc0 rootfstype=virtiofs rw quiet no-kvmapf rcupdate.rcu_expedited=1 init=/init.krun"
 
 # Distribution (planned, not live): the Image, its config and this manifest are
 # published under their sha256, so a user downloads and verifies, never builds.

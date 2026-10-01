@@ -2,6 +2,8 @@
 
 Date: 2026-10-01. Branch `feat/vm-guest-init`, stacked on `spike/libkrun-vm` (65fe6bf). Machine: Apple M4, macOS 27.0, HVF, libkrun 1.19.6, our 6.12.109 kernel from the spike.
 
+> **Follow-up (2026-10-01, `feat/vm-runtime`):** current state in [`microvm-runtime.md`](microvm-runtime.md). berth-init now runs from feat/vm-image's erofs rootfs as PID 1 straight from the kernel, with the state disk at `/dev/vdb` and berth-vmm restoring its tail. The test rootfs (`build-guest-init-rootfs.sh`) and `e2e-guest-init.mjs` are replaced by `build-apps.sh` and `scripts/e2e.mjs`. Open problem 1 below is resolved there.
+
 The spike booted apps/notes in a microVM with a shell script (`guest/berth-init.sh`) as its init and `socat` as the RPC relay, which started a new app process for every host connection. `berth-init` replaces both. It is one static binary (aarch64 musl, 645 KiB) at `/sbin/berth-init`, running as PID 1, and it does in the guest what `docker/entrypoint.sh` and tini do in the container:
 
 1. **PID 1 duties.** It mounts proc, sys, dev (plus pts and shm), securityfs, cgroup2 and the tmpfs mounts. It reaps every zombie. It shuts down cleanly when the host asks, on SIGTERM/SIGINT/SIGPWR, or when no app is left running: it stops the apps, syncs, unmounts and powers off.

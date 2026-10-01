@@ -1,22 +1,20 @@
 #!/bin/sh
 # Builds the Berth base rootfs as a content-addressed, read-only erofs image,
-# inside a libkrun builder VM, plus the notes app directory:
+# inside a libkrun builder VM (app directories: build-apps.sh):
 #
 #   $ART/rootfs/rootfs-<sha256>.erofs          the image, named by its sha256
 #   $ART/rootfs/rootfs-<sha256>.inputs.json    what went into it
 #   $ART/rootfs/LATEST                         file name of the last build
-#   $ART/app-notes/                            berth.yml + bundled app + SDK runtime
-#                                              (shared read-only at /app; not in the image)
 #
-# Image contents: Alpine minirootfs + rootfs/packages.txt (node, socat,
-# e2fsprogs; python3 with PYTHON=1), agent-init + probe (build-agent-init.sh),
-# the sdk-node tools (from POLICY_REF), the guest init at /sbin/berth-init, and
-# optionally CONTEXT_BUS_DAEMON=<static binary>.
+# Image contents: Alpine minirootfs + rootfs/packages.txt (node, e2fsprogs;
+# python3 with PYTHON=1), agent-init + probe (build-agent-init.sh), the
+# sdk-node tools (from POLICY_REF), berth-init at /sbin/berth-init and
+# context-bus-daemon (both from build-berth-init.sh).
 #
 # The guest init seam: BERTH_INIT=<file> places that file at /sbin/berth-init
-# (default guest/berth-init.sh). A static Rust init binary drops in the same
-# way; nothing else in the image changes. See docs/design/microvm-image.md for
-# the contract it must meet.
+# (default: the Rust berth-init from build-berth-init.sh). The pinned kernel
+# command line starts it as PID 1. CONTEXT_BUS_DAEMON=<static binary> likewise
+# (default: build-berth-init.sh's). See docs/design/microvm-runtime.md.
 #
 # NODE_MODULES_FROM points at a checkout with installed node_modules (esbuild,
 # yaml, zod), read only; this worktree has none.
@@ -25,12 +23,15 @@ set -eu
 min_free_gb 10
 build_vmm
 AI="$ART/agent-init"
-INIT=${BERTH_INIT:-$VMM_DIR/guest/berth-init.sh}
+BI="$ART/berth-init-build/out"
+INIT=${BERTH_INIT:-$BI/berth-init}
+BUS=${CONTEXT_BUS_DAEMON:-$BI/context-bus-daemon}
 NM=${NODE_MODULES_FROM:-$HOME/agentOS}
 POLICY_REF=${POLICY_REF:-feat/per-app-cgroups}
 EPOCH=$(manifest_get "$ROOTFS_MANIFEST" source_date_epoch)
 [ -f "$AI/agent-init" ] || { echo "run build-agent-init.sh first" >&2; exit 1; }
-[ -f "$INIT" ] || { echo "BERTH_INIT=$INIT does not exist" >&2; exit 1; }
+[ -f "$INIT" ] || { echo "BERTH_INIT=$INIT does not exist (run build-berth-init.sh)" >&2; exit 1; }
+[ -f "$BUS" ] || { echo "CONTEXT_BUS_DAEMON=$BUS does not exist (run build-berth-init.sh)" >&2; exit 1; }
 
 B="$ART/rootfs-build"
 rm -rf "$B" && mkdir -p "$B/in/files" "$B/out" "$B/bundle"
@@ -57,9 +58,8 @@ install -m 0755 "$AI/agent-init" "$F/usr/local/bin/agent-init"
 install -m 0755 "$AI/probe" "$F/usr/local/bin/berth-probe"
 install -m 0755 "$VMM_DIR/guest/net-probe.sh" "$F/usr/local/bin/net-probe"
 install -m 0755 "$VMM_DIR/guest/leak-probe.sh" "$F/usr/local/bin/leak-probe"
-# Optional: a static context-bus-daemon (berth-init starts it confined when
-# present; otherwise apps use the SDK's local bus).
-[ -z "${CONTEXT_BUS_DAEMON:-}" ] || install -m 0755 "$CONTEXT_BUS_DAEMON" "$F/usr/local/bin/context-bus-daemon"
+# berth-init starts it confined (uid 9001) before any app.
+install -m 0755 "$BUS" "$F/usr/local/bin/context-bus-daemon"
 install -m 0644 "$B/bundle/generate-capability-policy.mjs" "$B/bundle/run-lifecycle.mjs" "$F/opt/berth/sdk-node/"
 
 sha() { shasum -a 256 "$1" | cut -d' ' -f1; }
@@ -77,6 +77,7 @@ cat > "$F/etc/berth/build-inputs.json" <<EOF
   "agentInit": {"sha256": "$(sha "$AI/agent-init")", "sourceRef": "${AGENT_INIT_REF:-fix/seccomp-io-uring-vsock}", "sourceCommit": "$(cat "$AI/agent-init.ref")"},
   "probeSha256": "$(sha "$AI/probe")",
   "berthInit": {"path": "/sbin/berth-init", "source": "$(basename "$INIT")", "sha256": "$(sha "$INIT")"},
+  "contextBusDaemon": {"path": "/usr/local/bin/context-bus-daemon", "sha256": "$(sha "$BUS")"},
   "sdkNode": {
     "sourceRef": "$POLICY_REF", "sourceCommit": "$policy_commit",
     "generate-capability-policy.mjs": "$(sha "$B/bundle/generate-capability-policy.mjs")",
@@ -120,11 +121,5 @@ process.stdout.write(JSON.stringify(out, null, 2) + "\n");
 cp "$B/out/tree.txt" "$D/rootfs-$h.tree.txt"
 echo "$name" > "$D/LATEST"
 
-# The app directory, shared read-only into the guest at /app.
-APP="$ART/app-notes"
-rm -rf "$APP" && mkdir -p "$APP/dist"
-cp "$REPO_DIR/apps/notes/berth.yml" "$APP/"
-cp "$B/bundle/runtime.mjs" "$APP/runtime.mjs"
-cp "$B/bundle/notes.mjs" "$APP/dist/index.mjs"
 rm -rf "$B"
 echo "rootfs $D/$name ($(stat -f %z "$D/$name") bytes)"

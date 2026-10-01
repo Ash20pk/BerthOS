@@ -4,6 +4,8 @@ Date: 2026-10-01. Branch `feat/vm-image`, stacked on `spike/libkrun-vm` (65fe6bf
 
 **Aligned with `feat/vm-guest-init`** (the Rust berth-init) so the two branches merge cleanly. That covers the vsock port plan (1024 control, 1025 logs, 5000+i RPC, shutdown via `{"op":"shutdown"}` on 1024), identities written at boot instead of baked in, `/context`, the policy compiler from `feat/per-app-cgroups`, `rcupdate.rcu_expedited=1`, and cgroup2 with `favordynmods`. See "Guest init contract".
 
+> **Follow-up (2026-10-01, `feat/vm-runtime`):** current state in [`microvm-runtime.md`](microvm-runtime.md). The image now carries the Rust berth-init and context-bus-daemon (no socat, no shell stand-in; rootfs `57e7ef8b…`, pinned in `rootfs/manifest.toml`). The pinned command line boots berth-init directly as PID 1 (`root=/dev/vda rootfstype=erofs ro init=/sbin/berth-init`), with no init.krun. `run-probe.sh` and `boot-notes.mjs` are replaced by `berth-vmm run` and `scripts/e2e.mjs`.
+
 This follows the libkrun spike (`docs/design/microvm-spike.md`). The spike booted notes from a host directory over virtio-fs and loaded the kernel by putting a rebuilt `libkrunfw.5.dylib` on `DYLD_LIBRARY_PATH`. This branch replaces both:
 
 - **The kernel** is a pinned raw `Image`. `berth-vmm` compiles in `kernel/manifest.toml` and boots a kernel through `krun_set_kernel` only if the file's sha256 matches the pin.

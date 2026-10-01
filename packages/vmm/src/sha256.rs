@@ -24,6 +24,93 @@ pub fn file(path: &str) -> io::Result<[u8; 32]> {
     Ok(h.finish())
 }
 
+/// Digest of a (usually sparse) disk image's logical content, whose cost is
+/// proportional to the data in it rather than its size: the image is split
+/// into `chunk`-byte chunks, each is hashed (a chunk holding no data at all is
+/// all zeros, so its hash is known without reading it), and the result is
+///
+///   SHA-256("berth-chunked-sha256-v1\0" || u64be(size) || u64be(chunk) || H(c0) || H(c1) || ...)
+///
+/// A function of the bytes alone: the same content gives the same digest
+/// however the file happens to be allocated. Returns (digest, bytes read).
+pub fn chunked_sparse(path: &str, chunk: u64) -> io::Result<([u8; 32], u64)> {
+    use std::io::{Seek, SeekFrom};
+    use std::os::unix::io::AsRawFd;
+    let mut f = File::open(path)?;
+    let size = f.metadata()?.len();
+    let n = size.div_ceil(chunk);
+    let mut data = vec![false; n as usize];
+    match data_extents(f.as_raw_fd(), size) {
+        Some(extents) => {
+            for (start, end) in extents {
+                for c in start / chunk..end.div_ceil(chunk).min(n) {
+                    data[c as usize] = true;
+                }
+            }
+        }
+        None => data.iter_mut().for_each(|d| *d = true),
+    }
+    let zero_hash = |len: u64| {
+        let mut h = Hasher::new();
+        let z = vec![0u8; len as usize];
+        h.update(&z);
+        h.finish()
+    };
+    let full_zero = zero_hash(chunk.min(size));
+    let mut outer = Hasher::new();
+    outer.update(b"berth-chunked-sha256-v1\0");
+    outer.update(&size.to_be_bytes());
+    outer.update(&chunk.to_be_bytes());
+    let mut buf = vec![0u8; chunk as usize];
+    let mut read = 0u64;
+    for c in 0..n {
+        let len = chunk.min(size - c * chunk);
+        let h = if data[c as usize] {
+            f.seek(SeekFrom::Start(c * chunk))?;
+            f.read_exact(&mut buf[..len as usize])?;
+            read += len;
+            let mut h = Hasher::new();
+            h.update(&buf[..len as usize]);
+            h.finish()
+        } else if len == chunk.min(size) {
+            full_zero
+        } else {
+            zero_hash(len)
+        };
+        outer.update(&h);
+    }
+    Ok((outer.finish(), read))
+}
+
+/// The file's data extents, from lseek(SEEK_DATA/SEEK_HOLE); None if the
+/// filesystem cannot tell (then every chunk is read).
+fn data_extents(fd: i32, size: u64) -> Option<Vec<(u64, u64)>> {
+    extern "C" {
+        fn lseek(fd: i32, offset: i64, whence: i32) -> i64;
+    }
+    #[cfg(target_os = "macos")]
+    const SEEK_HOLE_DATA: (i32, i32) = (3, 4);
+    #[cfg(not(target_os = "macos"))]
+    const SEEK_HOLE_DATA: (i32, i32) = (4, 3);
+    let (seek_hole, seek_data) = SEEK_HOLE_DATA;
+    let mut out = Vec::new();
+    let mut pos = 0i64;
+    while (pos as u64) < size {
+        let start = unsafe { lseek(fd, pos, seek_data) };
+        if start < 0 {
+            // ENXIO: no data after pos. Anything else: unsupported.
+            return if io::Error::last_os_error().raw_os_error() == Some(6) { Some(out) } else { None };
+        }
+        let end = unsafe { lseek(fd, start, seek_hole) };
+        if end < 0 {
+            return None;
+        }
+        out.push((start as u64, end as u64));
+        pos = end;
+    }
+    Some(out)
+}
+
 #[cfg(target_os = "macos")]
 mod imp {
     // CC_SHA256_CTX is 26 u32s (count[2], hash[8], wbuf[16]); leave headroom.
@@ -184,6 +271,31 @@ mod tests {
             b.update(input.as_bytes());
             assert_eq!(hex(&b.finish()), *want);
         }
+    }
+
+    #[test]
+    fn chunked_sparse_ignores_allocation() {
+        use std::io::{Seek, SeekFrom, Write};
+        let dir = std::env::temp_dir();
+        let (a, b) = (dir.join(format!("berth-cs-a-{}", std::process::id())), dir.join(format!("berth-cs-b-{}", std::process::id())));
+        // a: sparse 3 MiB + 5 bytes with data in the middle; b: the same bytes, fully written.
+        let size = 3 * 1024 * 1024 + 5;
+        let mut fa = File::create(&a).unwrap();
+        fa.set_len(size).unwrap();
+        fa.seek(SeekFrom::Start(1_500_000)).unwrap();
+        fa.write_all(b"state").unwrap();
+        let mut content = vec![0u8; size as usize];
+        content[1_500_000..1_500_005].copy_from_slice(b"state");
+        File::create(&b).unwrap().write_all(&content).unwrap();
+        let (da, ra) = chunked_sparse(a.to_str().unwrap(), 1 << 20).unwrap();
+        let (db, rb) = chunked_sparse(b.to_str().unwrap(), 1 << 20).unwrap();
+        assert_eq!(da, db);
+        assert!(ra <= rb);
+        // One byte different, different digest.
+        content[size as usize - 1] = 1;
+        File::create(&b).unwrap().write_all(&content).unwrap();
+        assert_ne!(chunked_sparse(b.to_str().unwrap(), 1 << 20).unwrap().0, da);
+        let _ = (std::fs::remove_file(a), std::fs::remove_file(b));
     }
 
     #[test]

@@ -21,6 +21,7 @@ use std::os::raw::{c_char, c_int};
 use std::process::exit;
 
 mod pins;
+mod run;
 mod sha256;
 
 #[link(name = "krun")]
@@ -88,7 +89,11 @@ struct Opts {
     exec: Vec<String>,
 }
 
-const USAGE: &str = "usage: berth-vmm [options] -- <guest-path> [args...]
+const USAGE: &str = "usage: berth-vmm run --app DIR [--app DIR...] [--state DISK] [run options]
+       berth-vmm [options] [-- <guest-path> [args...]]
+
+`berth-vmm run` boots a sandbox from the pinned artifacts; see `berth-vmm run --help`.
+The low-level form below is what it expands to (and what builder VMs use).
 
   --cpus N                  vCPUs (default 1)
   --mem MIB                 guest RAM in MiB (default 512)
@@ -110,6 +115,9 @@ const USAGE: &str = "usage: berth-vmm [options] -- <guest-path> [args...]
   --vsock PORT:SOCK[:listen]  map guest vsock PORT to host unix socket SOCK.
                             default: guest connects out, host listens on SOCK.
                             :listen: guest listens, host connects to SOCK.
+  -- <guest-path> [args]    the guest command (init.krun runs it). With --kernel
+                            and --rootfs it is the pinned cmdline's init,
+                            /sbin/berth-init, and may be left out
   --env K=V                 guest environment (repeatable; host env is NOT passed)
   --rlimit RES=CUR:MAX      rlimit for the guest init (repeatable)
   --workdir DIR             guest working directory
@@ -122,7 +130,7 @@ fn die(msg: &str) -> ! {
     exit(2);
 }
 
-fn parse() -> Opts {
+fn parse(argv: Vec<String>) -> Opts {
     let mut o = Opts {
         cpus: 1,
         mem_mib: 512,
@@ -145,7 +153,7 @@ fn parse() -> Opts {
         log_level: 1,
         exec: vec![],
     };
-    let mut args = std::env::args().skip(1);
+    let mut args = argv.into_iter();
     while let Some(a) = args.next() {
         let mut val = || args.next().unwrap_or_else(|| die(&format!("{a} needs a value")));
         match a.as_str() {
@@ -204,6 +212,16 @@ fn parse() -> Opts {
             other => die(&format!("unknown option {other}\n{USAGE}")),
         }
     }
+    // With the pinned kernel and a rootfs image, the kernel starts the init
+    // named on the pinned command line itself; any other guest command would
+    // be silently ignored, so refuse it.
+    if o.kernel.is_some() && o.rootfs.is_some() {
+        match o.exec.first().map(String::as_str) {
+            None => o.exec = vec![run::GUEST_INIT.into()],
+            Some(run::GUEST_INIT) if o.exec.len() == 1 => {}
+            Some(_) => die(&format!("with --kernel and --rootfs the guest init is {} (the pinned command line); no other guest command", run::GUEST_INIT)),
+        }
+    }
     if o.exec.is_empty() {
         die(&format!("no guest command\n{USAGE}"));
     }
@@ -241,6 +259,33 @@ fn json_str(s: &str) -> String {
     format!("{s:?}")
 }
 
+/// libkrun puts the guest environment on the kernel command line, after the
+/// pinned one, as K="V". A `"` in a value ends the quoting, and the rest
+/// becomes kernel parameters of the caller's choosing: `--env 'X=1" lsm="yama'`
+/// booted with Landlock off (a later lsm= or init= wins). The kernel also
+/// turns at most 31 K=V words into PID 1's environment before it panics. So:
+/// names are identifiers, values have no whitespace, quotes, backslashes or
+/// control characters, and the count is bounded.
+fn check_guest_env(env: &[String]) {
+    // The kernel's MAX_INIT_ENVS (32) less HOME and TERM, less what libkrun
+    // and berth-vmm add (KRUN_INIT, KRUN_WORKDIR, PATH, BERTH_STATE_DEV) and
+    // some headroom.
+    const MAX_GUEST_ENV: usize = 20;
+    if env.len() > MAX_GUEST_ENV {
+        die(&format!("at most {MAX_GUEST_ENV} --env entries (they become kernel command line words)"));
+    }
+    for e in env {
+        let Some((k, v)) = e.split_once('=') else { die(&format!("--env {e:?} is not K=V")) };
+        let ident = !k.is_empty() && !k.starts_with(|c: char| c.is_ascii_digit()) && k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_');
+        if !ident {
+            die(&format!("--env name {k:?} must be [A-Za-z_][A-Za-z0-9_]*"));
+        }
+        if v.bytes().any(|b| b <= b' ' || b == b'"' || b == b'\'' || b == b'\\' || b == 0x7f) {
+            die(&format!("--env {k}: the value may not contain whitespace, quotes, backslashes or control characters (it goes on the kernel command line)"));
+        }
+    }
+}
+
 /// libkrun opens virtio-fs directories only when the guest activates the
 /// device; a failure there panics a vCPU thread and leaves the VM hung. Check
 /// up front (this is also where a host sandbox profile's denial shows up).
@@ -262,11 +307,33 @@ fn preflight(o: &Opts) {
 }
 
 fn main() {
-    let o = parse();
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    let o = match argv.first().map(String::as_str) {
+        Some("run") => run::opts(&argv[1..]),
+        _ => parse(argv),
+    };
+    check_guest_env(&o.env);
     preflight(&o);
     // Everything that identifies what is booted is checked before libkrun sees it.
-    let kernel = o.kernel.as_deref().map(|k| pins::verify_kernel(k).unwrap_or_else(|e| die(&e)));
+    let kernel = o.kernel.as_deref().map(|k| pins::verify_kernel(k, o.rootfs.is_some()).unwrap_or_else(|e| die(&e)));
     let rootfs = o.rootfs.as_deref().map(|r| pins::verify_rootfs(r, o.rootfs_sha256.as_deref()).unwrap_or_else(|e| die(&e)));
+    // COMMAND_LINE_SIZE is 2048 on arm64; past it the kernel truncates. libkrun
+    // appends each env entry as ` K="V"`, plus its own KRUN_INIT/KRUN_WORKDIR
+    // (about 40 bytes; measured: 301 bytes in /proc/cmdline for a 159-byte
+    // pinned line and three env entries totalling 105). 160 bytes cover
+    // libkrun's words, PATH and BERTH_STATE_DEV.
+    if let Some(k) = &kernel {
+        let est = k.cmdline.len() + o.env.iter().map(|e| e.len() + 3).sum::<usize>() + 160;
+        if est > 2048 {
+            die(&format!("the guest environment does not fit on the kernel command line ({est} of 2048 bytes)"));
+        }
+    }
+    // The pinned kernel mounts the image itself (root=/dev/vda rootfstype=erofs).
+    if let (Some(_), Some(r)) = (&kernel, &rootfs) {
+        if r.fstype != "erofs" {
+            die(&format!("rootfs {} is {}, but the pinned kernel command line mounts an erofs root", r.path, r.fstype));
+        }
+    }
     let state = o.state.as_deref().map(|s| pins::open_state(s, o.state_size_mib).unwrap_or_else(|e| die(&e)));
     unsafe {
         check("krun_init_log", krun_init_log(KRUN_LOG_TARGET_DEFAULT, o.log_level, KRUN_LOG_STYLE_AUTO, 0));
@@ -301,12 +368,16 @@ fn main() {
         if let Some(r) = &rootfs {
             let d = dev();
             check("krun_add_disk(rootfs)", krun_add_disk(ctx, cs("rootfs").as_ptr(), cs(&r.path).as_ptr(), true));
-            // libkrun boots its init from a dummy virtio-fs root, then mounts
-            // this device read-only and switches to it.
-            check(
-                "krun_set_root_disk_remount",
-                krun_set_root_disk_remount(ctx, cs(&d).as_ptr(), cs(r.fstype).as_ptr(), cs("ro").as_ptr()),
-            );
+            if kernel.is_none() {
+                // libkrunfw's kernel (not a sandbox): libkrun boots init.krun
+                // from a dummy virtio-fs root, then mounts this device
+                // read-only and switches to it. The pinned kernel's command
+                // line mounts it directly instead (root=/dev/vda).
+                check(
+                    "krun_set_root_disk_remount",
+                    krun_set_root_disk_remount(ctx, cs(&d).as_ptr(), cs(r.fstype).as_ptr(), cs("ro").as_ptr()),
+                );
+            }
         }
         let mut guest_env: Vec<String> = vec![];
         if let Some(s) = &state {
@@ -391,15 +462,25 @@ fn main() {
             )
         });
         let rootfs_json = rootfs.as_ref().map_or("null".to_string(), |r| {
-            format!("{{\"sha256\":{},\"fstype\":{},\"readOnly\":true,\"hashMs\":{}}}", json_str(&r.sha256), json_str(r.fstype), r.hash_ms)
+            format!(
+                "{{\"sha256\":{},\"pinned\":{},\"fstype\":{},\"readOnly\":true,\"hashMs\":{}}}",
+                json_str(&r.sha256),
+                r.sha256 == pins::rootfs_pin(),
+                json_str(r.fstype),
+                r.hash_ms
+            )
         });
         let state_json = state.as_ref().map_or("null".to_string(), |s| {
             format!(
-                "{{\"path\":{},\"sizeBytes\":{},\"created\":{},\"restoredBytes\":{}}}",
+                "{{\"chunkedSha256\":{},\"chunkBytes\":{},\"path\":{},\"sizeBytes\":{},\"created\":{},\"restoredBytes\":{},\"hashMs\":{},\"hashedBytes\":{}}}",
+                json_str(&s.digest),
+                pins::STATE_DIGEST_CHUNK,
                 json_str(&s.path),
                 s.size,
                 s.created,
-                s.restored
+                s.restored,
+                s.hash_ms,
+                s.hashed_bytes
             )
         });
         eprintln!(

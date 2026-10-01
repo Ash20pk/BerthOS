@@ -14,6 +14,18 @@ use std::io::{Read, Seek, SeekFrom};
 use std::time::Instant;
 
 pub const KERNEL_MANIFEST: &str = include_str!("../kernel/manifest.toml");
+/// The base rootfs this berth-vmm was released with (`berth-vmm run`'s
+/// default). Any content-addressed image still boots with --rootfs; the
+/// measurement line says whether it was this one.
+pub const ROOTFS_MANIFEST: &str = include_str!("../rootfs/manifest.toml");
+
+pub fn kernel_pin() -> &'static str {
+    manifest_get(KERNEL_MANIFEST, "image_sha256").expect("kernel manifest has image_sha256")
+}
+
+pub fn rootfs_pin() -> &'static str {
+    manifest_get(ROOTFS_MANIFEST, "image_sha256").expect("rootfs manifest has image_sha256")
+}
 
 /// Value of a flat `key = "value"` / `key = 123` line.
 pub fn manifest_get<'a>(manifest: &'a str, key: &str) -> Option<&'a str> {
@@ -45,7 +57,10 @@ fn kernel_format(name: &str) -> Result<u32, String> {
     }
 }
 
-pub fn verify_kernel(path: &str) -> Result<Kernel, String> {
+/// `block_root`: the root is the rootfs image (`cmdline`, berth-init as PID 1
+/// straight from the kernel); otherwise a virtio-fs directory
+/// (`cmdline_virtiofs_root`, through libkrun's init.krun).
+pub fn verify_kernel(path: &str, block_root: bool) -> Result<Kernel, String> {
     let m = KERNEL_MANIFEST;
     let need = |k: &str| manifest_get(m, k).ok_or_else(|| format!("kernel manifest has no {k}"));
     let want = need("image_sha256")?;
@@ -64,7 +79,7 @@ pub fn verify_kernel(path: &str) -> Result<Kernel, String> {
         path: path.into(),
         sha256: got,
         format: kernel_format(need("image_format")?)?,
-        cmdline: need("cmdline")?.into(),
+        cmdline: need(if block_root { "cmdline" } else { "cmdline_virtiofs_root" })?.into(),
         linux: need("linux_version")?.into(),
         config_sha256: need("config_sha256")?.into(),
         hash_ms,
@@ -131,6 +146,24 @@ pub struct State {
     pub created: bool,
     /// Bytes added back to a disk the last run left shorter than --state-size.
     pub restored: u64,
+    /// sha256::chunked_sparse of the disk as this boot starts from it.
+    pub digest: String,
+    pub hash_ms: u128,
+    pub hashed_bytes: u64,
+}
+
+/// The state disk's chunk size for its digest (sha256::chunked_sparse).
+pub const STATE_DIGEST_CHUNK: u64 = 1 << 20;
+
+/// What the sandbox boots from on its writable disk, by content: taken after
+/// any size restore, before the VM can write. A new disk is all zeros.
+fn measure_state(mut s: State) -> Result<State, String> {
+    let t = Instant::now();
+    let (d, read) = sha256::chunked_sparse(&s.path, STATE_DIGEST_CHUNK).map_err(|e| format!("cannot hash state disk {}: {e}", s.path))?;
+    s.hash_ms = t.elapsed().as_millis();
+    s.digest = sha256::hex(&d);
+    s.hashed_bytes = read;
+    Ok(s)
 }
 
 /// Opens the sandbox's state disk, creating it sparse at `size_mib` on first
@@ -145,11 +178,19 @@ pub struct State {
 /// a range the guest asked to read as zeros, so re-extending it with a sparse
 /// zero tail is the correct content, not a guess.
 pub fn open_state(path: &str, size_mib: u64) -> Result<State, String> {
+    open_state_unmeasured(path, size_mib).and_then(measure_state)
+}
+
+fn new_state(path: &str, size: u64, created: bool, restored: u64) -> State {
+    State { path: path.into(), size, created, restored, digest: String::new(), hash_ms: 0, hashed_bytes: 0 }
+}
+
+fn open_state_unmeasured(path: &str, size_mib: u64) -> Result<State, String> {
     let want = size_mib * 1024 * 1024;
     match OpenOptions::new().read(true).write(true).create_new(true).open(path) {
         Ok(f) => {
             f.set_len(want).map_err(|e| format!("cannot size state disk {path}: {e}"))?;
-            Ok(State { path: path.into(), size: want, created: true, restored: 0 })
+            Ok(new_state(path, want, true, 0))
         }
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
             let mut f = OpenOptions::new().read(true).write(true).open(path).map_err(|e| format!("cannot open state disk {path}: {e}"))?;
@@ -157,12 +198,12 @@ pub fn open_state(path: &str, size_mib: u64) -> Result<State, String> {
             if size < want {
                 f.set_len(want).map_err(|e| format!("cannot restore state disk {path} to {want} bytes: {e}"))?;
                 eprintln!("berth-vmm: state disk {path} was {size} bytes, restored to {want} (libkrun truncates on a tail discard)");
-                return Ok(State { path: path.into(), size: want, created: false, restored: want - size });
+                return Ok(new_state(path, want, false, want - size));
             }
             if size > want {
                 eprintln!("berth-vmm: state disk {path} is {} MiB; keeping it (larger than --state-size {size_mib})", size >> 20);
             }
-            Ok(State { path: path.into(), size, created: false, restored: 0 })
+            Ok(new_state(path, size, false, 0))
         }
         Err(e) => Err(format!("cannot create state disk {path}: {e}")),
     }
@@ -174,12 +215,22 @@ mod tests {
 
     #[test]
     fn manifest_has_what_berth_vmm_needs() {
+        assert!(is_hex64(rootfs_pin()));
         for k in ["image_sha256", "image_format", "cmdline", "linux_version", "config_sha256"] {
             assert!(manifest_get(KERNEL_MANIFEST, k).is_some(), "{k}");
         }
         assert!(is_hex64(manifest_get(KERNEL_MANIFEST, "image_sha256").unwrap()));
-        let cmdline = manifest_get(KERNEL_MANIFEST, "cmdline").unwrap();
-        assert!(!cmdline.contains("lsm="), "the LSM list is compiled in; the cmdline must not override it");
+        for key in ["cmdline", "cmdline_virtiofs_root"] {
+            let cmdline = manifest_get(KERNEL_MANIFEST, key).unwrap_or_else(|| panic!("{key}"));
+            assert!(!cmdline.contains("lsm="), "the LSM list is compiled in; the cmdline must not override it");
+        }
+        // The sandbox boots the rootfs image as the kernel's root, berth-init
+        // as PID 1, and nothing from libkrun in between.
+        let c = manifest_get(KERNEL_MANIFEST, "cmdline").unwrap();
+        for want in ["root=/dev/vda", "rootfstype=erofs", " ro ", "init=/sbin/berth-init"] {
+            assert!(c.contains(want), "cmdline lacks {want:?}");
+        }
+        assert!(!c.contains("init.krun"));
     }
 
     #[test]

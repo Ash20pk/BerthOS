@@ -3,7 +3,7 @@
 # ever committed. BERTH_VMM_ARTIFACTS overrides the location.
 VMM_DIR=$(cd "$(dirname "$0")/.." && pwd)
 REPO_DIR=$(cd "$VMM_DIR/../.." && pwd)
-ART=${BERTH_VMM_ARTIFACTS:-$(cd "$REPO_DIR/.." && pwd)/vm-image-artifacts}
+ART=${BERTH_VMM_ARTIFACTS:-$(cd "$REPO_DIR/.." && pwd)/vm-runtime-artifacts}
 VMM="$VMM_DIR/target/release/berth-vmm"
 CACHE="$ART/cache"
 
@@ -25,6 +25,7 @@ STOCK_KRUNFW_DIR=/opt/homebrew/opt/libkrunfw/lib
 # shared root put rustc into the kernel's .config).
 KERNEL_BUILDER_ROOT="$ART/builders/kernel"
 IMAGE_BUILDER_ROOT="$ART/builders/image"
+BERTH_INIT_BUILDER_ROOT="$ART/builders/berth-init"
 
 KERNEL_MANIFEST="$VMM_DIR/kernel/manifest.toml"
 ROOTFS_MANIFEST="$VMM_DIR/rootfs/manifest.toml"
