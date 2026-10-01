@@ -129,25 +129,40 @@ pub struct State {
     pub path: String,
     pub size: u64,
     pub created: bool,
+    /// Bytes added back to a disk the last run left shorter than --state-size.
+    pub restored: u64,
 }
 
 /// Opens the sandbox's state disk, creating it sparse at `size_mib` on first
-/// use. The guest formats it (ext4) on first boot. An existing disk keeps its
-/// size; a different --state-size is reported, not applied.
+/// use. The guest formats it (ext4) on first boot. A larger existing disk
+/// keeps its size (reported, not shrunk).
+///
+/// A shorter one is extended back to `size_mib`. libkrun 1.19.6 on macOS
+/// truncates a raw image when the guest discards or write-zeroes a range that
+/// reaches its end (mkfs.ext4 zeroes the last blocks; `blkdiscard /dev/vdb`
+/// truncates the file to 0), so the next boot would see a smaller device than
+/// the filesystem on it and the mount fails with EINVAL. The truncated tail is
+/// a range the guest asked to read as zeros, so re-extending it with a sparse
+/// zero tail is the correct content, not a guess.
 pub fn open_state(path: &str, size_mib: u64) -> Result<State, String> {
     let want = size_mib * 1024 * 1024;
     match OpenOptions::new().read(true).write(true).create_new(true).open(path) {
         Ok(f) => {
             f.set_len(want).map_err(|e| format!("cannot size state disk {path}: {e}"))?;
-            Ok(State { path: path.into(), size: want, created: true })
+            Ok(State { path: path.into(), size: want, created: true, restored: 0 })
         }
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
             let mut f = OpenOptions::new().read(true).write(true).open(path).map_err(|e| format!("cannot open state disk {path}: {e}"))?;
             let size = f.seek(SeekFrom::End(0)).map_err(|e| format!("cannot size state disk {path}: {e}"))?;
-            if size != want {
-                eprintln!("berth-vmm: state disk {path} is {} MiB; keeping it (--state-size {size_mib} is only applied on creation)", size >> 20);
+            if size < want {
+                f.set_len(want).map_err(|e| format!("cannot restore state disk {path} to {want} bytes: {e}"))?;
+                eprintln!("berth-vmm: state disk {path} was {size} bytes, restored to {want} (libkrun truncates on a tail discard)");
+                return Ok(State { path: path.into(), size: want, created: false, restored: want - size });
             }
-            Ok(State { path: path.into(), size, created: false })
+            if size > want {
+                eprintln!("berth-vmm: state disk {path} is {} MiB; keeping it (larger than --state-size {size_mib})", size >> 20);
+            }
+            Ok(State { path: path.into(), size, created: false, restored: 0 })
         }
         Err(e) => Err(format!("cannot create state disk {path}: {e}")),
     }

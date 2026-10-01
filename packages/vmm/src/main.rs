@@ -394,7 +394,13 @@ fn main() {
             format!("{{\"sha256\":{},\"fstype\":{},\"readOnly\":true,\"hashMs\":{}}}", json_str(&r.sha256), json_str(r.fstype), r.hash_ms)
         });
         let state_json = state.as_ref().map_or("null".to_string(), |s| {
-            format!("{{\"path\":{},\"sizeBytes\":{},\"created\":{}}}", json_str(&s.path), s.size, s.created)
+            format!(
+                "{{\"path\":{},\"sizeBytes\":{},\"created\":{},\"restoredBytes\":{}}}",
+                json_str(&s.path),
+                s.size,
+                s.created,
+                s.restored
+            )
         });
         eprintln!(
             "{{\"source\":\"berth-vmm\",\"event\":\"measurements\",\"kernel\":{kernel_json},\"rootfs\":{rootfs_json},\"state\":{state_json}}}"
