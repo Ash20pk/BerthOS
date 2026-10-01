@@ -21,6 +21,16 @@ pub fn is_mounted(path: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// The filesystem's own options for the mount at `path` (mountinfo's last
+/// field, e.g. cgroup2's "rw,nsdelegate,favordynmods").
+pub fn super_options(path: &str) -> Option<String> {
+    let m = std::fs::read_to_string("/proc/self/mountinfo").ok()?;
+    // The last mount at `path` is the visible one.
+    let line = m.lines().filter(|l| l.split(' ').nth(4) == Some(path)).last()?;
+    let (_, tail) = line.split_once(" - ")?;
+    tail.split(' ').nth(2).map(String::from)
+}
+
 pub fn mount(source: &str, target: &str, fstype: &str, flags: libc::c_ulong, data: Option<&str>) -> io::Result<()> {
     let (s, t, f) = (cstr(source), cstr(target), cstr(fstype));
     let d = data.map(cstr);

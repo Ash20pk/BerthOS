@@ -203,7 +203,15 @@ fn main() {
     hub::init(boot_id);
     let release = std::fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_default();
     let lsm = std::fs::read_to_string("/sys/kernel/security/lsm").unwrap_or_else(|_| "none".into());
-    hub::event("boot_start", json!({ "kernel": release.trim(), "lsm": lsm.trim() }));
+    // The kernel command line carries berth-vmm's guest environment (libkrun
+    // appends it), and is world-readable in /proc/cmdline. Only its size is
+    // reported: it has to fit COMMAND_LINE_SIZE (2048 on arm64).
+    let cmdline_bytes = std::fs::read("/proc/cmdline").map(|c| c.len()).unwrap_or(0);
+    hub::event(
+        "boot_start",
+        json!({ "kernel": release.trim(), "lsm": lsm.trim(), "pid": std::process::id(), "cmdlineBytes": cmdline_bytes,
+                "cgroup2": sys::super_options("/sys/fs/cgroup") }),
+    );
     // Not inherited by anything berth-init starts: every child gets an
     // explicit environment.
     std::env::set_var("PATH", PATH);
@@ -279,8 +287,16 @@ fn early_mounts() {
             m("cgroup2", "/sys/fs/cgroup", "cgroup2", nsd | libc::MS_NOEXEC, Some("nsdelegate"));
         }
     } else {
-        // Mounted by init.krun: ask for the option on a remount.
-        let _ = sys::mount("cgroup2", "/sys/fs/cgroup", "cgroup2", libc::MS_REMOUNT | nsd | libc::MS_NOEXEC, Some("nsdelegate,favordynmods"));
+        // Already mounted: libkrun's init.krun mounts cgroup2 with neither
+        // option when it starts us. Remount with them, falling back to
+        // nsdelegate alone on a kernel without favordynmods.
+        let remount = |o| sys::mount("cgroup2", "/sys/fs/cgroup", "cgroup2", libc::MS_REMOUNT | nsd | libc::MS_NOEXEC, Some(o));
+        if let Err(e) = remount("nsdelegate,favordynmods") {
+            eprintln!("[berth-init] WARNING: remount cgroup2 with nsdelegate,favordynmods: {e}");
+            if let Err(e) = remount("nsdelegate") {
+                eprintln!("[berth-init] WARNING: remount cgroup2 with nsdelegate: {e}");
+            }
+        }
     }
     m("tmpfs", "/run", "tmpfs", nsd, Some("mode=0755"));
     m("tmpfs", "/tmp", "tmpfs", nsd, Some("mode=1777"));
