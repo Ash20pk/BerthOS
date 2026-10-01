@@ -1,0 +1,39 @@
+# Berth guest kernel pin. berth-vmm embeds this file at compile time and boots
+# a --kernel only if its sha256 equals image_sha256 below; the command line is
+# taken from here too, never from the caller (lsm= or init= on a caller's
+# command line could switch Landlock off). scripts/build-kernel.sh checks every
+# source input against the *_sha256 pins and the output against image_sha256.
+# See docs/design/microvm-image.md.
+schema = 1
+name = "berth-kernel"
+arch = "aarch64"
+
+# Sources.
+linux_version = "6.12.109"
+linux_tarball = "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.109.tar.xz"
+linux_tarball_sha256 = "5484e552a334e15019f4aeba89e5b58f04651cf2f4e24e04de9f152f1c38e3fa"
+libkrunfw_version = "5.6.2"
+libkrunfw_tarball = "https://codeload.github.com/containers/libkrunfw/tar.gz/refs/tags/v5.6.2"
+libkrunfw_tarball_sha256 = "df45d649fcbd07a4d0ca03fa836b2f640fdcf9b40187f3eb7023259c6e83d582"
+base_config = "config-libkrunfw_aarch64"
+config_delta = "berth-kernel.config"
+config_delta_sha256 = "ac5c0c4e0d5740a222f0ef118aaf27fb21c8cafa7c9afcdfce6a023c98d439b8"
+
+# Builder: a fresh Alpine root (minirootfs below + apk build-base etc.), used
+# for nothing but this build. The exact toolchain is recorded in toolchain.txt
+# next to the output; the compiler string is also inside the Image.
+builder_alpine = "3.24.2"
+builder_minirootfs_sha256 = "9bf70a7f18ea44094cbb5f70c58f9af129c8214745743db0e68e5502cc2ce773"
+builder_cc = "gcc (Alpine 15.2.0) 15.2.0"
+build_timestamp = "Mon Sep 21 20:29:27 CEST 2026"
+
+# Output.
+config_sha256 = "e3f33c2bd4bffa16e52a066c325967e4bde091f20063e6eb5b81e8a2efac4dc8"
+image_format = "raw"
+image_size = 23668744
+image_sha256 = "8f79e8dae97ebc0ab8fcdc4ad209bb025ec967be82c713503e0612cfdd340ec8"
+cmdline = "reboot=k panic=-1 panic_print=0 nomodule console=hvc0 rootfstype=virtiofs rw quiet no-kvmapf init=/init.krun"
+
+# Distribution (planned, not live): the Image, its config and this manifest are
+# published under their sha256, so a user downloads and verifies, never builds.
+dist_url = "https://artifacts.berth.dev/kernel/sha256/{image_sha256}/Image"
