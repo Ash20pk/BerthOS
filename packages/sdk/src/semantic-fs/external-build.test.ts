@@ -53,6 +53,9 @@ function fakeSemanticFs(socketPath: string): { server: net.Server; query: Promis
   let onQuery: (frame: Record<string, unknown>) => void = () => {};
   const query = new Promise<Record<string, unknown>>((resolve) => (onQuery = resolve));
   const server = net.createServer((socket) => {
+    // The test ends by killing the runtime, which resets this connection;
+    // unhandled, that reset is an uncaught exception after the test passed.
+    socket.on("error", () => {});
     let buffer = Buffer.alloc(0);
     socket.on("data", (chunk: Buffer) => {
       buffer = Buffer.concat([buffer, chunk]);
