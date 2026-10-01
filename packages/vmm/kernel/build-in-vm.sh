@@ -1,11 +1,14 @@
 #!/bin/sh
-# Runs INSIDE the kernel builder VM (a fresh Alpine root used for nothing else,
-# stock libkrunfw kernel, TSI on so apk works). Every source input arrives
-# already sha256-checked by the host on the read-only /in share:
+# Runs INSIDE the kernel builder (scripts/common.sh run_builder): a pinned
+# Alpine root used for nothing else, either a libkrun builder VM (stock
+# libkrunfw kernel, TSI on so apk works) or a container on a Linux runner.
+# Every source input arrives already sha256-checked by the host on the
+# read-only /in mount:
 #   /in/libkrunfw.tar.gz, /in/linux.tar.xz, /in/berth-kernel.config
-# The first /dev/vdX is a raw disk image that becomes a case-sensitive ext4
-# build volume (the kernel tree does not survive a case-insensitive APFS root).
-# Output on /out: Image, config, check.txt, toolchain.txt, build.log.
+# /build is a case-sensitive ext4 build volume (the kernel tree does not
+# survive a case-insensitive APFS root): in a VM, the first /dev/vdX, formatted
+# here; in a container, a volume already mounted.
+# Output on /out: Image, config, check.txt, toolchain.txt, apk.lock, build.log.
 set -eu
 JOBS=${JOBS:-$(nproc)}
 apk add --no-cache build-base bc flex bison elfutils-dev openssl-dev perl python3 \
@@ -14,8 +17,8 @@ apk add --no-cache build-base bc flex bison elfutils-dev openssl-dev perl python
 mkdir -p /in /out /build
 mountpoint -q /in || mount -t virtiofs -o ro in /in
 mountpoint -q /out || mount -t virtiofs out /out
-DEV=${BUILD_DEV:-$(ls /dev/vd[a-z] | head -1)}
 mountpoint -q /build || {
+    DEV=${BUILD_DEV:-$(ls /dev/vd[a-z] | head -1)}
     dumpe2fs -h "$DEV" >/dev/null 2>&1 || mkfs.ext4 -q -F "$DEV"
     mount "$DEV" /build
 }
@@ -49,6 +52,7 @@ if grep -q '^MISS' /out/check.txt; then cat /out/check.txt; echo "config delta d
     ld --version | head -1
     apk info -v 2>/dev/null | sort
 } > /out/toolchain.txt
+apk info -v 2>/dev/null | LC_ALL=C sort > /out/apk.lock
 
 # Fixed build metadata: the timestamp, user and host end up in the Image's
 # version string, so they are part of what the sha256 pins.

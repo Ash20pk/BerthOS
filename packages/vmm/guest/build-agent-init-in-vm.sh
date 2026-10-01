@@ -1,5 +1,7 @@
 #!/bin/sh
-# Runs INSIDE a builder VM (Alpine aarch64, TSI on for apk/crates.io).
+# Runs INSIDE a builder (scripts/common.sh run_builder: a libkrun builder VM
+# with TSI on for apk/crates.io, or a container on a Linux runner; Alpine
+# aarch64 from the pinned minirootfs either way).
 # Alpine's rustc is natively aarch64-unknown-linux-musl, so this is the musl
 # "cross" build without adding a rustup target on the host.
 #   /src  (virtio-fs, read-only): agent-init sources + probe.c
@@ -11,8 +13,8 @@ rustc --version
 mkdir -p /src /out /build
 mountpoint -q /src || mount -t virtiofs -o ro src /src
 mountpoint -q /out || mount -t virtiofs out /out
-DEV=${BUILD_DEV:-$(ls /dev/vd[a-z] | head -1)}
 mountpoint -q /build || {
+    DEV=${BUILD_DEV:-$(ls /dev/vd[a-z] | head -1)}
     dumpe2fs -h "$DEV" >/dev/null 2>&1 || mkfs.ext4 -q -F "$DEV"
     mount "$DEV" /build
 }
@@ -26,5 +28,6 @@ RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --locked --targe
 cp /build/target/$T/release/agent-init /out/agent-init
 gcc -O2 -static -o /out/probe /src/probe.c
 { rustc --version; cargo --version; gcc --version | head -1; } > /out/toolchain.txt
+apk info -v 2>/dev/null | LC_ALL=C sort > /out/apk.lock
 file /out/agent-init /out/probe 2>/dev/null || ls -l /out
 echo "agent-init build ok"

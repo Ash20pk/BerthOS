@@ -65,7 +65,7 @@ export interface StartOptions {
   stateSizeMiB?: number;
   cpus?: number;
   memMiB?: number;
-  /** Default ~/.berth/vm (berth-vmm's own default). */
+  /** Passed as --artifacts; omitted, berth-vmm's own default ($HOME/.berth/vm). */
   artifactsDir?: string;
   env?: string[];
   /** More `berth-vmm run` options, passed as given (e.g. --egress-allow). */

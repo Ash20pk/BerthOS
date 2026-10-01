@@ -1,30 +1,43 @@
 #!/bin/sh
-# Builds agent-init (static aarch64 musl) and the enforcement probe inside a
-# libkrun builder VM using Alpine's own rust/gcc. No host rustup target.
-# AGENT_INIT_REF picks the git ref whose packages/agent-init is built; the
-# default carries the io_uring/AF_VSOCK seccomp refusal, which main lacks.
-# Output: $ART/agent-init/{agent-init,probe,agent-init.ref,toolchain.txt}
+# Builds agent-init (static aarch64 musl) and the enforcement probe in a pinned
+# Alpine builder (scripts/common.sh: a libkrun builder VM on macOS, a container
+# on a Linux runner) using Alpine's own rust/gcc. No host rustup target.
+#
+# The source is packages/agent-init at rootfs/manifest.toml's agent_init_commit
+# (fix/seccomp-io-uring-vsock, which main's history contains), not the working
+# tree: the image pins that build. AGENT_INIT_REF overrides it for a deliberate
+# change. The output is checked against agent_init_sha256 / probe_sha256 when
+# building the pinned commit (CHECK=0 skips that).
+# Output: $ART/agent-init/{agent-init,probe,agent-init.ref,toolchain.txt,apk.lock}
 set -eu
 . "$(dirname "$0")/common.sh"
 min_free_gb 10
 build_vmm
-REF=${AGENT_INIT_REF:-fix/seccomp-io-uring-vsock}
-ROOT="$ART/builders/agent-init"
+M="$ROOTFS_MANIFEST"
+PINNED=$(manifest_get "$M" agent_init_commit)
+REF=${AGENT_INIT_REF:-$PINNED}
 B="$ART/agent-init-build"
 O="$ART/agent-init"
-rm -rf "$B" && mkdir -p "$B/src" "$O"
-[ -d "$ROOT" ] || alpine_tree "$ROOT"
-mkdir -p "$ROOT/berth"
-cp "$VMM_DIR/guest/build-agent-init-in-vm.sh" "$ROOT/berth/"
+rm -rf "$B" "$O" && mkdir -p "$B/src" "$O"
 git -C "$REPO_DIR" archive --format=tar "$REF" packages/agent-init | tar -x -C "$B/src" --strip-components=1
-git -C "$REPO_DIR" rev-parse "$REF^{commit}" > "$B/src/agent-init/REF"
+commit=$(git -C "$REPO_DIR" rev-parse "$REF^{commit}")
+echo "$commit" > "$B/src/agent-init/REF"
 cp "$VMM_DIR/guest/probe.c" "$B/src/"
-mkfile -n 4g "$B/build.img"
-builder_vm "$ROOT" "${CPUS:-8}" "${MEM:-4096}" \
-    --disk build:"$B/build.img" --share src:"$B/src":ro --share out:"$O" \
-    -- /bin/sh /berth/build-agent-init-in-vm.sh
-cp "$B/src/agent-init/REF" "$O/agent-init.ref"
-[ "${KEEP_SCRATCH:-0}" = 1 ] || rm -rf "$B"
+run_builder agent-init "${CPUS:-8}" "${MEM:-4096}" 4 "$VMM_DIR/guest/build-agent-init-in-vm.sh" \
+    src:"$B/src":ro out:"$O"
+echo "$commit" > "$O/agent-init.ref"
+rm -rf "$B"
 chmod 0755 "$O/agent-init" "$O/probe"
-shasum -a 256 "$O/agent-init" "$O/probe"
-echo "agent-init from $REF ($(cat "$O/agent-init.ref"))"
+compare_lock "$VMM_DIR/guest/agent-init.apk.lock" "$O/apk.lock"
+ai=$(sha256_of "$O/agent-init")
+pr=$(sha256_of "$O/probe")
+echo "agent-init $ai  (from $REF, $commit)"
+echo "probe      $pr"
+if [ "$commit" = "$PINNED" ] && [ "${CHECK:-1}" = 1 ]; then
+    if [ "$ai" != "$(manifest_get "$M" agent_init_sha256)" ] || [ "$pr" != "$(manifest_get "$M" probe_sha256)" ]; then
+        echo "MISMATCH: built   agent-init $ai, probe $pr" >&2
+        echo "          pinned  agent-init $(manifest_get "$M" agent_init_sha256), probe $(manifest_get "$M" probe_sha256) (rootfs/manifest.toml)" >&2
+        exit 1
+    fi
+    echo "matches rootfs/manifest.toml"
+fi

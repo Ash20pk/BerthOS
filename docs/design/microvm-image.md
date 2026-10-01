@@ -40,7 +40,7 @@ STATE=$ART/state/notes.img ACTIONS=list node scripts/boot-notes.mjs   # boot 2: 
 STATE=$ART/state/notes.img RUNS=6 node scripts/boot-notes.mjs         # first + 5 repeats
 ```
 
-Each build script checks for 10 GB free before it starts. Builder VMs are the only VMs that run with TSI on, and the only ones that use libkrunfw's bundled kernel (`--libkrunfw-kernel`, through `DYLD_LIBRARY_PATH`). A sandbox never does either.
+On Linux the same scripts build in a container instead of a builder VM (`BERTH_BUILDER=docker`, the default there; see [Distribution](#distribution)), which is how CI runs them. Each build script checks for 10 GB free before it starts. Builder VMs are the only VMs that run with TSI on, and the only ones that use libkrunfw's bundled kernel (`--libkrunfw-kernel`, through `DYLD_LIBRARY_PATH`). A sandbox never does either.
 
 ## 1. The kernel
 
@@ -93,15 +93,63 @@ Every boot prints one JSON line on stderr before the VM starts:
 
 `kernel: null` (a builder on libkrunfw) or `rootfs: null` (a virtio-fs root) means "not pinned", and attestation must report it as such. The line is not signed yet: the host prints it, and a later step signs it or feeds it to the attestation record.
 
-### Distribution (planned, not built)
+### Distribution
 
-Users should never build the kernel. The plan:
+Implemented on `feat/vm-artifacts-release`. Users never build the kernel or the rootfs: CI does, and proves the result is the pinned bytes.
 
-- **Artifact keyed by hash:** `https://<artifact host>/kernel/sha256/<image_sha256>/{Image,config,manifest.toml,toolchain.txt}`. The manifest's `dist_url` holds a placeholder host. One directory per arch (`aarch64` now, `x86_64` with the same pipeline on `config-libkrunfw_x86_64`).
-- **Fetch:** the CLI (or `berth-vmm fetch-kernel`) reads the pin compiled into berth-vmm, downloads into `~/.berth/kernels/sha256/<hash>/Image`, verifies the sha256 and moves the file into place. The cache is content-addressed, so it is safe to share across Berth versions. Every boot re-verifies anyway (~15 ms).
-- **Integrity:** the sha256 pin is the root of trust, and it is compiled into a binary the user already trusts. Signing (minisign or Sigstore) on the release side adds provenance on top. It is not a substitute for the pin.
-- **GPL:** publish the exact sources next to the Image: the linux tarball hash, the libkrunfw tag and patches, `berth-kernel.config`, the resolved `config`, and the build script.
-- **CI:** the same `build-in-vm.sh` runs on an arm64 Linux runner (in a container or a libkrun VM). A second, independent build that reproduces `image_sha256` is the release gate.
+**The workflow** (`.github/workflows/vm-artifacts.yml`, on `workflow_dispatch` or a pushed `vm-artifacts-*` tag):
+
+| Job | Runner | What |
+|---|---|---|
+| `pins` | ubuntu-24.04 | reads `image_sha256` from both manifests, names the release `vm-artifacts-<kernel8>-<rootfs8>`, checks the CLI's `pins.ts` carries the same pins, and that a pushed tag is that name |
+| `kernel` | ubuntu-24.04-arm | `scripts/build-kernel.sh`. Fails unless the Image is `image_sha256` and the config is `config_sha256` |
+| `guest` | ubuntu-24.04-arm | `build-agent-init.sh` (from `agent_init_commit`), `build-berth-init.sh` (unit tests, then the static binaries). Each checks its outputs against `rootfs/manifest.toml` |
+| `rootfs` | ubuntu-24.04-arm | `pnpm install --frozen-lockfile` (esbuild, yaml, zod), then `build-rootfs.sh` on the guest job's binaries. Checks every input against its pin, then the image against `image_sha256` |
+| `vmm` | macos-15 (arm64) | libkrun 1.19.6 from the `libkrun/krun` tap at a pinned commit (`brew trust --formula` where Homebrew needs it), Rust 1.89.0, `cargo test` and `cargo build --release --locked`, ad hoc signed with `berth-vmm.entitlements`. Checks the entitlement, that the binary carries this release's kernel and rootfs pins, and that it links `/opt/homebrew/opt/libkrun/lib/libkrun.1.dylib`. It cannot boot a VM (no nested virtualization on hosted runners) |
+| `publish` | ubuntu-24.04 | only on a tag push or `publish: true`; the only job with `contents: write`. Re-hashes every asset against its name, writes `SHA256SUMS`, `SOURCES.md` and the notes, and creates the release (`--latest=false`, so the npm `v0.x` release stays "Latest") or updates it |
+
+A failed check prints both hashes, the built one and the pinned one. Every third-party action is pinned by commit SHA (`scripts/lint-workflows.sh` passes).
+
+**One build path, two builders.** The scripts are the ones a developer runs. `scripts/common.sh`'s `run_builder` starts the in-builder script (`kernel/build-in-vm.sh`, `guest/build-*-in-vm.sh`, `rootfs/build-in-vm.sh`) in either:
+
+- **`BERTH_BUILDER=vm`** (macOS default): a libkrun builder VM booting a root unpacked from the pinned minirootfs, with virtio-fs shares and an ext4 scratch disk.
+- **`BERTH_BUILDER=docker`** (Linux default, CI): a container whose image is that same minirootfs, `docker import`ed from the sha256-checked tarball and never pulled from a registry, with bind mounts and a scratch volume.
+
+The in-builder scripts see `/in` or `/src`, `/out` and `/build` either way, and install the toolchain with apk from Alpine 3.24, so the toolchain is the same as long as Alpine serves the same versions. The host side is portable shell (`sha256_of`, `file_size`, `sed_inplace` for BSD, GNU and busybox userlands).
+
+**Release assets**, named by sha256 so one release can hold several berth-vmm builds and every file is its own checksum:
+
+| Asset | |
+|---|---|
+| `Image-<sha256>` | the guest kernel |
+| `rootfs-<sha256>.erofs` | the base rootfs, plus `rootfs-<sha256>.inputs.json` and `.tree.txt` |
+| `berth-vmm-darwin-arm64-<sha256>` | the launcher, plus a `.txt` with its toolchain, libkrun and pins |
+| `SHA256SUMS` | every asset |
+| GPL-2.0 sources | `linux-6.12.109.tar.xz` and `libkrunfw-5.6.2.tar.gz` (the exact tarballs, sha256-checked against the manifest), `berth-kernel.config`, `kernel-config-<sha256>` (the resolved `.config`), `kernel-build-in-vm.sh`, `kernel-toolchain-<sha256>.txt`, and `SOURCES.md` describing them |
+
+**Fetch.** `berth vm install` takes the pins from berth-vmm (else its own), derives the tag, and downloads `https://github.com/Ash20pk/BerthOS/releases/download/vm-artifacts-{kernel8}-{rootfs8}/{asset}` into `~/.berth/vm`, checking the size as it streams and the sha256 before anything is renamed into place. A mirror is any URL template (`--url`, `BERTH_VM_ARTIFACTS_URL`, `vm.artifactsUrl`), including `file://`. When no berth-vmm is found, it downloads the published one, but only if the CLI pins its sha256 (`VMM_PINS` in `packages/cli/src/vm/pins.ts`). It then clears `com.apple.quarantine` on that verified file. The workflow prints the pin line to add after a build, since a binary CI builds can't be pinned before CI builds it.
+
+**Integrity.** The sha256 pins are the root of trust. They are compiled into berth-vmm and the CLI, which the user already trusts. The CI rebuild is the independent second build that shows the pins come from this source. Sigstore or minisign signing of the release would add provenance on top, but is not done.
+
+**Signing berth-vmm.** It is ad hoc signed. macOS runs it once it isn't quarantined, so a copy downloaded with a browser needs `xattr -d com.apple.quarantine`. `berth vm install` does that only after the sha256 matched, and a file Node downloads isn't quarantined in the first place. Proper distribution needs an Apple Developer ID Application certificate in the workflow (a `.p12` and its password as secrets, imported into a temporary keychain), `codesign --options runtime --timestamp` with the same entitlements, then `xcrun notarytool submit --wait` with an App Store Connect API key. A bare Mach-O can't be stapled, so the ticket is fetched online on first run, or it ships in a zip or pkg instead.
+
+#### Reproducibility across machines (evidence, 2026-10-01)
+
+| Artifact | Fresh root on the dev Mac, today | Pin |
+|---|---|---|
+| kernel `Image` | `8f79e8da…` (factored `build-kernel.sh`, new builder root). Alpine had since moved `python3` 3.14.7 to 3.14.8 and `nghttp2-libs` 1.69.0 to 1.70.0 in the builder, with no effect on the Image | `8f79e8da…`, unchanged |
+| agent-init, probe | `9ec8b25e…`, `6ec735d8…` (from `c558ef8`) | unchanged |
+| berth-init, context-bus-daemon | `c82613e7…`, `1138c359…` | unchanged |
+| rootfs | `47e1ea51…`, four builds, three from fresh builder roots, one with a different `node_modules` checkout | **re-pinned** from `5f80e448…` |
+
+The old rootfs pin could not be rebuilt anywhere but the machine that made it, for two reasons:
+
+1. **esbuild wrote host paths into the sdk-node bundles.** It puts a `// <path>` comment above each inlined module, and keys CommonJS wrappers by path, relative to the working directory. The pinned bundles held `../../../../agentOS/node_modules/.pnpm/yaml@2.9.1/...` and `../../../vm-egress-artifacts/rootfs-build/policy-src/...`. Rebuilding from a different directory changed the bytes. Recreating that exact relative layout reproduced the old bundle hashes (`3f19608e…`, `9f023166…`), which confirms this was the cause. Now `scripts/bundle-sdk-node.mjs` stages the sources and the packages they use into one fixed layout (`packages/sdk/src`, `node_modules/<name>`) and bundles from there. The output is the same from any checkout, any `node_modules` tree and any working directory. The code is unchanged apart from those paths. The bundler version and the inlined package versions are now recorded in the image's `build-inputs.json`.
+2. **Alpine moved a package.** `nghttp2-libs` (a nodejs dependency) went from 1.69.0-r0 to 1.70.0-r0 in v3.24, and Alpine's mirrors keep only the newest build. That alone changes the image.
+
+The new image passed `scripts/e2e.mjs all` (51/51) and `egress` (28/28). The CLI's `test/vm-e2e.mjs` also passed 17/17 on the kernel, rootfs and berth-vmm installed by `berth vm install` from a local GitHub-release-shaped server.
+
+**The limit that remains.** apk resolves the newest versions in v3.24, and the mirror drops old ones. A pin is reproducible from source only while Alpine still serves the package set in `rootfs/apk.lock` (and `kernel/apk.lock` and `guest/*.apk.lock` for the toolchains). The scripts report any difference from those locks, and the hash check fails if it matters. The kernel's toolchain drift above did not matter, but a gcc or binutils update would. So publish soon after pinning, and re-pin (`UPDATE_MANIFEST=1`) when CI reports drift. Published assets don't expire. Only the ability to rebuild them bit for bit does. Making that permanent needs a package snapshot: `apk fetch` the exact `.apk` files, which Alpine signs, into a cache kept with the release, and install from it offline. That is the next step, and is not done.
 
 ## 2. The root filesystem
 
@@ -130,7 +178,7 @@ A read-only root cannot `adduser` at boot the way `entrypoint.sh` does. The firs
 2. In a builder VM (its own fresh Alpine root, TSI on, 4 vCPU): untar onto an ext4 scratch disk **as guest root**, `apk --root … add`, overlay `files/` and chown every overlaid path to 0:0, then append the identities and empty `resolv.conf`. Drop `/var/cache/apk` and `/var/log/apk.log`. List every path with `uid:gid mode` and **fail if uid 501 appears**. Then `mkfs.erofs -zlz4hc -T$EPOCH --all-time -U <fixed uuid>` (erofs-utils 1.9).
 3. On the host: name the file `rootfs-<sha256>.erofs` (mode 0444) and write `rootfs-<sha256>.inputs.json` next to it, with the image hash and size, packages requested and resolved, the agent-init hash, source ref and commit, the berth-init and sdk-node hashes, the mkfs version, the tree listing hash, and the source commit and dirty flag. Also write `rootfs-<sha256>.tree.txt` (the ownership listing) and `LATEST`.
 
-**Reproducibility.** Two leaks of build time had to go: `/var/log/apk.log` (it carries a wall-clock line) and the git commit, which is now only in the outer `inputs.json`, since inside the image it would change the hash on every unrelated commit. After that, rebuilds gave the same hash every time: three in a row of one tree (`30eb84a4…`), the pre-alignment image `42b32ced…` from a dirty and then a clean tree, and the final image `2eaa3e0a…` twice. Every build formats a new scratch disk, so ext4 directory order does not leak in either. The limit is that apk resolves the newest package versions in v3.24, so a rebuild next month may differ. Content addressing makes that visible (a new hash, a diffable `inputs.json`) rather than silent. Bit-exact rebuilds of an old image need a pinned apk package cache (open item).
+**Reproducibility.** Two leaks of build time had to go: `/var/log/apk.log` (it carries a wall-clock line) and the git commit, which is now only in the outer `inputs.json`, since inside the image it would change the hash on every unrelated commit. After that, rebuilds gave the same hash every time: three in a row of one tree (`30eb84a4…`), the pre-alignment image `42b32ced…` from a dirty and then a clean tree, and the final image `2eaa3e0a…` twice. Every build formats a new scratch disk, so ext4 directory order does not leak in either. The limit is that apk resolves the newest package versions in v3.24, so a rebuild next month may differ. Content addressing makes that visible (a new hash, a diffable `inputs.json`) rather than silent. Bit-exact rebuilds of an old image need a pinned apk package cache (open item). Later it turned out that the sdk-node bundles also carried the build machine's paths. That is fixed, see [Distribution](#distribution).
 
 ### How berth-vmm boots it
 

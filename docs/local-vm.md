@@ -15,27 +15,89 @@ Docker is still the default. The VM runtime runs filesystem-only Node apps today
 ## Requirements
 
 - **macOS on Apple silicon** (Hypervisor.framework), or **Linux with KVM** (`/dev/kvm` readable and writable).
-- **libkrun 1.19.6**. On macOS: `brew tap libkrun/krun && brew install libkrun`.
-- **berth-vmm**, the small launcher that runs one VM per process. Build it from `packages/vmm` (`cargo build --release`). On macOS it has to be signed with the hypervisor entitlement (the build scripts do this). `berth doctor` prints the `codesign` command if it isn't.
+- **libkrun 1.19.6**. On macOS: `brew tap libkrun/krun && brew install libkrun`. Newer Homebrew asks you to trust a third-party tap's formulae first: `brew trust --formula libkrun/krun/libkrun libkrun/krun/libkrunfw libkrun/krun/virglrenderer-krun`.
+- **berth-vmm**, the small launcher that runs one VM per process. `berth vm install` downloads it on macOS arm64 once a published build is pinned in the CLI (see below). Otherwise build it from `packages/vmm` with `cargo build --release`. On macOS it has to be signed with the hypervisor entitlement. The published build is, and the build scripts sign a local one. `berth doctor` prints the `codesign` command if it isn't.
 - **The pinned kernel and rootfs**, about 70 MB, installed with `berth vm install`.
 
 ## Install
 
 ```bash
-berth vm install --from <artifacts-dir> --vmm packages/vmm/target/release/berth-vmm
+berth vm install
 berth doctor --sandbox vm
 ```
 
-`berth vm install` copies the kernel and rootfs into `~/.berth/vm`, where berth-vmm looks for them. Each file is hashed against its pin before it's put in place, and a file that doesn't match is refused. On APFS the copy is a clone, so it takes no extra disk space. The pins are the ones berth-vmm was built with: the CLI reads them out of the binary, because berth-vmm refuses to boot anything else.
+`berth vm install` puts the kernel and rootfs in `~/.berth/vm`, where berth-vmm looks for them. If no berth-vmm is found, it also puts berth-vmm in `~/.berth/vm/bin`. Each file is checked against its sha256 pin before it is put in place, and a file that doesn't match is refused. The kernel and rootfs pins are the ones berth-vmm was built with. The CLI reads them out of the binary, because berth-vmm refuses to boot anything else. If there is no berth-vmm yet, it uses its own copy of the same pins.
 
-Sources, in order:
+### What is downloaded, and from where
 
-1. **A local build directory**: `--from <dir>`, or `BERTH_VMM_ARTIFACTS`. This is the `$BERTH_VMM_ARTIFACTS` directory `packages/vmm`'s build scripts write (`kernel/sha256/<sha>/Image`, `rootfs/rootfs-<sha>.erofs`). A flat directory or one subdirectory per sha256 also works.
-2. **A download**, for anything the directory doesn't have. The URL is a template keyed by sha256: `{kind}` is `kernel` or `rootfs`, `{sha256}` is the pin, and `{file}` is the file name. The default is `https://artifacts.berth.dev/{kind}/sha256/{sha256}/{file}`, which **is not published yet**. Set your own with `--url`, `BERTH_VM_ARTIFACTS_URL`, or `vm.artifactsUrl` in `~/.berth/config.json`. A download is checked against the pinned size as it streams, and against the sha256 before it's kept.
+By default, from the GitHub release that [`.github/workflows/vm-artifacts.yml`](../.github/workflows/vm-artifacts.yml) publishes for the kernel and rootfs pair, `vm-artifacts-<first 8 hex of the kernel pin>-<first 8 of the rootfs pin>`:
 
-`--vmm <path>` also copies berth-vmm to `~/.berth/vm/bin/berth-vmm`. The signature is part of the binary, so it carries over. Without it, the CLI looks for berth-vmm in `BERTH_VMM`, then `~/.berth/vm/bin`, then `PATH`, then the checkout's `packages/vmm/target/release`.
+| File | Asset | sha256 (this CLI) | Size |
+|---|---|---|---|
+| `~/.berth/vm/kernel/sha256/<sha>/Image` | `Image-<sha>` | `8f79e8dae97ebc0ab8fcdc4ad209bb025ec967be82c713503e0612cfdd340ec8` | 23,668,744 B |
+| `~/.berth/vm/rootfs/rootfs-<sha>.erofs` | `rootfs-<sha>.erofs` | `47e1ea51bb54411e8a5ff9ec37296f254cd84d3c12ad7d0d12c0d9c2b6fe7e23` | 46,723,072 B |
+| `~/.berth/vm/bin/berth-vmm` | `berth-vmm-darwin-arm64-<sha>` | `VMM_PINS` in `packages/cli/src/vm/pins.ts` | about 600 KB |
 
-If the artifacts aren't installed, `berth dev --runtime vm` installs them the first time it runs, from the same sources.
+That is `https://github.com/Ash20pk/BerthOS/releases/download/vm-artifacts-8f79e8da-47e1ea51/`. CI rebuilt the kernel and rootfs there from source on GitHub's arm64 Linux runners, and they matched the pins bit for bit before the release was published. The release also carries `SHA256SUMS`, each rootfs's input record, berth-vmm's build record, and the kernel's GPL sources (the exact linux and libkrunfw tarballs, the config delta, the resolved config and the build script; see `SOURCES.md` there).
+
+berth-vmm is downloaded only when the CLI pins its sha256 for your platform (macOS arm64 is the only published one). A build from CI can't be pinned until CI has built it, so a CLI released before the first artifacts release has no pin, and says so. Then build berth-vmm and pass `--vmm`, or download it by hand (below).
+
+A download is checked against the pinned size as it streams, and against the sha256 before it's renamed into place, so nothing unverified is ever at the final path.
+
+### Sources, in order
+
+1. **A local directory**: `--from <dir>`, or `BERTH_VMM_ARTIFACTS`. It can be the `$BERTH_VMM_ARTIFACTS` directory that `packages/vmm`'s build scripts write (`kernel/sha256/<sha>/Image`, `rootfs/rootfs-<sha>.erofs`), a flat directory, one subdirectory per sha256, or a directory of downloaded release assets. On APFS the copy is a clone, so it takes no extra space.
+2. **A download**, for anything the directory doesn't have. The URL is a template:
+
+   | Placeholder | |
+   |---|---|
+   | `{asset}` | the release asset name: `Image-<sha>`, `rootfs-<sha>.erofs`, `berth-vmm-darwin-arm64-<sha>` |
+   | `{kernel8}`, `{rootfs8}` | the first 8 hex digits of the kernel and rootfs pins (the release tag); `{kernel}` and `{rootfs}` are the full pins |
+   | `{kind}`, `{sha256}`, `{file}` | `kernel`, `rootfs` or `vmm`; the artifact's own pin; its file name in `~/.berth/vm` (`Image`, `rootfs-<sha>.erofs`, `berth-vmm`) |
+
+   The default is `https://github.com/Ash20pk/BerthOS/releases/download/vm-artifacts-{kernel8}-{rootfs8}/{asset}`. Set a mirror with `--url`, `BERTH_VM_ARTIFACTS_URL`, or `vm.artifactsUrl` in `~/.berth/config.json`. `file://` works too, for example `--url 'file:///Volumes/usb/vm-artifacts/{asset}'`. A mirror needs no trust, because every file is checked against the pin.
+
+`--no-download` copies from `--from` only. `--vmm <path>` copies that berth-vmm to `~/.berth/vm/bin/berth-vmm` instead of downloading one. The signature is part of the binary, so it carries over. Otherwise the CLI looks for berth-vmm in `BERTH_VMM`, then `~/.berth/vm/bin`, then `PATH`, then the checkout's `packages/vmm/target/release`.
+
+If the kernel and rootfs aren't installed, `berth dev --runtime vm` installs them the first time it runs, from the same sources.
+
+### Verifying by hand
+
+```bash
+tag=vm-artifacts-8f79e8da-47e1ea51
+gh release download "$tag" -R Ash20pk/BerthOS -p 'Image-*' -p 'rootfs-*.erofs' -p 'berth-vmm-darwin-arm64-*' -p SHA256SUMS
+shasum -a 256 -c --ignore-missing SHA256SUMS     # each asset against the list
+shasum -a 256 Image-* rootfs-*.erofs              # and against the pins above, which are also in
+                                                  # packages/vmm/{kernel,rootfs}/manifest.toml
+berth vm install --from .                         # installs from this directory, checked again
+```
+
+`SHA256SUMS` comes from the same release, so it only catches a damaged download. The pins are what you trust: the table above, the manifests in the repository, and the copy compiled into berth-vmm (`berth doctor --sandbox vm` shows them).
+
+berth-vmm is ad hoc signed, not notarized. A copy you download with a browser is quarantined, and macOS won't run it until you clear that, after checking its sha256:
+
+```bash
+shasum -a 256 berth-vmm-darwin-arm64-*            # must equal the name's hash and the CLI's pin
+xattr -d com.apple.quarantine berth-vmm-darwin-arm64-*
+```
+
+`berth vm install` doesn't need this. A file it downloads isn't quarantined, and it clears the attribute only on a file whose sha256 matched the pin.
+
+### Building from source
+
+The same scripts CI runs, from `packages/vmm` (a libkrun builder VM on macOS, a container on Linux):
+
+```bash
+cd packages/vmm
+./scripts/build-kernel.sh       # checks the Image against kernel/manifest.toml
+./scripts/build-agent-init.sh   # agent-init + probe, checked against rootfs/manifest.toml
+./scripts/build-berth-init.sh   # berth-init + context-bus-daemon, checked likewise
+./scripts/build-rootfs.sh       # the erofs image, checked likewise
+cargo build --release           # berth-vmm (the scripts also sign it)
+berth vm install --from "$BERTH_VMM_ARTIFACTS" --vmm target/release/berth-vmm
+```
+
+Each script fails on a hash that isn't its pin and prints both. The builds are reproducible while Alpine 3.24 still serves the package versions in `kernel/apk.lock`, `guest/*.apk.lock` and `rootfs/apk.lock`, which is how long the pins can be rebuilt bit for bit. See [Distribution](design/microvm-image.md#distribution).
 
 ## Run an app
 
@@ -111,7 +173,7 @@ An app whose `berth.yml` needs something the VM doesn't have yet is refused befo
 - **Other `<service>:*` capabilities**, such as `github:*`, go through the egress broker or a host service, so they wait for egress.
 - **Native addons** (`.node` files) can't run in the guest, because they were built for your host, not for Linux on arm64. Bundling stops with that error.
 - **Files your app reads from its own directory** at run time, beyond `berth.yml`, aren't in the share. Only the bundle is.
-- **Architecture.** The pinned kernel and rootfs are built for arm64.
+- **Architecture.** The pinned kernel and rootfs are built for arm64, and berth-vmm is published for macOS arm64 only.
 - **`/app` is unmeasured.** The kernel, rootfs and state disk are hashed at every boot. Your bundle isn't yet.
 - **Policy digests.** `berth attest` records a VM boot with an empty `policies` list, because berth-init doesn't report the sha256 of the policy it compiled yet.
 

@@ -1,20 +1,26 @@
 #!/bin/sh
-# Runs INSIDE the image builder VM (fresh Alpine root, stock libkrunfw kernel,
-# TSI on so apk works). Assembles the Berth base rootfs on an ext4 scratch
+# Runs INSIDE the image builder (scripts/common.sh run_builder: a libkrun
+# builder VM with TSI on so apk works, or a container on a Linux runner; the
+# pinned Alpine root either way). Assembles the Berth base rootfs on an ext4 scratch
 # volume as guest root, so every file is owned by a real guest uid, and packs
 # it into a read-only erofs image.
 #   /in  (read-only): alpine-minirootfs.tar.gz, packages.txt, extra-packages,
 #                     files/ (the tree overlaid onto the root, see build-rootfs.sh),
-#                     SOURCE_DATE_EPOCH
-#   /out: rootfs.erofs, packages.lock, tree.txt, mkfs.txt
+#                     SOURCE_DATE_EPOCH, HOST_UID (the uid that owns /in/files)
+#   /out: rootfs.erofs, packages.lock, tree.txt, mkfs.txt, apk.lock (the builder's)
 #   first /dev/vdX: ext4 scratch volume
 set -eu
 apk add --no-cache erofs-utils e2fsprogs >/dev/null
 mkdir -p /in /out /build
 mountpoint -q /in || mount -t virtiofs -o ro in /in
 mountpoint -q /out || mount -t virtiofs out /out
-DEV=${BUILD_DEV:-$(ls /dev/vd[a-z] | head -1)}
-mountpoint -q /build || { mkfs.ext4 -q -F "$DEV"; mount "$DEV" /build; }
+# mkfs.erofs's version shapes the image, so the builder's package set is recorded.
+apk info -v 2>/dev/null | LC_ALL=C sort > /out/apk.lock
+mountpoint -q /build || {
+    DEV=${BUILD_DEV:-$(ls /dev/vd[a-z] | head -1)}
+    mkfs.ext4 -q -F "$DEV"
+    mount "$DEV" /build
+}
 EPOCH=$(cat /in/SOURCE_DATE_EPOCH)
 export SOURCE_DATE_EPOCH=$EPOCH
 
@@ -28,9 +34,9 @@ apk --root "$R" --keys-dir "$R/etc/apk/keys" --repositories-file "$R/etc/apk/rep
 apk --root "$R" info -v 2>/dev/null | sort > /out/packages.lock
 
 # Berth's files (agent-init, berth-init, sdk-node, ...), then identities.
-# cp -a keeps modes; the owner it keeps is the host user's (virtio-fs), on the
-# copied files and on the existing directories it lands in, so reset every
-# path that came from /in/files to root.
+# cp -a keeps modes; the owner it keeps is the host user's (virtio-fs, or a
+# bind mount), on the copied files and on the existing directories it lands
+# in, so reset every path that came from /in/files to root.
 cp -a /in/files/. "$R/"
 (cd /in/files && find .) | while read -r p; do chown -h 0:0 "$R/$p"; done
 # Static system identities only: group berth (9999) and context-bus-daemon
@@ -53,7 +59,10 @@ rm -rf "$R/var/cache/apk"/* "$R/tmp"/* "$R/root/.ash_history" "$R/var/log/apk.lo
 # A listing of the tree with owners and modes, for review and diffing.
 (cd "$R" && find . | LC_ALL=C sort | while read -r p; do
     stat -c '%u:%g %a %n' "$p"; done) > /out/tree.txt
-if awk '$1 ~ /^501:/' /out/tree.txt | grep -q .; then echo "host uid leaked into the tree:" >&2; awk '$1 ~ /^501:/' /out/tree.txt >&2; exit 1; fi
+HOST_UID=$(cat /in/HOST_UID 2>/dev/null || echo 501)
+if [ "$HOST_UID" != 0 ] && awk -v u="$HOST_UID" 'index($1, u ":") == 1' /out/tree.txt | grep -q .; then
+    echo "host uid $HOST_UID leaked into the tree:" >&2; awk -v u="$HOST_UID" 'index($1, u ":") == 1' /out/tree.txt >&2; exit 1
+fi
 du -sk "$R" | cut -f1 > /out/tree-kib.txt
 
 # Reproducible erofs: fixed timestamp on every inode, fixed UUID, lz4hc.

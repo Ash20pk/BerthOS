@@ -7,41 +7,74 @@
  * and `berth doctor` checks that the berth-vmm binary it finds carries them.
  */
 export interface ArtifactPin {
-  kind: "kernel" | "rootfs";
+  kind: "kernel" | "rootfs" | "vmm";
   sha256: string;
   size: number;
   /** The file name inside the artifacts directory. */
   file: string;
   /** Where berth-vmm looks for it, relative to the artifacts directory. */
   relPath: string;
+  /**
+   * Its name as a release asset, which carries the sha256 (Image-<sha256>,
+   * rootfs-<sha256>.erofs, berth-vmm-darwin-arm64-<sha256>), so that one
+   * release can hold several of a kind and a file is always its own hash.
+   */
+  asset: string;
 }
 
 export const KERNEL_SHA256 = "8f79e8dae97ebc0ab8fcdc4ad209bb025ec967be82c713503e0612cfdd340ec8";
 export const KERNEL_SIZE = 23668744;
 export const KERNEL_LINUX = "6.12.109";
 export const KERNEL_CONFIG_SHA256 = "e3f33c2bd4bffa16e52a066c325967e4bde091f20063e6eb5b81e8a2efac4dc8";
-export const ROOTFS_SHA256 = "5f80e448b6658cb14612dcc5534fcf495c6dd31a687822f9234859b1643c9579";
-export const ROOTFS_SIZE = 46727168;
+export const ROOTFS_SHA256 = "47e1ea51bb54411e8a5ff9ec37296f254cd84d3c12ad7d0d12c0d9c2b6fe7e23";
+export const ROOTFS_SIZE = 46723072;
 /** The libkrun berth-vmm is built against (packages/vmm/src/main.rs declares its API at this version). */
 export const LIBKRUN_VERSION = "1.19.6";
 
-export const KERNEL_PIN: ArtifactPin = {
-  kind: "kernel",
-  sha256: KERNEL_SHA256,
-  size: KERNEL_SIZE,
-  file: "Image",
-  relPath: `kernel/sha256/${KERNEL_SHA256}/Image`,
-};
+export function kernelPin(sha256: string, size: number): ArtifactPin {
+  return { kind: "kernel", sha256, size, file: "Image", relPath: `kernel/sha256/${sha256}/Image`, asset: `Image-${sha256}` };
+}
 
-export const ROOTFS_PIN: ArtifactPin = {
-  kind: "rootfs",
-  sha256: ROOTFS_SHA256,
-  size: ROOTFS_SIZE,
-  file: `rootfs-${ROOTFS_SHA256}.erofs`,
-  relPath: `rootfs/rootfs-${ROOTFS_SHA256}.erofs`,
-};
+export function rootfsPin(sha256: string, size: number): ArtifactPin {
+  const file = `rootfs-${sha256}.erofs`;
+  return { kind: "rootfs", sha256, size, file, relPath: `rootfs/${file}`, asset: file };
+}
+
+export const KERNEL_PIN: ArtifactPin = kernelPin(KERNEL_SHA256, KERNEL_SIZE);
+export const ROOTFS_PIN: ArtifactPin = rootfsPin(ROOTFS_SHA256, ROOTFS_SIZE);
 
 export const PINS: readonly ArtifactPin[] = [KERNEL_PIN, ROOTFS_PIN];
+
+/**
+ * The GitHub release that publishes a kernel and rootfs pair
+ * (.github/workflows/vm-artifacts.yml): `vm-artifacts-<kernel8>-<rootfs8>`.
+ */
+export function releaseTag(kernelSha256: string, rootfsSha256: string): string {
+  return `vm-artifacts-${kernelSha256.slice(0, 8)}-${rootfsSha256.slice(0, 8)}`;
+}
+
+/** A platform berth-vmm is published for: `${process.platform}-${process.arch}`. */
+export type VmmPlatform = "darwin-arm64";
+
+/**
+ * Published berth-vmm builds this CLI will download and run, by platform. Each
+ * is the binary the vm-artifacts workflow built for this CLI's kernel and
+ * rootfs pins (it compiles those pins in) and uploaded to their release as
+ * berth-vmm-<platform>-<sha256>. The workflow prints the line to add here.
+ * The binary is ad hoc signed, so the sha256 here is what vouches for it:
+ * `berth vm install` refuses any other bytes, and clears macOS's quarantine
+ * attribute only on a file that matched.
+ *
+ * Empty until the first release is built: the sha256 of a binary CI builds
+ * cannot be known before CI builds it.
+ */
+export const VMM_PINS: Partial<Record<VmmPlatform, { sha256: string; size: number }>> = {};
+
+export function vmmPin(platform: string = `${process.platform}-${process.arch}`, pins: Partial<Record<string, { sha256: string; size: number }>> = VMM_PINS): ArtifactPin | undefined {
+  const p = pins[platform];
+  if (!p) return undefined;
+  return { kind: "vmm", sha256: p.sha256, size: p.size, file: "berth-vmm", relPath: "bin/berth-vmm", asset: `berth-vmm-${platform}-${p.sha256}` };
+}
 
 /** `key = "value"` / `key = 123` lines of a flat manifest. */
 export function parseManifest(text: string): Record<string, string> {
@@ -83,8 +116,5 @@ export function pinsFromManifests(m: { kernel?: Record<string, string>; rootfs?:
   const kn = Number(m.kernel?.image_size);
   const rn = Number(m.rootfs?.image_size);
   if (!ks || !rs || !HEX64.test(ks) || !HEX64.test(rs) || !Number.isInteger(kn) || !Number.isInteger(rn)) return undefined;
-  return {
-    kernel: { kind: "kernel", sha256: ks, size: kn, file: "Image", relPath: `kernel/sha256/${ks}/Image` },
-    rootfs: { kind: "rootfs", sha256: rs, size: rn, file: `rootfs-${rs}.erofs`, relPath: `rootfs/rootfs-${rs}.erofs` },
-  };
+  return { kernel: kernelPin(ks, kn), rootfs: rootfsPin(rs, rn) };
 }

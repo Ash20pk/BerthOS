@@ -1,0 +1,431 @@
+name: VM artifacts
+
+# Builds the microVM runtime's artifacts from source on GitHub-hosted runners,
+# proves the guest kernel and base rootfs come out bit for bit equal to the
+# pins in packages/vmm/kernel/manifest.toml and rootfs/manifest.toml, and
+# publishes them as a GitHub release `berth vm install` downloads from.
+#
+#   kernel   ubuntu-24.04-arm   scripts/build-kernel.sh: the guest kernel Image
+#   guest    ubuntu-24.04-arm   scripts/build-agent-init.sh, build-berth-init.sh:
+#                               agent-init, probe, berth-init, context-bus-daemon
+#                               (static aarch64 musl)
+#   rootfs   ubuntu-24.04-arm   scripts/build-rootfs.sh: the erofs base rootfs,
+#                               from the guest job's binaries
+#   vmm      macos-15 (arm64)   berth-vmm, linked against Homebrew libkrun,
+#                               ad-hoc signed with berth-vmm.entitlements
+#   publish  ubuntu-24.04       release vm-artifacts-<kernel8>-<rootfs8>
+#
+# The Linux jobs run the same scripts a developer runs on macOS. There the
+# builder is a libkrun VM; here it is a container (BERTH_BUILDER=docker). Both
+# start from the same pinned Alpine minirootfs (`docker import`ed here, never
+# pulled from a registry) and install the toolchain with apk from the same
+# Alpine release, so the bytes match while Alpine still serves the package
+# versions the pins were built with (kernel/apk.lock, guest/*.apk.lock,
+# rootfs/apk.lock record them; a difference is reported as a warning). Each
+# script fails on a hash that is not its pin and prints both; that is the gate.
+#
+# Triggers:
+#   - workflow_dispatch: build and verify. With `publish`, also create or
+#     update the release (the tag is made at the commit that was built).
+#   - a pushed tag vm-artifacts-*: build, verify and publish. The tag must be
+#     the one the manifests name (vm-artifacts-<kernel8>-<rootfs8>).
+#
+# Release assets are named by sha256 (Image-<sha>, rootfs-<sha>.erofs,
+# berth-vmm-darwin-arm64-<sha>), so re-running against the same tag only adds
+# or re-uploads identical files; SHA256SUMS lists every asset. The kernel's
+# GPL sources go with it: the exact linux and libkrunfw tarballs, the config
+# delta and the resolved .config.
+#
+# berth-vmm is ad-hoc signed, not Developer ID signed or notarized. A copy
+# downloaded with a browser is quarantined, and Gatekeeper refuses it until
+# `xattr -d com.apple.quarantine` (`berth vm install` downloads it itself,
+# verifies it against the sha256 pinned in the CLI, and only then clears the
+# attribute). See docs/local-vm.md.
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish the GitHub release vm-artifacts-<kernel8>-<rootfs8> once every check passes"
+        type: boolean
+        default: false
+  push:
+    tags: ["vm-artifacts-*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vm-artifacts-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  BERTH_BUILDER: docker
+
+jobs:
+  pins:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.pins.outputs.tag }}
+      kernel: ${{ steps.pins.outputs.kernel }}
+      rootfs: ${{ steps.pins.outputs.rootfs }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read the pins
+        id: pins
+        run: |
+          get() { awk -v k="$2" -F' *= *' '$1 == k { v = $2; gsub(/^"|"$/, "", v); print v; exit }' "$1"; }
+          kernel=$(get packages/vmm/kernel/manifest.toml image_sha256)
+          rootfs=$(get packages/vmm/rootfs/manifest.toml image_sha256)
+          tag="vm-artifacts-$(echo "$kernel" | cut -c1-8)-$(echo "$rootfs" | cut -c1-8)"
+          # The CLI derives the same tag from the same pins; they must agree.
+          for v in "$kernel" "$rootfs"; do
+            grep -q "\"$v\"" packages/cli/src/vm/pins.ts || { echo "::error::packages/cli/src/vm/pins.ts does not carry $v"; exit 1; }
+          done
+          echo "kernel=$kernel" >> "$GITHUB_OUTPUT"
+          echo "rootfs=$rootfs" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "kernel $kernel, rootfs $rootfs, release $tag"
+
+      - name: A pushed tag must be the manifests' tag
+        if: github.event_name == 'push'
+        env:
+          WANT: ${{ steps.pins.outputs.tag }}
+        run: |
+          if [ "$GITHUB_REF_NAME" != "$WANT" ]; then
+            echo "::error::pushed tag $GITHUB_REF_NAME, but the manifests at this commit name $WANT"
+            exit 1
+          fi
+
+  kernel:
+    needs: pins
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Artifacts directory
+        run: echo "BERTH_VMM_ARTIFACTS=$RUNNER_TEMP/vm-artifacts" >> "$GITHUB_ENV"
+
+      - name: Build the kernel and check it against kernel/manifest.toml
+        run: CPUS=$(nproc) packages/vmm/scripts/build-kernel.sh
+
+      - name: Collect
+        env:
+          KERNEL: ${{ needs.pins.outputs.kernel }}
+        run: |
+          d="$BERTH_VMM_ARTIFACTS/kernel/sha256/$KERNEL"
+          mkdir -p dist
+          cp "$d/Image" "dist/Image-$KERNEL"
+          cp "$d/config" "dist/kernel-config-$KERNEL"
+          cp "$d/toolchain.txt" "dist/kernel-toolchain-$KERNEL.txt"
+          cp "$d/check.txt" "dist/kernel-config-check-$KERNEL.txt"
+          cp packages/vmm/kernel/berth-kernel.config dist/berth-kernel.config
+          cp packages/vmm/kernel/manifest.toml dist/kernel-manifest.toml
+          cp packages/vmm/kernel/build-in-vm.sh dist/kernel-build-in-vm.sh
+          # GPL: the exact sources the Image was built from, already
+          # sha256-checked against the manifest by build-kernel.sh.
+          cp "$BERTH_VMM_ARTIFACTS"/cache/linux-*.tar.xz "$BERTH_VMM_ARTIFACTS"/cache/libkrunfw-*.tar.gz dist/
+          ls -l dist
+
+      - name: Keep the build log
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: kernel-build-log
+          path: ${{ env.BERTH_VMM_ARTIFACTS }}/kernel-build/out/
+          if-no-files-found: ignore
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: kernel
+          path: dist/
+          if-no-files-found: error
+
+  guest:
+    needs: pins
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # agent-init is built from its pinned commit
+
+      - name: Artifacts directory
+        run: echo "BERTH_VMM_ARTIFACTS=$RUNNER_TEMP/vm-artifacts" >> "$GITHUB_ENV"
+
+      - name: Build agent-init and the probe, and check them against rootfs/manifest.toml
+        run: CPUS=$(nproc) packages/vmm/scripts/build-agent-init.sh
+
+      - name: Build berth-init and context-bus-daemon, and check them against rootfs/manifest.toml
+        run: CPUS=$(nproc) packages/vmm/scripts/build-berth-init.sh
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: guest
+          path: |
+            ${{ env.BERTH_VMM_ARTIFACTS }}/agent-init/
+            ${{ env.BERTH_VMM_ARTIFACTS }}/berth-init-build/out/
+          if-no-files-found: error
+
+  rootfs:
+    needs: [pins, guest]
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # the policy compiler is bundled from its pinned commit
+
+      - name: Artifacts directory
+        run: echo "BERTH_VMM_ARTIFACTS=$RUNNER_TEMP/vm-artifacts" >> "$GITHUB_ENV"
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 10.21.0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # esbuild, yaml and zod at the lockfile's versions, for the sdk-node bundles.
+      - run: pnpm install --frozen-lockfile
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: guest
+          path: ${{ env.BERTH_VMM_ARTIFACTS }}
+
+      - name: Build the rootfs and check it against rootfs/manifest.toml
+        # Artifacts lose their file modes in transit; build-rootfs.sh installs
+        # every binary with an explicit mode anyway.
+        run: packages/vmm/scripts/build-rootfs.sh
+
+      - name: Collect
+        env:
+          ROOTFS: ${{ needs.pins.outputs.rootfs }}
+        run: |
+          d="$BERTH_VMM_ARTIFACTS/rootfs"
+          mkdir -p dist
+          cp "$d/rootfs-$ROOTFS.erofs" "$d/rootfs-$ROOTFS.inputs.json" "$d/rootfs-$ROOTFS.tree.txt" dist/
+          cp packages/vmm/rootfs/manifest.toml dist/rootfs-manifest.toml
+          ls -l dist
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rootfs
+          path: dist/
+          if-no-files-found: error
+
+  vmm:
+    needs: pins
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      LIBKRUN_VERSION: "1.19.6"
+      # libkrun/homebrew-krun at the commit that ships libkrun 1.19.6 with an
+      # arm64_sequoia bottle.
+      KRUN_TAP_COMMIT: 9a2429bb157c5a0460a5ad6f4c12f368bf52b078
+      RUST_TOOLCHAIN: "1.89.0"
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install libkrun from the libkrun/krun tap, pinned
+        run: |
+          grep -q "LIBKRUN_VERSION = \"$LIBKRUN_VERSION\"" packages/cli/src/vm/pins.ts \
+            || { echo "::error::packages/cli/src/vm/pins.ts does not expect libkrun $LIBKRUN_VERSION"; exit 1; }
+          brew tap libkrun/krun
+          git -C "$(brew --repo libkrun/krun)" fetch -q origin "$KRUN_TAP_COMMIT"
+          git -C "$(brew --repo libkrun/krun)" checkout -q "$KRUN_TAP_COMMIT"
+          # Newer Homebrew loads formulae from a third-party tap only once
+          # they are trusted; older Homebrew has no `brew trust`.
+          if brew trust --help >/dev/null 2>&1; then
+            brew trust --formula libkrun/krun/libkrun libkrun/krun/libkrunfw libkrun/krun/virglrenderer-krun
+          fi
+          brew install libkrun/krun/libkrun
+          have=$(brew list --versions libkrun | awk '{print $2}')
+          [ "$have" = "$LIBKRUN_VERSION" ] || { echo "::error::installed libkrun $have, expected $LIBKRUN_VERSION"; exit 1; }
+
+      - name: Install Rust ${{ env.RUST_TOOLCHAIN }}
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+          rustc --version
+
+      - name: Test and build berth-vmm
+        working-directory: packages/vmm
+        run: |
+          cargo test --release --locked
+          cargo build --release --locked
+
+      - name: Sign ad hoc with the hypervisor entitlement, and check the binary
+        id: vmm
+        working-directory: packages/vmm
+        env:
+          KERNEL: ${{ needs.pins.outputs.kernel }}
+          ROOTFS: ${{ needs.pins.outputs.rootfs }}
+        run: |
+          bin=target/release/berth-vmm
+          codesign --sign - --force --entitlements berth-vmm.entitlements "$bin"
+          codesign -d --entitlements - --xml "$bin" | grep -q 'com.apple.security.hypervisor' \
+            || { echo "::error::berth-vmm lacks the hypervisor entitlement"; exit 1; }
+          # The pins it boots are compiled in; they must be this release's.
+          grep -aq "image_sha256 = \"$KERNEL\"" "$bin" || { echo "::error::berth-vmm does not carry kernel $KERNEL"; exit 1; }
+          grep -aq "image_sha256 = \"$ROOTFS\"" "$bin" || { echo "::error::berth-vmm does not carry rootfs $ROOTFS"; exit 1; }
+          otool -L "$bin" | tee otool.txt
+          grep -q '/opt/homebrew/opt/libkrun/lib/libkrun.1.dylib' otool.txt \
+            || { echo "::error::berth-vmm does not link Homebrew's libkrun"; exit 1; }
+          # It loads (libkrun resolves) and parses its arguments. A GitHub
+          # macOS runner cannot boot a VM (no nested virtualization), so the
+          # boot itself is tested on developer machines (scripts/e2e.mjs).
+          "$bin" run --help >/dev/null
+          sha=$(shasum -a 256 "$bin" | cut -d' ' -f1)
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          cp "$bin" "$GITHUB_WORKSPACE/dist/berth-vmm-darwin-arm64-$sha"
+          {
+            echo "berth-vmm-darwin-arm64-$sha"
+            echo "sha256: $sha"
+            echo "size: $(stat -f %z "$bin")"
+            echo "source commit: $GITHUB_SHA"
+            echo "rustc: $(rustc --version)"
+            echo "libkrun: $LIBKRUN_VERSION (Homebrew, libkrun/krun tap at $KRUN_TAP_COMMIT)"
+            echo "macOS: $(sw_vers -productVersion) $(uname -m)"
+            echo "signature: ad hoc, entitlements packages/vmm/berth-vmm.entitlements"
+            echo "pins: kernel $KERNEL, rootfs $ROOTFS"
+            echo
+            cat otool.txt
+          } > "$GITHUB_WORKSPACE/dist/berth-vmm-darwin-arm64-$sha.txt"
+          echo "sha256=$sha" >> "$GITHUB_OUTPUT"
+          echo "size=$(stat -f %z "$bin")" >> "$GITHUB_OUTPUT"
+          echo "berth-vmm sha256 $sha"
+
+      - name: The CLI pin for this berth-vmm
+        env:
+          SHA: ${{ steps.vmm.outputs.sha256 }}
+          SIZE: ${{ steps.vmm.outputs.size }}
+        run: |
+          # berth vm install downloads berth-vmm only when the CLI pins it.
+          if grep -q "$SHA" packages/cli/src/vm/pins.ts; then
+            echo "packages/cli/src/vm/pins.ts already pins this berth-vmm."
+          else
+            echo "::notice title=Pin this berth-vmm in the CLI::VMM_PINS[\"darwin-arm64\"] = { sha256: \"$SHA\", size: $SIZE } in packages/cli/src/vm/pins.ts"
+          fi
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: vmm
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: [pins, kernel, rootfs, vmm]
+    if: github.event_name == 'push' || inputs.publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write # create the release (and its tag on a dispatch) and upload assets
+    env:
+      TAG: ${{ needs.pins.outputs.tag }}
+      KERNEL: ${{ needs.pins.outputs.kernel }}
+      ROOTFS: ${{ needs.pins.outputs.rootfs }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Check every content-addressed asset against its name
+        working-directory: dist
+        run: |
+          ls -l
+          for f in Image-* rootfs-*.erofs berth-vmm-darwin-arm64-*; do
+            case "$f" in *.txt) continue ;; esac
+            want=$(echo "$f" | sed -E 's/^(Image|rootfs|berth-vmm-darwin-arm64)-//; s/\.erofs$//')
+            have=$(sha256sum "$f" | cut -d' ' -f1)
+            [ "$have" = "$want" ] || { echo "::error::$f hashes to $have"; exit 1; }
+          done
+          [ -f "Image-$KERNEL" ] && [ -f "rootfs-$ROOTFS.erofs" ] || { echo "::error::missing the pinned Image or rootfs"; exit 1; }
+
+      - name: Write the release notes and the GPL source notice
+        working-directory: dist
+        run: |
+          get() { awk -v k="$2" -F' *= *' '$1 == k { v = $2; gsub(/^"|"$/, "", v); print v; exit }' "$1"; }
+          M=kernel-manifest.toml
+          vmm=$(ls berth-vmm-darwin-arm64-* | grep -v '\.txt$')
+          linux_url=$(get $M linux_tarball)
+          krunfw_ver=$(get $M libkrunfw_version)
+          cat > SOURCES.md <<EOF
+          # Sources for the Berth guest kernel in this release
+
+          \`Image-$KERNEL\` is Linux $(get $M linux_version), licensed under the GNU GPL version 2,
+          built by packages/vmm/scripts/build-kernel.sh at commit $GITHUB_SHA of
+          https://github.com/$GITHUB_REPOSITORY. The complete corresponding source is attached to
+          this release:
+
+          | File | What | sha256 |
+          |---|---|---|
+          | \`$(basename "$linux_url")\` | Linux, from $linux_url | \`$(get $M linux_tarball_sha256)\` |
+          | \`libkrunfw-$krunfw_ver.tar.gz\` | libkrunfw v$krunfw_ver (https://github.com/containers/libkrunfw/tree/v$krunfw_ver): its \`patches/\` are applied to the tree, its \`config-libkrunfw_aarch64\` is the base config | \`$(get $M libkrunfw_tarball_sha256)\` |
+          | \`berth-kernel.config\` | Berth's config delta, appended to the base config | \`$(get $M config_delta_sha256)\` |
+          | \`kernel-config-$KERNEL\` | the resolved .config | \`$(get $M config_sha256)\` |
+          | \`kernel-build-in-vm.sh\` | the build script (patch, merge, olddefconfig, make Image) | |
+          | \`kernel-toolchain-$KERNEL.txt\` | the builder's gcc, binutils and every Alpine package | |
+
+          The Image is reproducible: the same script on Alpine $(get $M builder_alpine) with the
+          packages in the toolchain file gives the same sha256.
+          EOF
+          cat > notes.md <<EOF
+          Artifacts for Berth's local microVM runtime (\`berth vm install\`), built from source by
+          .github/workflows/vm-artifacts.yml at $GITHUB_SHA, run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID.
+          The kernel and rootfs were rebuilt on GitHub's arm64 Linux runners and matched the pins in
+          packages/vmm/kernel/manifest.toml and rootfs/manifest.toml bit for bit.
+
+          | Asset | sha256 |
+          |---|---|
+          | \`Image-$KERNEL\` (guest kernel, Linux $(get $M linux_version), aarch64) | \`$KERNEL\` |
+          | \`rootfs-$ROOTFS.erofs\` (base rootfs) | \`$ROOTFS\` |
+          | \`$vmm\` (macOS arm64, ad hoc signed, links Homebrew libkrun 1.19.6) | \`${vmm#berth-vmm-darwin-arm64-}\` |
+
+          \`berth vm install\` downloads these, checks each against the sha256 the CLI and berth-vmm
+          carry, and refuses anything else. By hand: \`shasum -a 256 -c SHA256SUMS\`.
+
+          berth-vmm is not notarized. A copy downloaded with a browser is quarantined; clear it after
+          checking the sha256: \`xattr -d com.apple.quarantine berth-vmm-darwin-arm64-*\`.
+
+          Kernel sources (GPL-2.0): see SOURCES.md, attached.
+          EOF
+          # Every asset but the notes themselves.
+          sha256sum $(ls | grep -vxE 'notes.md|SHA256SUMS(\.new)?') > SHA256SUMS.new
+
+      - name: Create or update the release
+        working-directory: dist
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # Merge with what is there: an earlier run's berth-vmm stays listed.
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS --output SHA256SUMS.old || : > SHA256SUMS.old
+            # New lines win for the same file name.
+            awk '{ sum[$2] = $1 } END { for (f in sum) print sum[f] "  " f }' SHA256SUMS.old SHA256SUMS.new | LC_ALL=C sort -k2 > SHA256SUMS
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file notes.md
+          else
+            LC_ALL=C sort -k2 SHA256SUMS.new > SHA256SUMS
+            if [ "$GITHUB_EVENT_NAME" = push ]; then verify=--verify-tag; else verify="--target $GITHUB_SHA"; fi
+            # shellcheck disable=SC2086
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" $verify --latest=false \
+              --title "VM artifacts: kernel ${KERNEL:0:8}, rootfs ${ROOTFS:0:8}" --notes-file notes.md
+          fi
+          rm -f SHA256SUMS.old SHA256SUMS.new
+          cat SHA256SUMS
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber $(ls | grep -vx notes.md)
+          echo "https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG"
