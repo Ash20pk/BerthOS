@@ -20,8 +20,11 @@ config_delta = "berth-kernel.config"
 config_delta_sha256 = "ac5c0c4e0d5740a222f0ef118aaf27fb21c8cafa7c9afcdfce6a023c98d439b8"
 
 # Builder: a fresh Alpine root (minirootfs below + apk build-base etc.), used
-# for nothing but this build. The exact toolchain is recorded in toolchain.txt
-# next to the output; the compiler string is also inside the Image.
+# for nothing but this build: a libkrun builder VM on macOS, a container on
+# the Linux runner .github/workflows/vm-artifacts.yml uses; both give this
+# Image. The exact toolchain is recorded in toolchain.txt next to the output,
+# and its Alpine package set in kernel/apk.lock; the compiler string is also
+# inside the Image.
 builder_alpine = "3.24.2"
 builder_minirootfs_sha256 = "9bf70a7f18ea44094cbb5f70c58f9af129c8214745743db0e68e5502cc2ce773"
 builder_cc = "gcc (Alpine 15.2.0) 15.2.0"
@@ -49,6 +52,8 @@ cmdline = "reboot=k panic=-1 panic_print=0 nomodule console=hvc0 root=/dev/vda r
 # /proc, /sys, /dev and runs the guest command.
 cmdline_virtiofs_root = "reboot=k panic=-1 panic_print=0 nomodule console=hvc0 rootfstype=virtiofs rw quiet no-kvmapf rcupdate.rcu_expedited=1 init=/init.krun"
 
-# Distribution (planned, not live): the Image, its config and this manifest are
-# published under their sha256, so a user downloads and verifies, never builds.
-dist_url = "https://artifacts.berth.dev/kernel/sha256/{image_sha256}/Image"
+# Distribution: .github/workflows/vm-artifacts.yml rebuilds the Image, checks
+# it against image_sha256, and publishes it with its config, its GPL sources
+# and this manifest as the GitHub release vm-artifacts-<kernel8>-<rootfs8>.
+# `berth vm install` downloads it from there and verifies it, never builds.
+dist_url = "https://github.com/Ash20pk/BerthOS/releases/download/vm-artifacts-{kernel8}-{rootfs8}/Image-{image_sha256}"

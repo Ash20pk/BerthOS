@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_ARTIFACTS_URL, readConfigFile, resolveArtifactsDir, resolveArtifactsUrl, resolveSandbox } from "./config.js";
 import { expandUrlTemplate } from "./artifacts.js";
-import { KERNEL_PIN, ROOTFS_PIN } from "./pins.js";
+import { KERNEL_PIN, ROOTFS_PIN, releaseTag } from "./pins.js";
 
 test("sandbox runtime: flag over BERTH_SANDBOX over the config file over docker", () => {
   assert.equal(resolveSandbox(undefined, {}, {}), "docker");
@@ -26,8 +26,12 @@ test("artifact sources: flag, then environment, then config", () => {
   assert.equal(resolveArtifactsDir(undefined, { BERTH_VMM_ARTIFACTS: "/a" }, { vm: { artifactsDir: "/b" } }), "/a");
 });
 
-test("the URL template is keyed by sha256", () => {
-  assert.equal(expandUrlTemplate(DEFAULT_ARTIFACTS_URL, KERNEL_PIN), `https://artifacts.berth.dev/kernel/sha256/${KERNEL_PIN.sha256}/Image`);
+test("the URL template is keyed by sha256, and defaults to the pair's GitHub release", () => {
+  const tag = releaseTag(KERNEL_PIN.sha256, ROOTFS_PIN.sha256);
+  assert.equal(tag, `vm-artifacts-${KERNEL_PIN.sha256.slice(0, 8)}-${ROOTFS_PIN.sha256.slice(0, 8)}`);
+  const pair = { kernel: KERNEL_PIN.sha256, rootfs: ROOTFS_PIN.sha256 };
+  assert.equal(expandUrlTemplate(DEFAULT_ARTIFACTS_URL, KERNEL_PIN, pair), `https://github.com/Ash20pk/BerthOS/releases/download/${tag}/Image-${KERNEL_PIN.sha256}`);
+  assert.equal(expandUrlTemplate(DEFAULT_ARTIFACTS_URL, ROOTFS_PIN, pair), `https://github.com/Ash20pk/BerthOS/releases/download/${tag}/rootfs-${ROOTFS_PIN.sha256}.erofs`);
   assert.equal(expandUrlTemplate("http://m/{sha256}/{file}", ROOTFS_PIN), `http://m/${ROOTFS_PIN.sha256}/rootfs-${ROOTFS_PIN.sha256}.erofs`);
 });
 

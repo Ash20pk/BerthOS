@@ -20,11 +20,16 @@ export const DEFAULT_SANDBOX: SandboxRuntime = "docker";
 
 /**
  * Where `berth vm install` downloads a pinned artifact from when there is no
- * local build: {kind} is kernel or rootfs, {sha256} its pin, {file} its file
- * name. Matches kernel/manifest.toml's dist_url. Nothing is published there
- * yet; set your own with BERTH_VM_ARTIFACTS_URL or the config file.
+ * local build: the GitHub release .github/workflows/vm-artifacts.yml publishes
+ * for this kernel and rootfs pair. The placeholders (artifacts.ts,
+ * expandUrlTemplate): {asset} the release asset name (Image-<sha256>,
+ * rootfs-<sha256>.erofs, berth-vmm-<platform>-<sha256>), {kernel8}/{rootfs8}
+ * the first 8 hex digits of the pair's pins (the release tag), {kind} kernel,
+ * rootfs or vmm, {sha256} the artifact's pin, {file} its file name in the
+ * artifacts directory. Every download is checked against its pin, so a mirror
+ * (BERTH_VM_ARTIFACTS_URL, vm.artifactsUrl, --url) needs no trust.
  */
-export const DEFAULT_ARTIFACTS_URL = "https://artifacts.berth.dev/{kind}/sha256/{sha256}/{file}";
+export const DEFAULT_ARTIFACTS_URL = "https://github.com/Ash20pk/BerthOS/releases/download/vm-artifacts-{kernel8}-{rootfs8}/{asset}";
 
 export interface BerthConfigFile {
   sandbox?: string;

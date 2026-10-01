@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { KERNEL_CONFIG_SHA256, KERNEL_LINUX, KERNEL_SHA256, KERNEL_SIZE, ROOTFS_SHA256, ROOTFS_SIZE, manifestsInBinary, pinsFromManifests } from "./pins.js";
+import { DEFAULT_ARTIFACTS_URL } from "./config.js";
+import { KERNEL_CONFIG_SHA256, KERNEL_LINUX, KERNEL_SHA256, KERNEL_SIZE, ROOTFS_SHA256, ROOTFS_SIZE, VMM_PINS, manifestsInBinary, pinsFromManifests } from "./pins.js";
 
 const vmm = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "vmm");
 const get = (manifest: string, key: string) => manifest.split("\n").map((l) => l.split("=")).find(([k]) => k!.trim() === key)?.[1]?.trim().replace(/^"|"$/g, "");
@@ -17,8 +18,10 @@ test("the CLI's pins are the ones berth-vmm compiles in (packages/vmm manifests)
   assert.equal(get(kernel, "config_sha256"), KERNEL_CONFIG_SHA256);
   assert.equal(get(rootfs, "image_sha256"), ROOTFS_SHA256);
   assert.equal(Number(get(rootfs, "image_size")), ROOTFS_SIZE);
-  // The download template's default matches the kernel manifest's planned dist_url.
-  assert.equal(get(kernel, "dist_url"), `https://artifacts.berth.dev/kernel/sha256/{image_sha256}/Image`);
+  // The kernel manifest's dist_url is the CLI's default template, for the kernel.
+  assert.equal(get(kernel, "dist_url"), DEFAULT_ARTIFACTS_URL.replace("{asset}", "Image-{image_sha256}"));
+  // A pinned berth-vmm was built for this pair (the release it is published in).
+  for (const p of Object.values(VMM_PINS)) assert.match(p!.sha256, /^[0-9a-f]{64}$/);
 });
 
 test("the pins are read out of a berth-vmm binary's compiled-in manifests", () => {

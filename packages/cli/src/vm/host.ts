@@ -3,7 +3,7 @@ import { accessSync, constants, existsSync, readlinkSync, readdirSync, realpathS
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readFileSync as readBytes } from "node:fs";
-import { KERNEL_PIN, LIBKRUN_VERSION, ROOTFS_PIN, manifestsInBinary, pinsFromManifests, type ArtifactPin } from "./pins.js";
+import { KERNEL_PIN, LIBKRUN_VERSION, ROOTFS_PIN, manifestsInBinary, pinsFromManifests, vmmPin, type ArtifactPin } from "./pins.js";
 import { vmHome } from "./paths.js";
 
 /**
@@ -221,7 +221,9 @@ export function checkHost(options: { env?: NodeJS.ProcessEnv; platform?: NodeJS.
       title: "berth-vmm",
       status: "fail",
       detail: vmm ? `BERTH_VMM=${vmm} does not exist` : `not found: not in BERTH_VMM, ${join(vmHome(), "bin", "berth-vmm")}, PATH, or this checkout's packages/vmm/target/release`,
-      remedy: "build it (cd packages/vmm && cargo build --release) and run `berth vm install --vmm packages/vmm/target/release/berth-vmm`, or set BERTH_VMM",
+      remedy: vmmPin()
+        ? "run `berth vm install`, which downloads the published berth-vmm and checks it against this CLI's pin, or set BERTH_VMM"
+        : "build it (cd packages/vmm && cargo build --release) and run `berth vm install --vmm packages/vmm/target/release/berth-vmm`, or set BERTH_VMM",
     });
   } else {
     checks.push({ id: "berth-vmm", title: "berth-vmm", status: "ok", detail: vmm });

@@ -1,13 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { artifactsPresent, checkArtifacts, installArtifacts } from "./artifacts.js";
-import type { ArtifactPin } from "./pins.js";
+import { artifactsPresent, checkArtifacts, expandUrlTemplate, installArtifacts, releasePair, sourceCandidates } from "./artifacts.js";
+import { DEFAULT_ARTIFACTS_URL } from "./config.js";
+import { kernelPin, rootfsPin, vmmPin, type ArtifactPin } from "./pins.js";
 
 const sha = (b: Buffer) => createHash("sha256").update(b).digest("hex");
 
@@ -16,10 +17,7 @@ function fixture() {
   const rootfs = Buffer.from("erofs image bytes ".repeat(300));
   const ks = sha(kernel);
   const rs = sha(rootfs);
-  const pins: ArtifactPin[] = [
-    { kind: "kernel", sha256: ks, size: kernel.length, file: "Image", relPath: `kernel/sha256/${ks}/Image` },
-    { kind: "rootfs", sha256: rs, size: rootfs.length, file: `rootfs-${rs}.erofs`, relPath: `rootfs/rootfs-${rs}.erofs` },
-  ];
+  const pins: ArtifactPin[] = [kernelPin(ks, kernel.length), rootfsPin(rs, rootfs.length)];
   const root = mkdtempSync(join(tmpdir(), "berth-vm-art-"));
   return { kernel, rootfs, pins, root, dest: join(root, "dest") };
 }
@@ -31,12 +29,12 @@ function writeLayout(dir: string, pins: ArtifactPin[], bodies: Buffer[]) {
   });
 }
 
-async function serve(handler: (path: string) => { status: number; body?: Buffer; length?: number }): Promise<{ url: string; server: Server; hits: string[] }> {
+async function serve(handler: (path: string) => { status: number; body?: Buffer; length?: number; location?: string }): Promise<{ url: string; server: Server; hits: string[] }> {
   const hits: string[] = [];
   const server = createServer((req, res) => {
     hits.push(req.url ?? "");
     const r = handler(req.url ?? "");
-    res.writeHead(r.status, r.length !== undefined ? { "content-length": String(r.length) } : {});
+    res.writeHead(r.status, { ...(r.length !== undefined ? { "content-length": String(r.length) } : {}), ...(r.location ? { location: r.location } : {}) });
     res.end(r.body);
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -109,4 +107,107 @@ test("an installed artifact that no longer verifies is replaced", async () => {
   const results = await installArtifacts({ root: f.dest, from: src, pins: f.pins, log: (m) => logs.push(m) });
   assert.deepEqual(results.map((r) => r.source), ["copied", "installed"]);
   assert.match(logs.join("\n"), /replacing it/);
+});
+
+/** A directory shaped like a vm-artifacts GitHub release: every asset named by its sha256. */
+function releaseDir(dir: string, pins: ArtifactPin[], bodies: Buffer[]) {
+  mkdirSync(dir, { recursive: true });
+  pins.forEach((p, i) => writeFileSync(join(dir, p.asset), bodies[i]!));
+}
+
+test("the default template is the GitHub release for the kernel and rootfs pair, by asset name", () => {
+  const f = fixture();
+  const [k, r] = f.pins as [ArtifactPin, ArtifactPin];
+  const tag = `vm-artifacts-${k.sha256.slice(0, 8)}-${r.sha256.slice(0, 8)}`;
+  const base = `https://github.com/Ash20pk/BerthOS/releases/download/${tag}`;
+  assert.equal(expandUrlTemplate(DEFAULT_ARTIFACTS_URL, k, releasePair(f.pins)), `${base}/Image-${k.sha256}`);
+  assert.equal(expandUrlTemplate(DEFAULT_ARTIFACTS_URL, r, releasePair(f.pins)), `${base}/rootfs-${r.sha256}.erofs`);
+  // berth-vmm sits in the release of the pair it was built for.
+  const v = vmmPin("darwin-arm64", { "darwin-arm64": { sha256: "c".repeat(64), size: 3 } })!;
+  assert.equal(expandUrlTemplate(DEFAULT_ARTIFACTS_URL, v, releasePair(f.pins)), `${base}/berth-vmm-darwin-arm64-${"c".repeat(64)}`);
+  // The older placeholders still work for a mirror keyed by sha256.
+  assert.equal(expandUrlTemplate("https://m/{kind}/sha256/{sha256}/{file}", k), `https://m/kernel/sha256/${k.sha256}/Image`);
+  assert.ok(sourceCandidates(k, "/d").includes(`/d/Image-${k.sha256}`), "a downloaded release directory works with --from");
+});
+
+test("installs from a local HTTP server shaped like a GitHub release, following the redirect to the asset host", async () => {
+  const f = fixture();
+  const [k, r] = f.pins as [ArtifactPin, ArtifactPin];
+  const tag = `vm-artifacts-${k.sha256.slice(0, 8)}-${r.sha256.slice(0, 8)}`;
+  const bodies = new Map([
+    [`/cdn/${k.asset}`, f.kernel],
+    [`/cdn/${r.asset}`, f.rootfs],
+  ]);
+  const prefix = `/Ash20pk/BerthOS/releases/download/${tag}/`;
+  const { url, server, hits } = await serve((path) => {
+    // github.com answers a release download with a 302 to its asset CDN.
+    if (path.startsWith(prefix)) return { status: 302, location: `/cdn/${path.slice(prefix.length)}` };
+    const body = bodies.get(path);
+    return body ? { status: 200, body, length: body.length } : { status: 404 };
+  });
+  try {
+    const results = await installArtifacts({ root: f.dest, urlTemplate: `${url}/Ash20pk/BerthOS/releases/download/vm-artifacts-{kernel8}-{rootfs8}/{asset}`, pins: f.pins });
+    assert.deepEqual(results.map((x) => x.source), ["downloaded", "downloaded"]);
+    assert.deepEqual(hits, [`${prefix}${k.asset}`, `/cdn/${k.asset}`, `${prefix}${r.asset}`, `/cdn/${r.asset}`]);
+    assert.deepEqual((await checkArtifacts(f.dest, f.pins)).map((x) => x.status), ["verified", "verified"]);
+    // berth-vmm's layout, not the release's names, on disk.
+    assert.deepEqual(readFileSync(join(f.dest, k.relPath)), f.kernel);
+    assert.deepEqual(readFileSync(join(f.dest, r.relPath)), f.rootfs);
+  } finally {
+    server.close();
+  }
+});
+
+test("installs from a file: URL template (a downloaded release directory as a mirror), and refuses a wrong file there", async () => {
+  const f = fixture();
+  const rel = join(f.root, "release");
+  releaseDir(rel, f.pins, [f.kernel, f.rootfs]);
+  const template = `file://${rel}/{asset}`;
+  const results = await installArtifacts({ root: f.dest, urlTemplate: template, pins: f.pins });
+  assert.deepEqual(results.map((x) => x.source), ["downloaded", "downloaded"]);
+  assert.ok(artifactsPresent(f.dest, f.pins));
+
+  const bad = join(f.root, "bad");
+  releaseDir(bad, f.pins, [Buffer.alloc(f.kernel.length, 7), f.rootfs]);
+  await assert.rejects(installArtifacts({ root: join(f.root, "dest2"), urlTemplate: `file://${bad}/{asset}`, pins: f.pins }), /served sha256 [0-9a-f]{64}, not the pinned/);
+  releaseDir(bad, [f.pins[0]!], [Buffer.concat([f.kernel, Buffer.from("x")])]);
+  await assert.rejects(installArtifacts({ root: join(f.root, "dest3"), urlTemplate: `file://${bad}/{asset}`, pins: [f.pins[0]!] }), /size \d+, but the pinned kernel is \d+ bytes/);
+});
+
+test("berth-vmm: made executable and cleared of quarantine only after its sha256 matched", async () => {
+  const f = fixture();
+  const vmm = Buffer.from("\xcf\xfa\xed\xfe a mach-o, really ".repeat(20));
+  const pin = vmmPin("darwin-arm64", { "darwin-arm64": { sha256: sha(vmm), size: vmm.length } })!;
+  assert.equal(pin.relPath, "bin/berth-vmm");
+  const calls: string[][] = [];
+  const run = ((cmd: string, args: string[]) => {
+    calls.push([cmd, ...args]);
+    return { status: 0, stdout: "", stderr: "" };
+  }) as unknown as typeof import("node:child_process").spawnSync;
+  const rel = join(f.root, "release");
+  releaseDir(rel, [pin], [vmm]);
+  const logs: string[] = [];
+  const [res] = await installArtifacts({ root: f.dest, urlTemplate: `file://${rel}/{asset}`, pins: [pin], release: releasePair(f.pins), run, log: (m) => logs.push(m) });
+  const dest = join(f.dest, "bin", "berth-vmm");
+  assert.equal(res!.path, dest);
+  assert.equal(statSync(dest).mode & 0o777, 0o755);
+  if (process.platform === "darwin") {
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0]!.slice(0, 3), ["xattr", "-d", "com.apple.quarantine"]);
+    assert.match(calls[0]![3]!, /berth-vmm\.partial-/, "cleared on the verified temporary file, before it is put in place");
+    assert.match(logs.join("\n"), /cleared com\.apple\.quarantine after verifying/);
+  }
+
+  // Wrong bytes: refused, and xattr is never run on them.
+  calls.length = 0;
+  const bad = join(f.root, "bad");
+  releaseDir(bad, [pin], [Buffer.alloc(vmm.length, 1)]);
+  await assert.rejects(installArtifacts({ root: join(f.root, "dest-bad"), urlTemplate: `file://${bad}/{asset}`, pins: [pin], run }), /not the pinned/);
+  assert.deepEqual(calls, []);
+  assert.equal(existsSync(join(f.root, "dest-bad", "bin", "berth-vmm")), false);
+});
+
+test("no berth-vmm is pinned for a platform it isn't published for", () => {
+  assert.equal(vmmPin("linux-x64", {}), undefined);
+  assert.equal(vmmPin("linux-arm64", { "darwin-arm64": { sha256: "d".repeat(64), size: 1 } }), undefined);
 });
