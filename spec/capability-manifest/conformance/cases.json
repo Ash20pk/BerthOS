@@ -1,5 +1,5 @@
 {
-  "specVersion": "1.1.0",
+  "specVersion": "1.2.0",
   "description": "Conformance corpus for the Capability Manifest Specification. See SPEC.md section 7.",
   "cases": [
     {
@@ -1411,6 +1411,68 @@
       "expect": {
         "valid": true
       }
+    },
+    {
+      "id": "valid-resources-pids",
+      "tags": [
+        "extended"
+      ],
+      "op": "validate",
+      "manifest": {
+        "name": "app",
+        "version": "1.0.0",
+        "resources": {
+          "pids": 64
+        }
+      },
+      "expect": {
+        "valid": true
+      },
+      "note": "pids is a positive integer count of tasks (\u00a74.9, since 1.2.0)"
+    },
+    {
+      "id": "invalid-resources-pids-zero",
+      "tags": [
+        "extended"
+      ],
+      "op": "validate",
+      "manifest": {
+        "name": "app",
+        "version": "1.0.0",
+        "resources": {
+          "pids": 0
+        }
+      },
+      "expect": {
+        "valid": false,
+        "path": [
+          "resources",
+          "pids"
+        ]
+      },
+      "note": "since 1.2.0"
+    },
+    {
+      "id": "invalid-resources-pids-float",
+      "tags": [
+        "extended"
+      ],
+      "op": "validate",
+      "manifest": {
+        "name": "app",
+        "version": "1.0.0",
+        "resources": {
+          "pids": 1.5
+        }
+      },
+      "expect": {
+        "valid": false,
+        "path": [
+          "resources",
+          "pids"
+        ]
+      },
+      "note": "since 1.2.0"
     },
     {
       "id": "valid-governance-exempt",

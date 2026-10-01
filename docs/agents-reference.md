@@ -56,7 +56,9 @@ The handle has `tools`, `call(toolName, input)`, `stop()`, `httpRpc` (`{ url, au
 
 `Computer.boot()` sets `BERTH_REQUIRE_ENFORCEMENT=1`, so if the kernel can't enforce the app's policy, the app doesn't start and `boot()` fails. Enforcement needs Linux 6.7+ with Landlock, which Docker Desktop lacks. `berth doctor` checks; on a Mac, `berth doctor --fix` sets up a VM that has it ([by platform](./kernel-enforcement.md#kernel-enforcement-by-platform)).
 
-For local iteration without Landlock, `Computer.boot({ enforcement: "warn" })` or `BERTH_ALLOW_UNENFORCED=1` on the host runs the app unrestricted with a warning on every boot. The option wins over the env var. Neither gives any isolation.
+It also sets `BERTH_REQUIRE_APP_CGROUPS=1`, so if the host can't give each app its own cgroup (cgroup v2 with `nsdelegate`, Docker 28+), `boot()` fails rather than running the apps bounded only by the container's caps. Pass `env: { BERTH_REQUIRE_APP_CGROUPS: "0" }` to relax only that. See [resource limits](./resource-limits.md#requiring-them).
+
+For local iteration without Landlock, `Computer.boot({ enforcement: "warn" })` or `BERTH_ALLOW_UNENFORCED=1` on the host runs the app unrestricted with a warning on every boot, and doesn't require per-app cgroups either. The option wins over the env var. Neither gives any isolation.
 
 ## Cold start: `berth os up` and `Computer.connect()`
 

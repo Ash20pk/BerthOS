@@ -2,8 +2,8 @@
 
 A standalone, versioned spec for the manifest an application uses to declare, before it runs, everything it intends to touch, plus a conformance suite that checks whether an implementation follows it.
 
-- **[SPEC.md](./SPEC.md)**: the specification, version **1.1.0** ([VERSION](./VERSION)).
-- **[conformance/cases.json](./conformance/cases.json)**: 87 machine-readable test cases.
+- **[SPEC.md](./SPEC.md)**: the specification, version **1.2.0** ([VERSION](./VERSION)).
+- **[conformance/cases.json](./conformance/cases.json)**: 93 machine-readable test cases.
 - **[conformance/run.mjs](./conformance/run.mjs)**: the runner. No dependencies, no knowledge of any implementation.
 
 The companion spec is [spec/attestation-record](../attestation-record): a manifest says what an app intends to touch, an attestation record says what a run actually enforced. They are versioned separately and share one thing, the enforcement-tier vocabulary.

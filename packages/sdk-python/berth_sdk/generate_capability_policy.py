@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 from typing import Iterable, Mapping, Optional
 
-from .manifest import capability_issue, is_capability_string, load_manifest, parse_capability
+from .manifest import ResourcesSpec, app_cgroup_limits, capability_issue, is_capability_string, load_manifest, parse_capability
 
 # Per-app, not container-wide: this used to be all of /tmp for every app, which
 # let one app reach another's RPC socket. See the TypeScript original for why a
@@ -295,6 +295,12 @@ def http_rpc_tls_read_paths(app_name: str, env: Mapping[str, str]) -> list[str]:
     return list(dict.fromkeys(dirs))
 
 
+def compile_cgroup_limits(resources: object) -> dict[str, str]:
+    """compileCgroupLimits() in the TypeScript file: an app's `resources:` as
+    cgroup limits, after the manifest's own validation."""
+    return app_cgroup_limits(ResourcesSpec.model_validate(resources))
+
+
 def main() -> None:
     manifest_path = os.environ.get("BERTH_MANIFEST_PATH", str(Path.cwd() / "berth.yml"))
     policy_path = Path(os.environ.get("BERTH_CAPABILITY_POLICY", str(Path.cwd() / ".berth" / "capability-policy.json")))
@@ -309,6 +315,7 @@ def main() -> None:
     policy["readPaths"].extend(
         d for d in http_rpc_tls_read_paths(manifest.name, os.environ) if not any(d == g or d.startswith(g + "/") for g in granted)
     )
+    policy["cgroupLimits"] = app_cgroup_limits(manifest.resources)
 
     policy_path.parent.mkdir(parents=True, exist_ok=True)
     policy_path.write_text(json.dumps(policy, indent=2))
@@ -324,7 +331,8 @@ def main() -> None:
         + (f"; readPaths={', '.join(policy['readPaths'])}" if policy["readPaths"] else "")
         + f"; {network_summary}"
         + (f"; bindPorts={', '.join(str(p) for p in policy['bindPorts'])}" if policy["bindPorts"] else "")
-        + (f"; meshPeers={', '.join(policy['meshPeers'])}" if policy["meshPeers"] else ""),
+        + (f"; meshPeers={', '.join(policy['meshPeers'])}" if policy["meshPeers"] else "")
+        + f"; cgroupLimits={', '.join(f'{k}={v}' for k, v in policy['cgroupLimits'].items())}",
         file=sys.stderr,
     )
 

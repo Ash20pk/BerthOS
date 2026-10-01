@@ -7,6 +7,7 @@ implementation validates the exact same shape rather than porting any code.
 from __future__ import annotations
 
 import json
+import math
 import re
 from typing import Literal, Optional
 
@@ -26,6 +27,40 @@ class ExportSpec(BaseModel):
     output: dict[str, JsonPrimitiveType] = Field(default_factory=dict)
 
 
+def _positive_number(value: object, *, integer: bool) -> object:
+    """z.number().positive() (and .int()) in schema.ts. Strict about type as
+    zod is: a bool or a numeric string is refused, not coerced."""
+    if value is None:
+        return value
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("must be a number")
+    if integer and not float(value).is_integer():
+        raise ValueError("must be an integer")
+    if value <= 0:
+        raise ValueError("must be positive")
+    return int(value) if integer else value
+
+
+class ResourcesSpec(BaseModel):
+    """ResourcesSpec in schema.ts. What each key means for an app's cgroup is
+    app_cgroup_limits() below."""
+
+    cpu: Optional[float] = None
+    memory_mb: Optional[int] = None
+    gpu: Optional[int] = None
+    pids: Optional[int] = None
+
+    @field_validator("cpu", mode="before")
+    @classmethod
+    def _validate_cpu(cls, v: object) -> object:
+        return _positive_number(v, integer=False)
+
+    @field_validator("memory_mb", "gpu", "pids", mode="before")
+    @classmethod
+    def _validate_count(cls, v: object) -> object:
+        return _positive_number(v, integer=True)
+
+
 class BerthManifest(BaseModel):
     name: str
     version: str
@@ -34,6 +69,7 @@ class BerthManifest(BaseModel):
     exports: list[ExportSpec] = Field(default_factory=list)
     on_install: list[str] = Field(default_factory=list)
     on_agent_ready: list[str] = Field(default_factory=list)
+    resources: ResourcesSpec = Field(default_factory=ResourcesSpec)
 
     @field_validator("name")
     @classmethod
@@ -167,3 +203,27 @@ def capability_issue(capability: str) -> Optional[str]:
     if parsed.namespace == "filesystem" and parsed.action == "read":
         return filesystem_scope_issue(parsed.scope)
     return None
+
+
+# Mirrors @berthos/manifest-schema's resources.ts: the cgroup v2 files one app's
+# `resources:` becomes, as the strings entrypoint.sh writes. Integer arithmetic
+# with the same half-up rounding as the TypeScript, so the two compilers write
+# identical policies (tests/test_policy_parity.py).
+CPU_PERIOD_US = 100_000
+_MIN_CPU_QUOTA_US = 1_000
+DEFAULT_APP_PIDS = 1024
+DEFAULT_APP_CPU_WEIGHT = 100
+
+
+def app_cgroup_limits(resources: ResourcesSpec) -> dict[str, str]:
+    """appCgroupLimits() in resources.ts."""
+    limits = {"cpu.weight": str(DEFAULT_APP_CPU_WEIGHT)}
+    if resources.cpu is not None:
+        quota = max(_MIN_CPU_QUOTA_US, math.floor(resources.cpu * CPU_PERIOD_US + 0.5))
+        limits["cpu.max"] = f"{quota} {CPU_PERIOD_US}"
+    if resources.memory_mb is not None:
+        # memory.max only, no memory.high: see resources.ts for why.
+        limits["memory.max"] = str(resources.memory_mb * 1024 * 1024)
+        limits["memory.swap.max"] = "0"
+    limits["pids.max"] = str(resources.pids if resources.pids is not None else DEFAULT_APP_PIDS)
+    return limits

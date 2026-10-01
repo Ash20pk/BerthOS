@@ -41,6 +41,8 @@ import {
   capabilityIssue,
   CapabilityString,
   ALLOWED_FILESYSTEM_SCOPE_PREFIXES,
+  ResourcesSpec,
+  appCgroupLimits,
   type ParsedCapability,
 } from "@berthos/manifest-schema";
 
@@ -306,6 +308,14 @@ export interface CapabilityPolicy {
   // declare `network:connect:*` to switch network restriction off wholesale
   // — which granted unrestricted connect as a side effect of wanting bind.
   bindPorts: number[];
+  // This app's cgroup v2 limits, as `interface file -> value` — what
+  // berth.yml's `resources:` means for the app itself (see
+  // @berthos/manifest-schema's resources.ts). Not read by agent-init at all:
+  // entrypoint.sh writes them into /sys/fs/cgroup/berth/apps/<app>/ and moves
+  // the app there before exec-ing agent-init. It lives in this file because
+  // this is already the one root-written, app-unwritable record of what one
+  // app was granted, and because it is what `berth attest` hashes.
+  cgroupLimits?: Record<string, string>;
 }
 
 function stripTrailingGlob(scope: string): string {
@@ -532,6 +542,15 @@ export function httpRpcTlsReadPaths(
   return [...dirs];
 }
 
+/**
+ * An app's `resources:` as cgroup limits, after the same validation the
+ * manifest loader applies. Exported, like compileCapabilityPolicy(), so the
+ * Python compiler's parity test can run both over the same inputs.
+ */
+export function compileCgroupLimits(resources: unknown): Record<string, string> {
+  return appCgroupLimits(ResourcesSpec.parse(resources));
+}
+
 async function main(): Promise<void> {
   const manifest = await loadManifest(MANIFEST_PATH);
   const policy = compileCapabilityPolicy(manifest.name, manifest.capabilities);
@@ -543,6 +562,7 @@ async function main(): Promise<void> {
   ];
   const covered = (path: string) => policy.readPaths.some((granted) => path === granted || path.startsWith(granted + "/"));
   policy.readPaths.push(...httpRpcTlsReadPaths(manifest.name, process.env).filter((dir) => !covered(dir)));
+  policy.cgroupLimits = appCgroupLimits(manifest.resources);
 
   await mkdir(dirname(POLICY_PATH), { recursive: true });
   await writeFile(POLICY_PATH, JSON.stringify(policy, null, 2));
@@ -556,7 +576,8 @@ async function main(): Promise<void> {
       (policy.readPaths.length > 0 ? `; readPaths=${policy.readPaths.join(", ")}` : "") +
       `; ${networkSummary}` +
       (policy.bindPorts.length > 0 ? `; bindPorts=${policy.bindPorts.join(", ")}` : "") +
-      (policy.meshPeers.length > 0 ? `; meshPeers=${policy.meshPeers.join(", ")}` : ""),
+      (policy.meshPeers.length > 0 ? `; meshPeers=${policy.meshPeers.join(", ")}` : "") +
+      `; cgroupLimits=${Object.entries(policy.cgroupLimits).map(([file, value]) => `${file}=${value}`).join(", ")}`,
   );
 }
 

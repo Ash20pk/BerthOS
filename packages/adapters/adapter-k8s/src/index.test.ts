@@ -167,6 +167,26 @@ test("start() sets requests == limits on the Pod spec when the manifest declares
   assert.deepEqual(podBody.spec.containers[0].resources, { requests: expected, limits: expected });
 });
 
+test("start() turns off per-app cgroup strict mode, which a Pod can never satisfy, unless the caller's env turns it back on", async (t) => {
+  let podBody: any;
+  const coreApi = {
+    createNamespacedPod: async (args: any) => {
+      podBody = args.body;
+      return { metadata: { name: "x-abc12" } };
+    },
+  };
+  t.mock.module("@kubernetes/client-node", mockK8sModule(coreApi));
+  const { createK8sAdapter } = await import("./index.js");
+  const adapter = createK8sAdapter();
+  await adapter.start("berth/x:1.0.0", { imageRef: "berth/x:1.0.0", manifest, env: { FOO: "bar" } });
+  assert.deepEqual(podBody.spec.containers[0].env, [
+    { name: "BERTH_REQUIRE_APP_CGROUPS", value: "0" },
+    { name: "FOO", value: "bar" },
+  ]);
+  await adapter.start("berth/x:1.0.0", { imageRef: "berth/x:1.0.0", manifest, env: { BERTH_REQUIRE_APP_CGROUPS: "1" } });
+  assert.deepEqual(podBody.spec.containers[0].env, [{ name: "BERTH_REQUIRE_APP_CGROUPS", value: "1" }]);
+});
+
 test("start() sets a topology.kubernetes.io/region nodeSelector when target.region is given", async (t) => {
   let podBody: any;
   const coreApi = {

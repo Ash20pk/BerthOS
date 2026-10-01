@@ -24,6 +24,24 @@ export interface BootEvidence {
   rulesetReports: RulesetReport[];
   policies: PolicyDigest[];
   doctorProbe: DoctorProbeResult;
+  /** What entrypoint.sh reported applying to each app's cgroup at this boot. Absent from evidence recorded before it existed. */
+  resourceLimits?: ResourceLimitsEvidence;
+}
+
+/**
+ * The per-app cgroup limits a boot applied, from entrypoint.sh's
+ * `cgroup_delegation` and `cgroup_limits_applied` events. The limits are read
+ * back from the kernel after they were written, so they say what the cgroup
+ * holds, not what the manifest asked for — that is already bound by the
+ * policy digest, since each app's `cgroupLimits` is in the policy file.
+ */
+export interface ResourceLimitsEvidence {
+  /** `active`: every app below has a cgroup of its own. `inactive`: none does, see `reason`. `unknown`: the boot logged neither. */
+  status: "active" | "inactive" | "unknown";
+  reason?: string;
+  /** The controllers enabled for the apps, space-separated as the kernel lists them. */
+  controllers?: string;
+  apps: { app: string; cgroup: string; limits: Record<string, string> }[];
 }
 
 /**
@@ -87,6 +105,45 @@ export function parseRulesetReports(logs: string, bootId: string): RulesetReport
     }
   }
   return reports;
+}
+
+/**
+ * entrypoint.sh's cgroup events for one boot. The first event of each kind
+ * (per app, for the limits) wins: entrypoint.sh prints its own before the app
+ * it describes has been exec'd, and an app's stderr shares this log, so a
+ * later line claiming otherwise is the one that cannot be the entrypoint's.
+ */
+export function parseResourceLimits(logs: string, bootId: string): ResourceLimitsEvidence {
+  const evidence: ResourceLimitsEvidence = { status: "unknown", apps: [] };
+  let delegationSeen = false;
+  const seenApps = new Set<string>();
+  for (const line of logs.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("{")) continue;
+    let event: Record<string, unknown>;
+    try {
+      event = JSON.parse(trimmed) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    if (event.source !== "berth-entrypoint" || event.bootId !== bootId) continue;
+    if (event.event === "cgroup_delegation" && !delegationSeen) {
+      delegationSeen = true;
+      if (event.status === "active" || event.status === "inactive") evidence.status = event.status;
+      if (typeof event.reason === "string") evidence.reason = event.reason;
+      if (typeof event.controllers === "string") evidence.controllers = event.controllers;
+    } else if (event.event === "cgroup_limits_applied" && typeof event.app === "string" && !seenApps.has(event.app)) {
+      seenApps.add(event.app);
+      const limits: Record<string, string> = {};
+      if (event.limits && typeof event.limits === "object") {
+        for (const [file, value] of Object.entries(event.limits as Record<string, unknown>)) {
+          if (typeof value === "string") limits[file] = value;
+        }
+      }
+      evidence.apps.push({ app: event.app, cgroup: typeof event.cgroup === "string" ? event.cgroup : "", limits });
+    }
+  }
+  return evidence;
 }
 
 /** Parses the `<sha256> <appName> <path>` lines POLICY_DIGEST_SCRIPT prints. */
@@ -163,6 +220,7 @@ export async function gatherBootEvidence(docker: Docker, containerName: string, 
   }
 
   const rulesetReports = parseRulesetReports(logs, bootId);
+  const resourceLimits = parseResourceLimits(logs, bootId);
   const reportedApps = new Set(rulesetReports.map((r) => r.app));
   const seen = new Set<string>();
   const policies = parsePolicyLines(await execCapture(docker, container, ["sh", "-c", POLICY_DIGEST_SCRIPT])).filter((p) => {
@@ -191,5 +249,6 @@ export async function gatherBootEvidence(docker: Docker, containerName: string, 
     rulesetReports,
     policies,
     doctorProbe,
+    resourceLimits,
   };
 }
