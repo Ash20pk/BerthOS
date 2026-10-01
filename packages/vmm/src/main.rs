@@ -21,6 +21,7 @@ use std::os::raw::{c_char, c_int};
 use std::process::exit;
 
 mod pins;
+mod run;
 mod sha256;
 
 #[link(name = "krun")]
@@ -88,7 +89,11 @@ struct Opts {
     exec: Vec<String>,
 }
 
-const USAGE: &str = "usage: berth-vmm [options] -- <guest-path> [args...]
+const USAGE: &str = "usage: berth-vmm run --app DIR [--app DIR...] [--state DISK] [run options]
+       berth-vmm [options] [-- <guest-path> [args...]]
+
+`berth-vmm run` boots a sandbox from the pinned artifacts; see `berth-vmm run --help`.
+The low-level form below is what it expands to (and what builder VMs use).
 
   --cpus N                  vCPUs (default 1)
   --mem MIB                 guest RAM in MiB (default 512)
@@ -110,6 +115,9 @@ const USAGE: &str = "usage: berth-vmm [options] -- <guest-path> [args...]
   --vsock PORT:SOCK[:listen]  map guest vsock PORT to host unix socket SOCK.
                             default: guest connects out, host listens on SOCK.
                             :listen: guest listens, host connects to SOCK.
+  -- <guest-path> [args]    the guest command (init.krun runs it). With --kernel
+                            and --rootfs it is the pinned cmdline's init,
+                            /sbin/berth-init, and may be left out
   --env K=V                 guest environment (repeatable; host env is NOT passed)
   --rlimit RES=CUR:MAX      rlimit for the guest init (repeatable)
   --workdir DIR             guest working directory
@@ -122,7 +130,7 @@ fn die(msg: &str) -> ! {
     exit(2);
 }
 
-fn parse() -> Opts {
+fn parse(argv: Vec<String>) -> Opts {
     let mut o = Opts {
         cpus: 1,
         mem_mib: 512,
@@ -145,7 +153,7 @@ fn parse() -> Opts {
         log_level: 1,
         exec: vec![],
     };
-    let mut args = std::env::args().skip(1);
+    let mut args = argv.into_iter();
     while let Some(a) = args.next() {
         let mut val = || args.next().unwrap_or_else(|| die(&format!("{a} needs a value")));
         match a.as_str() {
@@ -202,6 +210,16 @@ fn parse() -> Opts {
                 break;
             }
             other => die(&format!("unknown option {other}\n{USAGE}")),
+        }
+    }
+    // With the pinned kernel and a rootfs image, the kernel starts the init
+    // named on the pinned command line itself; any other guest command would
+    // be silently ignored, so refuse it.
+    if o.kernel.is_some() && o.rootfs.is_some() {
+        match o.exec.first().map(String::as_str) {
+            None => o.exec = vec![run::GUEST_INIT.into()],
+            Some(run::GUEST_INIT) if o.exec.len() == 1 => {}
+            Some(_) => die(&format!("with --kernel and --rootfs the guest init is {} (the pinned command line); no other guest command", run::GUEST_INIT)),
         }
     }
     if o.exec.is_empty() {
@@ -289,7 +307,11 @@ fn preflight(o: &Opts) {
 }
 
 fn main() {
-    let o = parse();
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    let o = match argv.first().map(String::as_str) {
+        Some("run") => run::opts(&argv[1..]),
+        _ => parse(argv),
+    };
     check_guest_env(&o.env);
     preflight(&o);
     // Everything that identifies what is booted is checked before libkrun sees it.
