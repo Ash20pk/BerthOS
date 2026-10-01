@@ -95,6 +95,7 @@ struct Opts {
 
 const USAGE: &str = "usage: berth-vmm run --app DIR [--app DIR...] [--state DISK] [run options]
        berth-vmm [options] [-- <guest-path> [args...]]
+       berth-vmm egress-dialer --egress-allow LIST --egress-socket SOCK   (the dialer alone, no VM)
 
 `berth-vmm run` boots a sandbox from the pinned artifacts; see `berth-vmm run --help`.
 The low-level form below is what it expands to (and what builder VMs use).
@@ -259,6 +260,25 @@ fn parse(argv: Vec<String>) -> Opts {
     o
 }
 
+fn egress_dialer_only(argv: &[String]) -> ! {
+    let (mut allow, mut socket, mut max) = (vec![], None, None);
+    let mut args = argv.iter().cloned();
+    while let Some(a) = args.next() {
+        let mut val = || args.next().unwrap_or_else(|| die(&format!("{a} needs a value")));
+        match a.as_str() {
+            "--egress-allow" => allow.push(val()),
+            "--egress-socket" => socket = Some(val()),
+            "--egress-max-conns" => max = Some(val().parse().unwrap_or_else(|_| die("bad --egress-max-conns"))),
+            _ => die("usage: berth-vmm egress-dialer --egress-allow LIST --egress-socket SOCK [--egress-max-conns N]"),
+        }
+    }
+    let socket = socket.unwrap_or_else(|| die("egress-dialer: --egress-socket SOCK"));
+    egress::start(&egress_config(&allow, socket.into(), max)).unwrap_or_else(|e| die(&e));
+    loop {
+        std::thread::park();
+    }
+}
+
 /// The egress dialer's configuration, and the refusals that apply to every
 /// way of starting it (the low-level flags and `run`).
 pub fn egress_config(allow: &[String], socket: std::path::PathBuf, max_conns: Option<usize>) -> egress::Config {
@@ -346,6 +366,9 @@ fn main() {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let o = match argv.first().map(String::as_str) {
         Some("run") => run::opts(&argv[1..]),
+        // The dialer alone, in the foreground, with no VM: for testing the
+        // broker's host path and the allowlist on the host.
+        Some("egress-dialer") => egress_dialer_only(&argv[1..]),
         _ => parse(argv),
     };
     check_guest_env(&o.env);
