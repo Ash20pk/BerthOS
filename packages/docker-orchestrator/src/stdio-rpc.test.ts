@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Duplex, type PassThrough } from "node:stream";
 import type Docker from "dockerode";
-import { createStdioRpcClient, RpcNotSentError } from "./stdio-rpc.js";
+import { createLineRpcClient, createStdioRpcClient, RpcNotSentError } from "./stdio-rpc.js";
 
 // No Docker here: the attach stream and demux are the only two things the
 // client touches, so both are stood in for. `answer` plays the app's side.
@@ -89,4 +89,67 @@ test("a failed call's error names the export and request id, never the input", a
     assert.doesNotMatch(err.message, /wJalrXUtnFEMI|\.env|content/);
   }
   assert.match((writeFailed as Error).message, /could not write/);
+});
+
+// The transport-agnostic core, as the microVM's socket client uses it.
+function fakeConnections() {
+  const opened: { written: string[]; onLine: (line: string) => void; onClose: () => void; isOpen: boolean }[] = [];
+  const connect = async (onLine: (line: string) => void, onClose: () => void) => {
+    const c = { written: [] as string[], onLine, onClose, isOpen: true };
+    opened.push(c);
+    return {
+      write: (line: string) => (c.written.push(line), true),
+      open: () => c.isOpen,
+      close: () => {
+        c.isOpen = false;
+      },
+    };
+  };
+  return { opened, connect };
+}
+
+test("line client: answers resolve by id, and junk lines are ignored", async () => {
+  const fake = fakeConnections();
+  const rpc = await createLineRpcClient({ connect: fake.connect, target: "a socket" });
+  const a = rpc.call({ id: "a", export: "x" });
+  const b = rpc.call({ id: "b", export: "y" });
+  await new Promise((resolve) => setImmediate(resolve));
+  const conn = fake.opened[0]!;
+  conn.onLine("not json");
+  conn.onLine(JSON.stringify(["an", "array"]));
+  conn.onLine(JSON.stringify({ id: "b", result: 2 }));
+  conn.onLine(JSON.stringify({ id: "a", result: 1 }));
+  assert.deepEqual(await a, { id: "a", result: 1 });
+  assert.deepEqual(await b, { id: "b", result: 2 });
+  assert.equal(fake.opened.length, 1, "one connection for both calls");
+});
+
+test("line client: a closed connection fails its waiting calls at once when asked to, and the next call reconnects", async () => {
+  const fake = fakeConnections();
+  const rpc = await createLineRpcClient({ connect: fake.connect, target: "a socket", failPendingOnClose: true });
+  const startedAt = Date.now();
+  const call = rpc.call({ id: "1", export: "write_file", input: { secret: "s3cr3t" } });
+  await new Promise((resolve) => setImmediate(resolve));
+  fake.opened[0]!.isOpen = false;
+  fake.opened[0]!.onClose();
+  const err = await call.catch((e: Error) => e);
+  assert.ok(err instanceof Error);
+  assert.match(err.message, /no answer to write_file \(request 1\): the connection closed/);
+  assert.doesNotMatch(err.message, /s3cr3t/);
+  assert.ok(Date.now() - startedAt < 1_000);
+
+  const next = rpc.call({ id: "2", export: "ping" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(fake.opened.length, 2);
+  fake.opened[1]!.onLine(JSON.stringify({ id: "2", result: "pong" }));
+  assert.deepEqual(await next, { id: "2", result: "pong" });
+});
+
+test("line client: without failPendingOnClose a close leaves the call to its timeout (Docker attach behaviour)", async () => {
+  const fake = fakeConnections();
+  const rpc = await createLineRpcClient({ connect: fake.connect, target: "a socket" });
+  const call = rpc.call({ id: "1", export: "slow" }, { timeoutMs: 30 });
+  await new Promise((resolve) => setImmediate(resolve));
+  fake.opened[0]!.onClose();
+  await assert.rejects(call, /timed out/);
 });
