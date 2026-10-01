@@ -1,0 +1,22 @@
+[package]
+name = "berth-init"
+version = "0.0.1"
+edition = "2021"
+description = "PID 1 for a Berth microVM guest: mounts, per-app cgroups, app supervision and the vsock RPC relay"
+license = "Apache-2.0"
+publish = false
+
+[[bin]]
+name = "berth-init"
+path = "src/main.rs"
+
+[dependencies]
+libc = "0.2"
+serde_json = "1"
+
+[profile.release]
+opt-level = "s"
+strip = true
+lto = true
+codegen-units = 1
+panic = "abort"
