@@ -140,7 +140,7 @@ The in-builder scripts see `/in` or `/src`, `/out` and `/build` either way, and 
 | kernel `Image` | `8f79e8da…` (factored `build-kernel.sh`, new builder root). Alpine had since moved `python3` 3.14.7 to 3.14.8 and `nghttp2-libs` 1.69.0 to 1.70.0 in the builder, with no effect on the Image | `8f79e8da…`, unchanged |
 | agent-init, probe | `9ec8b25e…`, `6ec735d8…` (from `c558ef8`) | unchanged |
 | berth-init, context-bus-daemon | `c82613e7…`, `1138c359…` | unchanged |
-| rootfs | `47e1ea51…`, four builds, three from fresh builder roots, one with a different `node_modules` checkout | **re-pinned** from `5f80e448…` |
+| rootfs | `778f0b25…`, four builds, three from fresh builder roots, one with a different `node_modules` checkout | **re-pinned** from `5f80e448…` |
 
 The old rootfs pin could not be rebuilt anywhere but the machine that made it, for two reasons:
 
