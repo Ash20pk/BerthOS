@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Bundles what the guest needs to run apps/notes without a node_modules tree:
-//   generate-capability-policy.mjs  - the same root-run policy compiler bundle
-//                                     entrypoint.sh runs (bundle-daemons.mjs)
+//   generate-capability-policy.mjs  - the root-run sdk-node tools the image
+//   run-lifecycle.mjs                 carries at /opt/berth/sdk-node, built as
+//                                     bundle-daemons.mjs builds them
 //   runtime.mjs                     - @berthos/sdk's resident-app runtime
 //   notes.mjs                       - apps/notes with @berthos/sdk and zod inlined
 //
@@ -46,17 +47,32 @@ const common = {
   logLevel: "warning",
 };
 
-const result = await esbuild.build({
+// The root-run sdk-node tools can come from another tree (BERTH_POLICY_SRC, a
+// directory holding packages/sdk/src and packages/manifest-schema/src, e.g.
+// a `git archive` of feat/per-app-cgroups, whose compiler writes cgroupLimits).
+// The app and its runtime always come from this tree.
+const policySrc = process.env.BERTH_POLICY_SRC ?? repo;
+const tools = await esbuild.build({
+  ...common,
+  alias: {
+    "@berthos/sdk": join(policySrc, "packages/sdk/src/index.ts"),
+    "@berthos/manifest-schema": join(policySrc, "packages/manifest-schema/src/index.ts"),
+  },
+  entryPoints: {
+    "generate-capability-policy": join(policySrc, "packages/sdk/src/generate-capability-policy.ts"),
+    "run-lifecycle": join(policySrc, "packages/sdk/src/run-lifecycle.ts"),
+  },
+});
+const app = await esbuild.build({
   ...common,
   entryPoints: {
-    "generate-capability-policy": join(repo, "packages/sdk/src/generate-capability-policy.ts"),
     runtime: join(repo, "packages/sdk/src/runtime.ts"),
     notes: join(repo, "apps/notes/src/index.ts"),
   },
 });
 
 const builtin = (p) => p.startsWith("node:") || builtinModules.includes(p);
-for (const [file, output] of Object.entries(result.metafile.outputs)) {
+for (const [file, output] of [...Object.entries(tools.metafile.outputs), ...Object.entries(app.metafile.outputs)]) {
   const bare = output.imports.filter((i) => i.external && !builtin(i.path));
   if (bare.length > 0) throw new Error(`${file} still imports ${bare.map((i) => i.path).join(", ")}`);
   console.log(`${file}: ${(output.bytes / 1024).toFixed(0)} KiB`);

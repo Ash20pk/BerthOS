@@ -1,38 +1,68 @@
 #!/bin/sh
-# Builds the Berth guest kernel (libkrunfw v5.6.2 + kernel/berth-kernel.config)
-# inside a libkrun builder VM, then wraps it into libkrunfw.5.dylib on the host.
-# Nothing is installed on the host: the toolchain comes from Alpine's apk inside
-# the builder VM (which, alone among the spike VMs, runs with TSI on).
+# Builds the pinned Berth guest kernel Image (kernel/manifest.toml) inside a
+# libkrun builder VM. Nothing is installed on the host: sources are downloaded
+# into $ART/cache and sha256-checked here, the toolchain comes from Alpine's apk
+# inside a builder VM whose root is used for nothing else.
+#
+# Output: $ART/kernel/sha256/<image sha256>/{Image,config,check.txt,toolchain.txt}
+# (the same layout a download cache would use). Fails if the Image's sha256 is
+# not the manifest's image_sha256. UPDATE_MANIFEST=1 rewrites the output pins
+# instead, for a deliberate config change.
 set -eu
 . "$(dirname "$0")/common.sh"
 min_free_gb 10
 build_vmm
+M="$KERNEL_MANIFEST"
+get() { manifest_get "$M" "$1"; }
+
+LINUX_TXZ="$CACHE/linux-$(get linux_version).tar.xz"
+fetch "$(get libkrunfw_tarball)" "$LIBKRUNFW_TGZ" "$(get libkrunfw_tarball_sha256)"
+fetch "$(get linux_tarball)" "$LINUX_TXZ" "$(get linux_tarball_sha256)"
+delta="$VMM_DIR/kernel/$(get config_delta)"
+have=$(shasum -a 256 "$delta" | cut -d' ' -f1)
+if [ "$have" != "$(get config_delta_sha256)" ] && [ "${UPDATE_MANIFEST:-0}" != 1 ]; then
+    echo "$(get config_delta) sha256 is $have, manifest pins $(get config_delta_sha256)" >&2
+    echo "(a deliberate change: rerun with UPDATE_MANIFEST=1)" >&2
+    exit 1
+fi
 
 B="$ART/kernel-build"
-mkdir -p "$B/out/src" "$ART/kernel/lib"
-[ -d "$BUILDER_ROOT" ] || alpine_tree "$BUILDER_ROOT"
-# The build script goes into the builder's root (the /out share is only mounted
-# by the script itself); the config delta travels over /out.
-mkdir -p "$BUILDER_ROOT/berth"
-cp "$VMM_DIR/kernel/build-in-vm.sh" "$BUILDER_ROOT/berth/"
-cp "$VMM_DIR/kernel/berth-kernel.config" "$B/out/src/"
-[ -f "$B/out/src/libkrunfw.tar.gz" ] || curl -fsSL -o "$B/out/src/libkrunfw.tar.gz" \
-    "https://codeload.github.com/containers/libkrunfw/tar.gz/refs/tags/v$LIBKRUNFW_VER"
-# Sparse; only what the build writes is allocated.
-[ -f "$B/build.img" ] || mkfile -n 8g "$B/build.img"
+rm -rf "$B/in" "$B/out" && mkdir -p "$B/in" "$B/out"
+ln "$LIBKRUNFW_TGZ" "$B/in/libkrunfw.tar.gz"
+ln "$LINUX_TXZ" "$B/in/linux.tar.xz"
+cp "$delta" "$B/in/berth-kernel.config"
+[ -d "$KERNEL_BUILDER_ROOT" ] || alpine_tree "$KERNEL_BUILDER_ROOT"
+mkdir -p "$KERNEL_BUILDER_ROOT/berth"
+cp "$VMM_DIR/kernel/build-in-vm.sh" "$KERNEL_BUILDER_ROOT/berth/"
+# Sparse; only what the build writes is allocated (~2.2 GB at peak).
+rm -f "$B/build.img" && mkfile -n 8g "$B/build.img"
 
-DYLD_LIBRARY_PATH="$STOCK_KRUNFW_DIR" "$VMM" --tsi --cpus "${CPUS:-8}" --mem "${MEM:-4096}" \
-    --root "$BUILDER_ROOT" --disk build:"$B/build.img" --share out:"$B/out" \
-    -- /bin/sh /berth/build-in-vm.sh </dev/null
-
-# Host side: kernel Image -> kernel.c -> libkrunfw.5.dylib, exactly as
-# libkrunfw's Makefile does for OS=Darwin.
-S="$B/libkrunfw-src"
-rm -rf "$S" && mkdir -p "$S" && tar -xzf "$B/out/src/libkrunfw.tar.gz" -C "$S" --strip-components=1
-python3 "$S/bin2cbundle.py" --os Darwin -t Image "$B/out/Image" "$S/kernel.c"
-cc -fPIC -DABI_VERSION=5 -shared -o "$ART/kernel/lib/libkrunfw.5.dylib" "$S/kernel.c"
-cp "$B/out/Image" "$B/out/config" "$B/out/check.txt" "$ART/kernel/"
-rm -rf "$S"
-# The ext4 scratch volume holds the kernel tree and tarball (~2.2 GB).
+builder_vm "$KERNEL_BUILDER_ROOT" "${CPUS:-8}" "${MEM:-4096}" \
+    --disk build:"$B/build.img" --share in:"$B/in":ro --share out:"$B/out" \
+    -- /bin/sh /berth/build-in-vm.sh
 [ "${KEEP_SCRATCH:-0}" = 1 ] || rm -f "$B/build.img"
-shasum -a 256 "$ART/kernel/Image" "$ART/kernel/config" "$ART/kernel/lib/libkrunfw.5.dylib"
+rm -rf "$B/in"
+
+img_sha=$(shasum -a 256 "$B/out/Image" | cut -d' ' -f1)
+cfg_sha=$(shasum -a 256 "$B/out/config" | cut -d' ' -f1)
+size=$(stat -f %z "$B/out/Image")
+D="$ART/kernel/sha256/$img_sha"
+mkdir -p "$D"
+for f in Image config check.txt toolchain.txt; do mv "$B/out/$f" "$D/$f"; done
+cp "$M" "$D/manifest.toml"
+echo "Image  sha256 $img_sha  ($size bytes)"
+echo "config sha256 $cfg_sha"
+echo "output $D"
+
+if [ "${UPDATE_MANIFEST:-0}" = 1 ]; then
+    sed -i '' -e "s/^config_delta_sha256 = .*/config_delta_sha256 = \"$have\"/" \
+        -e "s/^config_sha256 = .*/config_sha256 = \"$cfg_sha\"/" \
+        -e "s/^image_size = .*/image_size = $size/" \
+        -e "s/^image_sha256 = .*/image_sha256 = \"$img_sha\"/" "$M"
+    echo "manifest updated; rebuild berth-vmm so it embeds the new pin"
+elif [ "$img_sha" != "$(get image_sha256)" ] || [ "$cfg_sha" != "$(get config_sha256)" ]; then
+    echo "MISMATCH: manifest pins Image $(get image_sha256), config $(get config_sha256)" >&2
+    exit 1
+else
+    echo "matches kernel/manifest.toml"
+fi

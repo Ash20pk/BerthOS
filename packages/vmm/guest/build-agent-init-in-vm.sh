@@ -25,5 +25,6 @@ T=$(rustc -vV | sed -n 's/^host: //p')
 RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --locked --target "$T"
 cp /build/target/$T/release/agent-init /out/agent-init
 gcc -O2 -static -o /out/probe /src/probe.c
+{ rustc --version; cargo --version; gcc --version | head -1; } > /out/toolchain.txt
 file /out/agent-init /out/probe 2>/dev/null || ls -l /out
 echo "agent-init build ok"
