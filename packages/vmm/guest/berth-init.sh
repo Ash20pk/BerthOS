@@ -93,6 +93,12 @@ probe)
     /usr/local/bin/berth-probe /tmp | sed 's/^/[probe:root] /' >&2
     log "probe as the app, under agent-init (both walls):"
     /usr/local/bin/agent-init /usr/local/bin/berth-probe /workspace 2>&1 | sed 's/^/[probe:app] /' >&2
+    # /etc is on the read-only image, so EROFS answers there before Landlock
+    # does. /state (or /tmp without a state disk) is writable by root but not
+    # declared: write_declared below is the Landlock denial on a writable fs.
+    undeclared=/tmp; mountpoint -q /state && undeclared=/state
+    log "probe as the app against undeclared writable $undeclared:"
+    /usr/local/bin/agent-init /usr/local/bin/berth-probe $undeclared 2>&1 | grep 'name=write_declared' | sed 's/^/[probe:app-undeclared] /' >&2
     log "probe done"
     stop_vm
     ;;

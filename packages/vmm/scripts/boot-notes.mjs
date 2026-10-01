@@ -12,7 +12,8 @@
 // disk path; none = tmpfs /workspace), ACTIONS (comma list of add,list;
 // default add,list), STOP (graceful = vsock 5001 stop request, the default;
 // kill = SIGKILL berth-vmm), CPUS, MEM, SANDBOX_PROFILE (run under
-// sandbox-exec -f), BERTH_VM_MODE (rpc; inspect/probe just print and exit).
+// sandbox-exec -f), BERTH_VM_MODE (rpc; inspect/probe just print and exit),
+// ROOT_DIR + APP_DIR (boot a virtio-fs root directory instead, for comparison).
 import { spawn, execFileSync } from "node:child_process";
 import { existsSync, rmSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import net from "node:net";
@@ -42,9 +43,10 @@ function vmArgs() {
     "--cpus", process.env.CPUS ?? "2",
     "--mem", process.env.MEM ?? "512",
     "--kernel", KERNEL,
-    "--rootfs", ROOTFS,
+    // ROOT_DIR: a virtio-fs root directory instead (the spike's layout), for comparison.
+    ...(process.env.ROOT_DIR ? ["--root", process.env.ROOT_DIR, "--root-ro"] : ["--rootfs", ROOTFS]),
     ...(STATE ? ["--state", STATE, "--state-size", process.env.STATE_SIZE ?? "256"] : []),
-    "--share", `app:${join(ART, "app-notes")}:ro`,
+    "--share", `app:${process.env.APP_DIR ?? join(ART, "app-notes")}:ro`,
     "--vsock", `5000:${sock}:listen`,
     "--vsock", `5001:${ctl}:listen`,
     "--env", `BERTH_VM_MODE=${MODE}`,
