@@ -22,7 +22,7 @@ guest (no NIC, TSI off)                                   host (berth-vmm proces
 │   seccomp; bind 8090 only, no TCP connect)        │
 │   gate 1: declared host patterns, ports,          │
 │   dedicated-broker hosts, IP-literal block list   │
-│        │ {"op":"dial","host":…,"port":…}          │
+│        │ DIAL example.com 443                     │
 │        ▼  /run/berth/egress/dial.sock             │
 │   (root:berth-egress 0660, dir 0750)              │
 │ berth-init (PID 1): byte relay, unix → vsock      │
@@ -59,10 +59,12 @@ Gate 2 does not know which guest process asked, so it cannot apply the per-app o
 The guest connects out (libkrun's non-listen mapping: guest `connect(CID 2, 1026)` → libkrun connects to `<run-dir>/egress.sock`, where the dialer listens). One connection is one tunnel:
 
 ```
-guest → host   {"op":"dial","host":"example.com","port":443}\n        (one line, ≤ 1 KiB, within 5 s)
-host  → guest  {"ok":true,"address":"93.184.215.14"}\n                 then raw bytes both ways until either side closes
-           or  {"ok":false,"code":"denied|unresolved|unreachable|busy|bad_request","error":"…"}\n   and close
+guest → host   DIAL example.com 443\n                 one line, ≤ 1 KiB, within 5 s; single spaces, nothing else
+host  → guest  OK 93.184.215.14\n                     then raw bytes both ways until either side closes
+           or  ERR <code> <message>\n                 and close; code: denied | unresolved | unreachable | busy | bad_request
 ```
+
+A text frame rather than JSON: berth-vmm has no dependencies, and a grammar of three tokens is easier to hold strictly than a JSON parser. The port is decimal with no leading zero; the host is a lowercased DNS name (`[a-z0-9-]` labels of at most 63 bytes, no empty labels) or an IP literal, and a name whose last label is numeric must be a canonical dotted quad, so `127.1` and `2130706433` are refused before any lookup (the address check would refuse them after, too).
 
 There is no `resolve` op. The guest has no resolver to give it (no NIC, empty `resolv.conf`), and a separate resolve would open a window between the address the guest was told and the one the host dials. The dialer resolves on dial and pins; the broker sends names, and it only checks IP *literals* against its own block list (defence in depth; the host checks them again). `address` in the reply is informational, for the broker's log.
 
