@@ -45,13 +45,13 @@ import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { loadManifest, DAEMON_RESERVE, DEFAULT_APP_PIDS } from "@berthos/manifest-schema";
-import { buildImage, startContainer, stopContainer, invokeAppExport, demuxLogBuffer } from "../dist/index.js";
+import { buildImage, checkoutTag, startContainer, stopContainer, invokeAppExport, demuxLogBuffer } from "../dist/index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = join(__dirname, "fixtures");
-const IMAGE_TAG = "berth/resource-limits-milestone:test";
 const HOG = "cgroup-hog";
 const NEIGHBOUR = "cgroup-neighbour";
+const IMAGE_TAG = checkoutTag("berth/resource-limits-milestone:test", join(FIXTURES, HOG));
 // apps[] index -> uid, per entrypoint.sh's export_app_identity.
 const HOG_UID = "10000";
 const NEIGHBOUR_UID = "10001";
