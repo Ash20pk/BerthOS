@@ -109,6 +109,7 @@ export default class Attest extends Command {
         imageTag: evidence.imageTag,
         imageDigest: evidence.imageDigest,
         ...(evidence.runtime ? { runtime: evidence.runtime } : {}),
+        ...(evidence.isolation ? { isolation: evidence.isolation } : {}),
       },
       enforcement: { rulesetReports: evidence.rulesetReports, doctorProbe: evidence.doctorProbe },
       policies: evidence.policies,

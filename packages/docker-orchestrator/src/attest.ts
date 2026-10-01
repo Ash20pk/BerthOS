@@ -1,6 +1,6 @@
 import Docker from "dockerode";
 import { PassThrough } from "node:stream";
-import type { DoctorProbeResult, PolicyDigest, RulesetReport } from "@berthos/audit";
+import type { BootIsolation, DoctorProbeResult, PolicyDigest, RulesetReport } from "@berthos/audit";
 import { enforcementStatusForBoot } from "./doctor.js";
 
 /**
@@ -26,6 +26,12 @@ export interface BootEvidence {
   doctorProbe: DoctorProbeResult;
   /** What entrypoint.sh reported applying to each app's cgroup at this boot. Absent from evidence recorded before it existed. */
   resourceLimits?: ResourceLimitsEvidence;
+  /**
+   * A microVM boot's isolation facts (the CLI's local-vm runtime): kernel and
+   * rootfs by hash, no NIC, no TSI. Absent for a container, and from every
+   * record made before it existed.
+   */
+  isolation?: BootIsolation;
 }
 
 /**
