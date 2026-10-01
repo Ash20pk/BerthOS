@@ -15,14 +15,22 @@ packages = "rootfs/packages.txt"
 # Every inode gets this mtime; with the fixed UUID in rootfs/build-in-vm.sh it
 # makes the image a function of its inputs.
 source_date_epoch = 1790812800
+# /usr/local/bin/agent-init and berth-probe: build-agent-init.sh, from
+# packages/agent-init at this commit (main contains it).
 agent_init_ref = "fix/seccomp-io-uring-vsock"
+agent_init_commit = "c558ef85a920eece0413f2c08345a67396342153"
+agent_init_sha256 = "9ec8b25e38d31ee82a28155304f730c0ec589b057d11fce2a56c661455929483"
+probe_sha256 = "6ec735d885b58861b33abdd70a5a4d48ecad803cc92bd94c02f876a3346453d0"
 # /sbin/berth-init and /usr/local/bin/context-bus-daemon: build-berth-init.sh,
 # from this tree (packages/vmm/init, packages/context-bus-daemon).
 berth_init_sha256 = "c82613e72a1bc0445a18cd2b63822a7aab0f482dbf7ceb574ef0fa0fddf1b572"
 context_bus_daemon_sha256 = "1138c3595142a3235145b530d0cf1157b0971aa2230d417befe0a6e783477544"
 # /usr/local/bin/berth-egress-broker.cjs: packages/docker-orchestrator/docker/egress-broker.cjs.
 egress_broker_sha256 = "4ff162e8e2c86cc43a73caa02bd1a78e4fe620c2b18040334b79366402157d89"
+# /opt/berth/sdk-node: packages/sdk and packages/manifest-schema at this
+# commit (main contains it), bundled with esbuild.
 policy_compiler_ref = "feat/per-app-cgroups"
+policy_compiler_commit = "28b09997790f9d0a57fffd0adaf47fe7e0a6b9b9"
 init_path = "/sbin/berth-init"
 
 # Last verified build (filled in by hand after a build and a boot check):
