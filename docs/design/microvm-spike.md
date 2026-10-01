@@ -4,6 +4,8 @@ Date: 2026-09-30. Branch `spike/libkrun-vm`. Machine: Apple M4 (10 cores), 16 GB
 
 This spike checks the plan in the microVM research note (`/Users/ash/berth-wt/microvm-research.md`, section 7) on real hardware. It covers a launcher we own (`berth-vmm`), a guest kernel we build, agent-init plus `apps/notes` running inside the VM, and the enforcement checks. All four goals and both stretch goals pass. The problems we found are listed at the end.
 
+> **Follow-up (2026-10-01, `feat/vm-image`):** the kernel is now a pinned raw Image that `berth-vmm --kernel` verifies against `kernel/manifest.toml`, and the root is a content-addressed erofs image plus a per-sandbox state disk. The libkrunfw dylib route, `--cmdline` and the `rootfs-notes` directory layout described below are gone; see `docs/design/microvm-image.md` for the current build and run commands.
+
 Code lives in `packages/vmm/`. Nothing big is committed. Kernels, root filesystems and disk images go in `/Users/ash/berth-wt/libkrun-vm-artifacts/` (outside the repo; `$ART` below).
 
 ## Results at a glance

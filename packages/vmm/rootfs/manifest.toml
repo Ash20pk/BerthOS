@@ -1,0 +1,24 @@
+# Berth base rootfs: how it is built and the image the last verified build
+# produced. The image is content-addressed (rootfs-<image_sha256>.erofs) and
+# berth-vmm refuses an image that doesn't hash to its name. The full input
+# record is rootfs-<sha256>.inputs.json next to the image (and, minus the
+# image's own hash, /etc/berth/build-inputs.json inside it).
+# See docs/design/microvm-image.md.
+schema = 1
+name = "berth-rootfs"
+arch = "aarch64"
+fstype = "erofs"
+compression = "lz4hc"
+alpine = "3.24.2"
+alpine_minirootfs_sha256 = "9bf70a7f18ea44094cbb5f70c58f9af129c8214745743db0e68e5502cc2ce773"
+packages = "rootfs/packages.txt"
+# Every inode gets this mtime; with the fixed UUID in rootfs/build-in-vm.sh it
+# makes the image a function of its inputs.
+source_date_epoch = 1790812800
+agent_init_ref = "fix/seccomp-io-uring-vsock"
+policy_compiler_ref = "feat/per-app-cgroups"
+init_path = "/sbin/berth-init"
+
+# Last verified build (filled in by hand after a build and a boot check).
+image_sha256 = "2eaa3e0afc4597ad084d74df1d4fe37e7cc9aa1ddbd35051357d7ffab2142414"
+image_size = 46366720

@@ -1,8 +1,11 @@
-// berth-vmm: spike launcher that runs one Berth sandbox inside a libkrun microVM.
+// berth-vmm: launcher that runs one Berth sandbox inside a libkrun microVM.
 //
 // One process per VM (HVF allows one VM per process). The VM gets:
 //   - a fixed vCPU count and RAM size,
-//   - a root filesystem (a host directory over virtio-fs, or an ext4 disk image),
+//   - the pinned Berth kernel (--kernel, checked against kernel/manifest.toml),
+//   - a root filesystem: a content-addressed read-only image (--rootfs), or a
+//     host directory over virtio-fs (--root, builder VMs),
+//   - optionally a per-sandbox writable state disk (--state),
 //   - NO network interface and TSI explicitly disabled, unless --tsi is passed
 //     (only the rootfs/kernel *builder* VMs use --tsi, to reach the Alpine mirror),
 //   - vsock ports mapped to host Unix sockets (the only way in or out),
@@ -16,6 +19,9 @@
 use std::ffi::CString;
 use std::os::raw::{c_char, c_int};
 use std::process::exit;
+
+mod pins;
+mod sha256;
 
 #[link(name = "krun")]
 extern "C" {
@@ -64,8 +70,10 @@ struct Opts {
     mem_mib: u32,
     root: Option<String>,
     root_ro: bool,
-    root_disk: Option<String>,
-    root_disk_fstype: String,
+    rootfs: Option<String>,
+    rootfs_sha256: Option<String>,
+    state: Option<String>,
+    state_size_mib: u64,
     disks: Vec<Disk>,
     shares: Vec<Share>,
     vsocks: Vec<Vsock>,
@@ -73,8 +81,7 @@ struct Opts {
     rlimits: Vec<String>,
     workdir: Option<String>,
     kernel: Option<String>,
-    kernel_format: u32,
-    cmdline: Option<String>,
+    libkrunfw_kernel: bool,
     console_output: Option<String>,
     tsi: bool,
     log_level: u32,
@@ -85,10 +92,20 @@ const USAGE: &str = "usage: berth-vmm [options] -- <guest-path> [args...]
 
   --cpus N                  vCPUs (default 1)
   --mem MIB                 guest RAM in MiB (default 512)
-  --root DIR                root filesystem: host directory over virtio-fs
+  --kernel IMG              boot this raw kernel Image. Its sha256 must equal the
+                            image_sha256 pinned in kernel/manifest.toml (compiled
+                            in), and the kernel command line comes from there too
+  --libkrunfw-kernel        boot libkrunfw's bundled kernel instead (found via
+                            DYLD_LIBRARY_PATH; unpinned, no Landlock). Builder VMs only
+  --rootfs IMG              root filesystem: read-only erofs (or ext4) image, named
+                            by its sha256 (<name>-<sha256>.erofs); hashed before boot
+  --rootfs-sha256 HEX       expected sha256 of --rootfs, if its name doesn't carry it
+  --state IMG               per-sandbox writable state disk (raw; the guest formats
+                            it ext4 on first boot). Created sparse if missing
+  --state-size MIB          size (the cap) of a newly created --state disk (default 1024)
+  --root DIR                root filesystem: host directory over virtio-fs (builders)
   --root-ro                 expose --root read-only (guest needs tmpfs for writes)
-  --root-disk IMG           root filesystem: raw ext4 image (becomes /dev/vda)
-  --disk ID:IMG[:ro]        extra raw disk (repeatable; /dev/vdb, ...)
+  --disk ID:IMG[:ro]        extra raw disk (repeatable; after rootfs and state)
   --share TAG:DIR[:ro]      extra virtio-fs share (repeatable)
   --vsock PORT:SOCK[:listen]  map guest vsock PORT to host unix socket SOCK.
                             default: guest connects out, host listens on SOCK.
@@ -96,9 +113,6 @@ const USAGE: &str = "usage: berth-vmm [options] -- <guest-path> [args...]
   --env K=V                 guest environment (repeatable; host env is NOT passed)
   --rlimit RES=CUR:MAX      rlimit for the guest init (repeatable)
   --workdir DIR             guest working directory
-  --kernel IMG              boot this kernel instead of libkrunfw's
-  --kernel-format N         0 raw, 1 elf, 4 Image.gz (default 0)
-  --cmdline STR             kernel cmdline (with --kernel)
   --console-output FILE     write the guest console to FILE, ignore stdin
   --tsi                     ENABLE TSI (guest AF_INET = host sockets). Builder VMs only.
   --log-level N             libkrun log level 0-5 (default 1)";
@@ -114,8 +128,10 @@ fn parse() -> Opts {
         mem_mib: 512,
         root: None,
         root_ro: false,
-        root_disk: None,
-        root_disk_fstype: "ext4".into(),
+        rootfs: None,
+        rootfs_sha256: None,
+        state: None,
+        state_size_mib: 1024,
         disks: vec![],
         shares: vec![],
         vsocks: vec![],
@@ -123,8 +139,7 @@ fn parse() -> Opts {
         rlimits: vec![],
         workdir: None,
         kernel: None,
-        kernel_format: 0,
-        cmdline: None,
+        libkrunfw_kernel: false,
         console_output: None,
         tsi: false,
         log_level: 1,
@@ -138,8 +153,10 @@ fn parse() -> Opts {
             "--mem" => o.mem_mib = val().parse().unwrap_or_else(|_| die("bad --mem")),
             "--root" => o.root = Some(val()),
             "--root-ro" => o.root_ro = true,
-            "--root-disk" => o.root_disk = Some(val()),
-            "--root-disk-fstype" => o.root_disk_fstype = val(),
+            "--rootfs" => o.rootfs = Some(val()),
+            "--rootfs-sha256" => o.rootfs_sha256 = Some(val()),
+            "--state" => o.state = Some(val()),
+            "--state-size" => o.state_size_mib = val().parse().unwrap_or_else(|_| die("bad --state-size")),
             "--disk" => {
                 let v = val();
                 let p: Vec<&str> = v.splitn(3, ':').collect();
@@ -172,8 +189,7 @@ fn parse() -> Opts {
             "--rlimit" => o.rlimits.push(val()),
             "--workdir" => o.workdir = Some(val()),
             "--kernel" => o.kernel = Some(val()),
-            "--kernel-format" => o.kernel_format = val().parse().unwrap_or_else(|_| die("bad --kernel-format")),
-            "--cmdline" => o.cmdline = Some(val()),
+            "--libkrunfw-kernel" => o.libkrunfw_kernel = true,
             "--console-output" => o.console_output = Some(val()),
             "--tsi" => o.tsi = true,
             "--log-level" => o.log_level = val().parse().unwrap_or_else(|_| die("bad --log-level")),
@@ -191,8 +207,14 @@ fn parse() -> Opts {
     if o.exec.is_empty() {
         die(&format!("no guest command\n{USAGE}"));
     }
-    if o.root.is_none() && o.root_disk.is_none() {
-        die("need --root or --root-disk");
+    if o.root.is_some() == o.rootfs.is_some() {
+        die("need exactly one of --rootfs IMG or --root DIR");
+    }
+    if o.kernel.is_some() == o.libkrunfw_kernel {
+        die("need exactly one of --kernel IMG (the pinned Berth kernel) or --libkrunfw-kernel (builder VMs)");
+    }
+    if o.state_size_mib == 0 {
+        die("--state-size must be > 0");
     }
     o
 }
@@ -232,7 +254,7 @@ fn preflight(o: &Opts) {
             die(&format!("cannot open directory {d}: {e}"));
         }
     }
-    for f in o.disks.iter().map(|d| d.path.as_str()).chain(o.root_disk.as_deref()) {
+    for f in o.disks.iter().map(|d| d.path.as_str()) {
         if let Err(e) = std::fs::File::open(f) {
             die(&format!("cannot open disk image {f}: {e}"));
         }
@@ -242,6 +264,10 @@ fn preflight(o: &Opts) {
 fn main() {
     let o = parse();
     preflight(&o);
+    // Everything that identifies what is booted is checked before libkrun sees it.
+    let kernel = o.kernel.as_deref().map(|k| pins::verify_kernel(k).unwrap_or_else(|e| die(&e)));
+    let rootfs = o.rootfs.as_deref().map(|r| pins::verify_rootfs(r, o.rootfs_sha256.as_deref()).unwrap_or_else(|e| die(&e)));
+    let state = o.state.as_deref().map(|s| pins::open_state(s, o.state_size_mib).unwrap_or_else(|e| die(&e)));
     unsafe {
         check("krun_init_log", krun_init_log(KRUN_LOG_TARGET_DEFAULT, o.log_level, KRUN_LOG_STYLE_AUTO, 0));
         let ctx = krun_create_ctx();
@@ -249,17 +275,10 @@ fn main() {
         let ctx = ctx as u32;
         check("krun_set_vm_config", krun_set_vm_config(ctx, o.cpus, o.mem_mib));
 
-        if let Some(k) = &o.kernel {
-            let cmdline = o.cmdline.as_deref().map(cs);
+        if let Some(k) = &kernel {
             check(
                 "krun_set_kernel",
-                krun_set_kernel(
-                    ctx,
-                    cs(k).as_ptr(),
-                    o.kernel_format,
-                    std::ptr::null(),
-                    cmdline.as_ref().map_or(std::ptr::null(), |c| c.as_ptr()),
-                ),
+                krun_set_kernel(ctx, cs(&k.path).as_ptr(), k.format, std::ptr::null(), cs(&k.cmdline).as_ptr()),
             );
         }
 
@@ -271,13 +290,29 @@ fn main() {
                 check("krun_set_root", krun_set_root(ctx, cs(root).as_ptr()));
             }
         }
-        // Disks are attached in order: vda, vdb, ...  A root disk goes first.
-        if let Some(img) = &o.root_disk {
-            check("krun_add_disk(root)", krun_add_disk(ctx, cs("root").as_ptr(), cs(img).as_ptr(), false));
+        // Disks are attached in order: vda, vdb, ...  The guest contract
+        // (docs/design/microvm-image.md): vda = rootfs, vdb = state.
+        let mut next_dev = b'a';
+        let mut dev = || {
+            let d = format!("/dev/vd{}", next_dev as char);
+            next_dev += 1;
+            d
+        };
+        if let Some(r) = &rootfs {
+            let d = dev();
+            check("krun_add_disk(rootfs)", krun_add_disk(ctx, cs("rootfs").as_ptr(), cs(&r.path).as_ptr(), true));
+            // libkrun boots its init from a dummy virtio-fs root, then mounts
+            // this device read-only and switches to it.
             check(
                 "krun_set_root_disk_remount",
-                krun_set_root_disk_remount(ctx, cs("/dev/vda").as_ptr(), cs(&o.root_disk_fstype).as_ptr(), std::ptr::null()),
+                krun_set_root_disk_remount(ctx, cs(&d).as_ptr(), cs(r.fstype).as_ptr(), cs("ro").as_ptr()),
             );
+        }
+        let mut guest_env: Vec<String> = vec![];
+        if let Some(s) = &state {
+            let d = dev();
+            check("krun_add_disk(state)", krun_add_disk(ctx, cs("state").as_ptr(), cs(&s.path).as_ptr(), false));
+            guest_env.push(format!("BERTH_STATE_DEV={d}"));
         }
         for d in &o.disks {
             check("krun_add_disk", krun_add_disk(ctx, cs(&d.id).as_ptr(), cs(&d.path).as_ptr(), d.read_only));
@@ -310,6 +345,7 @@ fn main() {
 
         // Never leak the host environment into the guest: pass an explicit envp.
         let mut env = vec!["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin".to_string()];
+        env.extend(guest_env);
         env.extend(o.env.iter().cloned());
         let (_ek, envp) = cvec(&env);
         let (_ak, argv) = cvec(&o.exec[1..]);
@@ -328,17 +364,46 @@ fn main() {
             .map(|s| format!("{{\"tag\":{},\"path\":{},\"readOnly\":{}}}", json_str(&s.tag), json_str(&s.path), s.read_only))
             .collect();
         eprintln!(
-            "{{\"source\":\"berth-vmm\",\"event\":\"vm_config\",\"pid\":{},\"cpus\":{},\"memMiB\":{},\"tsi\":{},\"nics\":0,\"root\":{},\"rootReadOnly\":{},\"rootDisk\":{},\"kernel\":{},\"vsock\":[{}],\"shares\":[{}]}}",
+            "{{\"source\":\"berth-vmm\",\"event\":\"vm_config\",\"pid\":{},\"cpus\":{},\"memMiB\":{},\"tsi\":{},\"nics\":0,\"root\":{},\"rootReadOnly\":{},\"rootfs\":{},\"state\":{},\"kernel\":{},\"vsock\":[{}],\"shares\":[{}]}}",
             std::process::id(),
             o.cpus,
             o.mem_mib,
             o.tsi,
             json_str(o.root.as_deref().unwrap_or("")),
-            o.root_ro,
-            json_str(o.root_disk.as_deref().unwrap_or("")),
+            o.root_ro || rootfs.is_some(),
+            json_str(o.rootfs.as_deref().unwrap_or("")),
+            json_str(o.state.as_deref().unwrap_or("")),
             json_str(o.kernel.as_deref().unwrap_or("libkrunfw")),
             vs.join(","),
             sh.join(",")
+        );
+        // The measurement line: what was booted, by hash. Attestation reads this
+        // (a later step signs it); null means "not pinned" and must be reported
+        // as such, never as a pass.
+        let kernel_json = kernel.as_ref().map_or("null".to_string(), |k| {
+            format!(
+                "{{\"sha256\":{},\"pinned\":true,\"linux\":{},\"configSha256\":{},\"cmdline\":{},\"hashMs\":{}}}",
+                json_str(&k.sha256),
+                json_str(&k.linux),
+                json_str(&k.config_sha256),
+                json_str(&k.cmdline),
+                k.hash_ms
+            )
+        });
+        let rootfs_json = rootfs.as_ref().map_or("null".to_string(), |r| {
+            format!("{{\"sha256\":{},\"fstype\":{},\"readOnly\":true,\"hashMs\":{}}}", json_str(&r.sha256), json_str(r.fstype), r.hash_ms)
+        });
+        let state_json = state.as_ref().map_or("null".to_string(), |s| {
+            format!(
+                "{{\"path\":{},\"sizeBytes\":{},\"created\":{},\"restoredBytes\":{}}}",
+                json_str(&s.path),
+                s.size,
+                s.created,
+                s.restored
+            )
+        });
+        eprintln!(
+            "{{\"source\":\"berth-vmm\",\"event\":\"measurements\",\"kernel\":{kernel_json},\"rootfs\":{rootfs_json},\"state\":{state_json}}}"
         );
 
         // Only returns on a configuration error.
