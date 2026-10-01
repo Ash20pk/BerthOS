@@ -7,7 +7,8 @@
 #   $ART/apps/<app>/proto/context_bus.proto what the runtime's bus client loads
 # The image carries no app code; berth-vmm run --app <dir> shares one of these.
 #
-# APPS (default notes,filesystem,probe=packages/vmm/guest/probe-app): "<app>"
+# APPS (default notes,filesystem,probe=packages/vmm/guest/probe-app,
+# http-fetch=examples/resident-apps/http-fetch, the egress e2e's app): "<app>"
 # is apps/<app>; "<app>=<dir>" is an app elsewhere in the repo. The probe app
 # is the e2e's: it runs the enforcement probe from inside an app sandbox.
 # TEST_RESOURCES=1 (default) appends a resources: block to the copied
@@ -19,7 +20,7 @@ set -eu
 . "$(dirname "$0")/common.sh"
 NM=${NODE_MODULES_FROM:-$HOME/agentOS}
 POLICY_REF=${POLICY_REF:-feat/per-app-cgroups}
-APPS=${APPS:-notes,filesystem,probe=packages/vmm/guest/probe-app}
+APPS=${APPS:-notes,filesystem,probe=packages/vmm/guest/probe-app,http-fetch=examples/resident-apps/http-fetch}
 REPO="$VMM_DIR/../.."
 B="$ART/apps-build"
 rm -rf "$B" && mkdir -p "$B/policy-src"
