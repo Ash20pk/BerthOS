@@ -155,6 +155,10 @@ pub fn serve_logs(listener: OwnedFd) {
 pub trait Control: Send + Sync + 'static {
     fn status(&self) -> Value;
     fn request_shutdown(&self, reason: &str);
+    /// Test-only ops (BERTH_VM_TEST_HOOKS=1); None means not available.
+    fn test_op(&self, _op: &str, _req: &Value) -> Option<Value> {
+        None
+    }
 }
 
 pub fn serve_control(listener: OwnedFd, ctl: &'static dyn Control) {
@@ -203,14 +207,19 @@ fn control_conn(r: File, mut w: File, ctl: &'static dyn Control) {
         if text.is_empty() {
             continue;
         }
-        let op = serde_json::from_str::<Value>(text).ok().and_then(|v| v.get("op").and_then(Value::as_str).map(String::from));
+        let req = serde_json::from_str::<Value>(text).unwrap_or(Value::Null);
+        let op = req.get("op").and_then(Value::as_str).map(String::from);
         let res = match op.as_deref() {
             Some("status") => reply(&mut w, "status", ctl.status()),
             Some("shutdown") => {
                 ctl.request_shutdown("host request");
                 Ok(())
             }
-            _ => reply(&mut w, "error", json!({ "error": "unknown op; expected status or shutdown" })),
+            Some(other) => match ctl.test_op(other, &req) {
+                Some(v) => reply(&mut w, other, v),
+                None => reply(&mut w, "error", json!({ "error": "unknown op; expected status or shutdown" })),
+            },
+            None => reply(&mut w, "error", json!({ "error": "unknown op; expected status or shutdown" })),
         };
         if res.is_err() {
             return;

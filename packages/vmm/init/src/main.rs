@@ -25,8 +25,14 @@
 //!   BERTH_DISABLE_DAEMON_CONFINEMENT 1 = context-bus-daemon as root, unconfined
 //!   BERTH_VM_STOP_GRACE_MS      SIGTERM-to-SIGKILL grace at shutdown (default 3000)
 //!   BERTH_STATE_DEV             per-sandbox state disk (/dev/vdX): ext4 on /state, /state/workspace on /workspace
+//!   BERTH_VM_TEST_HOOKS         1 = accept test-only control ops (egress_raw); never set outside tests
+//!
+//! When exactly one app declares network:host:/browser:navigate:, berth-init
+//! also starts the egress broker confined (uid 9002) and relays its upstream
+//! connections to the host's dialer on vsock 1026 (egress.rs).
 
 mod cgroup;
+mod egress;
 mod hub;
 mod plan;
 mod relay;
@@ -46,6 +52,7 @@ use std::time::{Duration, Instant};
 const AGENT_INIT: &str = "/usr/local/bin/agent-init";
 const POLICY_COMPILER: &str = "/opt/berth/sdk-node/generate-capability-policy.mjs";
 const CONTEXT_BUS_DAEMON: &str = "/usr/local/bin/context-bus-daemon";
+const EGRESS_BROKER: &str = "/usr/local/bin/berth-egress-broker.cjs";
 const NODE: &str = "/usr/bin/node";
 const PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const POLICY_DIR: &str = "/run/berth/policy";
@@ -64,6 +71,7 @@ struct Config {
     confine_daemons: bool,
     grace: Duration,
     context_bus_socket: String,
+    test_hooks: bool,
 }
 
 impl Config {
@@ -79,6 +87,7 @@ impl Config {
             confine_daemons: !plan::flag(env("BERTH_DISABLE_DAEMON_CONFINEMENT").as_deref(), false),
             grace: Duration::from_millis(env("BERTH_VM_STOP_GRACE_MS").and_then(|v| v.parse().ok()).unwrap_or(3000)),
             context_bus_socket: env("BERTH_CONTEXT_BUS_SOCKET").unwrap_or_else(|| "/tmp/berth-context-bus.sock".into()),
+            test_hooks: plan::flag(env("BERTH_VM_TEST_HOOKS").as_deref(), false),
         })
     }
 }
@@ -123,6 +132,9 @@ struct Supervisor {
     shutdown: Mutex<Option<String>>,
     cgroups: Mutex<Option<Cgroups>>,
     rpc: RpcMode,
+    /// The egress broker is up: apps get BERTH_EGRESS_PROXY_URL.
+    egress_up: AtomicBool,
+    test_hooks: bool,
 }
 
 impl hub::Control for Supervisor {
@@ -167,6 +179,13 @@ impl hub::Control for Supervisor {
         self.shutdown.lock().unwrap().get_or_insert_with(|| reason.to_string());
         // Wakes the main thread's sigtimedwait.
         sys::kill(std::process::id() as i32, libc::SIGUSR1);
+    }
+
+    fn test_op(&self, op: &str, req: &Value) -> Option<Value> {
+        match op {
+            "egress_raw" if self.test_hooks => Some(egress::raw_probe(req)),
+            _ => None,
+        }
     }
 }
 
@@ -223,6 +242,8 @@ fn main() {
         shutdown: Mutex::new(None),
         cgroups: Mutex::new(None),
         rpc: cfg.as_ref().map_or(RpcMode::Socket, |c| c.rpc),
+        egress_up: AtomicBool::new(false),
+        test_hooks: cfg.as_ref().is_ok_and(|c| c.test_hooks),
     }));
 
     // The host-facing streams come up first, so a failed boot is reported on
@@ -410,11 +431,27 @@ fn boot(sup: &'static Supervisor, cfg: &Config) -> Result<(), String> {
     }
     phase("policies", json!({ "apps": compiled.iter().map(|(_, p)| p.app_name.clone()).collect::<Vec<_>>() }));
 
+    // --- Egress: which app's patterns the broker enforces, if any. ---
+    let egress_app = match plan::egress_plan(&compiled.iter().map(|(_, p)| p).collect::<Vec<_>>()) {
+        plan::EgressPlan::None => None,
+        plan::EgressPlan::Broker(k) if Path::new(EGRESS_BROKER).exists() => Some(compiled[k].0),
+        plan::EgressPlan::Broker(k) => {
+            hub::info(&format!("WARNING: {} declares egress but {EGRESS_BROKER} is not in this image; it has no way out", compiled[k].1.app_name));
+            hub::event("egress_refused", json!({ "reason": format!("{EGRESS_BROKER} is not in this image") }));
+            None
+        }
+        plan::EgressPlan::Refused(why) => {
+            hub::info(&format!("WARNING: {why}"));
+            hub::event("egress_refused", json!({ "reason": why }));
+            None
+        }
+    };
+
     // --- Identities and per-app directories (provision_app_identity). ---
     let with_bus = Path::new(CONTEXT_BUS_DAEMON).exists();
     let ident: Vec<(String, u32, Vec<u32>)> =
         compiled.iter().map(|(i, p)| (p.app_name.clone(), cfg.apps[*i].uid, plan::supplementary_gids(cfg.apps[*i].uid, p))).collect();
-    install_identities(&ident, with_bus);
+    install_identities(&ident, with_bus, egress_app.is_some());
     for (name, uid, _) in &ident {
         for (dir, mode) in [(format!("/run/berth/{name}"), 0o711), (format!("/run/berth/{name}/peers"), 0o711), (format!("/tmp/{name}"), 0o700)] {
             if let Err(e) = sys::install_dir(&dir, mode, *uid, *uid) {
@@ -468,6 +505,9 @@ fn boot(sup: &'static Supervisor, cfg: &Config) -> Result<(), String> {
     } else {
         hub::info(&format!("context-bus-daemon is not in this image ({CONTEXT_BUS_DAEMON}); apps fall back to the SDK's local context bus"));
         hub::event("daemon_absent", json!({ "daemon": "context-bus", "path": CONTEXT_BUS_DAEMON }));
+    }
+    if let Some(i) = egress_app {
+        start_egress(sup, cfg, &cfg.apps[i]);
     }
     phase("daemons", json!({}));
 
@@ -559,10 +599,10 @@ fn compile_policies(apps: &[AppSpec]) -> Vec<Result<Policy, String>> {
         .collect()
 }
 
-fn install_identities(apps: &[(String, u32, Vec<u32>)], with_bus: bool) {
+fn install_identities(apps: &[(String, u32, Vec<u32>)], with_bus: bool, with_egress: bool) {
     let passwd = std::fs::read_to_string("/etc/passwd").unwrap_or_default();
     let group = std::fs::read_to_string("/etc/group").unwrap_or_default();
-    let (p, g) = plan::identity_files(&passwd, &group, apps, with_bus);
+    let (p, g) = plan::identity_files(&passwd, &group, apps, with_bus, with_egress);
     let _ = sys::install_dir("/run/berth/etc", 0o755, 0, 0);
     for (name, content) in [("passwd", p), ("group", g)] {
         let staged = format!("/run/berth/etc/{name}");
@@ -576,7 +616,7 @@ fn install_identities(apps: &[(String, u32, Vec<u32>)], with_bus: bool) {
 
 /// The environment of one app's agent-init and runtime. Explicit: nothing of
 /// PID 1's own environment (the kernel command line's) is passed on.
-fn app_env(cfg: &Config, a: &AppSpec, policy: &Policy) -> Vec<(String, String)> {
+fn app_env(cfg: &Config, a: &AppSpec, policy: &Policy, egress_up: bool) -> Vec<(String, String)> {
     let name = &policy.app_name;
     let tmp = format!("/tmp/{name}");
     let gids = plan::supplementary_gids(a.uid, policy).iter().map(u32::to_string).collect::<Vec<_>>().join(",");
@@ -603,6 +643,11 @@ fn app_env(cfg: &Config, a: &AppSpec, policy: &Policy) -> Vec<(String, String)> 
     ];
     if cfg.rpc == RpcMode::Socket {
         e.push(("BERTH_RPC_SOCKET".into(), format!("/run/berth/{name}/rpc.sock")));
+    }
+    // To every app, as entrypoint.sh exports it to every app in a container;
+    // only an app that declared network:connect:8090 can connect to it.
+    if egress_up {
+        e.push(("BERTH_EGRESS_PROXY_URL".into(), format!("http://127.0.0.1:{}", plan::BROKER_PORT)));
     }
     let entry = format!("{}/dist/index.mjs", a.dir);
     if Path::new(&entry).exists() {
@@ -712,6 +757,101 @@ fn start_context_bus(sup: &'static Supervisor, cfg: &Config) {
     }
 }
 
+/// The egress broker for app `a`'s declared patterns: confined under
+/// agent-init as uid 9002 in /berth/daemons, TCP bind on 8090 only and no TCP
+/// connect at all; its upstream is berth-init's relay to the host dialer.
+fn start_egress(sup: &'static Supervisor, cfg: &Config, a: &AppSpec) {
+    if let Err(e) = egress::serve_relay() {
+        hub::info(&format!("WARNING: could not serve {}: {e}; no egress", plan::DIAL_SOCKET));
+        hub::event("egress_refused", json!({ "reason": format!("relay: {e}") }));
+        return;
+    }
+    // The broker reads the egress app's compiled policy (its declared
+    // patterns, and whether a github:* broker owns api.github.com) from a
+    // root-owned copy it can read and not write.
+    let copied = std::fs::copy(policy_path(a), plan::EGRESS_POLICY)
+        .and_then(|_| sys::chown(plan::EGRESS_POLICY, 0, plan::EGRESS_UID))
+        .and_then(|_| sys::chmod(plan::EGRESS_POLICY, 0o640));
+    let home = "/tmp/berth-egress";
+    let daemon_policy = "/run/berth/daemon-policy.egress-broker.json";
+    let body = json!({
+        "appName": "egress-broker",
+        "declaredCapabilities": ["daemon:egress-broker"],
+        "writePaths": [home],
+        "readPaths": [],
+        "networkPorts": [],
+        "networkUnrestricted": false,
+        "bindPorts": [plan::BROKER_PORT],
+    });
+    let written = copied.and_then(|_| sys::install_dir(home, 0o700, plan::EGRESS_UID, plan::EGRESS_UID)).and_then(|_| {
+        std::fs::write(daemon_policy, body.to_string())?;
+        sys::chmod(daemon_policy, 0o600)
+    });
+    if let Err(e) = written {
+        hub::info(&format!("WARNING: could not prepare the egress broker: {e}; no egress"));
+        hub::event("egress_refused", json!({ "reason": e.to_string() }));
+        return;
+    }
+    let u = plan::EGRESS_UID.to_string();
+    let mut cmd = Command::new(AGENT_INIT);
+    cmd.arg(NODE)
+        .arg(EGRESS_BROKER)
+        .env_clear()
+        .envs([
+            ("PATH", PATH.to_string()),
+            ("HOME", home.to_string()),
+            ("TMPDIR", home.to_string()),
+            ("BERTH_BOOT_ID", hub::boot_id().to_string()),
+            ("BERTH_CAPABILITY_POLICY", daemon_policy.to_string()),
+            ("BERTH_APP_UID", u.clone()),
+            ("BERTH_APP_GID", u.clone()),
+            ("BERTH_APP_SUPPLEMENTARY_GIDS", u),
+            ("BERTH_REQUIRE_ENFORCEMENT", if cfg.require_enforcement { "1" } else { "0" }.to_string()),
+            ("BERTH_EGRESS_POLICY", plan::EGRESS_POLICY.to_string()),
+            ("BERTH_EGRESS_BROKER_PORT", plan::BROKER_PORT.to_string()),
+            ("BERTH_EGRESS_DIALER_SOCKET", plan::DIAL_SOCKET.to_string()),
+        ])
+        .current_dir("/")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    unsafe { cmd.pre_exec(child_setup(None)) };
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            hub::info(&format!("WARNING: could not start the egress broker: {e}"));
+            hub::event("egress_refused", json!({ "reason": e.to_string() }));
+            return;
+        }
+    };
+    let pid = child.id() as i32;
+    let listening = Arc::new(AtomicBool::new(false));
+    if let Some(o) = child.stdout.take() {
+        relay::pipe_logs("egress-broker".into(), "stdout", o, |_| {});
+    }
+    if let Some(e) = child.stderr.take() {
+        let l = listening.clone();
+        relay::pipe_logs("egress-broker".into(), "stderr", e, move |line| {
+            if line.contains("[egress-broker] listening on 127.0.0.1:") {
+                l.store(true, Ordering::SeqCst);
+            }
+        });
+    }
+    sup.daemons.lock().unwrap().push(("egress-broker".into(), pid));
+    std::mem::forget(child);
+    let t = Instant::now();
+    while t.elapsed() < Duration::from_secs(10) && !listening.load(Ordering::SeqCst) {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let up = listening.load(Ordering::SeqCst);
+    sup.egress_up.store(up, Ordering::SeqCst);
+    hub::event(
+        "daemon_started",
+        json!({ "daemon": "egress-broker", "pid": pid, "uid": plan::EGRESS_UID, "port": plan::BROKER_PORT, "listening": up, "forApp": a.tag,
+                "dialSocket": plan::DIAL_SOCKET, "vsockPort": plan::EGRESS_PORT, "waitMs": t.elapsed().as_millis() as u64 }),
+    );
+}
+
 fn start_app(sup: &'static Supervisor, cfg: &Config, a: &AppSpec, policy: &Policy) {
     let name = policy.app_name.clone();
     let refuse = |reason: String| {
@@ -760,7 +900,7 @@ fn start_app(sup: &'static Supervisor, cfg: &Config, a: &AppSpec, policy: &Polic
         .arg(&runtime)
         .current_dir(&a.dir)
         .env_clear()
-        .envs(app_env(cfg, a, policy))
+        .envs(app_env(cfg, a, policy, sup.egress_up.load(Ordering::SeqCst)))
         .stdin(if cfg.rpc == RpcMode::Stdio { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -928,6 +1068,7 @@ fn shutdown(sup: &Supervisor, sigs: &libc::sigset_t, reason: &str, grace: Durati
         sys::wait_signal(sigs, Duration::from_millis(10));
     }
     reap_and_record(sup);
+    egress::stop_relay();
     unsafe { libc::sync() };
     let mut unmounted = Vec::new();
     let mut failed = Vec::new();
