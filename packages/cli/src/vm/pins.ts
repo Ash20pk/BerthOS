@@ -42,3 +42,49 @@ export const ROOTFS_PIN: ArtifactPin = {
 };
 
 export const PINS: readonly ArtifactPin[] = [KERNEL_PIN, ROOTFS_PIN];
+
+/** `key = "value"` / `key = 123` lines of a flat manifest. */
+export function parseManifest(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of text.split("\n")) {
+    const m = /^([a-z0-9_]+)\s*=\s*"?([^"#]*?)"?\s*$/.exec(line.trim());
+    if (m) out[m[1]!] ??= m[2]!;
+  }
+  return out;
+}
+
+/**
+ * The manifests a berth-vmm binary was built with. They are compiled in
+ * verbatim (include_str!), so each sits in the binary as one run of text
+ * starting at its `name = "berth-kernel"` / `name = "berth-rootfs"` line.
+ */
+export function manifestsInBinary(bytes: Buffer): { kernel?: Record<string, string>; rootfs?: Record<string, string> } {
+  const region = (marker: string) => {
+    const at = bytes.indexOf(marker);
+    if (at < 0) return undefined;
+    let end = at;
+    // Up to the first byte that can't be manifest text.
+    while (end < bytes.length && end - at < 16384 && (bytes[end] === 0x0a || bytes[end] === 0x09 || (bytes[end]! >= 0x20 && bytes[end]! < 0x7f))) end++;
+    return parseManifest(bytes.subarray(at, end).toString("latin1"));
+  };
+  return { kernel: region('name = "berth-kernel"'), rootfs: region('name = "berth-rootfs"') };
+}
+
+const HEX64 = /^[0-9a-f]{64}$/;
+
+/**
+ * The pins a berth-vmm boots, read out of the binary: it refuses anything
+ * else, so these, not the CLI's built-in copy, are what an install must
+ * fetch. Undefined when the binary doesn't carry readable manifests.
+ */
+export function pinsFromManifests(m: { kernel?: Record<string, string>; rootfs?: Record<string, string> }): { kernel: ArtifactPin; rootfs: ArtifactPin } | undefined {
+  const ks = m.kernel?.image_sha256;
+  const rs = m.rootfs?.image_sha256;
+  const kn = Number(m.kernel?.image_size);
+  const rn = Number(m.rootfs?.image_size);
+  if (!ks || !rs || !HEX64.test(ks) || !HEX64.test(rs) || !Number.isInteger(kn) || !Number.isInteger(rn)) return undefined;
+  return {
+    kernel: { kind: "kernel", sha256: ks, size: kn, file: "Image", relPath: `kernel/sha256/${ks}/Image` },
+    rootfs: { kind: "rootfs", sha256: rs, size: rn, file: `rootfs-${rs}.erofs`, relPath: `rootfs/rootfs-${rs}.erofs` },
+  };
+}

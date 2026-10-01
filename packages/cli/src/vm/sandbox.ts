@@ -68,6 +68,8 @@ export interface StartOptions {
   /** Default ~/.berth/vm (berth-vmm's own default). */
   artifactsDir?: string;
   env?: string[];
+  /** More `berth-vmm run` options, passed as given (e.g. --egress-allow). */
+  extraArgs?: string[];
   readyTimeoutMs?: number;
   /** Lines from the guest's log port, as they arrive. */
   onLog?: (line: GuestLogLine) => void;
@@ -216,6 +218,7 @@ export class VmSandbox {
     if (options.memMiB) args.push("--mem", String(options.memMiB));
     if (options.artifactsDir) args.push("--artifacts", options.artifactsDir);
     for (const e of options.env ?? []) args.push("--env", e);
+    args.push(...(options.extraArgs ?? []));
 
     // stderr to a file, not a pipe: a detached berth-vmm must not die of
     // SIGPIPE when the CLI that started it goes away.
@@ -492,6 +495,35 @@ export class VmSandbox {
     this.control = undefined;
     cleanRunDir(this.runDir);
     return { clean: !killed && powerOff !== undefined, killed, ...(powerOff ? { powerOff } : {}) };
+  }
+
+  /**
+   * berth-vmm's own JSON lines after boot, from vmm.log: the egress dialer's
+   * `egress` / `egress_closed` decisions (feat/vm-egress). Polled; stops when
+   * the VM exits or the returned function is called.
+   */
+  onVmmEvent(fn: (event: Record<string, unknown>) => void, pollMs = 250): () => void {
+    const path = join(this.runDir, VMM_LOG);
+    let offset = 0;
+    let partial = "";
+    const read = () => {
+      const text = readText(path);
+      if (text.length <= offset) return;
+      const chunk = partial + text.slice(offset);
+      offset = text.length;
+      const lines = chunk.split("\n");
+      partial = lines.pop() ?? "";
+      for (const line of lines) {
+        const v = line.startsWith("{") ? parseObject(line) : undefined;
+        if (v && v.source === "berth-vmm" && typeof v.event === "string" && !["endpoints", "vm_config", "measurements"].includes(v.event)) fn(v);
+      }
+    };
+    const timer = setInterval(() => {
+      read();
+      if (!this.isRunning()) clearInterval(timer);
+    }, pollMs);
+    timer.unref();
+    return () => clearInterval(timer);
   }
 
   /** Closes this process's connections without stopping the VM (a reattached caller leaving). */

@@ -1,8 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { accessSync, constants, existsSync, readFileSync, readlinkSync, readdirSync, realpathSync, writeFileSync, mkdirSync } from "node:fs";
+import { accessSync, constants, existsSync, readlinkSync, readdirSync, realpathSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { KERNEL_SHA256, LIBKRUN_VERSION, ROOTFS_SHA256 } from "./pins.js";
+import { readFileSync as readBytes } from "node:fs";
+import { KERNEL_PIN, LIBKRUN_VERSION, ROOTFS_PIN, manifestsInBinary, pinsFromManifests, type ArtifactPin } from "./pins.js";
 import { vmHome } from "./paths.js";
 
 /**
@@ -98,13 +99,24 @@ export function codesignRemedy(vmm: string): string {
 }
 
 /**
- * Whether this berth-vmm was built with the same pins as this CLI. The
- * manifests are compiled into the binary (include_str!), so the pinned
- * sha256 strings are in it verbatim.
+ * The kernel and rootfs this berth-vmm boots (its compiled-in manifests),
+ * and whether they are the ones this CLI was built with. berth-vmm's are the
+ * ones that count: it refuses anything else.
  */
-export function vmmCarriesPins(path: string): { kernel: boolean; rootfs: boolean } {
-  const bytes = readFileSync(path);
-  return { kernel: bytes.includes(KERNEL_SHA256), rootfs: bytes.includes(ROOTFS_SHA256) };
+export function vmmPins(path: string): { pins?: { kernel: ArtifactPin; rootfs: ArtifactPin }; sameAsCli: boolean } {
+  const pins = pinsFromManifests(manifestsInBinary(readBytes(path)));
+  return { ...(pins ? { pins } : {}), sameAsCli: pins?.kernel.sha256 === KERNEL_PIN.sha256 && pins.rootfs.sha256 === ROOTFS_PIN.sha256 };
+}
+
+/** The pins to install and boot: berth-vmm's when it is found and readable, else the CLI's own. */
+export function activePins(vmm: string | undefined): readonly ArtifactPin[] {
+  if (vmm && existsSync(vmm)) {
+    try {
+      const p = vmmPins(vmm).pins;
+      if (p) return [p.kernel, p.rootfs];
+    } catch {}
+  }
+  return [KERNEL_PIN, ROOTFS_PIN];
 }
 
 export interface LibkrunInfo {
@@ -223,16 +235,15 @@ export function checkHost(options: { env?: NodeJS.ProcessEnv; platform?: NodeJS.
         ...(sig.entitled ? {} : { remedy: codesignRemedy(vmm) }),
       });
     }
-    const pins = vmmCarriesPins(vmm);
-    const both = pins.kernel && pins.rootfs;
+    const read = vmmPins(vmm);
     checks.push({
       id: "pins",
-      title: "berth-vmm pins match this CLI",
-      status: both ? "ok" : "fail",
-      detail: both
-        ? `kernel ${KERNEL_SHA256.slice(0, 12)}…, rootfs ${ROOTFS_SHA256.slice(0, 12)}…`
-        : `berth-vmm was built with ${pins.kernel ? "the same kernel but a different rootfs" : pins.rootfs ? "the same rootfs but a different kernel" : "different pins"} than this CLI expects — it would refuse this CLI's artifacts`,
-      ...(both ? {} : { remedy: "rebuild berth-vmm from the same checkout as the CLI (cd packages/vmm && cargo build --release)" }),
+      title: "berth-vmm's pinned kernel and rootfs",
+      status: read.pins ? (read.sameAsCli ? "ok" : "warn") : "fail",
+      detail: !read.pins
+        ? "no readable kernel/rootfs manifests in the binary"
+        : `kernel ${read.pins.kernel.sha256.slice(0, 12)}…, rootfs ${read.pins.rootfs.sha256.slice(0, 12)}…${read.sameAsCli ? " (the same as this CLI's)" : ` — not this CLI's built-in kernel ${KERNEL_PIN.sha256.slice(0, 12)}… / rootfs ${ROOTFS_PIN.sha256.slice(0, 12)}…; berth-vmm's are used`}`,
+      ...(read.pins ? {} : { remedy: "rebuild berth-vmm from packages/vmm (cargo build --release)" }),
     });
   }
 
@@ -248,4 +259,17 @@ export function checkHost(options: { env?: NodeJS.ProcessEnv; platform?: NodeJS.
     ...(libkrun.found && versionOk ? {} : { remedy: libkrunRemedy(platform) }),
   });
   return { checks, ...(vmm ? { vmm } : {}), hypervisor, libkrun };
+}
+
+const featureCache = new Map<string, { egress: boolean }>();
+
+/** What this berth-vmm can do beyond the base `run`, from its own `run --help`. */
+export function vmmFeatures(vmm: string, run = spawnSync): { egress: boolean } {
+  const cached = featureCache.get(vmm);
+  if (cached) return cached;
+  const r = run(vmm, ["run", "--help"], { encoding: "utf8", timeout: 5_000 });
+  const help = `${r.stdout ?? ""}${r.stderr ?? ""}`;
+  const features = { egress: help.includes("--egress-allow") };
+  featureCache.set(vmm, features);
+  return features;
 }

@@ -146,3 +146,13 @@ test("only berth-vmm's own JSON lines are read from its stderr", () => {
   assert.equal(lines.measurements?.kernel, null);
   assert.equal(lines.vmConfig, undefined);
 });
+
+test("berth-vmm's own lines after boot (the egress dialer's) reach onVmmEvent; the boot lines don't", async () => {
+  const { sandbox } = await start("t-vmmev");
+  const seen: Record<string, unknown>[] = [];
+  const off = sandbox.onVmmEvent((e) => seen.push(e), 20);
+  for (let i = 0; i < 100 && seen.length === 0; i++) await new Promise((r) => setTimeout(r, 20));
+  off();
+  assert.deepEqual(seen.map((e) => [e.event, e.decision, e.host]), [["egress", "denied", "example.net"]]);
+  await sandbox.stop();
+});

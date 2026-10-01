@@ -3,12 +3,12 @@ import type { BerthManifest } from "@berthos/manifest-schema";
 import { artifactsPresent, installArtifacts } from "./artifacts.js";
 import { bundleApp, type BundledApp } from "./bundle.js";
 import { readConfigFile, resolveArtifactsDir, resolveArtifactsUrl } from "./config.js";
-import { checkHost } from "./host.js";
+import { activePins, checkHost, vmmFeatures } from "./host.js";
 import { vmHome, vmStateDisk } from "./paths.js";
 import { VmSandbox, type StartTimings } from "./sandbox.js";
 import type { ReadyResult } from "./control.js";
 import type { GuestLogLine } from "./guest-lines.js";
-import { vmUnsupported, vmUnsupportedMessage } from "./support.js";
+import { egressAllowList, vmUnsupported, vmUnsupportedMessage } from "./support.js";
 
 /**
  * The steps `berth dev --runtime vm` and `berth mcp --runtime vm` share:
@@ -39,23 +39,32 @@ export function requireHost(): string {
 }
 
 /** Installs the pinned kernel and rootfs if they aren't in ~/.berth/vm yet. */
-export async function ensureArtifacts(log: (message: string) => void): Promise<void> {
-  if (artifactsPresent()) return;
+export async function ensureArtifacts(log: (message: string) => void, vmm: string): Promise<void> {
+  const pins = activePins(vmm);
+  if (artifactsPresent(undefined, pins)) return;
   const config = readConfigFile();
   const from = resolveArtifactsDir(undefined, process.env, config);
   const urlTemplate = resolveArtifactsUrl(undefined, process.env, config);
   log(`installing the pinned VM kernel and rootfs into ${vmHome()} (first use)${from ? ` from ${from}` : ""}...`);
   try {
-    const results = await installArtifacts({ ...(from && existsSync(from) ? { from } : {}), urlTemplate, log });
+    const results = await installArtifacts({ ...(from && existsSync(from) ? { from } : {}), urlTemplate, log, pins });
     for (const r of results) log(`  ${r.kind}: ${r.source} ${r.sha256.slice(0, 12)}… in ${r.ms} ms`);
   } catch (err) {
     throw new VmHostError(`${err instanceof Error ? err.message : String(err)}\nInstall them with \`berth vm install --from <dir>\` (a packages/vmm build's artifacts directory).`);
   }
 }
 
-export function assertSupported(apps: VmAppInput[]): void {
+export function assertSupported(apps: VmAppInput[], vmm: string): void {
+  const features = vmmFeatures(vmm);
+  // The guest's egress broker is one app's, as in a container.
+  const egressApps = apps.filter((a) => egressAllowList([a.manifest]).length > 0);
+  if (egressApps.length > 1) {
+    throw new VmHostError(
+      `at most one app may declare a browser:navigate:*/network:host:* capability when running multiple apps together — found ${egressApps.length}: ${egressApps.map((a) => a.name).join(", ")}`,
+    );
+  }
   for (const app of apps) {
-    const reasons = vmUnsupported(app.manifest);
+    const reasons = vmUnsupported(app.manifest, features);
     if (reasons.length > 0) throw new VmHostError(vmUnsupportedMessage(app.name, reasons));
   }
 }
@@ -89,9 +98,17 @@ export async function bootVm(options: BootVmOptions): Promise<{ sandbox: VmSandb
     vmm: options.vmm,
     apps: bundles.map((b, i) => ({ name: b.name, share: b.shareDir, appDir: options.apps[i]!.appDir })),
     ...(options.state === false ? {} : { state: vmStateDisk(primary.name) }),
+    ...egressArgs(options.apps.map((a) => a.manifest), options.vmm),
     ...(options.onLog ? { onLog: options.onLog } : {}),
     ...(options.readyTimeoutMs ? { readyTimeoutMs: options.readyTimeoutMs } : {}),
     ...(options.signal ? { signal: options.signal } : {}),
   });
   return { sandbox, ready, timings: { ...timings, bundleMs }, bundles };
+}
+
+/** `--egress-allow` for the sandbox, when its apps declare egress and this berth-vmm has the dialer. */
+function egressArgs(manifests: BerthManifest[], vmm: string): { extraArgs?: string[] } {
+  const allow = egressAllowList(manifests);
+  if (allow.length === 0 || !vmmFeatures(vmm).egress) return {};
+  return { extraArgs: ["--egress-allow", allow.join(",")] };
 }

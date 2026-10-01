@@ -71,7 +71,7 @@ test("the probe: enforcing only for the pinned kernel running with landlock", ()
   assert.match(vmDoctorProbe(iso, events).reason!, /not a behavioural probe/);
   assert.equal(vmDoctorProbe(iso, [{ source: "berth-init", event: "boot_start", lsm: "capability,yama" }]).status, "unsupported");
   assert.equal(vmDoctorProbe(iso, []).status, "unknown");
-  assert.equal(vmDoctorProbe({ ...iso, kernel: { ...iso.kernel, sha256: "e".repeat(64) } }, events).status, "unknown");
+  assert.equal(vmDoctorProbe({ ...iso, kernel: { ...iso.kernel, sha256: "e".repeat(64), pinned: false } }, events).status, "unknown");
   assert.equal(vmDoctorProbe(undefined, events).status, "unknown");
 });
 

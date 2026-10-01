@@ -1,7 +1,6 @@
 import type { BootIsolation, DoctorProbeResult, RulesetReport } from "@berthos/audit";
 import type { BootEvidence, ResourceLimitsEvidence } from "@berthos/docker-orchestrator";
 import { parseObject, type ControlEvent, type GuestLogLine } from "./guest-lines.js";
-import { KERNEL_SHA256 } from "./pins.js";
 import type { VmRecord } from "./sandbox.js";
 
 /**
@@ -132,7 +131,7 @@ export function vmDoctorProbe(isolation: BootIsolation | undefined, events: Cont
   const start = events.find((e) => e.event === "boot_start");
   const lsm = str(start?.lsm);
   if (!isolation) return { status: "unknown", reason: "berth-vmm's measurement line was not recorded for this boot" };
-  if (!isolation.kernel.pinned || isolation.kernel.sha256 !== KERNEL_SHA256) {
+  if (!isolation.kernel.pinned) {
     return { status: "unknown", reason: `the guest kernel ${isolation.kernel.sha256.slice(0, 12)}… is not the pinned one; nothing is known about its Landlock support` };
   }
   if (!lsm) return { status: "unknown", reason: "berth-init did not report the guest kernel's LSMs at this boot" };

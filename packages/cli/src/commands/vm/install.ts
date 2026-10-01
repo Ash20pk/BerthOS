@@ -3,7 +3,7 @@ import { chmodSync, constants, copyFileSync, existsSync, mkdirSync, renameSync }
 import { join, resolve } from "node:path";
 import { installArtifacts } from "../../vm/artifacts.js";
 import { readConfigFile, resolveArtifactsDir, resolveArtifactsUrl } from "../../vm/config.js";
-import { checkHost, writeEntitlementsFile } from "../../vm/host.js";
+import { activePins, checkHost, locateVmm, writeEntitlementsFile } from "../../vm/host.js";
 import { vmHome } from "../../vm/paths.js";
 
 export default class VmInstall extends Command {
@@ -35,18 +35,6 @@ export default class VmInstall extends Command {
     if (!from && !urlTemplate) this.error("nothing to install from: pass --from <dir>, or drop --no-download");
 
     const t0 = Date.now();
-    let results;
-    try {
-      results = await installArtifacts({ ...(from ? { from: resolve(from) } : {}), ...(urlTemplate ? { urlTemplate } : {}), force: flags.force, log: (m) => this.log(m) });
-    } catch (err) {
-      this.error(err instanceof Error ? err.message : String(err));
-    }
-    for (const r of results) {
-      const how = r.source === "installed" ? "already installed" : r.source === "copied" ? `copied from ${r.from}` : `downloaded from ${r.from}`;
-      this.log(`✔ ${r.kind} ${r.sha256.slice(0, 16)}… verified (${how}, ${r.ms} ms)`);
-      this.log(`    ${r.path}`);
-    }
-
     if (flags.vmm) {
       const src = resolve(flags.vmm);
       if (!existsSync(src)) this.error(`--vmm ${src} does not exist`);
@@ -57,6 +45,20 @@ export default class VmInstall extends Command {
       renameSync(`${dest}.tmp`, dest);
       this.log(`✔ berth-vmm copied to ${dest}`);
     }
+    // The kernel and rootfs berth-vmm was built to boot; it refuses any other.
+    const pins = activePins(locateVmm(process.env, config.vm?.vmm));
+    let results;
+    try {
+      results = await installArtifacts({ ...(from ? { from: resolve(from) } : {}), ...(urlTemplate ? { urlTemplate } : {}), force: flags.force, pins, log: (m) => this.log(m) });
+    } catch (err) {
+      this.error(err instanceof Error ? err.message : String(err));
+    }
+    for (const r of results) {
+      const how = r.source === "installed" ? "already installed" : r.source === "copied" ? `copied from ${r.from}` : `downloaded from ${r.from}`;
+      this.log(`✔ ${r.kind} ${r.sha256.slice(0, 16)}… verified (${how}, ${r.ms} ms)`);
+      this.log(`    ${r.path}`);
+    }
+
     const entitlements = writeEntitlementsFile();
 
     const host = checkHost(config.vm?.vmm ? { configuredVmm: config.vm.vmm } : {});

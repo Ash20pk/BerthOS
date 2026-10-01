@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { KERNEL_CONFIG_SHA256, KERNEL_LINUX, KERNEL_SHA256, KERNEL_SIZE, ROOTFS_SHA256, ROOTFS_SIZE } from "./pins.js";
+import { KERNEL_CONFIG_SHA256, KERNEL_LINUX, KERNEL_SHA256, KERNEL_SIZE, ROOTFS_SHA256, ROOTFS_SIZE, manifestsInBinary, pinsFromManifests } from "./pins.js";
 
 const vmm = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "vmm");
 const get = (manifest: string, key: string) => manifest.split("\n").map((l) => l.split("=")).find(([k]) => k!.trim() === key)?.[1]?.trim().replace(/^"|"$/g, "");
@@ -19,4 +19,22 @@ test("the CLI's pins are the ones berth-vmm compiles in (packages/vmm manifests)
   assert.equal(Number(get(rootfs, "image_size")), ROOTFS_SIZE);
   // The download template's default matches the kernel manifest's planned dist_url.
   assert.equal(get(kernel, "dist_url"), `https://artifacts.berth.dev/kernel/sha256/{image_sha256}/Image`);
+});
+
+test("the pins are read out of a berth-vmm binary's compiled-in manifests", () => {
+  const k = "a".repeat(64);
+  const r = "b".repeat(64);
+  const bin = Buffer.concat([
+    Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0, 1, 2]),
+    Buffer.from(`# kernel pin\nschema = 1\nname = "berth-kernel"\nimage_size = 10\nimage_sha256 = "${k}"\ncmdline = "x init=/sbin/berth-init"\n`),
+    Buffer.from([0, 0, 0xff]),
+    Buffer.from(`name = "berth-rootfs"\nimage_sha256 = "${r}"\nimage_size = 20\n`),
+    Buffer.from([0]),
+  ]);
+  const pins = pinsFromManifests(manifestsInBinary(bin))!;
+  assert.equal(pins.kernel.sha256, k);
+  assert.equal(pins.kernel.size, 10);
+  assert.equal(pins.kernel.relPath, `kernel/sha256/${k}/Image`);
+  assert.equal(pins.rootfs.relPath, `rootfs/rootfs-${r}.erofs`);
+  assert.equal(pinsFromManifests(manifestsInBinary(Buffer.from("no manifests here"))), undefined);
 });

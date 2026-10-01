@@ -123,6 +123,8 @@ setTimeout(() => {
     else emit(ev("app_ready", { app: name, pid: 200 + i }));
   });
   emit(ev("boot_complete", {}));
+  // The egress dialer's log line (feat/vm-egress), as berth-vmm prints it after boot.
+  out({ source: "berth-vmm", event: "egress", id: 1, decision: "denied", host: "example.net", port: 443, reason: "not in --egress-allow" });
 }, 30);
 
 process.on("SIGTERM", () => process.exit(143));
