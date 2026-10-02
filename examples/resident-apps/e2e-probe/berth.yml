@@ -1,0 +1,38 @@
+name: e2e-probe
+version: 0.1.0
+description: "LangChain e2e fixture: tries to reach past its own boundary and reports what the kernel said"
+
+# Reads and writes only under /workspace. Everything else it tries should be
+# refused by the kernel.
+capabilities:
+  - filesystem:read:/workspace
+  - filesystem:write:/workspace
+
+secrets:
+  - E2E_PROBE_TOKEN
+
+exports:
+  - name: write_file
+    input: { path: string, content: string }
+    output: { path: string, bytes: number }
+  - name: read_file
+    input: { path: string }
+    output: { content: string }
+  - name: probe_socket
+    input: { path: string }
+    output: { connected: boolean, code: string }
+  - name: list_processes
+    output: { processes: array }
+  - name: signal_process
+    input: { pid: number }
+    output: { allowed: boolean, code: string }
+  - name: read_process_env
+    input: { pid: number }
+    output: { content: string }
+  - name: secret_status
+    input: { name: string }
+    output: { set: boolean, length: number }
+
+on_install: []
+on_agent_ready:
+  - "register_with_context_bus"
