@@ -1,0 +1,19 @@
+{
+  "name": "langchain-e2e-example",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node agent.mjs"
+  },
+  "dependencies": {
+    "@berthos/agents": "workspace:*",
+    "@langchain/core": "^1.2.13",
+    "@langchain/openai": "^1.6.0",
+    "langchain": "^1.5.14",
+    "@langchain/mcp-adapters": "^1.1.4",
+    "@ai-sdk/openai": "^4.0.73",
+    "ai": "^7.0.112",
+    "@berthos/audit": "workspace:*"
+  }
+}
