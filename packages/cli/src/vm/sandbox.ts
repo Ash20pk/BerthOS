@@ -6,6 +6,7 @@ import { createLineRpcClient, type StdioRpcClient } from "@berthos/docker-orches
 import { BootFailedError, connectUnix, openControl, requestStatus, waitForReady, type ControlConnection, type ReadyResult } from "./control.js";
 import { asGuestLogLine, parseObject, readJsonLines, type ControlEvent, type GuestLogLine } from "./guest-lines.js";
 import { MAX_SOCKET_PATH, vmRunDir, vmRunRoot } from "./paths.js";
+import { SECRETS_FILE, hasSecrets, removeSecretsDisk, writeSecretsDisk, type VmSecrets } from "./secrets.js";
 
 /**
  * One local microVM sandbox: `berth-vmm run` as a detached host process, and
@@ -14,7 +15,8 @@ import { MAX_SOCKET_PATH, vmRunDir, vmRunRoot } from "./paths.js";
  *   start   spawns `berth-vmm run` detached (it outlives a CLI that dies;
  *           `find` gets it back), run dir ~/.berth/run/vm/<name>/ (0700),
  *           its stderr in vmm.log, its pid in berth-vmm.pid, and vm.json
- *   ready   waits for every app's app_ready on control.sock
+ *   ready   waits for every app's app_ready on control.sock, then removes
+ *           the secrets disk (berth-init has read it by then)
  *   call    line RPC over rpc-<i>.sock (docker-orchestrator's line client)
  *   logs    logs.sock, one reader at a time (berth-init's rule), so the
  *           process that started the VM pumps it into guest.log and to its
@@ -68,6 +70,11 @@ export interface StartOptions {
   /** Passed as --artifacts; omitted, berth-vmm's own default ($HOME/.berth/vm). */
   artifactsDir?: string;
   env?: string[];
+  /**
+   * The sandbox's environment, as a secrets disk (secrets.ts), never on the
+   * kernel command line. Needs a berth-vmm with `run --secrets`.
+   */
+  secrets?: VmSecrets;
   /** More `berth-vmm run` options, passed as given (e.g. --egress-allow). */
   extraArgs?: string[];
   readyTimeoutMs?: number;
@@ -133,7 +140,7 @@ export function cleanRunDir(runDir: string): void {
     return;
   }
   for (const f of entries) {
-    if (f.endsWith(".sock") || f === PID_FILE || f === VM_RECORD) rmSync(join(runDir, f), { force: true });
+    if (f.endsWith(".sock") || f === PID_FILE || f === VM_RECORD || f === SECRETS_FILE) rmSync(join(runDir, f), { force: true });
   }
 }
 
@@ -220,6 +227,7 @@ export class VmSandbox {
     if (options.memMiB) args.push("--mem", String(options.memMiB));
     if (options.artifactsDir) args.push("--artifacts", options.artifactsDir);
     for (const e of options.env ?? []) args.push("--env", e);
+    if (options.secrets && hasSecrets(options.secrets)) args.push("--secrets", writeSecretsDisk(runDir, options.secrets));
     args.push(...(options.extraArgs ?? []));
 
     // stderr to a file, not a pipe: a detached berth-vmm must not die of
@@ -272,6 +280,9 @@ export class VmSandbox {
       timings.controlMs = Date.now() - t0;
       const ready = await waitForReady(control, options.apps.length, readyTimeoutMs, options.signal);
       timings.readyMs = Date.now() - t0;
+      // Read by berth-init before the first app started; berth-vmm keeps its
+      // own open descriptor, so the file need not outlive the boot.
+      removeSecretsDisk(runDir);
       return { sandbox, ready, timings };
     } catch (err) {
       await sandbox.stop({ timeoutMs: 2_000 }).catch(() => {});

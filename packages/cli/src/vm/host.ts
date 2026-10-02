@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { readFileSync as readBytes } from "node:fs";
 import { KERNEL_PIN, LIBKRUN_VERSION, ROOTFS_PIN, manifestsInBinary, pinsFromManifests, vmmPin, type ArtifactPin } from "./pins.js";
 import { vmHome } from "./paths.js";
+import type { VmFeatures } from "./support.js";
 
 /**
  * What the host needs before `berth-vmm run` can boot anything: the berth-vmm
@@ -263,15 +264,15 @@ export function checkHost(options: { env?: NodeJS.ProcessEnv; platform?: NodeJS.
   return { checks, ...(vmm ? { vmm } : {}), hypervisor, libkrun };
 }
 
-const featureCache = new Map<string, { egress: boolean }>();
+const featureCache = new Map<string, VmFeatures>();
 
 /** What this berth-vmm can do beyond the base `run`, from its own `run --help`. */
-export function vmmFeatures(vmm: string, run = spawnSync): { egress: boolean } {
+export function vmmFeatures(vmm: string, run = spawnSync): VmFeatures {
   const cached = featureCache.get(vmm);
   if (cached) return cached;
   const r = run(vmm, ["run", "--help"], { encoding: "utf8", timeout: 5_000 });
   const help = `${r.stdout ?? ""}${r.stderr ?? ""}`;
-  const features = { egress: help.includes("--egress-allow") };
+  const features = { egress: help.includes("--egress-allow"), secrets: help.includes("--secrets") };
   featureCache.set(vmm, features);
   return features;
 }

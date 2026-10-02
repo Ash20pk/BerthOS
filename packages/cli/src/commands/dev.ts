@@ -15,6 +15,7 @@ import { loadManifestOrExit } from "../util/manifest.js";
 import { resolveSandbox } from "../vm/config.js";
 import { runDevVm } from "../vm/dev.js";
 import { bootDevContainer } from "../util/dev-boot.js";
+import { describeEnvNames, envFlags, readEnvFlags, undeclaredEnvNames } from "../util/env-args.js";
 import {
   resolveApps,
   assertAtMostOneBrowserApp,
@@ -34,6 +35,7 @@ export default class Dev extends Command {
     "mesh-coordinator": Flags.string({
       description: "berth-mesh-coordinator URL for network:peer:* apps, e.g. http://localhost:4875 (see docs/mesh-reference.md)",
     }),
+    ...envFlags,
   };
 
   async run(): Promise<void> {
@@ -48,12 +50,24 @@ export default class Dev extends Command {
     }
 
     const apps = await resolveApps(appDir, flags.apps, manifest);
+    let env: Record<string, string> = {};
+    try {
+      env = await readEnvFlags(flags);
+    } catch (err) {
+      this.error(err instanceof Error ? err.message : String(err));
+    }
+    const undeclared = undeclaredEnvNames(env, apps);
+    if (undeclared.length > 0) {
+      this.warn(
+        `no app declares ${describeEnvNames(undeclared)} under secrets:, so every app in this sandbox can read ${undeclared.length === 1 ? "it" : "them"}. Declare a secret in the berth.yml of the app that needs it to deliver it to that app alone — see docs/secrets-reference.md.`,
+      );
+    }
     if (sandbox === "vm") {
       if (flags["mesh-coordinator"]) this.error("--mesh-coordinator needs network:peer, which the microVM runtime doesn't have; use --runtime docker");
       assertAtMostOneEgressBrokerApp(apps);
       if (apps.length > 1) this.log(`Running with companion apps: ${apps.slice(1).map((a) => a.name).join(", ")}`);
       try {
-        await runDevVm({ apps, log: (m) => this.log(m), error: (m) => this.error(m, { exit: false }) });
+        await runDevVm({ apps, env, log: (m) => this.log(m), error: (m) => this.error(m, { exit: false }) });
       } catch (err) {
         this.error(err instanceof Error ? err.message : String(err));
       }
@@ -72,6 +86,7 @@ export default class Dev extends Command {
       apps,
       docker,
       meshCoordinatorUrl: flags["mesh-coordinator"],
+      env,
       log: (message) => this.log(message),
     });
 
