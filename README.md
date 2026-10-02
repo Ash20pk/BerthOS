@@ -21,12 +21,16 @@ flowchart LR
     KERNEL{"Linux kernel<br/>Landlock + seccomp"}
     MANIFEST -. "compiled into a policy<br/>before the app starts" .-> KERNEL
     APP -- "syscall" --> KERNEL
+    subgraph fs["The sandbox's own filesystem"]
+      OK["write /workspace/report.md"]
+      NO["write /etc/passwd"]
+    end
+    KERNEL -- "declared: allowed" --> OK
+    KERNEL -- "undeclared: EACCES" --> NO
   end
 
   MCP -- "MCP (berth mcp)" --> APP
   LOOP -- "toAiSdkTools / toLangChainTools" --> APP
-  KERNEL -- "declared: allowed" --> OK["write /workspace/report.md"]
-  KERNEL -- "undeclared: EACCES" --> NO["write /etc/passwd"]
 ```
 
 1. **Declare.** Every tool is a *resident app* with a `berth.yml` that names the capabilities it needs (`filesystem:write:/workspace`, `network:connect:443`) and the functions it exports.
