@@ -1,0 +1,24 @@
+name: e2e-gh-probe
+version: 0.1.0
+description: "Test-only: github-assistant's exact capabilities, plus one export that sends any method and path to the GitHub API through the same proxy, to check the proxy's per-request decisions."
+
+# Identical to apps/github-assistant/berth.yml
+capabilities:
+  - github:read:repos
+  - github:write:issues
+  - filesystem:read:/workspace
+  - browser:navigate:*.github.com
+  - network:connect:8092
+
+secrets:
+  - GITHUB_TOKEN
+
+exports:
+  - name: github_request
+    input: { method: string, path: string, body: string }
+    output: { status: number, body: string }
+  - name: token_in_env
+    output: { present: boolean }
+
+on_install: []
+on_agent_ready: []

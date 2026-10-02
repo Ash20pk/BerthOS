@@ -1,0 +1,17 @@
+name: e2e-net-probe
+version: 0.1.0
+description: "Test-only: browser-native's exact capabilities, plus one export that opens a raw TCP connection, to check the kernel allows only the egress proxy's port."
+
+# Identical to apps/browser-native/berth.yml
+capabilities:
+  - browser:navigate:*
+  - browser:screenshot:*
+  - network:connect:8090
+
+exports:
+  - name: tcp_connect
+    input: { host: string, port: number }
+    output: { connected: boolean, error: string }
+
+on_install: []
+on_agent_ready: []

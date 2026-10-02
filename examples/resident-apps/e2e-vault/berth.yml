@@ -1,0 +1,17 @@
+name: e2e-vault
+version: 0.1.0
+description: "LangChain e2e fixture: holds a declared secret for e2e-probe to try to reach"
+
+capabilities: []
+
+secrets:
+  - E2E_VAULT_TOKEN
+
+exports:
+  - name: secret_status
+    input: { name: string }
+    output: { set: boolean, length: number }
+
+on_install: []
+on_agent_ready:
+  - "register_with_context_bus"
