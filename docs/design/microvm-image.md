@@ -23,7 +23,7 @@ Artifacts live in `/Users/ash/berth-wt/vm-image-artifacts/` (`$ART`). Nothing bi
 | 3. End to end | **Pass** | Boot 1: `add_note`, then a graceful stop. Boot 2: `list_notes` returns the note. `ruleset=FullyEnforced`. Ownership was checked (table below). Boot times are below; the host was under load from other work |
 | 4. Docs | This file | |
 
-python3 is **not** in the base image. It adds 20.8 MB to the image (+45%) and 41 MB to the tree. `PYTHON=1 ./scripts/build-rootfs.sh` builds that variant (67.2 MB image, reproducible).
+python3 was **not** in the base image at first. Since feat/vm-python it is, with berth_sdk's dependencies from Alpine (py3-yaml, py3-pydantic, py3-protobuf) and berth_sdk itself at `/opt/berth/sdk-python`: rootfs `322ee4f3…` is 74.7 MB against 46.7 MB without (+28 MB, +60%). The `PYTHON=1` variant is gone.
 
 ## How to build and run
 
@@ -31,7 +31,7 @@ python3 is **not** in the base image. It adds 20.8 MB to the image (+45%) and 41
 cd packages/vmm
 ./scripts/build-kernel.sh       # ~5 to 9 min, 8 vCPU builder VM, ~2.2 GB scratch at peak (deleted after)
 ./scripts/build-agent-init.sh   # ~30 s
-./scripts/build-rootfs.sh       # ~7 s after the first apk download; PYTHON=1 adds python3
+./scripts/build-rootfs.sh       # ~7 s after the first apk download
 ./scripts/run-probe.sh                          # enforcement probe on the image
 MODE=inspect STATE=$ART/state/x.img ./scripts/run-probe.sh   # mounts + ownership
 
@@ -297,7 +297,7 @@ What the init gets, and has to do (what `guest/berth-init.sh` does today):
 7. **Identities at boot.** The image no longer bakes app users (fixed during the alignment). The shell stand-in writes only the single app. Multi-app identities, `tty` membership and peer directories come with the Rust init.
 8. **Graceful stop needs the guest to cooperate.** A hung guest gets SIGKILL after 10 s, and only the ext4 journal protects the state then. The control port is unauthenticated on the host side: anything that can reach `$ART/run/*-ctl.sock` can stop the VM, so the socket directory's permissions are its access control. Guest root can also bind or speak on the port (feat/vm-guest-init's host validation rule applies).
 9. **The Seatbelt profile** now allows writes under `$ART/state`, but still all of `$ART` for reads. It should allow exactly this sandbox's kernel, image, app dir, state disk and sockets.
-10. **python3 is not in the base image** (+20.8 MB, +45%). It could be a second erofs layer (overlay lower) mounted only for `runtime: python` apps, or a `PYTHON=1` variant image.
+10. **python3 is in the base image** (feat/vm-python, +28 MB, +60%), so every sandbox downloads it. A second erofs layer (overlay lower) mounted only for `runtime: python` apps would keep the Node-only image at 46.7 MB, at the cost of a second pinned artifact.
 11. **Timing was measured on a loaded host** (see above). Re-measure on a quiet one.
 12. **One image+state benchmark run printed no result** (the first after the alignment). The run's stderr was not captured, and 5 more runs (30 boots, a new disk each) passed. It is most likely the same class as the EINTR bug fixed in e235def, but that is unconfirmed.
 13. **Fixed along the way:** the shell init's fifo open was interrupted by a child's SIGCHLD (EINTR, which busybox ash does not retry) and ended the VM two seconds into every boot. The 2-second guest-mem logger exposed it. The Rust init is unaffected, but anything that waits in ash on a fifo needs the retry.
