@@ -71,7 +71,7 @@ export function assertSupported(apps: VmAppInput[], vmm: string): void {
 }
 
 export async function bundleApps(apps: VmAppInput[]): Promise<BundledApp[]> {
-  return Promise.all(apps.map((a) => bundleApp(a.appDir, a.name)));
+  return Promise.all(apps.map((a) => bundleApp(a.appDir, a.name, { runtime: a.manifest.runtime })));
 }
 
 export interface BootVmOptions {

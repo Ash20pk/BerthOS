@@ -26,8 +26,8 @@ export const KERNEL_SHA256 = "8f79e8dae97ebc0ab8fcdc4ad209bb025ec967be82c713503e
 export const KERNEL_SIZE = 23668744;
 export const KERNEL_LINUX = "6.12.109";
 export const KERNEL_CONFIG_SHA256 = "e3f33c2bd4bffa16e52a066c325967e4bde091f20063e6eb5b81e8a2efac4dc8";
-export const ROOTFS_SHA256 = "17b41f015eb3cb049d73d5decda3e85c4062f64fe38662d85bb037d97500d536";
-export const ROOTFS_SIZE = 46718976;
+export const ROOTFS_SHA256 = "322ee4f323f591b4fe2adaf3e305f2f06f8b8fe8cf7d79b9ee30e327ed0868eb";
+export const ROOTFS_SIZE = 74743808;
 /** The libkrun berth-vmm is built against (packages/vmm/src/main.rs declares its API at this version). */
 export const LIBKRUN_VERSION = "1.19.6";
 

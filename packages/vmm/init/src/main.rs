@@ -41,7 +41,7 @@ mod secrets;
 mod sys;
 
 use cgroup::Cgroups;
-use plan::{AppSpec, Owner, Policy, RpcMode};
+use plan::{AppSpec, Owner, Policy, RpcMode, Runtime};
 use serde_json::{json, Value};
 use std::ffi::CString;
 use std::os::unix::process::CommandExt;
@@ -56,6 +56,14 @@ const POLICY_COMPILER: &str = "/opt/berth/sdk-node/generate-capability-policy.mj
 const CONTEXT_BUS_DAEMON: &str = "/usr/local/bin/context-bus-daemon";
 const EGRESS_BROKER: &str = "/usr/local/bin/berth-egress-broker.cjs";
 const NODE: &str = "/usr/bin/node";
+const PYTHON: &str = "/usr/bin/python3";
+/// berth_sdk for runtime: python apps (PYTHONPATH), as entrypoint.sh's BERTH_IMAGE_PYTHON_SDK.
+const SDK_PYTHON: &str = "/opt/berth/sdk-python";
+/// entrypoint.sh's run_python_sdk_tool: -I (no PYTHONPATH, user site or cwd on
+/// sys.path, so a berth_sdk/ the app ships can't stand in for the image's),
+/// then the image's SDK first; PYTHONPATH is still passed, for the compiler to
+/// grant the app read access to where its own process will load berth_sdk.
+const PYTHON_TOOL: &str = "import runpy, sys; sys.path.insert(0, sys.argv[1]); runpy.run_module(sys.argv[2], run_name=\"__main__\", alter_sys=True)";
 const PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const POLICY_DIR: &str = "/run/berth/policy";
 
@@ -565,6 +573,11 @@ fn mount_state(dev: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// The share's `.berth-runtime` (plan::parse_runtime).
+fn app_runtime(a: &AppSpec) -> Result<Runtime, String> {
+    plan::parse_runtime(std::fs::read_to_string(format!("{}/{}", a.dir, plan::RUNTIME_FILE)).ok().as_deref())
+}
+
 fn policy_path(a: &AppSpec) -> String {
     format!("{POLICY_DIR}/{}.json", a.tag)
 }
@@ -580,19 +593,31 @@ fn compile_policies(apps: &[AppSpec]) -> Vec<Result<Policy, String>> {
             if !Path::new(&format!("{}/berth.yml", a.dir)).exists() {
                 return Err(format!("no berth.yml in {}", a.dir));
             }
-            Command::new(NODE)
-                .arg(POLICY_COMPILER)
-                .current_dir(&a.dir)
-                .env_clear()
+            // The runtime's own compiler, as in a container: a Python app's
+            // grants read access to berth_sdk, which the Node one doesn't know.
+            let mut cmd = match app_runtime(a)? {
+                Runtime::Node => {
+                    let mut c = Command::new(NODE);
+                    c.env_clear().arg(POLICY_COMPILER);
+                    c
+                }
+                Runtime::Python => {
+                    let mut c = Command::new(PYTHON);
+                    c.env_clear().args(["-I", "-c", PYTHON_TOOL, SDK_PYTHON, "berth_sdk.generate_capability_policy"]).env("PYTHONPATH", SDK_PYTHON);
+                    c
+                }
+            };
+            cmd.current_dir(&a.dir)
                 .env("PATH", PATH)
                 .env("HOME", "/root")
                 .env("BERTH_MANIFEST_PATH", format!("{}/berth.yml", a.dir))
                 .env("BERTH_CAPABILITY_POLICY", policy_path(a))
+                .env("PYTHONDONTWRITEBYTECODE", "1")
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()
-                .map_err(|e| format!("cannot run {NODE} {POLICY_COMPILER}: {e}"))
+                .map_err(|e| format!("cannot run the policy compiler ({:?}): {e}", cmd.get_program()))
         })
         .collect();
     children
@@ -629,7 +654,7 @@ fn install_identities(apps: &[(String, u32, Vec<u32>)], with_bus: bool, with_egr
 
 /// The environment of one app's agent-init and runtime. Explicit: nothing of
 /// PID 1's own environment (the kernel command line's) is passed on.
-fn app_env(cfg: &Config, a: &AppSpec, policy: &Policy, egress_up: bool) -> Vec<(String, String)> {
+fn app_env(cfg: &Config, a: &AppSpec, policy: &Policy, runtime: Runtime, egress_up: bool) -> Vec<(String, String)> {
     let name = &policy.app_name;
     let tmp = format!("/tmp/{name}");
     let gids = plan::supplementary_gids(a.uid, policy).iter().map(u32::to_string).collect::<Vec<_>>().join(",");
@@ -668,6 +693,12 @@ fn app_env(cfg: &Config, a: &AppSpec, policy: &Policy, egress_up: bool) -> Vec<(
     }
     if let Some(v) = env("NODE_ENV") {
         e.push(("NODE_ENV".into(), v));
+    }
+    if runtime == Runtime::Python {
+        // What entrypoint.sh exports for a Python app's own process. The
+        // share and the image are read-only, so no bytecode is written.
+        e.push(("PYTHONPATH".into(), SDK_PYTHON.into()));
+        e.push(("PYTHONDONTWRITEBYTECODE".into(), "1".into()));
     }
     let skipped = secrets::merge_into(&mut e, secrets::loaded().for_app(name));
     if !skipped.is_empty() {
@@ -906,18 +937,37 @@ fn start_app(sup: &'static Supervisor, cfg: &Config, a: &AppSpec, policy: &Polic
     }
     drop(cg);
 
-    // --- The process: agent-init -> node runtime, as the app's uid. ---
-    let runtime = if Path::new(&format!("{}/runtime.mjs", a.dir)).exists() {
-        format!("{}/runtime.mjs", a.dir)
-    } else {
-        "node_modules/@berthos/sdk/dist/runtime.js".to_string()
+    // --- The process: agent-init -> the app's runtime, as the app's uid. ---
+    let runtime = match app_runtime(a) {
+        Ok(r) => r,
+        Err(e) => {
+            refuse(e);
+            return;
+        }
+    };
+    let argv: Vec<String> = match runtime {
+        Runtime::Node => {
+            let entry = if Path::new(&format!("{}/runtime.mjs", a.dir)).exists() {
+                format!("{}/runtime.mjs", a.dir)
+            } else {
+                "node_modules/@berthos/sdk/dist/runtime.js".to_string()
+            };
+            vec![NODE.into(), entry]
+        }
+        Runtime::Python => {
+            if !Path::new(PYTHON).exists() || !Path::new(&format!("{SDK_PYTHON}/berth_sdk/runtime.py")).exists() {
+                refuse(format!("{name} is runtime: python, but this image has no {PYTHON} or {SDK_PYTHON}/berth_sdk"));
+                return;
+            }
+            // As entrypoint.sh starts one: berth_sdk's runtime loads src/app.py.
+            vec![PYTHON.into(), "-m".into(), "berth_sdk.runtime".into()]
+        }
     };
     let mut cmd = Command::new(AGENT_INIT);
-    cmd.arg(NODE)
-        .arg(&runtime)
+    cmd.args(&argv)
         .current_dir(&a.dir)
         .env_clear()
-        .envs(app_env(cfg, a, policy, sup.egress_up.load(Ordering::SeqCst)))
+        .envs(app_env(cfg, a, policy, runtime, sup.egress_up.load(Ordering::SeqCst)))
         .stdin(if cfg.rpc == RpcMode::Stdio { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -925,7 +975,7 @@ fn start_app(sup: &'static Supervisor, cfg: &Config, a: &AppSpec, policy: &Polic
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
-            refuse(format!("could not start {name} (agent-init {NODE} {runtime}) in its cgroup: {e}"));
+            refuse(format!("could not start {name} (agent-init {}) in its cgroup: {e}", argv.join(" ")));
             return;
         }
     };
@@ -938,7 +988,7 @@ fn start_app(sup: &'static Supervisor, cfg: &Config, a: &AppSpec, policy: &Polic
         r.state = AppState::Running;
         r.started_ms = Some(started);
     }
-    hub::event("app_started", json!({ "app": name, "pid": pid, "uid": a.uid, "rpcPort": a.rpc_port, "rpc": if cfg.rpc == RpcMode::Socket { "socket" } else { "stdio" } }));
+    hub::event("app_started", json!({ "app": name, "pid": pid, "uid": a.uid, "runtime": if runtime == Runtime::Python { "python" } else { "node" }, "rpcPort": a.rpc_port, "rpc": if cfg.rpc == RpcMode::Socket { "socket" } else { "stdio" } }));
 
     let marker = format!("[berth:runtime] \"{name}\" ready");
     let index = a.index;

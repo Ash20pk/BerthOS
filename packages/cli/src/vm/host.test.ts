@@ -67,8 +67,8 @@ test("no hypervisor, no berth-vmm, other pins", () => {
 test("secrets disk support is read from berth-vmm's own run --help", () => {
   const withSecrets = ((_: string) => ({ status: 0, stdout: "  --secrets FILE        the sandbox's credentials", stderr: "" })) as unknown as typeof spawnSync;
   const without = ((_: string) => ({ status: 0, stdout: "  --egress-allow LIST", stderr: "" })) as unknown as typeof spawnSync;
-  assert.deepEqual(vmmFeatures("/c/berth-vmm", withSecrets), { egress: false, secrets: true });
-  assert.deepEqual(vmmFeatures("/d/berth-vmm", without), { egress: true, secrets: false });
+  assert.deepEqual(vmmFeatures("/c/berth-vmm", withSecrets), { egress: false, secrets: true, python: false });
+  assert.deepEqual(vmmFeatures("/d/berth-vmm", without), { egress: true, secrets: false, python: false });
 });
 
 test("egress support is read from berth-vmm's own run --help", () => {

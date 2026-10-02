@@ -13,6 +13,9 @@
 //                                         undeclared one every app; neither is in /proc/cmdline,
 //                                         another app's environ, a device node, a log, or the
 //                                         run dir once the sandbox is ready
+//   berth dev --runtime vm (python)       a runtime: python app: its exports answer, it may
+//                                         write where it declared and nowhere else, and a
+//                                         declared secret reaches it
 //   berth attest <run>                    ACTIVE, isolation microvm, and the shipped
 //                                         verifier accepts the record
 //
@@ -238,6 +241,103 @@ ${statusExport}
     check("the host's secrets file is gone once the sandbox is ready", !existsSync(join(runDir, "secrets.img")) && existsSync(join(runDir, "vm.json")), runDir);
     const logs = ["vmm.log", "guest.log", "console.log"].filter((f) => existsSync(join(runDir, f)) && readFileSync(join(runDir, f), "utf8").includes(token));
     check("the secret is in no log", logs.length === 0 && !out.includes(token), logs.join(", "));
+  }
+  d.kill("SIGINT");
+  await new Promise((r) => (d.exitCode !== null ? r() : d.once("exit", r)));
+}
+
+// --- 3c. python -------------------------------------------------------------------
+{
+  const ws = mkdtempSync(join(tmpdir(), "berth-vm-e2e-py-"));
+  const app = join(ws, "py-e2e");
+  mkdirSync(join(app, "src"), { recursive: true });
+  writeFileSync(
+    join(app, "berth.yml"),
+    "name: py-e2e\nversion: 0.1.0\ndescription: a Python app in the VM\nruntime: python\ncapabilities:\n  - filesystem:write:/workspace\nsecrets:\n  - E2E_PY_TOKEN\nexports:\n  - name: greet\n    input: { name: string }\n    output: { message: string }\n  - name: try_write\n    input: { path: string }\n    output: { ok: boolean, error: string }\n  - name: info\n    output: { python: string, token_length: number }\n",
+  );
+  writeFileSync(
+    join(app, "src", "app.py"),
+    `import os, sys
+from berth_sdk import define_app
+from pydantic import BaseModel
+from src.helper import greeting
+
+class GreetInput(BaseModel):
+    name: str
+
+class GreetOutput(BaseModel):
+    message: str
+
+class WriteInput(BaseModel):
+    path: str
+
+class WriteOutput(BaseModel):
+    ok: bool
+    error: str
+
+class InfoOutput(BaseModel):
+    python: str
+    token_length: int
+
+def _greet(i: GreetInput) -> GreetOutput:
+    return GreetOutput(message=greeting(i.name))
+
+def _try_write(i: WriteInput) -> WriteOutput:
+    try:
+        with open(i.path, "w") as f:
+            f.write("x")
+        return WriteOutput(ok=True, error="")
+    except OSError as e:
+        return WriteOutput(ok=False, error=e.strerror or str(e))
+
+def _info(_input=None) -> InfoOutput:
+    return InfoOutput(python=sys.version.split()[0], token_length=len(os.environ.get("E2E_PY_TOKEN", "")))
+
+def _setup(a):
+    a.export("greet", _greet, input_model=GreetInput, output_model=GreetOutput)
+    a.export("try_write", _try_write, input_model=WriteInput, output_model=WriteOutput)
+    a.export("info", _info, output_model=InfoOutput)
+
+app = define_app(_setup)
+`,
+  );
+  writeFileSync(join(app, "src", "helper.py"), 'def greeting(name):\n    return f"Hello, {name}, from Python in the VM"\n');
+  run(["vm", "stop", "berth-dev-py-e2e"]);
+  let out = "";
+  const d = spawn(process.execPath, [berth, "dev", "--runtime", "vm", "--env", "E2E_PY_TOKEN"], {
+    cwd: app,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, E2E_PY_TOKEN: "py-token-1234" },
+  });
+  d.stdout.on("data", (x) => (out += x));
+  d.stderr.on("data", (x) => (out += x));
+  const end = Date.now() + 60_000;
+  while (Date.now() < end && !/VM ready in \d+ ms/.test(out) && d.exitCode === null) await sleep(50);
+  const m = out.match(/VM ready in (\d+) ms \(bundle (\d+) ms(, cached)?, boot (\d+) ms\)/);
+  check("berth dev --runtime vm boots a runtime: python app", m, m ? `ready ${m[1]} ms (bundle ${m[2]} ms, boot ${m[4]} ms)` : out.slice(-2000));
+  if (m) {
+    timings.pythonFirstBootMs = Number(m[1]);
+    const call = (exp, input) => {
+      const r = run(["rpc", "py-e2e", "--runtime", "vm", "--export", exp, ...(input ? ["--input", JSON.stringify(input)] : [])]);
+      try {
+        return JSON.parse(r.stdout);
+      } catch {
+        return { error: r.stdout + r.stderr };
+      }
+    };
+    const g = call("greet", { name: "e2e" });
+    check("its export answers, importing its own module", g.message === "Hello, e2e, from Python in the VM", JSON.stringify(g));
+    const info = call("info");
+    check("it runs on the image's python3, and its declared secret reached it", /^3\.\d+/.test(info.python ?? "") && info.token_length === "py-token-1234".length, JSON.stringify(info));
+    const ok = call("try_write", { path: "/workspace/py-e2e.txt" });
+    const denied = call("try_write", { path: "/tmp/py-e2e-elsewhere.txt" });
+    check("Landlock: it may write /workspace, which it declared, and not /tmp", ok.ok === true && denied.ok === false && /denied/i.test(denied.error), JSON.stringify({ ok, denied }));
+    let mark = out.length;
+    writeFileSync(join(app, "src", "helper.py"), 'def greeting(name):\n    return f"Hi again, {name}"\n');
+    const end2 = Date.now() + 30_000;
+    while (Date.now() < end2 && !/Reloaded in \d+ ms/.test(out.slice(mark))) await sleep(50);
+    const again = call("greet", { name: "e2e" });
+    check("editing a .py file reboots the VM on the new code", again.message === "Hi again, e2e", JSON.stringify(again) + out.slice(mark, mark + 400));
   }
   d.kill("SIGINT");
   await new Promise((r) => (d.exitCode !== null ? r() : d.once("exit", r)));
