@@ -35,10 +35,10 @@ By default, from the GitHub release that [`.github/workflows/vm-artifacts.yml`](
 | File | Asset | sha256 (this CLI) | Size |
 |---|---|---|---|
 | `~/.berth/vm/kernel/sha256/<sha>/Image` | `Image-<sha>` | `8f79e8dae97ebc0ab8fcdc4ad209bb025ec967be82c713503e0612cfdd340ec8` | 23,668,744 B |
-| `~/.berth/vm/rootfs/rootfs-<sha>.erofs` | `rootfs-<sha>.erofs` | `5f696a92de7284e9221412bc6f00e2bbc579f2efbd27825ee5102c3375928ad6` | 46,706,688 B |
+| `~/.berth/vm/rootfs/rootfs-<sha>.erofs` | `rootfs-<sha>.erofs` | `17b41f015eb3cb049d73d5decda3e85c4062f64fe38662d85bb037d97500d536` | 46,718,976 B |
 | `~/.berth/vm/bin/berth-vmm` | `berth-vmm-darwin-arm64-<sha>` | `VMM_PINS` in `packages/cli/src/vm/pins.ts` | about 600 KB |
 
-That is `https://github.com/Ash20pk/BerthOS/releases/download/vm-artifacts-8f79e8da-5f696a92/`. CI rebuilds the kernel and rootfs for it from source on GitHub's arm64 Linux runners, and publishes the release only if they match the pins bit for bit. The release also carries `SHA256SUMS`, each rootfs's input record, berth-vmm's build record, and the kernel's GPL sources (the exact linux and libkrunfw tarballs, the config delta, the resolved config and the build script; see `SOURCES.md` there).
+That is `https://github.com/Ash20pk/BerthOS/releases/download/vm-artifacts-8f79e8da-17b41f01/`. CI rebuilds the kernel and rootfs for it from source on GitHub's arm64 Linux runners, and publishes the release only if they match the pins bit for bit. The release also carries `SHA256SUMS`, each rootfs's input record, berth-vmm's build record, and the kernel's GPL sources (the exact linux and libkrunfw tarballs, the config delta, the resolved config and the build script; see `SOURCES.md` there).
 
 berth-vmm is downloaded only when the CLI pins its sha256 for your platform (macOS arm64 is the only published one). A build from CI can't be pinned until CI has built it, so a CLI released before the first artifacts release has no pin, and says so. Then build berth-vmm and pass `--vmm`, or download it by hand (below).
 
@@ -64,7 +64,7 @@ If the kernel and rootfs aren't installed, `berth dev --runtime vm` installs the
 ### Verifying by hand
 
 ```bash
-tag=vm-artifacts-8f79e8da-5f696a92
+tag=vm-artifacts-8f79e8da-17b41f01
 gh release download "$tag" -R Ash20pk/BerthOS -p 'Image-*' -p 'rootfs-*.erofs' -p 'berth-vmm-darwin-arm64-*' -p SHA256SUMS
 shasum -a 256 -c --ignore-missing SHA256SUMS     # each asset against the list
 shasum -a 256 Image-* rootfs-*.erofs              # and against the pins above, which are also in
@@ -128,6 +128,18 @@ What happens:
 - **Inside.** `berth-init` is PID 1. It compiles your capability policy, runs your app as its own uid in its own cgroup under agent-init (Landlock, seccomp), and starts the context bus. See [the design notes](design/microvm-runtime.md).
 - **`/workspace`** is on a per-app state disk, `~/.berth/vm/state/<app>.img`. It is created sparse at 1 GiB and kept across reloads and sessions, like the Docker path's named volume.
 
+### Secrets and other variables
+
+```bash
+export GITHUB_TOKEN=...            # or keep it in a .env file
+berth dev --runtime vm --env GITHUB_TOKEN --env GITHUB_REPO=owner/name
+berth dev --runtime vm --env-file .env
+```
+
+`--env` and `--env-file` work as they do on `berth os up` (and on `berth dev` with Docker). A name an app declares under `secrets:` in its `berth.yml` reaches that app alone. Any other name reaches every app in the sandbox, with a warning. A declared name with no value prints a warning naming it, and the app boots without it.
+
+None of it goes on the guest's kernel command line, which every process in the guest can read in `/proc/cmdline`. The CLI writes the values to `secrets.img` in the run directory (0600), berth-vmm attaches it as a read-only disk, and berth-init reads it as root before anything starts, removes the device node, and puts each app's values into that app's environment only. The apps run as different uids, so one can't read another's `/proc/<pid>/environ`. The CLI deletes `secrets.img` as soon as the sandbox is ready. Values are never logged; berth-init reports the names it delivered. See the [secrets reference](secrets-reference.md#in-a-microvm).
+
 ### Reloading
 
 Saving a file in `src/` or `berth.yml` rebundles. If the bundle comes out the same (you changed only a comment, say), the VM keeps running. Otherwise the VM is stopped and a fresh one boots on the new bundle:
@@ -166,7 +178,6 @@ The variable is `BERTH_SANDBOX`, not `BERTH_RUNTIME`. `BERTH_RUNTIME` already se
 An app whose `berth.yml` needs something the VM doesn't have yet is refused before boot, with the reason and a pointer back to `--runtime docker`:
 
 - **Network.** The VM has no network device, and TSI is off. An app that declares `network:host:` or `browser:navigate:` reaches those hosts through the egress broker inside the guest, which dials out over vsock to a dialer in berth-vmm. The CLI passes your apps' scopes to berth-vmm as `--egress-allow`, and the dialer enforces that allowlist again on the host: it resolves names itself and refuses private, loopback, link-local and metadata addresses. One app per sandbox may declare egress, as with containers. See [the egress design](./design/microvm-egress.md).
-- **Secrets.** There is no secrets channel yet. The guest's environment is passed on the kernel command line, which every process in the guest can read.
 - **semantic-fs and `/context`.** Not in the VM yet (`BERTH_NO_SEMANTIC_FS=1`).
 - **Python apps.** The image has no `python3` or `berthos-sdk` yet.
 - **Browser and terminal capabilities.** Not in the image.

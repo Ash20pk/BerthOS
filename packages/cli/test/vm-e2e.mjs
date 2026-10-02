@@ -9,6 +9,10 @@
 //                                         edit doesn't, /workspace survives the reboot
 //   berth mcp --runtime vm                a real MCP client: initialize, tools/list,
 //                                         tools/call; time from spawn to the first answer
+//   berth dev --runtime vm --env          secrets: a declared one reaches its app alone, an
+//                                         undeclared one every app; neither is in /proc/cmdline,
+//                                         another app's environ, a device node, a log, or the
+//                                         run dir once the sandbox is ready
 //   berth attest <run>                    ACTIVE, isolation microvm, and the shipped
 //                                         verifier accepts the record
 //
@@ -17,7 +21,7 @@
 // Nothing outside ~/.berth (or $BERTH_HOME) and a temp dir is written; the sandboxes are named
 // berth-dev-notes-e2e and stopped at the end.
 import { spawn, spawnSync } from "node:child_process";
-import { cpSync, mkdtempSync, readFileSync, writeFileSync, appendFileSync, existsSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, appendFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -138,6 +142,106 @@ dev.kill("SIGINT");
 await new Promise((r) => dev.once("exit", r));
 const st = run(["vm", "status", sandbox]);
 check("stopping berth dev stops the VM", st.status !== 0 && /no running sandbox/.test(st.stderr + st.stdout), st.stdout);
+
+// --- 3b. secrets -------------------------------------------------------------------
+// Two apps in one sandbox: vault-e2e declares E2E_VAULT_TOKEN, probe-e2e
+// doesn't and looks for it everywhere it could leak inside the guest.
+{
+  const ws = mkdtempSync(join(tmpdir(), "berth-vm-e2e-secrets-"));
+  writeFileSync(join(ws, "pnpm-workspace.yaml"), "packages:\n  - '*'\n");
+  const mkApp = (dir, yml, src) => {
+    mkdirSync(join(ws, dir), { recursive: true });
+    cpSync(join(repo, "apps", "notes", "package.json"), join(ws, dir, "package.json"));
+    writeFileSync(join(ws, dir, "berth.yml"), yml);
+    mkdirSync(join(ws, dir, "src"), { recursive: true });
+    writeFileSync(join(ws, dir, "src", "index.ts"), src);
+  };
+  const statusExport = `  app.export({
+    name: "secret_status",
+    input: z.object({ name: z.string() }),
+    output: z.object({ set: z.boolean(), length: z.number() }),
+    handler: async ({ name }) => ({ set: process.env[name] !== undefined, length: process.env[name]?.length ?? 0 }),
+  });`;
+  mkApp(
+    "vault-e2e",
+    "name: vault-e2e\nversion: 0.1.0\ndescription: holds a declared secret\ncapabilities: []\nsecrets:\n  - E2E_VAULT_TOKEN\nexports:\n  - name: secret_status\n    input: { name: string }\n    output: { set: boolean, length: number }\n",
+    `import { defineApp } from "@berthos/sdk";\nimport { z } from "zod";\nexport default defineApp((app) => {\n${statusExport}\n});\n`,
+  );
+  mkApp(
+    "probe-e2e",
+    "name: probe-e2e\nversion: 0.1.0\ndescription: looks for another app's secret\ncapabilities: []\nexports:\n  - name: secret_status\n    input: { name: string }\n    output: { set: boolean, length: number }\n  - name: reach\n    input: { needle: string }\n    output: { cmdline: boolean, environs: number, unreadable: number, devices: array }\n",
+    `import { defineApp } from "@berthos/sdk";
+import { z } from "zod";
+import { readFileSync, readdirSync } from "node:fs";
+export default defineApp((app) => {
+${statusExport}
+  // Booleans and counts only: the needle itself never comes back.
+  app.export({
+    name: "reach",
+    input: z.object({ needle: z.string() }),
+    output: z.object({ cmdline: z.boolean(), environs: z.number(), unreadable: z.number(), devices: z.array(z.string()) }),
+    handler: async ({ needle }) => {
+      const has = (p) => { try { return readFileSync(p, "latin1").includes(needle) ? 1 : 0; } catch { return -1; } };
+      let environs = 0, unreadable = 0;
+      for (const pid of readdirSync("/proc").filter((d) => /^\\d+$/.test(d))) {
+        const r = has(\`/proc/\${pid}/environ\`);
+        if (r === 1 && pid !== String(process.pid)) environs++;
+        if (r === -1) unreadable++;
+      }
+      return { cmdline: has("/proc/cmdline") === 1, environs, unreadable, devices: readdirSync("/dev").filter((d) => /^vd[a-z]$/.test(d)) };
+    },
+  });
+});
+`,
+  );
+  const token = `e2e-${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+  const shared = "e2e-shared-value";
+  run(["vm", "stop", "berth-dev-vault-e2e"]);
+  let out = "";
+  const d = spawn(process.execPath, [berth, "dev", "--runtime", "vm", "--apps", "probe-e2e", "--env", "E2E_VAULT_TOKEN", "--env", `E2E_SHARED=${shared}`], {
+    cwd: join(ws, "vault-e2e"),
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, E2E_VAULT_TOKEN: token },
+  });
+  d.stdout.on("data", (x) => (out += x));
+  d.stderr.on("data", (x) => (out += x));
+  const end = Date.now() + 60_000;
+  while (Date.now() < end && !/VM ready in \d+ ms/.test(out) && d.exitCode === null) await sleep(50);
+  const up = /VM ready in \d+ ms/.test(out);
+  check("berth dev --runtime vm --env boots two apps with a secrets disk", up, up ? "" : out.slice(-2000));
+  if (up) {
+    const call = (appName, exp, input) => {
+      const r = run(["rpc", appName, "--container", "berth-dev-vault-e2e", "--runtime", "vm", "--export", exp, "--input", JSON.stringify(input)]);
+      try {
+        return JSON.parse(r.stdout);
+      } catch {
+        return { error: r.stdout + r.stderr };
+      }
+    };
+    const v = call("vault-e2e", "secret_status", { name: "E2E_VAULT_TOKEN" });
+    check("the app that declares a secret gets it", v.set === true && v.length === token.length, JSON.stringify(v));
+    const p = call("probe-e2e", "secret_status", { name: "E2E_VAULT_TOKEN" });
+    check("another app in the sandbox doesn't", p.set === false, JSON.stringify(p));
+    const sv = call("vault-e2e", "secret_status", { name: "E2E_SHARED" });
+    const sp = call("probe-e2e", "secret_status", { name: "E2E_SHARED" });
+    check("an undeclared name reaches every app", sv.set && sp.set && sp.length === shared.length, JSON.stringify({ sv, sp }));
+    const r = call("probe-e2e", "reach", { needle: token });
+    check(
+      "the secret is not in /proc/cmdline, any other process's environ, or a device node",
+      r.cmdline === false && r.environs === 0 && Array.isArray(r.devices) && !r.devices.includes("vdc"),
+      JSON.stringify(r),
+    );
+    // Positive control: the probe does see what is on the command line.
+    const c = call("probe-e2e", "reach", { needle: "init=/sbin/berth-init" });
+    check("...and the probe would have seen it on the command line (control)", c.cmdline === true && r.unreadable > 0, JSON.stringify(c));
+    const runDir = join(process.env.BERTH_HOME ?? join(process.env.HOME, ".berth"), "run", "vm", "berth-dev-vault-e2e");
+    check("the host's secrets file is gone once the sandbox is ready", !existsSync(join(runDir, "secrets.img")) && existsSync(join(runDir, "vm.json")), runDir);
+    const logs = ["vmm.log", "guest.log", "console.log"].filter((f) => existsSync(join(runDir, f)) && readFileSync(join(runDir, f), "utf8").includes(token));
+    check("the secret is in no log", logs.length === 0 && !out.includes(token), logs.join(", "));
+  }
+  d.kill("SIGINT");
+  await new Promise((r) => (d.exitCode !== null ? r() : d.once("exit", r)));
+}
 
 // --- 4. mcp ---------------------------------------------------------------------
 const mcpRuns = [];

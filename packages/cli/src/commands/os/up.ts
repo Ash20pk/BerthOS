@@ -1,5 +1,4 @@
 import { Args, Command, Flags } from "@oclif/core";
-import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 import Docker from "dockerode";
@@ -14,7 +13,7 @@ import {
   assertAtMostOneEgressBrokerApp,
 } from "../../util/os-config.js";
 import { isContainerRunning, removeStaleContainer } from "../../util/os-docker.js";
-import { describeEnvNames, parseEnvFile, resolveEnvFlags, undeclaredEnvNames } from "../../util/env-args.js";
+import { describeEnvNames, readEnvFlags, undeclaredEnvNames } from "../../util/env-args.js";
 
 export default class OsUp extends Command {
   static override description =
@@ -91,17 +90,9 @@ export default class OsUp extends Command {
 
     const name = args.name ?? configName ?? apps[0]!.name;
 
-    let fromFile: Record<string, string> = {};
-    if (flags["env-file"]) {
-      try {
-        fromFile = parseEnvFile(await readFile(flags["env-file"], "utf-8"));
-      } catch (err) {
-        this.error(`--env-file ${flags["env-file"]}: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
     let env: Record<string, string> = {};
     try {
-      env = resolveEnvFlags(flags.env ?? [], fromFile, process.env);
+      env = await readEnvFlags(flags);
     } catch (err) {
       this.error(err instanceof Error ? err.message : String(err));
     }
