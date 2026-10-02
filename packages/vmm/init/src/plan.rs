@@ -441,10 +441,38 @@ pub fn rpc_mode(v: Option<&str>) -> Result<RpcMode, String> {
     }
 }
 
+/// The language an app's code is in (berth.yml `runtime:`), as the CLI's
+/// manifest loader decided it and wrote it into the share's `.berth-runtime`,
+/// as the container image records it in /etc/berth/runtime/<app>. A share with
+/// no such file is node, which is every share made before Python ran in a VM.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Runtime {
+    Node,
+    Python,
+}
+
+pub const RUNTIME_FILE: &str = ".berth-runtime";
+
+pub fn parse_runtime(file: Option<&str>) -> Result<Runtime, String> {
+    match file.map(str::trim) {
+        None | Some("node") => Ok(Runtime::Node),
+        Some("python") => Ok(Runtime::Python),
+        Some(other) => Err(format!("{RUNTIME_FILE} says {:?}; expected node or python", other.chars().take(32).collect::<String>())),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn runtime_from_the_share() {
+        assert_eq!(parse_runtime(None), Ok(Runtime::Node));
+        assert_eq!(parse_runtime(Some("python\n")), Ok(Runtime::Python));
+        assert_eq!(parse_runtime(Some("node")), Ok(Runtime::Node));
+        assert!(parse_runtime(Some("ruby")).unwrap_err().contains("expected node or python"));
+    }
 
     fn policy(name: &str, writes: &[&str], declared: &[&str], limits: Option<Value>) -> Policy {
         let mut v = json!({ "appName": name, "writePaths": writes, "declaredCapabilities": declared });
