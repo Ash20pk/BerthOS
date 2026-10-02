@@ -1,3 +1,6 @@
+import { readFile } from "node:fs/promises";
+import { Flags } from "@oclif/core";
+
 /**
  * Values for a sandbox's environment from the command line: `--env NAME`
  * (taken from this process's environment, so a secret needn't appear in
@@ -125,4 +128,27 @@ export function describeEnvNames(names: readonly string[]): string {
   if (hidden === 0) return shown.join(", ");
   const counted = `${hidden} ${shown.length > 0 ? "other " : ""}name${hidden === 1 ? "" : "s"} (not shown: not uppercase)`;
   return shown.length > 0 ? `${shown.join(", ")} and ${counted}` : counted;
+}
+
+/** `--env` and `--env-file`, as `berth os up` and `berth dev` take them. */
+export const envFlags = {
+  env: Flags.string({
+    multiple: true,
+    description:
+      "a variable for the sandbox: NAME (value taken from this shell's environment, so it stays out of shell history and ps) or NAME=value (visible in both, so not for a secret). Repeatable. A name an app declares under secrets: is delivered to that app alone; any other name reaches every app in the sandbox, with a warning.",
+  }),
+  "env-file": Flags.string({ description: "dotenv file (NAME=value lines) of variables for the sandbox, applied before --env" }),
+};
+
+/** The values `envFlags` name. Errors follow this file's rule: never a value. */
+export async function readEnvFlags(flags: { env?: string[]; "env-file"?: string }, processEnv: NodeJS.ProcessEnv = process.env): Promise<Record<string, string>> {
+  let fromFile: Record<string, string> = {};
+  if (flags["env-file"]) {
+    try {
+      fromFile = parseEnvFile(await readFile(flags["env-file"], "utf-8"));
+    } catch (err) {
+      throw new Error(`--env-file ${flags["env-file"]}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  return resolveEnvFlags(flags.env ?? [], fromFile, processEnv);
 }

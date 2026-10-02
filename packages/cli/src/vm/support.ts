@@ -7,18 +7,27 @@ import type { BerthManifest } from "@berthos/manifest-schema";
  * into a sandbox where the first call that needs it fails.
  *
  * Update this list as the guest gains each part (the egress broker is on
- * feat/vm-egress).
+ * feat/vm-egress, the secrets disk on feat/vm-secrets, python3 on feat/vm-python).
  */
 export interface VmFeatures {
   /** berth-vmm has the host egress dialer (`run --egress-allow`, feat/vm-egress). */
   egress: boolean;
+  /**
+   * berth-vmm takes a secrets disk (`run --secrets`, feat/vm-secrets), and
+   * its pinned rootfs has the berth-init that reads it.
+   */
+  secrets: boolean;
+  /** berth-vmm's pinned rootfs has python3 and berth_sdk (feat/vm-python). */
+  python: boolean;
 }
 
-export function vmUnsupported(manifest: BerthManifest, features: VmFeatures = { egress: false }): string[] {
+export function vmUnsupported(manifest: BerthManifest, features: VmFeatures = { egress: false, secrets: false, python: false }): string[] {
   const reasons: string[] = [];
   const m = manifest as BerthManifest & { runtime?: string; secrets?: string[] };
-  if (m.runtime === "python") reasons.push("runtime: python (the VM image has no python3 or berthos-sdk yet)");
-  if (m.secrets && m.secrets.length > 0) reasons.push(`secrets: ${m.secrets.join(", ")} (the VM has no secrets channel yet; the guest environment is on the kernel command line, which is world-readable)`);
+  if (m.runtime === "python" && !features.python) reasons.push("runtime: python (this berth-vmm's image has no python3 or berth_sdk; update it with `berth vm install`)");
+  if (m.secrets && m.secrets.length > 0 && !features.secrets) {
+    reasons.push(`secrets: ${m.secrets.join(", ")} (this berth-vmm has no secrets disk, and the guest environment is on the kernel command line, which is world-readable; update berth-vmm with \`berth vm install\`)`);
+  }
   for (const cap of manifest.capabilities) {
     const [ns, action, ...rest] = cap.split(":");
     const scope = rest.join(":");

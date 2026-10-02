@@ -4,3 +4,10 @@
 nodejs
 # mkfs.ext4 for the per-sandbox state disk on first boot.
 e2fsprogs
+# runtime: python apps: python3 and berth_sdk's dependencies (pyproject.toml:
+# pyyaml, pydantic, protobuf>=6.30; its context_bus_pb2 needs 6.31.1 or later).
+# From Alpine, not pip, so they are pinned by rootfs/apk.lock like the rest.
+python3
+py3-yaml
+py3-pydantic
+py3-protobuf

@@ -47,6 +47,20 @@ A name you declare under `secrets:` is always treated as a credential. Any other
 
 If a credential's name matches none of these, declare it under `secrets:` or rename it (anything ending in `_TOKEN` or `_KEY` works). Otherwise it goes into `Env` in plain text.
 
+## In a microVM
+
+`berth dev --runtime vm --env ...` (see [local-vm.md](local-vm.md#secrets-and-other-variables)) gives the same scoping without Docker's files. Every value, declared or not, travels on one small read-only disk:
+
+| | Where it goes |
+|---|---|
+| On the host | `~/.berth/run/vm/<sandbox>/secrets.img`, 0600 in a 0700 directory, deleted once the sandbox is ready (and on stop, if it never got there) |
+| Into the guest | a read-only virtio-blk disk (`berth-vmm run --secrets`). berth-init reads it as root before any daemon or app starts, then removes the device node |
+| Names an app declared under `secrets:` | that app's process environment only |
+| Any other name | every app's process environment (not berth's own daemons, unlike the container's shared file) |
+| The guest's kernel command line (`/proc/cmdline`) | nothing. It holds only berth-vmm's own settings |
+
+A name berth-init sets itself (`PATH`, `BERTH_CAPABILITY_POLICY` and the rest of each app's fixed environment) is not replaced by a value of the same name; berth-init warns, naming it. A disk that can't be read or parsed fails the boot. The format is in `packages/vmm/src/secrets.rs`.
+
 ## Snapshots
 
 `berth snapshot create` saves the container's environment to `env.json`, minus any credential-named values, and records the names it left out. `berth snapshot restore` tells you which ones to supply again:

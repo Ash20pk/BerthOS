@@ -9,6 +9,7 @@ import { VmSandbox, type StartTimings } from "./sandbox.js";
 import type { ReadyResult } from "./control.js";
 import type { GuestLogLine } from "./guest-lines.js";
 import { egressAllowList, vmUnsupported, vmUnsupportedMessage } from "./support.js";
+import { vmSecrets, type VmSecrets } from "./secrets.js";
 
 /**
  * The steps `berth dev --runtime vm` and `berth mcp --runtime vm` share:
@@ -70,7 +71,7 @@ export function assertSupported(apps: VmAppInput[], vmm: string): void {
 }
 
 export async function bundleApps(apps: VmAppInput[]): Promise<BundledApp[]> {
-  return Promise.all(apps.map((a) => bundleApp(a.appDir, a.name)));
+  return Promise.all(apps.map((a) => bundleApp(a.appDir, a.name, { runtime: a.manifest.runtime })));
 }
 
 export interface BootVmOptions {
@@ -85,6 +86,12 @@ export interface BootVmOptions {
   bundles?: BundledApp[];
   /** A state disk per primary app (default), so /workspace survives restarts like the Docker path's named volume. */
   state?: boolean;
+  /**
+   * Variables for the apps (`--env`, `--env-file`). A name an app declares
+   * under `secrets:` reaches that app alone; any other reaches every app.
+   * All of it travels on the secrets disk, none on the kernel command line.
+   */
+  env?: Record<string, string>;
 }
 
 export async function bootVm(options: BootVmOptions): Promise<{ sandbox: VmSandbox; ready: ReadyResult; timings: StartTimings & { bundleMs: number }; bundles: BundledApp[] }> {
@@ -93,6 +100,7 @@ export async function bootVm(options: BootVmOptions): Promise<{ sandbox: VmSandb
   const bundleMs = Date.now() - t0;
   options.signal?.throwIfAborted();
   const primary = options.apps[0]!;
+  const secrets = sandboxSecrets(options.apps, options.env ?? {}, options.vmm, options.log);
   const { sandbox, ready, timings } = await VmSandbox.start({
     name: options.name,
     vmm: options.vmm,
@@ -101,12 +109,27 @@ export async function bootVm(options: BootVmOptions): Promise<{ sandbox: VmSandb
     // $HOME/.berth/vm, which is not this when BERTH_HOME moves ~/.berth.
     artifactsDir: vmHome(),
     ...(options.state === false ? {} : { state: vmStateDisk(primary.name) }),
+    ...(secrets ? { secrets } : {}),
     ...egressArgs(options.apps.map((a) => a.manifest), options.vmm),
     ...(options.onLog ? { onLog: options.onLog } : {}),
     ...(options.readyTimeoutMs ? { readyTimeoutMs: options.readyTimeoutMs } : {}),
     ...(options.signal ? { signal: options.signal } : {}),
   });
   return { sandbox, ready, timings: { ...timings, bundleMs }, bundles };
+}
+
+/**
+ * The sandbox's secrets disk, if it has anything to carry. Warns, by name
+ * only, about a declared secret with no value, as the container path does.
+ */
+function sandboxSecrets(apps: VmAppInput[], env: Record<string, string>, vmm: string, log: (message: string) => void): VmSecrets | undefined {
+  const { shared, perApp, missing } = vmSecrets(env, apps);
+  for (const { app, name } of missing) log(`warning: app "${app}" declares secret ${name} in berth.yml, but no value was provided for this boot`);
+  if (Object.keys(env).length === 0) return undefined;
+  if (!vmmFeatures(vmm).secrets) {
+    throw new VmHostError(`this berth-vmm can't take variables for the apps (it has no \`run --secrets\`); update it with \`berth vm install\`, or use --runtime docker`);
+  }
+  return { shared, perApp };
 }
 
 /** `--egress-allow` for the sandbox, when its apps declare egress and this berth-vmm has the dialer. */

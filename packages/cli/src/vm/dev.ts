@@ -20,6 +20,8 @@ import { pidAlive, VmSandbox } from "./sandbox.js";
 
 export interface DevVmOptions {
   apps: VmAppInput[];
+  /** Variables for the apps, delivered on each boot's secrets disk. */
+  env?: Record<string, string>;
   log: (message: string) => void;
   error: (message: string) => void;
 }
@@ -51,7 +53,7 @@ export async function runDevVm(options: DevVmOptions): Promise<void> {
   };
 
   log(`Booting "${primary.name}" in a microVM (berth-vmm ${vmm})...`);
-  let current = await bootVm({ name, apps, vmm, log, onLog: printLog });
+  let current = await bootVm({ name, apps, vmm, log, onLog: printLog, env: options.env ?? {} });
   let stopVmmEvents = current.sandbox.onVmmEvent(printVmm);
   const t = current.timings;
   log(
@@ -82,7 +84,7 @@ export async function runDevVm(options: DevVmOptions): Promise<void> {
       await current.sandbox.stop();
       const stopMs = Date.now() - s0;
       try {
-        current = await bootVm({ name, apps, vmm, log, onLog: printLog, bundles });
+        current = await bootVm({ name, apps, vmm, log, onLog: printLog, bundles, env: options.env ?? {} });
       } catch (err) {
         options.error(`the new bundle didn't boot: ${err instanceof Error ? err.message : String(err)} — fix it and save again`);
         return;

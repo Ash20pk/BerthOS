@@ -43,6 +43,10 @@ until the guest powers off ({\"op\":\"shutdown\"} on control.sock, or every app 
   --state DISK          per-sandbox state disk: /workspace survives a reboot.
                         Created sparse on first use. Without it /workspace is tmpfs
   --state-size MIB      size of a new --state disk (default 1024)
+  --secrets FILE        the sandbox's credentials, as a secrets disk (0600, owned
+                        by you; src/secrets.rs has the format). Attached read-only;
+                        berth-init gives each app only its own. Never pass a
+                        secret with --env: that ends up in /proc/cmdline
   --cpus N              vCPUs (default 2)
   --mem MIB             guest RAM (default 512 for one app, 1024 for more)
   --artifacts DIR       where the pinned artifacts are (default $BERTH_VMM_ARTIFACTS,
@@ -88,6 +92,7 @@ pub fn opts(argv: &[String]) -> Opts {
     let mut apps: Vec<String> = vec![];
     let mut state: Option<String> = None;
     let mut state_size_mib = 1024;
+    let mut secrets: Option<String> = None;
     let mut cpus = 2u8;
     let mut mem: Option<u32> = None;
     let mut artifacts: Option<String> = std::env::var("BERTH_VMM_ARTIFACTS").ok().filter(|s| !s.is_empty());
@@ -105,6 +110,7 @@ pub fn opts(argv: &[String]) -> Opts {
             "--app" => apps.push(val()),
             "--state" => state = Some(val()),
             "--state-size" => state_size_mib = val().parse().unwrap_or_else(|_| die("bad --state-size")),
+            "--secrets" => secrets = Some(val()),
             "--cpus" => cpus = val().parse().unwrap_or_else(|_| die("bad --cpus")),
             "--mem" => mem = Some(val().parse().unwrap_or_else(|_| die("bad --mem"))),
             "--artifacts" => artifacts = Some(val()),
@@ -128,8 +134,8 @@ pub fn opts(argv: &[String]) -> Opts {
     if apps.len() > MAX_APPS {
         die(&format!("run: at most {MAX_APPS} apps"));
     }
-    if env.iter().any(|e| e.starts_with("BERTH_VM_APPS=") || e.starts_with("BERTH_STATE_DEV=")) {
-        die("run: BERTH_VM_APPS and BERTH_STATE_DEV are set by run itself");
+    if env.iter().any(|e| ["BERTH_VM_APPS=", "BERTH_STATE_DEV=", "BERTH_SECRETS_DEV="].iter().any(|k| e.starts_with(k))) {
+        die("run: BERTH_VM_APPS, BERTH_STATE_DEV and BERTH_SECRETS_DEV are set by run itself");
     }
 
     // The pinned artifacts.
@@ -229,6 +235,7 @@ pub fn opts(argv: &[String]) -> Opts {
         rootfs_sha256: None,
         state,
         state_size_mib,
+        secrets,
         disks: vec![],
         shares,
         vsocks,

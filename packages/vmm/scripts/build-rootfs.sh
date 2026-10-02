@@ -9,13 +9,14 @@
 #   $ART/rootfs/rootfs-<sha256>.tree.txt       every path with owner and mode
 #   $ART/rootfs/LATEST                         file name of the last build
 #
-# Image contents: Alpine minirootfs + rootfs/packages.txt (node, e2fsprogs;
-# python3 with PYTHON=1), agent-init + probe (build-agent-init.sh), the
+# Image contents: Alpine minirootfs + rootfs/packages.txt (node, e2fsprogs,
+# python3 and berth_sdk's dependencies), agent-init + probe (build-agent-init.sh), the
 # sdk-node tools (bundle-sdk-node.mjs, from rootfs/manifest.toml's
 # policy_compiler_commit), berth-init at /sbin/berth-init and
 # context-bus-daemon (both from build-berth-init.sh), and the egress broker
 # (docker-orchestrator/docker/egress-broker.cjs from this tree, no npm
-# dependencies) at /usr/local/bin/berth-egress-broker.cjs.
+# dependencies) at /usr/local/bin/berth-egress-broker.cjs, and berth_sdk
+# (packages/sdk-python/berth_sdk at HEAD, sources only) at /opt/berth/sdk-python.
 #
 # Every input binary is checked against its pin in rootfs/manifest.toml before
 # the build, and the image against image_sha256 after it. UPDATE_MANIFEST=1
@@ -52,11 +53,21 @@ CHECK=${CHECK:-1}
 [ -f "$BUS" ] || { echo "CONTEXT_BUS_DAEMON=$BUS does not exist (run build-berth-init.sh)" >&2; exit 1; }
 BROKER="$REPO_DIR/packages/docker-orchestrator/docker/egress-broker.cjs"
 
+# berth_sdk for runtime: python apps: the committed .py files only (no
+# __pycache__, nothing uncommitted), so the tree is a function of HEAD.
+SDKPY="$ART/sdk-python-src"
+rm -rf "$SDKPY" && mkdir -p "$SDKPY"
+git -C "$REPO_DIR" archive --format=tar HEAD packages/sdk-python/berth_sdk | tar -x -C "$SDKPY" --strip-components=2
+find "$SDKPY/berth_sdk" -type f ! -name '*.py' -exec rm -f {} +
+# One hash for the tree: "<sha256>  <path>" per file, sorted, hashed.
+SDKPY_LIST="$ART/sdk-python-src.sha256"
+(cd "$SDKPY" && find berth_sdk -type f | LC_ALL=C sort | while read -r f; do echo "$(sha256_of "$f")  $f"; done) > "$SDKPY_LIST"
+
 # The inputs must be the pinned ones before any time goes into an image.
 if [ "$CHECK" = 1 ]; then
     bad=0
     for c in "agent_init_sha256 $AI/agent-init" "probe_sha256 $AI/probe" "berth_init_sha256 $INIT" \
-        "context_bus_daemon_sha256 $BUS" "egress_broker_sha256 $BROKER"; do
+        "context_bus_daemon_sha256 $BUS" "egress_broker_sha256 $BROKER" "sdk_python_sha256 $SDKPY_LIST"; do
         key=${c%% *} file=${c#* }
         have=$(sha256_of "$file")
         if [ "$have" != "$(pin "$key")" ]; then
@@ -75,7 +86,7 @@ F="$B/in/files"
 fetch_alpine
 ln "$ALPINE_TGZ" "$B/in/alpine-minirootfs.tar.gz"
 cp "$VMM_DIR/rootfs/packages.txt" "$B/in/"
-if [ "${PYTHON:-0}" = 1 ]; then echo python3 > "$B/in/extra-packages"; else : > "$B/in/extra-packages"; fi
+: > "$B/in/extra-packages"
 echo "$EPOCH" > "$B/in/SOURCE_DATE_EPOCH"
 id -u > "$B/in/HOST_UID"
 
@@ -86,7 +97,7 @@ git -C "$REPO_DIR" archive --format=tar "$POLICY_REF" packages/sdk/src packages/
 policy_commit=$(git -C "$REPO_DIR" rev-parse "$POLICY_REF^{commit}")
 bundled=$(node "$VMM_DIR/scripts/bundle-sdk-node.mjs" "$B/sdk-stage" "$B/bundle" "$B/policy-src" \
     "$NM/packages/sdk/node_modules" "$NM/packages/manifest-schema/node_modules" "$NM/node_modules")
-mkdir -p "$F/sbin" "$F/usr/local/bin" "$F/opt/berth/sdk-node" "$F/etc/berth"
+mkdir -p "$F/sbin" "$F/usr/local/bin" "$F/opt/berth/sdk-node" "$F/opt/berth/sdk-python" "$F/etc/berth"
 install -m 0755 "$INIT" "$F/sbin/berth-init"
 install -m 0755 "$AI/agent-init" "$F/usr/local/bin/agent-init"
 install -m 0755 "$AI/probe" "$F/usr/local/bin/berth-probe"
@@ -95,12 +106,16 @@ install -m 0755 "$VMM_DIR/guest/leak-probe.sh" "$F/usr/local/bin/leak-probe"
 # berth-init starts it confined (uid 9001) before any app.
 install -m 0755 "$BUS" "$F/usr/local/bin/context-bus-daemon"
 install -m 0644 "$B/bundle/generate-capability-policy.mjs" "$B/bundle/run-lifecycle.mjs" "$F/opt/berth/sdk-node/"
+# berth-init starts a runtime: python app as python3 -m berth_sdk.runtime with
+# PYTHONPATH=/opt/berth/sdk-python, as entrypoint.sh does in a container.
+cp -R "$SDKPY/berth_sdk" "$F/opt/berth/sdk-python/"
+find "$F/opt/berth/sdk-python" -type d -exec chmod 0755 {} + && find "$F/opt/berth/sdk-python" -type f -exec chmod 0644 {} +
 # berth-init starts it confined (uid 9002) when one app declares network:host:.
 install -m 0644 "$BROKER" "$F/usr/local/bin/berth-egress-broker.cjs"
 
 sha() { sha256_of "$1"; }
 src_rev=$(git -C "$REPO_DIR" rev-parse HEAD)
-src_dirty=$(git -C "$REPO_DIR" status --porcelain -- packages/vmm packages/sdk packages/manifest-schema packages/docker-orchestrator/docker/egress-broker.cjs | grep -q . && echo true || echo false)
+src_dirty=$(git -C "$REPO_DIR" status --porcelain -- packages/vmm packages/sdk packages/sdk-python/berth_sdk packages/manifest-schema packages/docker-orchestrator/docker/egress-broker.cjs | grep -q . && echo true || echo false)
 # Recorded inside the image too (/etc/berth/build-inputs.json), minus the
 # image's own hash, which cannot be inside itself, and minus the git commit,
 # so that an unrelated commit does not change the image. The commit is in the
@@ -115,6 +130,7 @@ cat > "$F/etc/berth/build-inputs.json" <<EOF
   "berthInit": {"path": "/sbin/berth-init", "source": "$(basename "$INIT")", "sha256": "$(sha "$INIT")"},
   "contextBusDaemon": {"path": "/usr/local/bin/context-bus-daemon", "sha256": "$(sha "$BUS")"},
   "egressBroker": {"path": "/usr/local/bin/berth-egress-broker.cjs", "sha256": "$(sha "$BROKER")"},
+  "sdkPython": {"path": "/opt/berth/sdk-python/berth_sdk", "treeSha256": "$(sha "$SDKPY_LIST")"},
   "sdkNode": {
     "sourceRef": "$(pin policy_compiler_ref)", "sourceCommit": "$policy_commit",
     "bundle": $bundled,
@@ -158,10 +174,11 @@ cp "$B/out/packages.lock" "$D/rootfs-$h.packages.lock"
 cp "$B/out/apk.lock" "$D/rootfs-$h.builder.apk.lock"
 echo "$name" > "$D/LATEST"
 
-rm -rf "$B"
+rm -rf "$B" "$SDKPY"
 echo "rootfs $D/$name ($size bytes)"
 if [ "${UPDATE_MANIFEST:-0}" = 1 ]; then
-    sed_inplace "$M" -e "s/^image_sha256 = .*/image_sha256 = \"$h\"/" -e "s/^image_size = .*/image_size = $size/"
+    sed_inplace "$M" -e "s/^image_sha256 = .*/image_sha256 = \"$h\"/" -e "s/^image_size = .*/image_size = $size/" \
+        -e "s/^sdk_python_sha256 = .*/sdk_python_sha256 = \"$(sha "$SDKPY_LIST")\"/"
     cp "$D/rootfs-$h.packages.lock" "$VMM_DIR/rootfs/apk.lock"
     cp "$D/rootfs-$h.builder.apk.lock" "$VMM_DIR/rootfs/builder.apk.lock"
     echo "rootfs/manifest.toml updated; rebuild berth-vmm so it embeds the new pin"

@@ -14,6 +14,8 @@ export interface BootDevContainerOptions {
   /** Defaults to `berth-dev-<app>`, which is also what `berth mcp` looks for. */
   containerName?: string;
   meshCoordinatorUrl?: string;
+  /** Variables for the apps (`--env`, `--env-file`); startContainer() scopes declared secrets to their apps. */
+  env?: Record<string, string>;
   /**
    * Where progress lines go. `berth dev` sends them to stdout; `berth mcp`
    * MUST send them to stderr, because its stdout *is* the MCP transport and a
@@ -79,6 +81,7 @@ export async function bootDevContainer(options: BootDevContainerOptions): Promis
         ? apps.map((a) => ({ name: a.name, workingDir: `/workspace/${a.relPath}`, manifest: a.manifest }))
         : undefined,
     env: {
+      ...options.env,
       BERTH_WORKSPACE_ROOT: workspaceRoot,
     },
     meshCoordinatorUrl: options.meshCoordinatorUrl,

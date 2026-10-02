@@ -25,6 +25,7 @@ use std::process::exit;
 mod egress;
 mod pins;
 mod run;
+mod secrets;
 mod sha256;
 
 #[link(name = "krun")]
@@ -78,6 +79,8 @@ struct Opts {
     rootfs_sha256: Option<String>,
     state: Option<String>,
     state_size_mib: u64,
+    /// The secrets disk (secrets.rs), attached read-only after state.
+    secrets: Option<String>,
     disks: Vec<Disk>,
     shares: Vec<Share>,
     vsocks: Vec<Vsock>,
@@ -113,6 +116,7 @@ The low-level form below is what it expands to (and what builder VMs use).
   --state IMG               per-sandbox writable state disk (raw; the guest formats
                             it ext4 on first boot). Created sparse if missing
   --state-size MIB          size (the cap) of a newly created --state disk (default 1024)
+  --secrets FILE            secrets disk, read-only after state; sets BERTH_SECRETS_DEV (src/secrets.rs)
   --root DIR                root filesystem: host directory over virtio-fs (builders)
   --root-ro                 expose --root read-only (guest needs tmpfs for writes)
   --disk ID:IMG[:ro]        extra raw disk (repeatable; after rootfs and state)
@@ -151,6 +155,7 @@ fn parse(argv: Vec<String>) -> Opts {
         rootfs_sha256: None,
         state: None,
         state_size_mib: 1024,
+        secrets: None,
         disks: vec![],
         shares: vec![],
         vsocks: vec![],
@@ -180,6 +185,7 @@ fn parse(argv: Vec<String>) -> Opts {
             "--rootfs-sha256" => o.rootfs_sha256 = Some(val()),
             "--state" => o.state = Some(val()),
             "--state-size" => o.state_size_mib = val().parse().unwrap_or_else(|_| die("bad --state-size")),
+            "--secrets" => o.secrets = Some(val()),
             "--disk" => {
                 let v = val();
                 let p: Vec<&str> = v.splitn(3, ':').collect();
@@ -324,7 +330,8 @@ fn json_str(s: &str) -> String {
 /// control characters, and the count is bounded.
 fn check_guest_env(env: &[String]) {
     // The kernel's MAX_INIT_ENVS (32) less HOME and TERM, less what libkrun
-    // and berth-vmm add (KRUN_INIT, KRUN_WORKDIR, PATH, BERTH_STATE_DEV) and
+    // and berth-vmm add (KRUN_INIT, KRUN_WORKDIR, PATH, BERTH_STATE_DEV,
+    // BERTH_SECRETS_DEV) and
     // some headroom.
     const MAX_GUEST_ENV: usize = 20;
     if env.len() > MAX_GUEST_ENV {
@@ -355,6 +362,9 @@ fn preflight(o: &Opts) {
             die(&format!("cannot open directory {d}: {e}"));
         }
     }
+    if let Some(p) = &o.secrets {
+        secrets::check(p).unwrap_or_else(|e| die(&e));
+    }
     for f in o.disks.iter().map(|d| d.path.as_str()) {
         if let Err(e) = std::fs::File::open(f) {
             die(&format!("cannot open disk image {f}: {e}"));
@@ -379,10 +389,10 @@ fn main() {
     // COMMAND_LINE_SIZE is 2048 on arm64; past it the kernel truncates. libkrun
     // appends each env entry as ` K="V"`, plus its own KRUN_INIT/KRUN_WORKDIR
     // (about 40 bytes; measured: 301 bytes in /proc/cmdline for a 159-byte
-    // pinned line and three env entries totalling 105). 160 bytes cover
-    // libkrun's words, PATH and BERTH_STATE_DEV.
+    // pinned line and three env entries totalling 105). 192 bytes cover
+    // libkrun's words, PATH, BERTH_STATE_DEV and BERTH_SECRETS_DEV.
     if let Some(k) = &kernel {
-        let est = k.cmdline.len() + o.env.iter().map(|e| e.len() + 3).sum::<usize>() + 160;
+        let est = k.cmdline.len() + o.env.iter().map(|e| e.len() + 3).sum::<usize>() + 192;
         if est > 2048 {
             die(&format!("the guest environment does not fit on the kernel command line ({est} of 2048 bytes)"));
         }
@@ -456,6 +466,11 @@ fn main() {
             let d = dev();
             check("krun_add_disk(state)", krun_add_disk(ctx, cs("state").as_ptr(), cs(&s.path).as_ptr(), false));
             guest_env.push(format!("BERTH_STATE_DEV={d}"));
+        }
+        if let Some(p) = &o.secrets {
+            let d = dev();
+            check("krun_add_disk(secrets)", krun_add_disk(ctx, cs("secrets").as_ptr(), cs(p).as_ptr(), true));
+            guest_env.push(format!("BERTH_SECRETS_DEV={d}"));
         }
         for d in &o.disks {
             check("krun_add_disk", krun_add_disk(ctx, cs(&d.id).as_ptr(), cs(&d.path).as_ptr(), d.read_only));

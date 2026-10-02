@@ -17,11 +17,23 @@ test("filesystem-only node apps run in the VM; network, browser, python, secrets
 test("with a berth-vmm that has the egress dialer, network:host and network:connect run; the allowlist is the declared scopes", () => {
   const app = m({ capabilities: ["network:host:api.example.com", "network:host:*.example.org:8443", "network:connect:8090", "filesystem:write:/workspace"] });
   assert.equal(vmUnsupported(app).length, 3);
-  assert.deepEqual(vmUnsupported(app, { egress: true }), []);
-  assert.equal(vmUnsupported(m({ capabilities: ["network:bind:8080"] }), { egress: true }).length, 1);
+  assert.deepEqual(vmUnsupported(app, { egress: true, secrets: false, python: false }), []);
+  assert.equal(vmUnsupported(m({ capabilities: ["network:bind:8080"] }), { egress: true, secrets: false, python: false }).length, 1);
   assert.deepEqual(egressAllowList([app, m({ capabilities: ["browser:navigate:*.github.com", "network:host:api.example.com"] })]), [
     "api.example.com",
     "*.example.org:8443",
     "*.github.com",
   ]);
+});
+
+test("with a berth-vmm that takes a secrets disk, an app declaring secrets runs", () => {
+  const app = m({ secrets: ["GITHUB_TOKEN"], capabilities: ["filesystem:write:/workspace"] });
+  assert.match(vmUnsupported(app, { egress: true, secrets: false, python: false }).join(), /secrets: GITHUB_TOKEN.*berth vm install/);
+  assert.deepEqual(vmUnsupported(app, { egress: false, secrets: true, python: false }), []);
+});
+
+test("with a berth-vmm whose image has python3, a runtime: python app runs", () => {
+  const app = m({ runtime: "python", capabilities: ["filesystem:write:/workspace"] });
+  assert.match(vmUnsupported(app).join(), /runtime: python.*berth vm install/);
+  assert.deepEqual(vmUnsupported(app, { egress: false, secrets: false, python: true }), []);
 });

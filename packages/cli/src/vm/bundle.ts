@@ -21,6 +21,10 @@ import { vmAppsCache } from "./paths.js";
  * dependencies otherwise, so a project that has never run `npm install` still
  * bundles against the SDK the CLI ships with.
  *
+ * A `runtime: python` app is not bundled (bundlePythonApp): its own files
+ * are copied into the share as they are, with `.berth-runtime` saying
+ * "python", and the image supplies python3, berth_sdk and its dependencies.
+ *
  * Bundles are cached by content: the files esbuild actually read, berth.yml,
  * and the list of the app's own source files (so a new file that changes how
  * an import resolves is noticed). An unchanged app doesn't rebundle, which is
@@ -38,8 +42,8 @@ export interface BundledApp {
   hash: string;
   cached: boolean;
   ms: number;
-  /** Where the SDK runtime came from: the project or the CLI. */
-  sdkFrom: "project" | "cli";
+  /** Where the SDK runtime came from: the project or the CLI, or the image for a Python app. */
+  sdkFrom: "project" | "cli" | "image";
   sdkRuntime: string;
 }
 
@@ -49,7 +53,7 @@ interface CacheIndex {
   listing: string;
   hash: string;
   shareDir: string;
-  sdkFrom: "project" | "cli";
+  sdkFrom: "project" | "cli" | "image";
   sdkRuntime: string;
 }
 
@@ -92,10 +96,15 @@ export function findEntry(appDir: string): string {
   throw new Error(`no app entry in ${appDir}: expected src/index.ts (or src/index.js, or package.json "main")`);
 }
 
-const SKIP_DIRS = new Set(["node_modules", "dist", ".berth", ".git", ".turbo", "coverage"]);
+const SKIP_DIRS = new Set(["node_modules", "dist", ".berth", ".git", ".turbo", "coverage", "__pycache__", "venv"]);
 
 /** The app's own source files, by relative path (names only): a file appearing or disappearing changes it. */
 export function sourceListing(appDir: string): string {
+  return createHash("sha256").update(sourceFiles(appDir).join("\n")).digest("hex");
+}
+
+/** The app's own files, relative and sorted: what sourceListing names and a Python share holds. */
+export function sourceFiles(appDir: string): string[] {
   const out: string[] = [];
   const walk = (dir: string, depth: number) => {
     if (depth > 8) return;
@@ -114,7 +123,7 @@ export function sourceListing(appDir: string): string {
     }
   };
   walk(appDir, 0);
-  return createHash("sha256").update(out.sort().join("\n")).digest("hex");
+  return out.sort();
 }
 
 function sha256(data: Buffer | string): string {
@@ -163,9 +172,12 @@ export interface BundleOptions {
   cacheRoot?: string;
   /** Rebundle even when the cache says nothing changed. */
   force?: boolean;
+  /** berth.yml's `runtime:` (default node). */
+  runtime?: "node" | "python";
 }
 
 export async function bundleApp(appDir: string, name: string, options: BundleOptions = {}): Promise<BundledApp> {
+  if (options.runtime === "python") return bundlePythonApp(appDir, name, options);
   const t0 = Date.now();
   const root = join(options.cacheRoot ?? vmAppsCache(), cacheKey(appDir, name));
   const indexPath = join(root, "index.json");
@@ -238,6 +250,77 @@ export async function bundleApp(appDir: string, name: string, options: BundleOpt
 
     const inputPaths = [...new Set([manifest, ...Object.keys(result.metafile.inputs).map((p) => resolve(appDir, p)), proto])].filter((p) => !p.includes("\0"));
     const inputs = (await hashInputs(inputPaths)) ?? [];
+    const index: CacheIndex = { format: BUNDLE_FORMAT, inputs, listing, hash, shareDir, sdkFrom: sdk.from, sdkRuntime: sdk.path };
+    await writeFile(`${indexPath}.tmp`, JSON.stringify(index));
+    await rename(`${indexPath}.tmp`, indexPath);
+    await prune(root, [hash.slice(0, 16)]);
+    return { name, shareDir, hash, cached: false, ms: Date.now() - t0, sdkFrom: sdk.from, sdkRuntime: sdk.path };
+  } finally {
+    await rm(work, { recursive: true, force: true });
+  }
+}
+
+/** The share's marker berth-init reads to pick the runtime (packages/vmm/init/src/plan.rs RUNTIME_FILE). */
+export const RUNTIME_FILE = ".berth-runtime";
+/** A Python share is the app's own files; past these it is not a source tree. */
+export const PYTHON_SHARE_MAX_FILES = 2000;
+export const PYTHON_SHARE_MAX_BYTES = 32 << 20;
+
+/**
+ * A `runtime: python` app's share: its own files as they are (sourceFiles:
+ * no __pycache__, venv, node_modules or dot directories), plus RUNTIME_FILE.
+ * berth-init starts it as `python3 -m berth_sdk.runtime`, which loads
+ * src/app.py, with the image's berth_sdk on PYTHONPATH, as a container does.
+ * Only the standard library and berth_sdk's own dependencies (pyyaml,
+ * pydantic, protobuf) are there: nothing is pip-installed.
+ */
+export async function bundlePythonApp(appDir: string, name: string, options: BundleOptions = {}): Promise<BundledApp> {
+  const t0 = Date.now();
+  const root = join(options.cacheRoot ?? vmAppsCache(), cacheKey(appDir, name));
+  const indexPath = join(root, "index.json");
+  const files = sourceFiles(appDir);
+  const listing = createHash("sha256").update(files.join("\n")).digest("hex");
+  const sdk = { from: "image" as const, path: "/opt/berth/sdk-python" };
+  if (!files.includes("src/app.py")) throw new Error(`no app entry in ${appDir}: a runtime: python app needs src/app.py`);
+  if (!files.includes("berth.yml")) throw new Error(`no berth.yml in ${appDir}`);
+  if (files.length > PYTHON_SHARE_MAX_FILES) throw new Error(`${name} has ${files.length} files, more than the ${PYTHON_SHARE_MAX_FILES} a Python app's VM share takes; is a virtualenv or data directory in the app directory?`);
+
+  if (!options.force) {
+    const index = await readFile(indexPath, "utf8").then((t) => JSON.parse(t) as CacheIndex, () => undefined);
+    if (index && index.format === BUNDLE_FORMAT && index.listing === listing && existsSync(join(index.shareDir, RUNTIME_FILE))) {
+      const now = await hashInputs(index.inputs.map((i) => i.path));
+      if (now && now.every((h, i) => h.sha256 === index.inputs[i]!.sha256)) {
+        return { name, shareDir: index.shareDir, hash: index.hash, cached: true, ms: Date.now() - t0, sdkFrom: sdk.from, sdkRuntime: sdk.path };
+      }
+    }
+  }
+
+  await mkdir(root, { recursive: true });
+  const work = join(root, `.work-${process.pid}-${Date.now()}`);
+  try {
+    const h = createHash("sha256");
+    const inputs: { path: string; sha256: string }[] = [];
+    let bytes = 0;
+    for (const f of files) {
+      const data = await readFile(join(appDir, f));
+      bytes += data.length;
+      if (bytes > PYTHON_SHARE_MAX_BYTES) throw new Error(`${name}'s files are more than ${PYTHON_SHARE_MAX_BYTES >> 20} MiB, more than a Python app's VM share takes`);
+      const digest = sha256(data);
+      inputs.push({ path: join(appDir, f), sha256: digest });
+      h.update(`${f}\0`).update(digest).update("\n");
+      await mkdir(dirname(join(work, f)), { recursive: true });
+      await writeFile(join(work, f), data);
+    }
+    await writeFile(join(work, RUNTIME_FILE), "python\n");
+    h.update(`${RUNTIME_FILE}\0python\n`);
+    const hash = h.digest("hex");
+    const shareParent = join(root, hash.slice(0, 16));
+    const shareDir = join(shareParent, name);
+    if (!existsSync(join(shareDir, RUNTIME_FILE))) {
+      await rm(shareParent, { recursive: true, force: true });
+      await mkdir(shareParent, { recursive: true });
+      await rename(work, shareDir);
+    }
     const index: CacheIndex = { format: BUNDLE_FORMAT, inputs, listing, hash, shareDir, sdkFrom: sdk.from, sdkRuntime: sdk.path };
     await writeFile(`${indexPath}.tmp`, JSON.stringify(index));
     await rename(`${indexPath}.tmp`, indexPath);
