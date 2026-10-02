@@ -23,10 +23,13 @@ agent_init_sha256 = "9ec8b25e38d31ee82a28155304f730c0ec589b057d11fce2a56c6614559
 probe_sha256 = "6ec735d885b58861b33abdd70a5a4d48ecad803cc92bd94c02f876a3346453d0"
 # /sbin/berth-init and /usr/local/bin/context-bus-daemon: build-berth-init.sh,
 # from this tree (packages/vmm/init, packages/context-bus-daemon).
-berth_init_sha256 = "578aa91e79fd0395eace4b3e03b6c26054e462456bda04423d9a7aae420893ea"
+berth_init_sha256 = "2b7762477f0300e76725ec0b3195be78bc4a2adad1bea20350def94eaa5bbb57"
 context_bus_daemon_sha256 = "1138c3595142a3235145b530d0cf1157b0971aa2230d417befe0a6e783477544"
 # /usr/local/bin/berth-egress-broker.cjs: packages/docker-orchestrator/docker/egress-broker.cjs.
 egress_broker_sha256 = "4ff162e8e2c86cc43a73caa02bd1a78e4fe620c2b18040334b79366402157d89"
+# /opt/berth/sdk-python/berth_sdk: packages/sdk-python/berth_sdk at HEAD, the
+# .py files only. The pin is the sha256 of "<sha256>  <path>" lines, sorted.
+sdk_python_sha256 = "378ff0d0b7820c5be5359435b975bcf43c74a3f3a4362a93540d40769f93105a"
 # /opt/berth/sdk-node: bundle-sdk-node.mjs, from packages/sdk and
 # packages/manifest-schema at this commit (main contains it), with the
 # lockfile's yaml and zod.
@@ -40,5 +43,5 @@ init_path = "/sbin/berth-init"
 # builder.apk.lock the builder's (erofs-utils). .github/workflows/vm-artifacts.yml
 # rebuilds it on a Linux runner and fails on any other hash. berth-vmm
 # compiles this in; berth-vmm run boots it by default.
-image_sha256 = "17b41f015eb3cb049d73d5decda3e85c4062f64fe38662d85bb037d97500d536"
-image_size = 46718976
+image_sha256 = "322ee4f323f591b4fe2adaf3e305f2f06f8b8fe8cf7d79b9ee30e327ed0868eb"
+image_size = 74743808
