@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bundleApp } from "./bundle.js";
@@ -60,4 +60,41 @@ test("an import nothing provides is a clear error", async () => {
   const p = project();
   writeFileSync(join(p.app, "src", "greeting.ts"), `import "left-pad-that-does-not-exist";\nexport const greeting = "x";\n`);
   await assert.rejects(bundleApp(p.app, "hello", { cacheRoot: p.cache }), /can't bundle hello for the VM: Could not resolve "left-pad-that-does-not-exist"/);
+});
+
+function pythonProject() {
+  const dir = mkdtempSync(join(tmpdir(), "berth-bundle-py-"));
+  const app = join(dir, "hello-py");
+  mkdirSync(join(app, "src", "__pycache__"), { recursive: true });
+  mkdirSync(join(app, "venv", "lib"), { recursive: true });
+  writeFileSync(join(app, "berth.yml"), "name: hello-py\nversion: 0.1.0\nruntime: python\ncapabilities: []\nexports: []\n");
+  writeFileSync(join(app, "src", "app.py"), "from berth_sdk import define_app\nfrom greeting import GREETING\napp = define_app()\n");
+  writeFileSync(join(app, "src", "greeting.py"), 'GREETING = "pong"\n');
+  writeFileSync(join(app, "src", "__pycache__", "app.cpython-314.pyc"), "bytecode");
+  writeFileSync(join(app, "venv", "lib", "site.py"), "");
+  return { app, cache: join(dir, "cache") };
+}
+
+test("a Python app's share is its own files as they are, marked python, without bytecode or a virtualenv", async () => {
+  const p = pythonProject();
+  const b = await bundleApp(p.app, "hello-py", { cacheRoot: p.cache, runtime: "python" });
+  assert.equal(b.cached, false);
+  assert.equal(b.sdkFrom, "image");
+  assert.equal(readFileSync(join(b.shareDir, ".berth-runtime"), "utf8"), "python\n");
+  assert.equal(readFileSync(join(b.shareDir, "src", "greeting.py"), "utf8"), 'GREETING = "pong"\n');
+  assert.ok(existsSync(join(b.shareDir, "berth.yml")));
+  assert.ok(!existsSync(join(b.shareDir, "src", "__pycache__")) && !existsSync(join(b.shareDir, "venv")));
+  assert.ok(!existsSync(join(b.shareDir, "runtime.mjs")), "no Node runtime");
+
+  assert.equal((await bundleApp(p.app, "hello-py", { cacheRoot: p.cache, runtime: "python" })).cached, true);
+  writeFileSync(join(p.app, "src", "greeting.py"), 'GREETING = "pang"\n');
+  const changed = await bundleApp(p.app, "hello-py", { cacheRoot: p.cache, runtime: "python" });
+  assert.equal(changed.cached, false);
+  assert.notEqual(changed.hash, b.hash);
+});
+
+test("a Python app without src/app.py is refused before boot", async () => {
+  const p = pythonProject();
+  rmSync(join(p.app, "src", "app.py"));
+  await assert.rejects(bundleApp(p.app, "hello-py", { cacheRoot: p.cache, runtime: "python" }), /needs src\/app\.py/);
 });
