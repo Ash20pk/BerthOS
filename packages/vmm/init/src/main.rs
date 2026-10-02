@@ -25,6 +25,7 @@
 //!   BERTH_DISABLE_DAEMON_CONFINEMENT 1 = context-bus-daemon as root, unconfined
 //!   BERTH_VM_STOP_GRACE_MS      SIGTERM-to-SIGKILL grace at shutdown (default 3000)
 //!   BERTH_STATE_DEV             per-sandbox state disk (/dev/vdX): ext4 on /state, /state/workspace on /workspace
+//!   BERTH_SECRETS_DEV           read-only secrets disk (/dev/vdX): read once, node removed, entries into the apps' environments (secrets.rs)
 //!   BERTH_VM_TEST_HOOKS         1 = accept test-only control ops (egress_raw); never set outside tests
 //!
 //! When exactly one app declares network:host:/browser:navigate:, berth-init
@@ -36,6 +37,7 @@ mod egress;
 mod hub;
 mod plan;
 mod relay;
+mod secrets;
 mod sys;
 
 use cgroup::Cgroups;
@@ -338,6 +340,12 @@ fn boot(sup: &'static Supervisor, cfg: &Config) -> Result<(), String> {
     }
     let nsd = libc::MS_NOSUID | libc::MS_NODEV;
 
+    // --- Credentials, read before anything else is started. ---
+    if let Some(dev) = env("BERTH_SECRETS_DEV") {
+        let s = secrets::load(&dev)?;
+        hub::event("secrets", json!({ "device": dev, "names": s.names() }));
+    }
+
     // --- Filesystems the apps see. ---
     let mut fresh_mounts: Vec<&str> = Vec::new();
     match env("BERTH_STATE_DEV") {
@@ -428,6 +436,11 @@ fn boot(sup: &'static Supervisor, cfg: &Config) -> Result<(), String> {
     }
     if compiled.is_empty() {
         return Err("no app's capability policy compiled; nothing to start".into());
+    }
+    for app in secrets::loaded().apps.keys() {
+        if !compiled.iter().any(|(_, p)| p.app_name == *app) {
+            hub::info(&format!("WARNING: the secrets disk has entries for {app:?}, which is not an app in this sandbox; nobody gets them"));
+        }
     }
     phase("policies", json!({ "apps": compiled.iter().map(|(_, p)| p.app_name.clone()).collect::<Vec<_>>() }));
 
@@ -655,6 +668,10 @@ fn app_env(cfg: &Config, a: &AppSpec, policy: &Policy, egress_up: bool) -> Vec<(
     }
     if let Some(v) = env("NODE_ENV") {
         e.push(("NODE_ENV".into(), v));
+    }
+    let skipped = secrets::merge_into(&mut e, secrets::loaded().for_app(name));
+    if !skipped.is_empty() {
+        hub::info(&format!("WARNING: {name}: secrets {} not set, since berth-init sets them itself", skipped.join(", ")));
     }
     e
 }
