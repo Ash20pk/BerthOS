@@ -67,8 +67,8 @@ test("no hypervisor, no berth-vmm, other pins", () => {
 test("secrets disk support is read from berth-vmm's own run --help", () => {
   const withSecrets = ((_: string) => ({ status: 0, stdout: "  --secrets FILE        the sandbox's credentials", stderr: "" })) as unknown as typeof spawnSync;
   const without = ((_: string) => ({ status: 0, stdout: "  --egress-allow LIST", stderr: "" })) as unknown as typeof spawnSync;
-  assert.deepEqual(vmmFeatures("/c/berth-vmm", withSecrets), { egress: false, secrets: true, python: false });
-  assert.deepEqual(vmmFeatures("/d/berth-vmm", without), { egress: true, secrets: false, python: false });
+  assert.deepEqual(vmmFeatures("/c/berth-vmm", withSecrets), { egress: false, secrets: true, python: false, semanticFs: false });
+  assert.deepEqual(vmmFeatures("/d/berth-vmm", without), { egress: true, secrets: false, python: false, semanticFs: false });
 });
 
 test("egress support is read from berth-vmm's own run --help", () => {
@@ -76,4 +76,16 @@ test("egress support is read from berth-vmm's own run --help", () => {
   const without = ((_: string) => ({ status: 0, stdout: "  --state DISK", stderr: "" })) as unknown as typeof spawnSync;
   assert.equal(vmmFeatures("/a/berth-vmm", withEgress).egress, true);
   assert.equal(vmmFeatures("/b/berth-vmm", without).egress, false);
+});
+
+test("python3 and semantic-fs are read from the rootfs manifest compiled into berth-vmm", () => {
+  const help = ((_: string) => ({ status: 0, stdout: "", stderr: "" })) as unknown as typeof spawnSync;
+  const binary = (rootfsKeys: string) => () => Buffer.from(`\0ELF\0name = "berth-rootfs"\n${rootfsKeys}image_size = 2\n\0`);
+  const sha = (c: string) => c.repeat(64);
+  assert.deepEqual(vmmFeatures("/e/berth-vmm", help, binary(`sdk_python_sha256 = "${sha("a")}"\n`)), { egress: false, secrets: false, python: true, semanticFs: false });
+  assert.deepEqual(
+    vmmFeatures("/f/berth-vmm", help, binary(`sdk_python_sha256 = "${sha("a")}"\nsemantic_fs_daemon_sha256 = "${sha("b")}"\n`)),
+    { egress: false, secrets: false, python: true, semanticFs: true },
+  );
+  assert.equal(vmmFeatures("/g/berth-vmm", help, binary(`semantic_fs_daemon_sha256 = "unset"\n`)).semanticFs, false);
 });

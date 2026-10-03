@@ -1,6 +1,6 @@
 # semantic-fs in the microVM
 
-Status: steps 1 and 2 done (feat/vm-semantic-fs-build, feat/vm-semantic-fs-init); steps 3 to 5 to go. Closes the semantic-fs part of open problem 4 in [`microvm-runtime.md`](microvm-runtime.md#open-problems) and of open problem 3 in [`microvm-guest-init.md`](microvm-guest-init.md), and the "semantic-fs and `/context`" limit in [`../local-vm.md`](../local-vm.md#limits).
+Status: steps 1 to 3 done (feat/vm-semantic-fs-build, -init, -cli); steps 4 and 5 to go. Closes the semantic-fs part of open problem 4 in [`microvm-runtime.md`](microvm-runtime.md#open-problems) and of open problem 3 in [`microvm-guest-init.md`](microvm-guest-init.md), and the "semantic-fs and `/context`" limit in [`../local-vm.md`](../local-vm.md#limits).
 
 ## The problem
 
