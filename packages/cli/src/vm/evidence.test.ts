@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { deriveEnforcementStatus } from "@berthos/audit";
-import { consoleLines, vmBootEvidence, vmDoctorProbe, vmIsolation, vmRulesetReports } from "./evidence.js";
+import { consoleLines, vmBootEvidence, vmDoctorProbe, vmIsolation, vmPolicyDigests, vmRulesetReports } from "./evidence.js";
 import { KERNEL_SHA256, ROOTFS_SHA256 } from "./pins.js";
 import type { VmRecord } from "./sandbox.js";
 import type { ControlEvent } from "./guest-lines.js";
@@ -94,4 +94,18 @@ test("a VM boot's evidence attests ACTIVE only with agent-init's report, and nam
   assert.equal(deriveEnforcementStatus(ev.rulesetReports, ev.doctorProbe).status, "ACTIVE");
   const none = vmBootEvidence({ record: record(), bootId: boot, controlEvents: events, logLines: [] });
   assert.equal(deriveEnforcementStatus(none.rulesetReports, none.doctorProbe).status, "UNDETERMINED");
+});
+
+test("policies are berth-init's policy_digest events, one per app of this sandbox", () => {
+  const ev = (app: string, sha256: string) => ({ source: "berth-init", event: "policy_digest", app, path: `/run/berth/policy/${app}.json`, sha256 }) as ControlEvent;
+  const got = vmPolicyDigests([ev("notes", "a".repeat(64)), ev("notes", "b".repeat(64)), ev("stranger", "c".repeat(64)), ev("probe", "not-hex")], ["notes", "probe"]);
+  assert.deepEqual(got, [{ app: "notes", path: "/run/berth/policy/notes.json", sha256: "a".repeat(64) }]);
+  const evidence = vmBootEvidence({ record: record(), bootId: boot, controlEvents: [ev("notes", "e".repeat(64))], logLines: [] });
+  assert.equal(evidence.policies[0]?.sha256, "e".repeat(64));
+});
+
+test("each app share's tree digest is in isolation.apps; an older berth-vmm claims none", () => {
+  assert.equal(vmIsolation(record())!.apps, undefined);
+  const m = { ...record().measurements!, apps: [{ tag: "app", path: "/s/notes", treeSha256: "f".repeat(64), files: 4, bytes: 9000, hashMs: 1 }, { tag: "bad", treeSha256: "x" }] };
+  assert.deepEqual(vmIsolation(record({ measurements: m }))!.apps, [{ tag: "app", treeSha256: "f".repeat(64), files: 4, bytes: 9000 }]);
 });

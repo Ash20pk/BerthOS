@@ -93,6 +93,12 @@ export interface BootIsolation {
    * Absent when the berth-vmm predates the report.
    */
   hostSandbox?: { kind: string | null; applied: boolean; reason?: string };
+  /**
+   * Each app share (/app, or /app/<tag>) as it booted: the sha256 of its
+   * sorted `<sha256>  <path>` file listing. The share stays live, so this is
+   * the code at boot. Absent when the berth-vmm predates the measurement.
+   */
+  apps?: { tag: string; treeSha256: string; files: number; bytes: number }[];
 }
 
 export interface AttestationRecord {

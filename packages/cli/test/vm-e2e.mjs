@@ -494,6 +494,11 @@ check("a VM the MCP session booted is stopped when the client leaves", leftover.
     process.platform !== "darwin" || (iso?.hostSandbox?.applied === true && iso.hostSandbox.kind === "seatbelt"),
     JSON.stringify(iso?.hostSandbox),
   );
+  check(
+    "...with the compiled policy's sha256 and the app share's tree digest",
+    rec?.policies?.length === 1 && /^[0-9a-f]{64}$/.test(rec.policies[0].sha256) && rec.policies[0].app === name && /^[0-9a-f]{64}$/.test(iso?.apps?.[0]?.treeSha256 ?? ""),
+    JSON.stringify({ policies: rec?.policies, apps: iso?.apps }),
+  );
   const v = spawnSync(process.execPath, [join(repo, "scripts", "verify-attestation.mjs"), out], { encoding: "utf8" });
   check("scripts/verify-attestation.mjs accepts it", v.status === 0 && /^OK/.test(v.stdout), v.stdout + v.stderr);
 }
