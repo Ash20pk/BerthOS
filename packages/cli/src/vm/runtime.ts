@@ -8,7 +8,7 @@ import { vmHome, vmStateDisk } from "./paths.js";
 import { VmSandbox, type StartTimings } from "./sandbox.js";
 import type { ReadyResult } from "./control.js";
 import type { GuestLogLine } from "./guest-lines.js";
-import { egressAllowList, vmUnsupported, vmUnsupportedMessage } from "./support.js";
+import { dialerAllowList, egressAllowList, vmUnsupported, vmUnsupportedMessage } from "./support.js";
 import { vmSecrets, type VmSecrets } from "./secrets.js";
 
 /**
@@ -134,7 +134,7 @@ function sandboxSecrets(apps: VmAppInput[], env: Record<string, string>, vmm: st
 
 /** `--egress-allow` for the sandbox, when its apps declare egress and this berth-vmm has the dialer. */
 function egressArgs(manifests: BerthManifest[], vmm: string): { extraArgs?: string[] } {
-  const allow = egressAllowList(manifests);
+  const allow = dialerAllowList(manifests);
   if (allow.length === 0 || !vmmFeatures(vmm).egress) return {};
   return { extraArgs: ["--egress-allow", allow.join(",")] };
 }

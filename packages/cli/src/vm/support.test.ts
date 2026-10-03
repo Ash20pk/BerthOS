@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { BerthManifest } from "@berthos/manifest-schema";
-import { egressAllowList, vmUnsupported } from "./support.js";
+import { dialerAllowList, egressAllowList, vmUnsupported } from "./support.js";
 
 const m = (extra: Partial<BerthManifest> & Record<string, unknown>) => ({ name: "a", version: "1", capabilities: [], exports: [], ...extra }) as unknown as BerthManifest;
 
@@ -45,4 +45,21 @@ test("with a berth-vmm whose image has semantic-fs, an app declaring /context ru
   assert.match(without.join(), /no semantic-fs.*berth vm install/);
   assert.deepEqual(vmUnsupported(app, { egress: false, secrets: false, python: false, semanticFs: true }), []);
   assert.equal(vmUnsupported(m({ capabilities: ["filesystem:read:/contextual"] })).length, 0, "only /context and below");
+});
+
+test("a github:* app runs with a berth-vmm whose image has the broker and the egress dialer; the dialer allows api.github.com:443", () => {
+  const app = m({ capabilities: ["github:read:repos", "github:write:issues", "network:connect:8092", "browser:navigate:*.github.com"] });
+  assert.match(vmUnsupported(app, { egress: true, secrets: true, python: true, semanticFs: true }).join(), /no GitHub API broker.*berth vm install/);
+  assert.match(vmUnsupported(app, { egress: false, secrets: true, python: true, semanticFs: true, github: true }).join(), /egress dialer/);
+  assert.deepEqual(vmUnsupported(app, { egress: true, secrets: true, python: true, semanticFs: true, github: true }), []);
+  assert.deepEqual(dialerAllowList([app]), ["*.github.com", "api.github.com:443"]);
+  assert.deepEqual(egressAllowList([app]), ["*.github.com"], "the egress broker's own list is unchanged");
+  assert.deepEqual(dialerAllowList([m({ capabilities: ["github:read:repos"] })]), ["api.github.com:443"]);
+});
+
+test("browser:navigate is an egress host pattern in the VM; the rest of browser: needs a browser", () => {
+  const f = { egress: true, secrets: true, python: true, semanticFs: true };
+  assert.deepEqual(vmUnsupported(m({ capabilities: ["browser:navigate:*.github.com"] }), f), []);
+  assert.equal(vmUnsupported(m({ capabilities: ["browser:navigate:*.github.com"] })).length, 1, "not without the egress dialer");
+  assert.match(vmUnsupported(m({ capabilities: ["browser:screenshot:*"] }), f).join(), /no browser or display/);
 });
