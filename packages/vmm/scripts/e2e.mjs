@@ -29,7 +29,12 @@
 //                          killed (test hook): queries, tags and writes fail
 //                          with errors, the apps keep running, shutdown is
 //                          clean (docs/design/microvm-semantic-fs.md)
-//   node e2e.mjs all       single, multi, enforce, stdio, exits, context
+//   node e2e.mjs host      berth-vmm confined by its own Seatbelt profile
+//                          (src/sandbox.rs): a file of the user's outside the
+//                          sandbox can't be read or written, the pinned kernel
+//                          is readable but not writable, the run directory is
+//                          both; and --no-host-sandbox says it is off
+//   node e2e.mjs all       single, multi, enforce, stdio, exits, context, host
 //   node e2e.mjs egress    network:host: through the in-guest broker and the
 //                          host dialer on vsock 1026 (real network: fetches
 //                          example.com); the guest-root bypass, internal
@@ -675,9 +680,41 @@ async function context() {
   return { results, started: [ev1, ev3], query: q1, embeddings, afterKill: { qGone, tagGone, writeGone } };
 }
 
+async function host() {
+  const results = [];
+  // Stand-ins for the user's own files: outside every path the sandbox uses.
+  const outside = join(os.tmpdir(), `berth-host-probe-${process.pid}.txt`);
+  writeFileSync(outside, "a file of the user's");
+  const sibling = join(ART, "rootfs", "LATEST");
+  const kernel = join(ART, "kernel/sha256", KERNEL_PIN, "Image");
+  const inRun = join(RUN, "host", "probe-target.txt");
+  mkdirSync(join(RUN, "host"), { recursive: true });
+  writeFileSync(inRun, "x");
+  const probes = [outside, sibling, kernel, inRun];
+  const b = await run("host", ["notes"], { extra: probes.flatMap((p) => ["--host-sandbox-probe", p]) });
+  const s = await attach(b);
+  const { result: added } = await rpcConnect(rpcPath(b, 0), (r) => r.call("add_note", { text: "under seatbelt" }));
+  const off = await shutdown(b, s);
+  rmSync(outside, { force: true });
+  const hs = b.vmm.host_sandbox;
+  const at = (p) => hs?.probes?.find((x) => x.path === p) ?? {};
+  const denied = (v) => v === "EPERM" || v === "EACCES";
+  check(results, hs?.applied === true && hs.kind === "seatbelt", `berth-vmm confined itself (${hs?.kind}, ${hs?.profileBytes} bytes of profile; tcpOut ${hs?.tcpOut})`);
+  check(results, denied(at(outside).read) && denied(at(outside).write), `a file of the user's outside the sandbox: read ${at(outside).read}, write ${at(outside).write}`);
+  check(results, denied(at(sibling).read), `a file next to the pinned rootfs, not granted: read ${at(sibling).read}`);
+  check(results, at(kernel).read === "ok" && denied(at(kernel).write), `the pinned kernel: read ${at(kernel).read}, write ${at(kernel).write}`);
+  check(results, at(inRun).read === "ok" && at(inRun).write === "ok", `the run directory: read ${at(inRun).read}, write ${at(inRun).write}`);
+  check(results, typeof added?.id === "string" && off.exit.code === 0, `and the VM works under it: add_note answered, clean shutdown (${off.ms} ms)`);
+  const b2 = await run("host-off", ["notes"], { extra: ["--no-host-sandbox"] });
+  const s2 = await attach(b2);
+  const off2 = await shutdown(b2, s2);
+  check(results, b2.vmm.host_sandbox?.applied === false && b2.vmm.host_sandbox.reason === "--no-host-sandbox" && off2.exit.code === 0, `--no-host-sandbox boots and says it is unconfined (${JSON.stringify(b2.vmm.host_sandbox)})`);
+  return { results, hostSandbox: hs };
+}
+
 const mode = process.argv[2] ?? "all";
-const modes = { single, multi, enforce, stdio, exits, bench, egress, context };
-const todo = mode === "all" ? ["single", "multi", "enforce", "stdio", "exits", "context"] : [mode];
+const modes = { single, multi, enforce, stdio, exits, bench, egress, context, host };
+const todo = mode === "all" ? ["single", "multi", "enforce", "stdio", "exits", "context", "host"] : [mode];
 let failed = false;
 const report = {};
 for (const m of todo) {
