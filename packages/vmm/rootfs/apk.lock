@@ -24,6 +24,7 @@ libbz2-1.0.8-r6
 libcom_err-1.47.4-r0
 libcrypto3-3.5.9-r0
 libeconf-0.8.3-r0
+libevent-2.1.13-r0
 libexpat-2.8.5-r0
 libffi-3.5.2-r1
 libgcc-15.2.0-r5
@@ -63,6 +64,7 @@ simdjson-4.2.4-r0
 simdutf-9.0.0-r0
 sqlite-libs-3.53.4-r0
 ssl_client-1.37.0-r31
+tmux-3.7c-r0
 tzdata-2026d-r0
 xz-libs-5.8.4-r0
 yaml-0.2.5-r2

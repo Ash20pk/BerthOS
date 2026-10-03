@@ -17,3 +17,6 @@ fuse3
 # openssl(1): the GitHub API broker mints its CA and leaf certificate with it
 # at start, as it does in a container.
 openssl
+# terminal:*: apps/terminal drives a shared shell through tmux (its web view,
+# ttyd, has no port to the host in a VM, and the app runs without it).
+tmux

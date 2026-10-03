@@ -20,6 +20,8 @@ export interface VmFeatures {
   secrets: boolean;
   /** berth-vmm's pinned rootfs has python3 and berth_sdk (feat/vm-python). */
   python: boolean;
+  /** berth-vmm's pinned rootfs has tmux, for a terminal:* app (feat/vm-terminal). */
+  terminal?: boolean;
   /**
    * berth-vmm's pinned rootfs has the GitHub API broker and openssl, which
    * berth-init starts for a github:* app (feat/vm-github-broker).
@@ -56,7 +58,8 @@ export function vmUnsupported(manifest: BerthManifest, features: VmFeatures = NO
     // "Network"); what needs Chromium and a display is everything else under browser:.
     else if (ns === "browser" && action === "navigate" && features.egress) continue;
     else if (ns === "browser") reasons.push(`${cap} (no browser or display in the VM image)`);
-    else if (ns === "terminal") reasons.push(`${cap} (no terminal service in the VM)`);
+    else if (ns === "terminal" && features.terminal) continue;
+    else if (ns === "terminal") reasons.push(`${cap} (this berth-vmm's image has no tmux; update it with \`berth vm install\`)`);
     else if (ns === "filesystem" && (scope === "/context" || scope.startsWith("/context/")) && !features.semanticFs) {
       reasons.push(`${cap} (this berth-vmm's image has no semantic-fs, so no /context; update it with \`berth vm install\`)`);
     }

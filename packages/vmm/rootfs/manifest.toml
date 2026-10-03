@@ -46,6 +46,9 @@ sdk_python_sha256 = "378ff0d0b7820c5be5359435b975bcf43c74a3f3a4362a93540d40769f9
 policy_compiler_ref = "feat/per-app-cgroups"
 policy_compiler_commit = "28b09997790f9d0a57fffd0adaf47fe7e0a6b9b9"
 init_path = "/sbin/berth-init"
+# What a terminal:* app gets (packages.txt's tmux); the CLI reads it from
+# berth-vmm, as it reads sdk_python_sha256.
+terminal = "tmux"
 
 # Last verified build (UPDATE_MANIFEST=1 scripts/build-rootfs.sh, then a boot
 # check): rebuilt from fresh builder roots to the same hash, scripts/e2e.mjs
@@ -53,5 +56,5 @@ init_path = "/sbin/berth-init"
 # builder.apk.lock the builder's (erofs-utils). .github/workflows/vm-artifacts.yml
 # rebuilds it on a Linux runner and fails on any other hash. berth-vmm
 # compiles this in; berth-vmm run boots it by default.
-image_sha256 = "5f8629c87bf8c97263d3cd6d786b5a7b4db38fa2c24b835ff7ac58e34e3a0048"
-image_size = 107507712
+image_sha256 = "ea41c5094eb712abd6339727afdabbe2479eca31e3914c397bc4bec764974e5c"
+image_size = 80449536
