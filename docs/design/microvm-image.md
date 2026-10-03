@@ -23,7 +23,7 @@ Artifacts live in `/Users/ash/berth-wt/vm-image-artifacts/` (`$ART`). Nothing bi
 | 3. End to end | **Pass** | Boot 1: `add_note`, then a graceful stop. Boot 2: `list_notes` returns the note. `ruleset=FullyEnforced`. Ownership was checked (table below). Boot times are below; the host was under load from other work |
 | 4. Docs | This file | |
 
-python3 was **not** in the base image at first. Since feat/vm-python it is, with berth_sdk's dependencies from Alpine (py3-yaml, py3-pydantic, py3-protobuf) and berth_sdk itself at `/opt/berth/sdk-python`: rootfs `322ee4f3…` is 74.7 MB against 46.7 MB without (+28 MB, +60%). The `PYTHON=1` variant is gone. Since feat/vm-semantic-fs-build it also holds `fuse3` (fusermount3, setuid bit removed) and `semantic-fs-daemon` (7.5 MB, static Go): rootfs `7f361418…` is 79.5 MB.
+python3 was **not** in the base image at first. Since feat/vm-python it is, with berth_sdk's dependencies from Alpine (py3-yaml, py3-pydantic, py3-protobuf) and berth_sdk itself at `/opt/berth/sdk-python`: rootfs `322ee4f3…` is 74.7 MB against 46.7 MB without (+28 MB, +60%). The `PYTHON=1` variant is gone. Since feat/vm-semantic-fs-build it also holds `fuse3` (fusermount3, setuid bit removed) and `semantic-fs-daemon` (7.5 MB, static Go): rootfs `7f361418…` is 79.5 MB. berth-init starting it (feat/vm-semantic-fs-init) made that `30845aab…`, 79.5 MB.
 
 ## How to build and run
 
