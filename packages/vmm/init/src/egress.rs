@@ -61,6 +61,11 @@ pub fn stop_relay() {
 /// Binds DIAL_SOCKET with the ownership described above and relays every
 /// connection to vsock (VMADDR_CID_HOST, EGRESS_PORT).
 pub fn serve_relay() -> std::io::Result<()> {
+    // The egress and GitHub API brokers both dial out through it; the first
+    // to start serves it for both.
+    if LISTENER_FD.load(Ordering::SeqCst) >= 0 {
+        return Ok(());
+    }
     sys::install_dir(plan::EGRESS_DIR, 0o750, 0, plan::EGRESS_UID)?;
     let _ = std::fs::remove_file(plan::DIAL_SOCKET);
     let listener = UnixListener::bind(plan::DIAL_SOCKET)?;

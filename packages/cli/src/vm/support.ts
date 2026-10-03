@@ -21,6 +21,11 @@ export interface VmFeatures {
   /** berth-vmm's pinned rootfs has python3 and berth_sdk (feat/vm-python). */
   python: boolean;
   /**
+   * berth-vmm's pinned rootfs has the GitHub API broker and openssl, which
+   * berth-init starts for a github:* app (feat/vm-github-broker).
+   */
+  github?: boolean;
+  /**
    * berth-vmm's pinned rootfs has semantic-fs-daemon, which berth-init starts
    * to serve /context (feat/vm-semantic-fs-init).
    */
@@ -47,10 +52,21 @@ export function vmUnsupported(manifest: BerthManifest, features: VmFeatures = NO
           : `${cap} (this berth-vmm has no egress dialer: no NIC, TSI off; egress needs a berth-vmm with --egress-allow)`,
       );
     }
+    // A navigate scope is a host pattern the egress broker enforces (docs/local-vm.md,
+    // "Network"); what needs Chromium and a display is everything else under browser:.
+    else if (ns === "browser" && action === "navigate" && features.egress) continue;
     else if (ns === "browser") reasons.push(`${cap} (no browser or display in the VM image)`);
     else if (ns === "terminal") reasons.push(`${cap} (no terminal service in the VM)`);
     else if (ns === "filesystem" && (scope === "/context" || scope.startsWith("/context/")) && !features.semanticFs) {
       reasons.push(`${cap} (this berth-vmm's image has no semantic-fs, so no /context; update it with \`berth vm install\`)`);
+    }
+    else if (ns === "github" && features.github && features.egress) continue;
+    else if (ns === "github") {
+      reasons.push(
+        features.github
+          ? `${cap} (the GitHub API broker reaches api.github.com through the egress dialer, which this berth-vmm doesn't have)`
+          : `${cap} (this berth-vmm's image has no GitHub API broker; update it with \`berth vm install\`)`,
+      );
     }
     else if (ns !== "filesystem") reasons.push(`${cap} (a ${ns}:${action} capability is served through the egress broker or a host service, which the VM doesn't have yet)`);
   }
@@ -66,6 +82,17 @@ export function vmUnsupportedMessage(name: string, reasons: string[]): string {
  * every `network:host:` and `browser:navigate:` scope the sandbox's apps
  * declare, verbatim. Computed here because berth-vmm never reads manifests.
  */
+/**
+ * Everything the host dialer must allow: the egress allowlist, plus
+ * api.github.com:443 for an app that declares github:*, whose broker in the
+ * guest dials it (and decides per request what reaches it).
+ */
+export function dialerAllowList(manifests: BerthManifest[]): string[] {
+  const out = egressAllowList(manifests);
+  if (manifests.some((m) => m.capabilities.some((c) => c.startsWith("github:"))) && !out.includes("api.github.com:443")) out.push("api.github.com:443");
+  return out;
+}
+
 export function egressAllowList(manifests: BerthManifest[]): string[] {
   const out: string[] = [];
   for (const m of manifests) {

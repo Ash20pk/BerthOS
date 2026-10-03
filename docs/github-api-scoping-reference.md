@@ -88,6 +88,16 @@ Each decision is logged to stderr as JSON with `event` (`allowed`, `denied`, `co
 
 An app can declare `github:*` and a host capability such as `browser:navigate:*.github.com` together; `github-assistant` does. The egress broker then refuses `api.github.com`, so a broad host pattern can't bypass the method and path checks. Every other host works as declared.
 
+## In a microVM
+
+`--runtime vm` runs the same broker, with three differences, all made by berth-init (`packages/vmm/init/src/main.rs`, `start_github`):
+
+- **It isn't root.** It runs as `berth-github` (uid 9003) under agent-init: Landlock lets it write only its CA directory and its own scratch directory, and bind only port 8092; it may make no TCP connection at all.
+- **Its upstream is the host dialer.** The guest has no network. The broker asks berth-init's relay at `/run/berth/egress/dial.sock` (as a member of the egress group) for a tunnel to `api.github.com:443`, and the host dialer in berth-vmm checks that against its own allowlist, to which the CLI adds `api.github.com:443` for a `github:*` app. TLS to GitHub is the broker's own, over that tunnel, with Node's normal certificate checks.
+- **It reads the app's policy from `BERTH_GITHUB_API_POLICY`,** a root-owned copy, because under agent-init `BERTH_CAPABILITY_POLICY` is the broker's own.
+
+As in a container, one app per sandbox may declare `github:*`, and only that app gets `BERTH_GITHUB_API_PROXY` and `NODE_EXTRA_CA_CERTS`. `packages/vmm/scripts/e2e.mjs github` checks it against the real API with a fake token: `DELETE /repos/...` and `GET /user/emails` get the broker's own 403 and are never forwarded; `GET /repos/...` and `POST .../issues` reach GitHub, which answers 401.
+
 ## What's deliberately out of scope
 
 - **Single-app sandboxes only.** The proxy doesn't start for a `github:*` app in a multi-app sandbox.

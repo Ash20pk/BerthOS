@@ -34,6 +34,12 @@
 //                          sandbox can't be read or written, the pinned kernel
 //                          is readable but not writable, the run directory is
 //                          both; and --no-host-sandbox says it is off
+//   node e2e.mjs github    the GitHub API broker in the guest (real network:
+//                          reaches api.github.com): e2e-gh-probe, with
+//                          github-assistant's capabilities and a fake token on
+//                          the secrets disk. Undeclared calls get the broker's
+//                          own 403 and are not forwarded; declared ones reach
+//                          GitHub, which answers 401 for the fake token
 //   node e2e.mjs all       single, multi, enforce, stdio, exits, context, host
 //   node e2e.mjs egress    network:host: through the in-guest broker and the
 //                          host dialer on vsock 1026 (real network: fetches
@@ -712,8 +718,48 @@ async function host() {
   return { results, hostSandbox: hs };
 }
 
+async function github() {
+  const results = [];
+  const token = "ghp_berthVmE2eFakeToken0000000000000000000";
+  const secrets = join(RUN, "github-secrets.img");
+  const body = Buffer.from(`BERTHSEC1\n${JSON.stringify({ shared: {}, apps: { "e2e-gh-probe": { GITHUB_TOKEN: token } } })}`);
+  const disk = Buffer.alloc(Math.ceil((body.length + 1) / 512) * 512);
+  body.copy(disk);
+  writeFileSync(secrets, disk, { mode: 0o600 });
+  const b = await run("github", ["e2e-gh-probe"], { extra: ["--secrets", secrets, "--egress-allow", "*.github.com,api.github.com:443"] });
+  const s = await attach(b);
+  const req = (r, method, path, body = "") => r.call("github_request", { method, path, body }, 40000).catch((e) => ({ status: -1, body: e.message }));
+  const { r } = await rpcConnect(rpcPath(b, 0), (x) => x.call("token_in_env"));
+  const del = await req(r, "DELETE", "/repos/Ash20pk/BerthOS");
+  const emails = await req(r, "GET", "/user/emails");
+  const read = await req(r, "GET", "/repos/Ash20pk/BerthOS");
+  const issue = await req(r, "POST", "/repos/Ash20pk/BerthOS/issues", JSON.stringify({ title: "x" }));
+  const own = await r.call("token_in_env");
+  await sleep(200);
+  const off = await shutdown(b, s);
+  rmSync(secrets, { force: true });
+  const started = s.events.find((e) => e.event === "daemon_started" && e.daemon === "github-api-broker");
+  const brokerLog = s.logs.filter((l) => l.src === "github-api-broker").map((l) => l.line);
+  const fromGithub = (x) => x?.status === 401 && /Bad credentials/.test(x.body ?? "");
+  check(results, started?.listening && started.caShared && started.uid === 9003 && started.forApp === "e2e-gh-probe", `broker started for e2e-gh-probe as uid ${started?.uid}, CA shared with the app (${started?.waitMs} ms)`);
+  check(results, s.logs.some((l) => l.src === "github-api-broker" && l.line.includes("ruleset=FullyEnforced")), "the broker runs under agent-init, FullyEnforced");
+  check(results, brokerLog.some((l) => l.includes("upstream through the host dialer")), "its upstream is the host dialer");
+  check(results, del.status === 403 && /no declared capability covers github:write:repos/.test(del.body), `DELETE /repos/...: the broker's own 403 (${del.body.slice(0, 80)})`);
+  check(results, emails.status === 403 && /github:read:user:emails/.test(emails.body), `GET /user/emails: the broker's own 403 (${emails.body.slice(0, 80)})`);
+  check(results, fromGithub(read), `GET /repos/... (github:read:repos) reached GitHub: ${read.status} ${read.body.slice(0, 60)}`);
+  check(results, fromGithub(issue), `POST /repos/.../issues (github:write:issues) reached GitHub: ${issue.status} ${issue.body.slice(0, 60)}`);
+  check(results, brokerLog.filter((l) => l.includes('"event":"denied"')).length === 2 && brokerLog.filter((l) => l.includes('"event":"allowed"')).length === 2, "the broker logged two denials and two forwards");
+  check(results, own.present === true, "the app has its token (secrets disk)");
+  check(results, off.exit.code === 0, `clean shutdown (${off.ms} ms)`);
+  if (results.some((x) => !x.pass)) {
+    for (const l of s.logs.filter((l) => ["github-api-broker", "e2e-gh-probe", "berth-init", "egress-broker"].includes(l.src))) console.error(`  [${l.src}] ${l.line.slice(0, 300)}`);
+    for (const e of s.events.filter((e) => /github|egress|daemon/.test(e.event))) console.error(`  event ${JSON.stringify(e).slice(0, 300)}`);
+  }
+  return { results, started, responses: { del, emails, read, issue } };
+}
+
 const mode = process.argv[2] ?? "all";
-const modes = { single, multi, enforce, stdio, exits, bench, egress, context, host };
+const modes = { single, multi, enforce, stdio, exits, bench, egress, context, host, github };
 const todo = mode === "all" ? ["single", "multi", "enforce", "stdio", "exits", "context", "host"] : [mode];
 let failed = false;
 const report = {};

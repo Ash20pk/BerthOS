@@ -14,3 +14,6 @@ py3-protobuf
 # fusermount3, which semantic-fs-daemon's FUSE library (bazil.org/fuse) execs
 # to mount /context. Only root runs it, so build-in-vm.sh drops its setuid bit.
 fuse3
+# openssl(1): the GitHub API broker mints its CA and leaf certificate with it
+# at start, as it does in a container.
+openssl

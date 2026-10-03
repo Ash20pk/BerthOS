@@ -279,12 +279,14 @@ export function vmmFeatures(vmm: string, run = spawnSync, read: (path: string) =
   const help = `${r.stdout ?? ""}${r.stderr ?? ""}`;
   let python = false;
   let semanticFs = false;
+  let github = false;
   try {
     const rootfs = manifestsInBinary(read(vmm)).rootfs;
     python = /^[0-9a-f]{64}$/.test(rootfs?.sdk_python_sha256 ?? "");
     semanticFs = /^[0-9a-f]{64}$/.test(rootfs?.semantic_fs_daemon_sha256 ?? "");
+    github = /^[0-9a-f]{64}$/.test(rootfs?.github_api_broker_sha256 ?? "");
   } catch {}
-  const features = { egress: help.includes("--egress-allow"), secrets: help.includes("--secrets"), python, semanticFs };
+  const features = { egress: help.includes("--egress-allow"), secrets: help.includes("--secrets"), python, semanticFs, github };
   featureCache.set(vmm, features);
   return features;
 }

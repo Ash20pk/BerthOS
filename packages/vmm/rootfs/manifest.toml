@@ -23,12 +23,14 @@ agent_init_sha256 = "9ec8b25e38d31ee82a28155304f730c0ec589b057d11fce2a56c6614559
 probe_sha256 = "6ec735d885b58861b33abdd70a5a4d48ecad803cc92bd94c02f876a3346453d0"
 # /sbin/berth-init and /usr/local/bin/context-bus-daemon: build-berth-init.sh,
 # from this tree (packages/vmm/init, packages/context-bus-daemon).
-berth_init_sha256 = "2976c0d3e36a2b20a6d0d2248b53e164980678665e6bd3eb90a79e00ab8fc9ec"
+berth_init_sha256 = "d2514a05598f8d2d7b24651161e40b5db4a517149e7eb87ad3fb84d786c14a16"
 context_bus_daemon_sha256 = "1138c3595142a3235145b530d0cf1157b0971aa2230d417befe0a6e783477544"
 # /usr/local/bin/semantic-fs-daemon: build-semantic-fs.sh, from
 # packages/semantic-fs-daemon at HEAD: the daemon that serves /context
 # (docs/design/microvm-semantic-fs.md).
 semantic_fs_daemon_sha256 = "469dce88701aae0a64f0ff481205ddec5004e1fb55925c449b4d754acb7e3a97"
+# /usr/local/bin/berth-github-api-broker.cjs: packages/docker-orchestrator/docker/github-api-broker.cjs.
+github_api_broker_sha256 = "0a809855c067d76b2074746b2390f6b204d1d80a7cafdc8cea4371efa624baaa"
 # /usr/local/bin/berth-egress-broker.cjs: packages/docker-orchestrator/docker/egress-broker.cjs.
 egress_broker_sha256 = "4ff162e8e2c86cc43a73caa02bd1a78e4fe620c2b18040334b79366402157d89"
 # /opt/berth/sdk-python/berth_sdk: packages/sdk-python/berth_sdk at HEAD, the
@@ -47,5 +49,5 @@ init_path = "/sbin/berth-init"
 # builder.apk.lock the builder's (erofs-utils). .github/workflows/vm-artifacts.yml
 # rebuilds it on a Linux runner and fails on any other hash. berth-vmm
 # compiles this in; berth-vmm run boots it by default.
-image_sha256 = "e3b834418a8d308dbde11e9f9f3d2bdfd73f15d5c44aa29a5b83f9fce4759c22"
-image_size = 79466496
+image_sha256 = "3db0930b3864db235a0b85b904b292076ae2f6b337a8353768a709a7a161e9a0"
+image_size = 79970304
