@@ -1,6 +1,6 @@
 # semantic-fs in the microVM
 
-Status: steps 1 to 3 done (feat/vm-semantic-fs-build, -init, -cli); steps 4 and 5 to go. Closes the semantic-fs part of open problem 4 in [`microvm-runtime.md`](microvm-runtime.md#open-problems) and of open problem 3 in [`microvm-guest-init.md`](microvm-guest-init.md), and the "semantic-fs and `/context`" limit in [`../local-vm.md`](../local-vm.md#limits).
+Status: steps 1 to 4 done (feat/vm-semantic-fs-build, -init, -cli, test/vm-semantic-fs-e2e); step 5, the release, to go. Closes the semantic-fs part of open problem 4 in [`microvm-runtime.md`](microvm-runtime.md#open-problems) and of open problem 3 in [`microvm-guest-init.md`](microvm-guest-init.md), and the "semantic-fs and `/context`" limit in [`../local-vm.md`](../local-vm.md#limits).
 
 ## The problem
 
@@ -117,7 +117,8 @@ Each step is one branch with its own verification, in order:
 - **`/dev/fuse` appears by itself** from devtmpfs, as section 2 inferred.
 - **Embeddings fail in the guest, as section 7 expected,** but not for the reason it guessed: `@xenova/transformers` throws `ReferenceError: __filename is not defined` inside the ESM bundle, before it looks for the model. The SDK falls back to keyword ranking. `scripts/e2e.mjs context` records the lines.
 - **Precreate is unchanged.** `/context` simply isn't in `fresh_mounts` once it is a FUSE mount, so the pass leaves its root to the daemon. A declared path under it is created through the mount, as root, which gives it the daemon's `root:berth` ownership, as in a container.
-- **Not covered yet: the daemon dying while apps run.** berth-init records `daemon_exited`, and the SDK's queries then fail with an error naming the socket. The e2e has no way to kill a root process in the guest; step 4 adds one (a test-hook op on the control port, like `egress_raw`).
+- **The daemon dying while apps run** (step 4, through a `kill_daemon` test-hook op on the control port, like `egress_raw`): berth-init records `daemon_exited`; `query_context` and `tag_context_file` fail with `semantic-fs call "query" cannot be sent: the control socket closed`; a write under `/context` fails with `ENOTCONN`; every app stays ready; shutdown unmounts the dead mount cleanly. Nothing restarts the daemon: until the next boot, `/context` is gone for that sandbox, loudly.
+- **Through the CLI** (step 4, `packages/cli/test/vm-e2e.mjs` 3d): a renamed copy of apps/filesystem under `berth dev --runtime vm` writes, tags and finds a context file, attributed to `fs-e2e`, the kernel's name for it, though the app registers as "filesystem"; after `berth dev` restarts, the file and its tag are still there.
 
 ## Open questions
 
