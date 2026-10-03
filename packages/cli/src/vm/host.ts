@@ -288,7 +288,7 @@ export function vmmFeatures(vmm: string, run = spawnSync, read: (path: string) =
     github = /^[0-9a-f]{64}$/.test(rootfs?.github_api_broker_sha256 ?? "");
     terminal = rootfs?.terminal === "tmux";
   } catch {}
-  const features = { egress: help.includes("--egress-allow"), secrets: help.includes("--secrets"), python, semanticFs, github, terminal };
+  const features = { egress: help.includes("--egress-allow"), secrets: help.includes("--secrets"), publish: help.includes("--publish"), python, semanticFs, github, terminal };
   featureCache.set(vmm, features);
   return features;
 }

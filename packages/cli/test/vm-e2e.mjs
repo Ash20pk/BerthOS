@@ -23,6 +23,8 @@
 //                                         its tag are still there (state disk)
 //   berth mcp --runtime vm --env           a declared secret reaches the app through MCP's
 //                                         own boot, and an attach says --env was not applied
+//   berth dev --runtime vm (terminal)     apps/terminal's web view: berth dev prints a loopback
+//                                         URL and login; ttyd answers 401 without it, its page with it
 //   berth attest <run>                    ACTIVE, isolation microvm, and the shipped
 //                                         verifier accepts the record
 //
@@ -33,6 +35,8 @@
 import { spawn, spawnSync } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, appendFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
+import http from "node:http";
+import { gunzipSync } from "node:zlib";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -405,6 +409,47 @@ app = define_app(_setup)
     );
   }
   await stop(b.d);
+}
+
+// --- 3e. the terminal's web view ---------------------------------------------------
+{
+  const ws = mkdtempSync(join(tmpdir(), "berth-vm-e2e-term-"));
+  const app = join(ws, "term-e2e");
+  cpSync(join(repo, "apps", "terminal", "src"), join(app, "src"), { recursive: true });
+  cpSync(join(repo, "apps", "terminal", "package.json"), join(app, "package.json"));
+  writeFileSync(join(app, "berth.yml"), readFileSync(join(repo, "apps", "terminal", "berth.yml"), "utf8").replace(/^name: terminal$/m, "name: term-e2e"));
+  run(["vm", "stop", "berth-dev-term-e2e"]);
+  let out = "";
+  const d = spawn(process.execPath, [berth, "dev", "--runtime", "vm"], { cwd: app, stdio: ["ignore", "pipe", "pipe"] });
+  d.stdout.on("data", (x) => (out += x));
+  d.stderr.on("data", (x) => (out += x));
+  const end = Date.now() + 60_000;
+  while (Date.now() < end && !/login: \S+ \/ \S+/.test(out) && d.exitCode === null) await sleep(50);
+  const url = out.match(/Terminal: (http:\/\/127\.0\.0\.1:\d+)/)?.[1];
+  const login = out.match(/login: (\S+) \/ (\S+)/);
+  check("berth dev --runtime vm prints the web terminal's loopback URL and login", url && login, url ? "" : out.slice(-1500));
+  if (url && login) {
+    // ttyd starts with the terminal's first call, as in a container.
+    run(["rpc", "term-e2e", "--runtime", "vm", "--export", "run_command", "--input", JSON.stringify({ command: "true" })]);
+    const get = (auth) =>
+      new Promise((resolve) => {
+        const req = http.get(`${url}/`, { agent: false, headers: { "accept-encoding": "gzip", ...(auth ? { authorization: `Basic ${Buffer.from(auth).toString("base64")}` } : {}) } }, (res) => {
+          const chunks = [];
+          res.on("data", (c) => chunks.push(c));
+          res.on("end", () => resolve({ status: res.statusCode, body: res.headers["content-encoding"] === "gzip" ? gunzipSync(Buffer.concat(chunks)).toString() : Buffer.concat(chunks).toString() }));
+        });
+        req.on("error", (e) => resolve({ status: -1, body: e.message }));
+      });
+    let anon = { status: -1 };
+    for (let i = 0; i < 40 && anon.status === -1; i++) {
+      anon = await get(null);
+      if (anon.status === -1) await sleep(250);
+    }
+    const ok = await get(`${login[1]}:${login[2]}`);
+    check("ttyd refuses the URL without the login, and serves the terminal with it", anon.status === 401 && ok.status === 200 && /ttyd/i.test(ok.body), `${anon.status} / ${ok.status}`);
+  }
+  d.kill("SIGINT");
+  await new Promise((r) => (d.exitCode !== null ? r() : d.once("exit", r)));
 }
 
 // --- 4. mcp ---------------------------------------------------------------------

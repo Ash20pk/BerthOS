@@ -22,6 +22,8 @@ export interface VmFeatures {
   python: boolean;
   /** berth-vmm's pinned rootfs has tmux, for a terminal:* app (feat/vm-terminal). */
   terminal?: boolean;
+  /** berth-vmm takes `run --publish PORT` (feat/vm-ttyd): a guest port reachable from the host. */
+  publish?: boolean;
   /**
    * berth-vmm's pinned rootfs has the GitHub API broker and openssl, which
    * berth-init starts for a github:* app (feat/vm-github-broker).
