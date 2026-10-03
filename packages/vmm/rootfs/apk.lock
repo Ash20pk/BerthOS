@@ -18,6 +18,7 @@ fuse3-libs-3.18.3-r0
 gdbm-1.26-r0
 icu-data-en-78.1-r0
 icu-libs-78.1-r0
+json-c-0.18-r1
 libapk-3.0.8-r0
 libblkid-2.42.3-r1
 libbz2-1.0.8-r6
@@ -33,6 +34,9 @@ libpanelw-6.6_p20260516-r0
 libssl3-3.5.9-r0
 libstdc++-15.2.0-r5
 libuuid-2.42.3-r1
+libuv-1.52.1-r0
+libwebsockets-4.3.5-r2
+libwebsockets-evlib_uv-4.3.5-r2
 mpdecimal-4.0.1-r0
 musl-1.2.6-r2
 musl-utils-1.2.6-r2
@@ -65,6 +69,7 @@ simdutf-9.0.0-r0
 sqlite-libs-3.53.4-r0
 ssl_client-1.37.0-r31
 tmux-3.7c-r0
+ttyd-1.7.7-r0
 tzdata-2026d-r0
 xz-libs-5.8.4-r0
 yaml-0.2.5-r2

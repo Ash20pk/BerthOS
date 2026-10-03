@@ -92,7 +92,21 @@ export interface BootVmOptions {
    * All of it travels on the secrets disk, none on the kernel command line.
    */
   env?: Record<string, string>;
+  /**
+   * ttyd's `user:password` for the sandbox's terminal:* app, when it publishes
+   * its web view: onto the secrets disk for that app alone, as the container
+   * path puts it in that container's environment.
+   */
+  terminalCredential?: string;
 }
+
+/** The terminal:* app whose ttyd the host may reach: the container path's needsTerminalPort rule. */
+export function terminalApp(apps: VmAppInput[]): VmAppInput | undefined {
+  return apps.find((a) => a.manifest.capabilities.some((c) => c.startsWith("terminal:")) && (a.manifest as { expose?: { terminal?: boolean } }).expose?.terminal !== false);
+}
+
+/** apps/terminal's ttyd port (tmux-controller.ts's default, docker-orchestrator's TERMINAL_PORT). */
+export const TERMINAL_PORT = 7681;
 
 export async function bootVm(options: BootVmOptions): Promise<{ sandbox: VmSandbox; ready: ReadyResult; timings: StartTimings & { bundleMs: number }; bundles: BundledApp[] }> {
   const t0 = Date.now();
@@ -100,7 +114,18 @@ export async function bootVm(options: BootVmOptions): Promise<{ sandbox: VmSandb
   const bundleMs = Date.now() - t0;
   options.signal?.throwIfAborted();
   const primary = options.apps[0]!;
-  const secrets = sandboxSecrets(options.apps, options.env ?? {}, options.vmm, options.log);
+  let secrets = sandboxSecrets(options.apps, options.env ?? {}, options.vmm, options.log);
+  // The terminal's web view: its port published, its credential to it alone.
+  const term = options.terminalCredential ? terminalApp(options.apps) : undefined;
+  const features = vmmFeatures(options.vmm);
+  const publishTerminal = Boolean(term && features.publish && features.secrets);
+  if (term && !publishTerminal) options.log(`"${term.name}"'s web terminal isn't published: this berth-vmm has no \`run --publish\` (update it with \`berth vm install\`); the app runs without it`);
+  if (publishTerminal && term) {
+    secrets ??= { shared: {}, perApp: {} };
+    secrets.perApp[term.name] = { ...(secrets.perApp[term.name] ?? {}), BERTH_TERMINAL_CREDENTIAL: options.terminalCredential! };
+  }
+  const egress = egressArgs(options.apps.map((a) => a.manifest), options.vmm);
+  const extraArgs = [...(egress.extraArgs ?? []), ...(publishTerminal ? ["--publish", String(TERMINAL_PORT)] : [])];
   const { sandbox, ready, timings } = await VmSandbox.start({
     name: options.name,
     vmm: options.vmm,
@@ -110,7 +135,7 @@ export async function bootVm(options: BootVmOptions): Promise<{ sandbox: VmSandb
     artifactsDir: vmHome(),
     ...(options.state === false ? {} : { state: vmStateDisk(primary.name) }),
     ...(secrets ? { secrets } : {}),
-    ...egressArgs(options.apps.map((a) => a.manifest), options.vmm),
+    ...(extraArgs.length > 0 ? { extraArgs } : {}),
     ...(vmMemMiB(options.apps.map((a) => a.manifest)) ? { memMiB: vmMemMiB(options.apps.map((a) => a.manifest)) } : {}),
     ...(options.onLog ? { onLog: options.onLog } : {}),
     ...(options.readyTimeoutMs ? { readyTimeoutMs: options.readyTimeoutMs } : {}),
