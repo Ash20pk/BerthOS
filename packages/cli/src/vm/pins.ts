@@ -65,11 +65,12 @@ export type VmmPlatform = "darwin-arm64";
  * `berth vm install` refuses any other bytes, and clears macOS's quarantine
  * attribute only on a file that matched.
  *
- * darwin-arm64 is from release vm-artifacts-8f79e8da-e3b83441 (run
- * 37098827237): rootfs e3b83441, with semantic-fs.
+ * darwin-arm64 is from release vm-artifacts-8f79e8da-15a8892b (run
+ * 37108356030): the combined rootfs, and berth-vmm with its own Seatbelt
+ * profile, --publish and app measurement.
  */
 export const VMM_PINS: Partial<Record<VmmPlatform, { sha256: string; size: number }>> = {
-  "darwin-arm64": { sha256: "79a7a51a835638e8bab8ac506293cf5eac115d4250103c04eb1c314678cc7800", size: 633408 },
+  "darwin-arm64": { sha256: "34a91cc8e24e884752f6d528b96a317b2dfdb3df22ad66cc812333bb57fed143", size: 683792 },
 };
 
 export function vmmPin(platform: string = `${process.platform}-${process.arch}`, pins: Partial<Record<string, { sha256: string; size: number }>> = VMM_PINS): ArtifactPin | undefined {
