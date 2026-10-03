@@ -44,7 +44,7 @@
 //                          (run_command, send_keys, read_screen) as the app's
 //                          uid, in the tty group, under the app's Landlock
 //                          rules; without ttyd, which has no port out of a VM
-//   node e2e.mjs all       single, multi, enforce, stdio, exits, context, host
+//   node e2e.mjs all       single, multi, enforce, stdio, exits, context, host, terminal
 //   node e2e.mjs egress    network:host: through the in-guest broker and the
 //                          host dialer on vsock 1026 (real network: fetches
 //                          example.com); the guest-root bypass, internal
