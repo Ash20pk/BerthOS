@@ -21,6 +21,8 @@ berth mcp --app filesystem --app-dir apps/filesystem --run-id nightly-2026-09-28
 | `--container=<name>` | `berth-dev-<app>` | The container (or microVM sandbox) to attach to or boot |
 | `--runtime=<docker\|vm>` | `docker` | Where the sandbox runs. `vm` is the [local microVM runtime](local-vm.md): the bridge attaches to a running `berth dev --runtime vm` sandbox or boots its own. Defaults to `BERTH_SANDBOX`, then `"sandbox"` in `~/.berth/config.json` |
 | `--only=<a>,<b>` | every export | Bridge only these exports. A name not in the manifest is an error |
+| `--env=<NAME>` / `--env=<NAME=value>` | none | A variable for the sandbox this command boots: `NAME` takes the value from this shell's environment (so it stays out of shell history, `ps` and the MCP client's config), `NAME=value` is visible in both. Repeatable. A name the app declares under `secrets:` reaches that app alone. With `--runtime vm` it travels on the secrets disk, never the kernel command line. A sandbox the bridge attaches to keeps the variables it was started with, and the bridge says so on stderr. See [secrets](secrets-reference.md) |
+| `--env-file=<path>` | none | A dotenv file of variables, applied before `--env` |
 | `--no-boot` | boots | Attach to a running container only; fail if there isn't one |
 | `--warm` | off | Build the image, boot the sandbox, wait for the app to report ready, stop it, exit 0. Doesn't serve MCP. Makes the first tool call of the next session fast |
 | `--boot-timeout=<seconds>` | `120` | How long to wait for a freshly booted app to report ready, and the longest a tool call waits for a sandbox that is still starting |

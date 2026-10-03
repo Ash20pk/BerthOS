@@ -142,7 +142,7 @@ berth dev --runtime vm --env GITHUB_TOKEN --env GITHUB_REPO=owner/name
 berth dev --runtime vm --env-file .env
 ```
 
-`--env` and `--env-file` work as they do on `berth os up` (and on `berth dev` with Docker). A name an app declares under `secrets:` in its `berth.yml` reaches that app alone. Any other name reaches every app in the sandbox, with a warning. A declared name with no value prints a warning naming it, and the app boots without it.
+`--env` and `--env-file` work as they do on `berth os up` (and on `berth dev` with Docker), and on `berth mcp --runtime vm` when it boots the VM itself. A name an app declares under `secrets:` in its `berth.yml` reaches that app alone. Any other name reaches every app in the sandbox, with a warning. A declared name with no value prints a warning naming it, and the app boots without it.
 
 None of it goes on the guest's kernel command line, which every process in the guest can read in `/proc/cmdline`. The CLI writes the values to `secrets.img` in the run directory (0600), berth-vmm attaches it as a read-only disk, and berth-init reads it as root before anything starts, removes the device node, and puts each app's values into that app's environment only. The apps run as different uids, so one can't read another's `/proc/<pid>/environ`. The CLI deletes `secrets.img` as soon as the sandbox is ready. Values are never logged; berth-init reports the names it delivered. See the [secrets reference](secrets-reference.md#in-a-microvm).
 
