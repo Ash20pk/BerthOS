@@ -155,6 +155,24 @@ const builtin = (p: string) => p.startsWith("node:") || builtinModules.includes(
 /** Imports left out of a VM bundle on purpose: the SDK catches their failure to load. */
 const OPTIONAL_EXTERNALS = ["@xenova/transformers"];
 
+/**
+ * Packages an optional layer provides, imported from it by absolute path
+ * (docs/design/microvm-layers.md): playwright-core reads its own package files
+ * at run time and doesn't survive bundling, so the browser layer carries it.
+ */
+export const LAYER_IMPORTS: Record<string, string> = {
+  "playwright-core": "/usr/lib/berth/node_modules/playwright-core/index.mjs",
+};
+
+function layerImports(): import("esbuild").Plugin {
+  return {
+    name: "berth-layer-imports",
+    setup(build) {
+      build.onResolve({ filter: /^playwright-core$/ }, (args) => ({ path: LAYER_IMPORTS[args.path]!, external: true }));
+    },
+  };
+}
+
 function cliFallback(): import("esbuild").Plugin {
   return {
     name: "berth-cli-fallback",
@@ -217,7 +235,7 @@ export async function bundleApp(appDir: string, name: string, options: BundleOpt
       absWorkingDir: appDir,
       // Bundled ESM still meets CommonJS packages that call require().
       banner: { js: 'import { createRequire as __berthCreateRequire } from "node:module"; const require = __berthCreateRequire(import.meta.url);' },
-      plugins: [cliFallback()],
+      plugins: [layerImports(), cliFallback()],
       // The SDK imports it lazily for semantic-fs embeddings. In the guest it
       // loads the rootfs's kit instead (BERTH_EMBEDDINGS_DIR), and inlined
       // here it is megabytes of an app's share that never run.
@@ -235,7 +253,7 @@ export async function bundleApp(appDir: string, name: string, options: BundleOpt
       );
     });
     for (const [file, output] of Object.entries(result.metafile.outputs)) {
-      const bare = output.imports.filter((i) => i.external && !builtin(i.path) && !OPTIONAL_EXTERNALS.includes(i.path));
+      const bare = output.imports.filter((i) => i.external && !builtin(i.path) && !OPTIONAL_EXTERNALS.includes(i.path) && !Object.values(LAYER_IMPORTS).includes(i.path));
       if (bare.length > 0) throw new Error(`can't bundle ${name} for the VM: ${file} still imports ${bare.map((i) => i.path).join(", ")}`);
     }
     await mkdir(join(work, "proto"), { recursive: true });

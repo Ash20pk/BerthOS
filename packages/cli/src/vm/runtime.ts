@@ -128,7 +128,16 @@ export interface BootVmOptions {
    * path puts it in that container's environment.
    */
   terminalCredential?: string;
+  /**
+   * The VNC password for the sandbox's browser app, when the browser layer is
+   * attached: onto the secrets disk for that app (berth-init gives it to
+   * x11vnc), and noVNC's port published, as the container path does.
+   */
+  vncPassword?: string;
 }
+
+/** noVNC's port in the guest (berth-init's plan::NOVNC_PORT, the container's 6080). */
+export const NOVNC_PORT = 6080;
 
 /** The terminal:* app whose ttyd the host may reach: the container path's needsTerminalPort rule. */
 export function terminalApp(apps: VmAppInput[]): VmAppInput | undefined {
@@ -156,8 +165,15 @@ export async function bootVm(options: BootVmOptions): Promise<{ sandbox: VmSandb
   }
   const egress = egressArgs(options.apps.map((a) => a.manifest), options.vmm);
   const layers = layersFor(options.apps.map((a) => a.manifest));
+  // The browser's VNC view: the password to the browser app alone, its port published.
+  const browserApp = layers.includes("browser") ? options.apps.find((a) => layersFor([a.manifest]).includes("browser")) : undefined;
+  const publishVnc = Boolean(browserApp && options.vncPassword && features.publish && features.secrets);
+  if (publishVnc && browserApp) {
+    secrets ??= { shared: {}, perApp: {} };
+    secrets.perApp[browserApp.name] = { ...(secrets.perApp[browserApp.name] ?? {}), BERTH_VNC_PASSWORD: options.vncPassword! };
+  }
   await ensureLayers(layers, options.vmm, options.log, options.apps.filter((a) => layersFor([a.manifest]).length > 0).map((a) => a.name).join(", "));
-  const extraArgs = [...(egress.extraArgs ?? []), ...(publishTerminal ? ["--publish", String(TERMINAL_PORT)] : []), ...layers.flatMap((l) => ["--layer", l])];
+  const extraArgs = [...(egress.extraArgs ?? []), ...(publishTerminal ? ["--publish", String(TERMINAL_PORT)] : []), ...layers.flatMap((l) => ["--layer", l]), ...(publishVnc ? ["--publish", String(NOVNC_PORT)] : [])];
   const { sandbox, ready, timings } = await VmSandbox.start({
     name: options.name,
     vmm: options.vmm,
