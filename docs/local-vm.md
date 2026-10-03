@@ -2,7 +2,7 @@
 
 `berth dev --runtime vm` and `berth mcp --runtime vm` run your app in a small virtual machine instead of a Docker container. The VM boots Berth's own pinned Linux kernel and a read-only base image, so the kernel that enforces your app's capabilities is the same on every machine, with Landlock always built in. No Docker daemon is involved, and no image is built.
 
-Docker is still the default. The VM runtime runs filesystem-only Node and Python apps today. See [Limits](#limits) for what it doesn't cover yet.
+Docker is still the default. The VM runtime runs Node and Python apps that use the filesystem, `/context`, secrets and declared network hosts today. See [Limits](#limits) for what it doesn't cover yet.
 
 | | `--runtime docker` (default) | `--runtime vm` |
 |---|---|---|
@@ -184,7 +184,7 @@ The variable is `BERTH_SANDBOX`, not `BERTH_RUNTIME`. `BERTH_RUNTIME` already se
 An app whose `berth.yml` needs something the VM doesn't have yet is refused before boot, with the reason and a pointer back to `--runtime docker`:
 
 - **Network.** The VM has no network device, and TSI is off. An app that declares `network:host:` or `browser:navigate:` reaches those hosts through the egress broker inside the guest, which dials out over vsock to a dialer in berth-vmm. The CLI passes your apps' scopes to berth-vmm as `--egress-allow`, and the dialer enforces that allowlist again on the host: it resolves names itself and refuses private, loopback, link-local and metadata addresses. One app per sandbox may declare egress, as with containers. See [the egress design](./design/microvm-egress.md).
-- **semantic-fs and `/context`.** Not in the VM yet (`BERTH_NO_SEMANTIC_FS=1`).
+- **`/context` persists, and ranks by keyword.** berth-init runs semantic-fs-daemon in the guest, so an app that declares `/context` works as in a container, with two differences. `/context` is kept on the state disk with `/workspace`, so it survives `berth vm stop` and the next boot (a container's goes when the container does, unless you snapshot it). And `query_context` ranks by keyword only: the embedding model doesn't load in the bundled app (`__filename is not defined`), so the SDK falls back, as it does whenever the model is missing. Needs a berth-vmm whose image has the daemon; with an older one the app is refused, with that reason. See [the design](./design/microvm-semantic-fs.md).
 - **Browser and terminal capabilities.** Not in the image.
 - **Other `<service>:*` capabilities**, such as `github:*`, go through the egress broker or a host service, so they wait for egress.
 - **Native addons** (`.node` files) can't run in the guest, because they were built for your host, not for Linux on arm64. Bundling stops with that error.
