@@ -1,0 +1,4 @@
+# The test layer: one small package, figlet, so that scripts/e2e.mjs layer can
+# show a layer's files appearing in the guest and its measurement in the boot
+# record, without a 400 MB download.
+figlet

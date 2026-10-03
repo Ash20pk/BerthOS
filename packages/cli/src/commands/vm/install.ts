@@ -6,6 +6,7 @@ import { readConfigFile, resolveArtifactsDir, resolveArtifactsUrl } from "../../
 import { activePins, checkHost, locateVmm, writeEntitlementsFile } from "../../vm/host.js";
 import { vmHome } from "../../vm/paths.js";
 import { PINS, vmmPin } from "../../vm/pins.js";
+import { ensureLayers } from "../../vm/runtime.js";
 
 export default class VmInstall extends Command {
   static override description =
@@ -29,6 +30,10 @@ export default class VmInstall extends Command {
       description: "copy this berth-vmm binary to ~/.berth/vm/bin/berth-vmm instead of downloading the published one (its signature travels with it)",
     }),
     force: Flags.boolean({ description: "replace installed artifacts even when they verify", default: false }),
+    layer: Flags.string({
+      multiple: true,
+      description: "also install this optional layer (e.g. browser), which is otherwise downloaded the first time an app needs it",
+    }),
   };
 
   async run(): Promise<void> {
@@ -81,6 +86,17 @@ export default class VmInstall extends Command {
       const how = r.source === "installed" ? "already installed" : r.source === "copied" ? `copied from ${r.from}` : `downloaded from ${r.from}`;
       this.log(`✔ ${r.kind} ${r.sha256.slice(0, 16)}… verified (${how}, ${r.ms} ms)`);
       this.log(`    ${r.path}`);
+    }
+
+    if (flags.layer?.length) {
+      const vmm = locateVmm(process.env, config.vm?.vmm);
+      if (!vmm) this.error("--layer needs a berth-vmm, which carries the layer pins");
+      try {
+        await ensureLayers(flags.layer, vmm, (m) => this.log(m), "--layer");
+      } catch (err) {
+        this.error(err instanceof Error ? err.message : String(err));
+      }
+      for (const l of flags.layer) this.log(`✔ layer ${l} verified`);
     }
 
     const entitlements = writeEntitlementsFile();

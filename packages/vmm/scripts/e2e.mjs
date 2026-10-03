@@ -44,6 +44,17 @@
 //                          (run_command, send_keys, read_screen) as the app's
 //                          uid, in the tty group, under the app's Landlock
 //                          rules; without ttyd, which has no port out of a VM
+//   node e2e.mjs layer     an optional layer (the pinned example, figlet) laid over
+//                          the base: its files in the guest, the base's still
+//                          there, nothing writable, the measurement line naming
+//                          it; an unpinned layer, and one built for another
+//                          base, refused (docs/design/microvm-layers.md)
+//   node e2e.mjs browser   apps/browser-native with the browser layer (real network:
+//                          example.com through the egress broker and the host
+//                          dialer): Xvfb, x11vnc and noVNC as berth-display,
+//                          Chromium from the layer drawing a real page, the
+//                          metadata address refused, the noVNC page through
+//                          --publish 6080 behind the VNC password
 //   node e2e.mjs all       single, multi, enforce, stdio, exits, context, host, terminal
 //   node e2e.mjs egress    network:host: through the in-guest broker and the
 //                          host dialer on vsock 1026 (real network: fetches
@@ -58,7 +69,7 @@
 // Env: BERTH_VMM_ARTIFACTS (default ../../../vm-runtime-artifacts), CPUS, MEM,
 // ROUNDS (bench, default 6: the first round is a warm-up), SPIKE_ART (the
 // spike's artifacts, for the bench control), VERBOSE=1.
-import { spawn, execFileSync } from "node:child_process";
+import { spawn, spawnSync, execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import net from "node:net";
@@ -859,9 +870,79 @@ async function terminal() {
   return { results, first, denied };
 }
 
+async function layer() {
+  const results = [];
+  const pinnedLayer = (name) => pinned("rootfs/manifest.toml", `layer_${name}_sha256`);
+  const b = await run("layer", ["terminal"], { extra: ["--layer", "example"] });
+  const s = await attach(b);
+  const { r, result: fig } = await rpcConnect(rpcPath(b, 0), (x) => x.call("run_command", { command: "figlet -f small hi; echo rc=$?" }, 30000));
+  const base = await r.call("run_command", { command: "node --version && test -x /usr/bin/tmux && echo base-ok" });
+  const write = await r.call("run_command", { command: "touch /usr/bin/berth-x 2>&1; echo rc=$?" });
+  const off = await shutdown(b, s);
+  const m = b.vmm.measurements?.layers ?? [];
+  const mounted = s.events.find((e) => e.event === "layers_mounted");
+  check(results, /rc=0/.test(fig.output) && fig.output.split("\n").length > 3, `figlet, from the layer, runs in the guest:\n${fig.output.split("\n").slice(0, 4).join("\n")}`);
+  check(results, /base-ok/.test(base.output), "the base's own files are still there under the overlay");
+  check(results, /Read-only file system|Permission denied/.test(write.output) && /rc=1/.test(write.output), `nothing under the overlay is writable: ${write.output.trim().split("\n")[0]}`);
+  check(results, m.length === 1 && m[0].name === "example" && m[0].sha256 === pinnedLayer("example") && m[0].pinned, `the measurement line names the layer (${m[0]?.sha256?.slice(0, 12)}, ${m[0]?.hashMs} ms)`);
+  check(results, mounted?.overlays?.includes("/usr"), `berth-init laid it over ${JSON.stringify(mounted?.overlays)}`);
+  check(results, off.exit.code === 0, `clean shutdown (${off.ms} ms)`);
+  // Refusals, before any VM: a layer that isn't pinned, and a pinned one whose base isn't the one booted.
+  const refuse = (args) => spawnSync(VMM, ["run", "--artifacts", ART, "--run-dir", join(RUN, "layer-refused"), "--app", join(APPS, "notes"), ...args], { encoding: "utf8" });
+  const unpinned = refuse(["--layer", "nosuch"]);
+  check(results, unpinned.status !== 0 && /no layer "nosuch" is pinned/.test(unpinned.stderr), `an unpinned layer is refused: ${unpinned.stderr.trim().split("\n")[0]}`);
+  const other = join(ART, "rootfs", readdirSync(join(ART, "rootfs")).find((f) => f.endsWith(".erofs") && !f.includes(ROOTFS_PIN)) ?? "none.erofs");
+  const wrongBase = existsSync(other) ? refuse(["--rootfs", other, "--layer", "example"]) : { status: 0, stderr: "no other rootfs to try" };
+  check(results, wrongBase.status !== 0 && /was built for rootfs/.test(wrongBase.stderr), `a layer on a base it wasn't built for is refused: ${wrongBase.stderr.trim().split("\n")[0]}`);
+  return { results, measured: m };
+}
+
+async function browser() {
+  const results = [];
+  const password = Math.random().toString(36).slice(2, 10);
+  const secrets = join(RUN, "browser-secrets.img");
+  const body = Buffer.from(`BERTHSEC1\n${JSON.stringify({ shared: {}, apps: { "browser-native": { BERTH_VNC_PASSWORD: password } } })}`);
+  const disk = Buffer.alloc(Math.ceil((body.length + 1) / 512) * 512);
+  body.copy(disk);
+  writeFileSync(secrets, disk, { mode: 0o600 });
+  const b = await run("browser", ["browser-native"], { mem: "2048", extra: ["--layer", "browser", "--secrets", secrets, "--egress-allow", "*", "--publish", "6080"] });
+  const s = await attach(b);
+  const call = (r, exp, input, ms = 90000) => r.call(exp, input, ms).catch((e) => ({ error: e.message }));
+  // The first call throws on a dead connection, so rpcConnect retries it.
+  const { r, result: nav } = await rpcConnect(rpcPath(b, 0), (x) => x.call("navigate", { url: "https://example.com" }, 90000));
+  const page = await call(r, "get_page_text", {});
+  const meta = await call(r, "navigate", { url: "http://169.254.169.254/latest/meta-data/" });
+  const metaPage = await call(r, "get_page_text", {});
+  const published = b.ep.published?.find((p) => p.port === 6080)?.socket;
+  const novnc = await new Promise((resolve) => {
+    const req = http.request({ socketPath: published, agent: false, path: "/vnc.html", headers: { host: "127.0.0.1" } }, (res) => {
+      let t = "";
+      res.on("data", (d) => (t += d));
+      res.on("end", () => resolve({ status: res.statusCode, text: t }));
+    });
+    req.on("error", (e) => resolve({ status: -1, text: e.message }));
+    req.end();
+  });
+  const off = await shutdown(b, s);
+  rmSync(secrets, { force: true });
+  const display = s.events.find((e) => e.event === "daemon_started" && e.daemon === "display");
+  const text = String(page?.text ?? JSON.stringify(page));
+  check(results, s.events.find((e) => e.event === "layers_mounted")?.overlays?.includes("/usr") && b.vmm.measurements?.layers?.[0]?.name === "browser", "the browser layer is attached, measured and laid over /usr");
+  check(results, display?.xUp && display.vnc && display.uid === 9005, `the display stack as berth-display: Xvfb up ${display?.xUp}, VNC ${display?.vnc}`);
+  check(results, ["xvfb", "x11vnc", "websockify"].every((d) => s.logs.some((l) => l.src === d && l.line.includes("ruleset=FullyEnforced"))), "Xvfb, x11vnc and websockify each FullyEnforced");
+  check(results, !nav?.error && /Example Domain|documentation examples/.test(text), `Chromium from the layer loads https://example.com through the egress broker: ${text.slice(0, 70)}`);
+  check(results, !/ami-id|instance-id/.test(JSON.stringify(metaPage)), `the metadata address gives nothing: ${String(JSON.stringify(meta ?? null)).slice(0, 60)}, page ${String(JSON.stringify(metaPage ?? null)).slice(0, 80)}`);
+  check(results, s.logs.some((l) => l.src === "browser-native" && l.line.includes("ruleset=FullyEnforced")), "browser-native: FullyEnforced");
+  check(results, novnc.status === 200 && /noVNC/i.test(novnc.text), `noVNC's page through the published port (${novnc.status})`);
+  check(results, !s.logs.some((l) => l.line.includes(password)), "the VNC password is in no log line");
+  check(results, off.exit.code === 0, `clean shutdown (${off.ms} ms)`);
+  if (results.some((x) => !x.pass)) for (const l of s.logs.filter((l) => l.src === "browser-native" && !/agent-init|^\{/.test(l.line))) console.error(`  [${l.src}] ${l.line.slice(0, 300)}`);
+  return { results, nav, display };
+}
+
 const mode = process.argv[2] ?? "all";
-const modes = { single, multi, enforce, stdio, exits, bench, egress, context, host, github, terminal };
-const todo = mode === "all" ? ["single", "multi", "enforce", "stdio", "exits", "context", "host", "terminal"] : [mode];
+const modes = { single, multi, enforce, stdio, exits, bench, egress, context, host, github, terminal, layer, browser };
+const todo = mode === "all" ? ["single", "multi", "enforce", "stdio", "exits", "context", "host", "terminal", "layer"] : [mode];
 let failed = false;
 const report = {};
 for (const m of todo) {

@@ -82,6 +82,9 @@ struct Opts {
     state_size_mib: u64,
     /// The secrets disk (secrets.rs), attached read-only after state.
     secrets: Option<String>,
+    /// Optional layers, (name, image path), attached read-only after secrets
+    /// (`run --layer`; pins.rs verifies each against its pin and base).
+    layers: Vec<(String, String)>,
     disks: Vec<Disk>,
     shares: Vec<Share>,
     vsocks: Vec<Vsock>,
@@ -165,6 +168,7 @@ fn parse(argv: Vec<String>) -> Opts {
         state: None,
         state_size_mib: 1024,
         secrets: None,
+        layers: vec![],
         disks: vec![],
         shares: vec![],
         vsocks: vec![],
@@ -332,10 +336,10 @@ fn cvec(items: &[String]) -> (Vec<CString>, Vec<*const c_char>) {
 /// Applies sandbox.rs's profile for this run and reports it on stderr as one
 /// `host_sandbox` line. Fails closed: a profile that doesn't apply stops the
 /// boot (`--no-host-sandbox` is the explicit way to run without one).
-fn confine(o: &Opts, hs: &HostSandbox, kernel: Option<&str>, rootfs: Option<&str>, state: Option<&str>) {
+fn confine(o: &Opts, hs: &HostSandbox, kernel: Option<&str>, rootfs: Option<&str>, state: Option<&str>, layers: &[&str]) {
     let canon = |p: &str| std::fs::canonicalize(p).map(|c| c.display().to_string()).unwrap_or_else(|e| die(&format!("host sandbox: {p}: {e}")));
     let mut plan = sandbox::Plan { socket_dir: canon(&hs.run_dir), egress: o.egress.is_some(), ..Default::default() };
-    plan.read_files.extend(kernel.into_iter().chain(rootfs).chain(o.secrets.as_deref()).map(canon));
+    plan.read_files.extend(kernel.into_iter().chain(rootfs).chain(o.secrets.as_deref()).chain(layers.iter().copied()).map(canon));
     plan.read_dirs.extend(o.shares.iter().filter(|s| s.read_only).map(|s| canon(&s.path)));
     plan.write_dirs.extend(o.shares.iter().filter(|s| !s.read_only).map(|s| canon(&s.path)));
     plan.write_files.extend(state.map(canon));
@@ -448,6 +452,14 @@ fn main() {
             die(&format!("rootfs {} is {}, but the pinned kernel command line mounts an erofs root", r.path, r.fstype));
         }
     }
+    let layers: Vec<pins::Layer> = o
+        .layers
+        .iter()
+        .map(|(name, path)| {
+            let base = rootfs.as_ref().map(|r| r.sha256.as_str()).unwrap_or_else(|| die("--layer needs a rootfs image"));
+            pins::verify_layer(name, path, base).unwrap_or_else(|e| die(&e))
+        })
+        .collect();
     let state = o.state.as_deref().map(|s| pins::open_state(s, o.state_size_mib).unwrap_or_else(|e| die(&e)));
     let mut o = o;
     if let Some(e) = &o.egress {
@@ -517,6 +529,16 @@ fn main() {
             check("krun_add_disk(secrets)", krun_add_disk(ctx, cs("secrets").as_ptr(), cs(p).as_ptr(), true));
             guest_env.push(format!("BERTH_SECRETS_DEV={d}"));
         }
+        // Layers, after secrets; berth-init mounts each and lays it over the base.
+        let mut layer_devs = vec![];
+        for l in &layers {
+            let d = dev();
+            check("krun_add_disk(layer)", krun_add_disk(ctx, cs(&format!("layer-{}", l.name)).as_ptr(), cs(&l.path).as_ptr(), true));
+            layer_devs.push(format!("{}={d}", l.name));
+        }
+        if !layer_devs.is_empty() {
+            guest_env.push(format!("BERTH_VM_LAYERS={}", layer_devs.join(",")));
+        }
         for d in &o.disks {
             check("krun_add_disk", krun_add_disk(ctx, cs(&d.id).as_ptr(), cs(&d.path).as_ptr(), d.read_only));
         }
@@ -558,7 +580,8 @@ fn main() {
         // given. Before the measurement line, so a client that reads up to it
         // has seen this one too.
         if let Some(hs) = &o.host_sandbox {
-            confine(&o, hs, kernel.as_ref().map(|k| k.path.as_str()), rootfs.as_ref().map(|r| r.path.as_str()), state.as_ref().map(|s| s.path.as_str()));
+            let layer_paths: Vec<&str> = layers.iter().map(|l| l.path.as_str()).collect();
+            confine(&o, hs, kernel.as_ref().map(|k| k.path.as_str()), rootfs.as_ref().map(|r| r.path.as_str()), state.as_ref().map(|s| s.path.as_str()), &layer_paths);
         }
 
         // One structured line describing what this VM was given; doctor/attestation
@@ -642,8 +665,13 @@ fn main() {
             })
             .collect();
         eprintln!(
-            "{{\"source\":\"berth-vmm\",\"event\":\"measurements\",\"kernel\":{kernel_json},\"rootfs\":{rootfs_json},\"state\":{state_json},\"apps\":[{}]}}",
-            apps_json.join(",")
+            "{{\"source\":\"berth-vmm\",\"event\":\"measurements\",\"kernel\":{kernel_json},\"rootfs\":{rootfs_json},\"state\":{state_json},\"apps\":[{}],\"layers\":[{}]}}",
+            apps_json.join(","),
+            layers
+                .iter()
+                .map(|l| format!("{{\"name\":{},\"sha256\":{},\"pinned\":true,\"hashMs\":{}}}", json_str(&l.name), json_str(&l.sha256), l.hash_ms))
+                .collect::<Vec<_>>()
+                .join(",")
         );
 
         // Only returns on a configuration error.

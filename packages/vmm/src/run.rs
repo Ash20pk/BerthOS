@@ -80,6 +80,10 @@ until the guest powers off ({\"op\":\"shutdown\"} on control.sock, or every app 
                         after confining itself, try to read and write PATH and
                         report the result in the host_sandbox line (repeatable;
                         a diagnostic, used by scripts/e2e.mjs)
+  --layer NAME          attach the optional layer NAME (pinned in rootfs/manifest.toml
+                        as layer_<NAME>_*), from <artifacts>/layers/layer-<NAME>-<sha>.erofs,
+                        read-only; berth-init lays it over the base (repeatable).
+                        See docs/design/microvm-layers.md
   --publish PORT        make guest TCP port PORT reachable from the host, as
                         <run-dir>/publish-<PORT>.sock (repeatable, at most 8):
                         berth-init relays each connection to 127.0.0.1:PORT in
@@ -125,6 +129,7 @@ pub fn opts(argv: &[String]) -> Opts {
     let mut host_sandbox = cfg!(target_os = "macos");
     let mut probes: Vec<String> = vec![];
     let mut publish: Vec<u16> = vec![];
+    let mut layer_names: Vec<String> = vec![];
     let mut args = argv.iter().cloned();
     while let Some(a) = args.next() {
         let mut val = || args.next().unwrap_or_else(|| die(&format!("{a} needs a value")));
@@ -145,6 +150,13 @@ pub fn opts(argv: &[String]) -> Opts {
             "--egress-max-conns" => egress_max = Some(val().parse().unwrap_or_else(|_| die("bad --egress-max-conns"))),
             "--no-host-sandbox" => host_sandbox = false,
             "--host-sandbox-probe" => probes.push(val()),
+            "--layer" => {
+                let n = val();
+                if !n.bytes().all(|b| b.is_ascii_lowercase()) || n.is_empty() || layer_names.contains(&n) {
+                    die(&format!("bad or repeated --layer {n:?}"));
+                }
+                layer_names.push(n);
+            }
             "--publish" => {
                 let p: u16 = val().parse().ok().filter(|p| *p > 0).unwrap_or_else(|| die("bad --publish: a TCP port"));
                 if publish.contains(&p) {
@@ -172,8 +184,8 @@ pub fn opts(argv: &[String]) -> Opts {
     if apps.len() > MAX_APPS {
         die(&format!("run: at most {MAX_APPS} apps"));
     }
-    if env.iter().any(|e| ["BERTH_VM_APPS=", "BERTH_STATE_DEV=", "BERTH_SECRETS_DEV=", "BERTH_VM_PUBLISH="].iter().any(|k| e.starts_with(k))) {
-        die("run: BERTH_VM_APPS, BERTH_STATE_DEV, BERTH_SECRETS_DEV and BERTH_VM_PUBLISH are set by run itself");
+    if env.iter().any(|e| ["BERTH_VM_APPS=", "BERTH_STATE_DEV=", "BERTH_SECRETS_DEV=", "BERTH_VM_PUBLISH=", "BERTH_VM_LAYERS="].iter().any(|k| e.starts_with(k))) {
+        die("run: BERTH_VM_APPS, BERTH_STATE_DEV, BERTH_SECRETS_DEV, BERTH_VM_PUBLISH and BERTH_VM_LAYERS are set by run itself");
     }
     if publish.len() > MAX_PUBLISHED {
         die(&format!("run: at most {MAX_PUBLISHED} --publish ports"));
@@ -191,6 +203,16 @@ pub fn opts(argv: &[String]) -> Opts {
             p.display().to_string()
         }
     };
+
+    let layers: Vec<(String, String)> = layer_names
+        .iter()
+        .map(|n| {
+            let pin = pins::layer_pin(n).unwrap_or_else(|| die(&format!("no layer {n:?} is pinned in this berth-vmm; pinned: {:?}", pins::layer_names())));
+            let p = art.join("layers").join(format!("layer-{n}-{}.erofs", pin.sha256));
+            need_file(&p, &format!("layer {n} (berth vm install --layer {n})"));
+            (n.clone(), p.display().to_string())
+        })
+        .collect();
 
     // Apps: one share each. One app is tag "app" at /app; several are
     // /app/<tag>, tagged by directory name.
@@ -285,6 +307,7 @@ pub fn opts(argv: &[String]) -> Opts {
         state,
         state_size_mib,
         secrets,
+        layers,
         disks: vec![],
         shares,
         vsocks,

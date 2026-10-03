@@ -3,7 +3,7 @@ import { accessSync, constants, existsSync, readlinkSync, readdirSync, realpathS
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readFileSync as readBytes } from "node:fs";
-import { KERNEL_PIN, LIBKRUN_VERSION, ROOTFS_PIN, manifestsInBinary, pinsFromManifests, vmmPin, type ArtifactPin } from "./pins.js";
+import { KERNEL_PIN, LIBKRUN_VERSION, ROOTFS_PIN, manifestsInBinary, pinsFromManifests, vmmPin, type ArtifactPin, layerPinsFromManifest } from "./pins.js";
 import { vmHome } from "./paths.js";
 import type { VmFeatures } from "./support.js";
 
@@ -107,6 +107,16 @@ export function codesignRemedy(vmm: string): string {
 export function vmmPins(path: string): { pins?: { kernel: ArtifactPin; rootfs: ArtifactPin }; sameAsCli: boolean } {
   const pins = pinsFromManifests(manifestsInBinary(readBytes(path)));
   return { ...(pins ? { pins } : {}), sameAsCli: pins?.kernel.sha256 === KERNEL_PIN.sha256 && pins.rootfs.sha256 === ROOTFS_PIN.sha256 };
+}
+
+/** The optional layers this berth-vmm will attach, from its compiled-in rootfs manifest. */
+export function vmmLayerPins(vmm: string | undefined, read: (path: string) => Buffer = readBytes): ReturnType<typeof layerPinsFromManifest> {
+  if (!vmm) return {};
+  try {
+    return layerPinsFromManifest(manifestsInBinary(read(vmm)).rootfs);
+  } catch {
+    return {};
+  }
 }
 
 /** The pins to install and boot: berth-vmm's when it is found and readable, else the CLI's own. */
@@ -288,7 +298,8 @@ export function vmmFeatures(vmm: string, run = spawnSync, read: (path: string) =
     github = /^[0-9a-f]{64}$/.test(rootfs?.github_api_broker_sha256 ?? "");
     terminal = rootfs?.terminal === "tmux";
   } catch {}
-  const features = { egress: help.includes("--egress-allow"), secrets: help.includes("--secrets"), publish: help.includes("--publish"), python, semanticFs, github, terminal };
+  const layers = help.includes("--layer") ? Object.keys(vmmLayerPins(vmm, read)) : [];
+  const features = { egress: help.includes("--egress-allow"), secrets: help.includes("--secrets"), publish: help.includes("--publish"), python, semanticFs, github, terminal, layers };
   featureCache.set(vmm, features);
   return features;
 }

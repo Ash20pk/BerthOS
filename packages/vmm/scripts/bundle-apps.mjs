@@ -44,6 +44,16 @@ const options = (root, entryPoints, outdir) => ({
     "@berthos/manifest-schema": join(root, "packages/manifest-schema/src/index.ts"),
   },
   banner: { js: 'import { createRequire as __berthCreateRequire } from "node:module"; const require = __berthCreateRequire(import.meta.url);' },
+  // What an optional layer provides (the CLI's bundle.ts does the same):
+  // playwright-core from the browser layer, by absolute path.
+  plugins: [
+    {
+      name: "berth-layer-imports",
+      setup(b) {
+        b.onResolve({ filter: /^playwright-core$/ }, () => ({ path: "/usr/lib/berth/node_modules/playwright-core/index.mjs", external: true }));
+      },
+    },
+  ],
   metafile: true,
   logLevel: "warning",
 });
@@ -51,7 +61,7 @@ const options = (root, entryPoints, outdir) => ({
 const builtin = (p) => p.startsWith("node:") || builtinModules.includes(p);
 const check = (result) => {
   for (const [file, output] of Object.entries(result.metafile.outputs)) {
-    const bare = output.imports.filter((i) => i.external && !builtin(i.path));
+    const bare = output.imports.filter((i) => i.external && !builtin(i.path) && !i.path.startsWith("/usr/lib/berth/"));
     if (bare.length > 0) throw new Error(`${file} still imports ${bare.map((i) => i.path).join(", ")}`);
     console.log(`${file}: ${(output.bytes / 1024).toFixed(0)} KiB`);
   }
