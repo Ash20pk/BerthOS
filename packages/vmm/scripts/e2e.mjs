@@ -40,6 +40,10 @@
 //                          the secrets disk. Undeclared calls get the broker's
 //                          own 403 and are not forwarded; declared ones reach
 //                          GitHub, which answers 401 for the fake token
+//   node e2e.mjs terminal  apps/terminal: a shared tmux shell the agent drives
+//                          (run_command, send_keys, read_screen) as the app's
+//                          uid, in the tty group, under the app's Landlock
+//                          rules; without ttyd, which has no port out of a VM
 //   node e2e.mjs all       single, multi, enforce, stdio, exits, context, host
 //   node e2e.mjs egress    network:host: through the in-guest broker and the
 //                          host dialer on vsock 1026 (real network: fetches
@@ -786,9 +790,38 @@ async function github() {
   return { results, started, responses: { del, emails, read, issue } };
 }
 
+async function terminal() {
+  const results = [];
+  const b = await run("terminal", ["terminal"], { state: join(RUN, "terminal-state.img") });
+  const s = await attach(b);
+  const { r, result: first } = await rpcConnect(rpcPath(b, 0), (x) => x.call("run_command", { command: "echo hello; pwd; id -u; id -G" }, 30000));
+  const lines = String(first?.output ?? "").split(/\r?\n/).map((l) => l.trim());
+  // /tmp is 1777, so a refusal there is Landlock's (/etc would fail on the
+  // read-only rootfs first and prove nothing).
+  const denied = await r.call("run_command", { command: "touch /tmp/berth-term.txt; echo rc=$?" });
+  const wrote = await r.call("run_command", { command: "echo from-the-shell > /workspace/term.txt && cat /workspace/term.txt" });
+  await r.call("send_keys", { keys: "s l e e p Space 3 0 Enter" });
+  await sleep(300);
+  await r.call("send_keys", { keys: "C-c" });
+  await sleep(300);
+  const back = await r.call("run_command", { command: "echo back" });
+  const screen = await r.call("read_screen");
+  const off = await shutdown(b, s);
+  rmSync(join(RUN, "terminal-state.img"), { force: true });
+  check(results, lines.includes("hello") && lines.includes("/workspace") && lines.includes("10000"), `run_command: the shell runs in /workspace as the app's uid (${lines.filter(Boolean).slice(0, 4).join(" | ")})`);
+  check(results, lines.some((l) => /(^| )5( |$)/.test(l)), "...in the tty group, for its pty");
+  check(results, /Permission denied/.test(denied.output) && /rc=1/.test(denied.output), `a write outside what the app declared, from the shell, is refused by Landlock: ${denied.output.trim().split("\n").slice(-2).join(" | ")}`);
+  check(results, /from-the-shell/.test(wrote.output), "a write inside /workspace works");
+  check(results, /back/.test(back.output), "send_keys: C-c interrupted a running command, and the shell answers again");
+  check(results, typeof screen?.text === "string" && /back/.test(screen.text), "read_screen shows the session");
+  check(results, s.logs.some((l) => l.src === "terminal" && l.line.includes("ruleset=FullyEnforced")), "terminal: FullyEnforced");
+  check(results, off.exit.code === 0, `clean shutdown (${off.ms} ms)`);
+  return { results, first, denied };
+}
+
 const mode = process.argv[2] ?? "all";
-const modes = { single, multi, enforce, stdio, exits, bench, egress, context, host, github };
-const todo = mode === "all" ? ["single", "multi", "enforce", "stdio", "exits", "context", "host"] : [mode];
+const modes = { single, multi, enforce, stdio, exits, bench, egress, context, host, github, terminal };
+const todo = mode === "all" ? ["single", "multi", "enforce", "stdio", "exits", "context", "host", "terminal"] : [mode];
 let failed = false;
 const report = {};
 for (const m of todo) {
