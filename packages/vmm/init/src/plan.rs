@@ -40,6 +40,63 @@ pub const EGRESS_DIR: &str = "/run/berth/egress";
 pub const DIAL_SOCKET: &str = "/run/berth/egress/dial.sock";
 pub const EGRESS_POLICY: &str = "/run/berth/egress/policy.json";
 
+/// semantic-fs-daemon's control socket, the SDK's default path (the apps reach
+/// it through the berth group), and the FUSE mount it serves.
+pub const SEMANTIC_FS_SOCKET: &str = "/tmp/berth-semantic-fs.sock";
+pub const CONTEXT_MOUNT: &str = "/context";
+
+/// Where semantic-fs keeps /context's backing files and its index: on the
+/// state disk when there is one, so /context persists across boots as
+/// /workspace does; on /run's tmpfs otherwise. Root-only (0700): the apps see
+/// these files only through the mount, with the daemon's ownership rules.
+pub fn context_store(state_disk: bool) -> &'static str {
+    if state_disk {
+        "/state/context"
+    } else {
+        "/run/berth/context"
+    }
+}
+
+/// semantic-fs-daemon's one JSON line after mounting:
+/// {"source":"semantic-fs-daemon","event":"post_mount_caps_narrowed","applied":<bool>,"detail":<string>,...}.
+/// Some((applied, detail)) for that line, None for any other.
+pub fn caps_narrowed_line(line: &str) -> Option<(bool, String)> {
+    let line = line.trim();
+    if !line.starts_with('{') || line.len() > 4096 {
+        return None;
+    }
+    let v: Value = serde_json::from_str(line).ok()?;
+    if v.get("source")?.as_str()? != "semantic-fs-daemon" || v.get("event")?.as_str()? != "post_mount_caps_narrowed" {
+        return None;
+    }
+    Some((v.get("applied")?.as_bool()?, v.get("detail").and_then(Value::as_str).unwrap_or("").chars().take(256).collect()))
+}
+
+/// Whether /proc/<pid>/stat says the process is a zombie: the state is the
+/// field after the last ')', since the command name may hold anything.
+pub fn stat_is_zombie(stat: &str) -> bool {
+    stat.rsplit_once(')').is_some_and(|(_, rest)| rest.trim_start().starts_with('Z'))
+}
+
+/// Whether /proc/self/mounts has a FUSE filesystem at `mount_point`.
+pub fn is_fuse_mount(mounts: &str, mount_point: &str) -> bool {
+    mounts.lines().any(|l| {
+        let mut f = l.split_whitespace();
+        let (_, mp, fs) = (f.next(), f.next(), f.next());
+        mp == Some(mount_point) && fs.is_some_and(|t| t == "fuse" || t.starts_with("fuse."))
+    })
+}
+
+/// Whether a policy declares a /context scope (filesystem:read: or
+/// filesystem:write: on /context or under it). Such an app cannot run without
+/// semantic-fs, so its absence is a boot failure, not a warning.
+pub fn declares_context(policy: &Policy) -> bool {
+    policy.declared.iter().any(|c| {
+        let scope = c.strip_prefix("filesystem:read:").or_else(|| c.strip_prefix("filesystem:write:"));
+        scope.is_some_and(|s| s == CONTEXT_MOUNT || s.starts_with("/context/"))
+    })
+}
+
 /// The cgroup files berth-init will ever write into an app's cgroup, whatever
 /// a policy lists (entrypoint.sh's BERTH_CGROUP_LIMIT_FILES). No memory.high:
 /// with no swap, an app past it is throttled indefinitely instead of being
@@ -175,7 +232,7 @@ pub struct Precreate {
 /// `exists` says whether a path is already there. Anything that exists is
 /// left alone, as in entrypoint.sh, with one VM-specific exception:
 /// `fresh_mounts`, the tmpfs mounts berth-init itself just made (/workspace,
-/// /context). In the image those directories do not exist until this pass
+/// and /context only in an image without semantic-fs, whose mount it owns). In the image those directories do not exist until this pass
 /// creates them; in the VM a mount point has to, so their root is treated as
 /// new and gets the ownership the declarations call for.
 pub fn precreate_plan(
@@ -465,6 +522,37 @@ pub fn parse_runtime(file: Option<&str>) -> Result<Runtime, String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn context_declarations() {
+        assert!(declares_context(&policy("filesystem", &[], &["filesystem:read:/context", "filesystem:write:/context"], None)));
+        assert!(declares_context(&policy("a", &[], &["filesystem:read:/context/notes"], None)));
+        assert!(!declares_context(&policy("notes", &[], &["filesystem:write:/workspace"], None)));
+        assert!(!declares_context(&policy("b", &[], &["filesystem:read:/contextual"], None)));
+        assert!(!declares_context(&policy("c", &[], &["network:host:context"], None)));
+        assert_eq!(context_store(true), "/state/context");
+        assert_eq!(context_store(false), "/run/berth/context");
+    }
+
+    #[test]
+    fn semantic_fs_readiness() {
+        let ok = r#"{"source":"semantic-fs-daemon","event":"post_mount_caps_narrowed","bootId":"b","applied":true,"detail":"","timestamp":1}"#;
+        assert_eq!(caps_narrowed_line(ok), Some((true, String::new())));
+        let failed = r#"{"source":"semantic-fs-daemon","event":"post_mount_caps_narrowed","applied":false,"detail":"EPERM"}"#;
+        assert_eq!(caps_narrowed_line(failed), Some((false, "EPERM".into())));
+        assert_eq!(caps_narrowed_line("2026/10/03 [semantic-fs] mounted at /context"), None);
+        assert_eq!(caps_narrowed_line(r#"{"source":"agent-init","event":"post_mount_caps_narrowed","applied":true}"#), None);
+        assert_eq!(caps_narrowed_line(r#"{"source":"semantic-fs-daemon","event":"post_mount_caps_narrowed","applied":"yes"}"#), None);
+
+        assert!(stat_is_zombie("42 (semantic-fs-d) Z 1 42 42 0"));
+        assert!(!stat_is_zombie("42 (a) Z) S 1 42"));
+        assert!(!stat_is_zombie("42 (semantic-fs-d) S 1 42 42 0"));
+
+        let mounts = "tmpfs /tmp tmpfs rw 0 0\nberth-semantic-fs /context fuse.berthctx rw,nosuid,nodev,user_id=0,group_id=0,default_permissions,allow_other 0 0\n";
+        assert!(is_fuse_mount(mounts, "/context"));
+        assert!(!is_fuse_mount("tmpfs /context tmpfs rw 0 0\n", "/context"));
+        assert!(!is_fuse_mount(mounts, "/workspace"));
+    }
 
     #[test]
     fn runtime_from_the_share() {

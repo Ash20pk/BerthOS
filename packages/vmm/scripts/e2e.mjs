@@ -19,7 +19,15 @@
 //                          after a refused boot
 //   node e2e.mjs bench     boot timing, interleaved rounds: single (tmpfs and
 //                          state disk), multi, and the spike's layout as a control
-//   node e2e.mjs all       single, multi, enforce, stdio, exits
+//   node e2e.mjs context   semantic-fs serving /context (filesystem, notes,
+//                          probe): the daemon mounted as root in
+//                          /berth/daemons with its capabilities narrowed; a
+//                          context file written, tagged and found by query
+//                          with its writer; probe, with no /context scope,
+//                          refused; file and tags kept across a reboot on the
+//                          state disk, and gone without one
+//                          (docs/design/microvm-semantic-fs.md)
+//   node e2e.mjs all       single, multi, enforce, stdio, exits, context
 //   node e2e.mjs egress    network:host: through the in-guest broker and the
 //                          host dialer on vsock 1026 (real network: fetches
 //                          example.com); the guest-root bypass, internal
@@ -590,9 +598,69 @@ async function egress() {
   return { results, host: { boot1: host, boot2: host2 }, tricked: { viaLocalhost, viaNip, viaNipMeta, viaLiteral }, probeNet: pnet, raw: { bypassUndeclared, bypassMetadata, bypassPort, bypassGarbage, bypassShorthand, bypassDeclared: { reply: bypassDeclared.reply, firstLine: (bypassDeclared.data ?? "").split("\r\n")[0] }, rawLocal, rawLiteral, rawNip } };
 }
 
+async function context() {
+  const results = [];
+  const apps = ["filesystem", "notes", "probe"];
+  const img = join(RUN, "context-state.img");
+  rmSync(img, { force: true });
+  const sfsStarted = (s) => s.events.find((e) => e.event === "daemon_started" && e.daemon === "semantic-fs");
+
+  // Boot 1: a new state disk.
+  let b = await run("context", apps, { state: img });
+  let s = await attach(b);
+  const { r: fs } = await rpcConnect(rpcPath(b, 0), (r) => r.call("write_context_file", { path: "findings/churn.txt", content: "churn is highest in week 2" }));
+  await fs.call("tag_context_file", { path: "findings/churn.txt", task: "retention analysis", relatedApps: ["notes"] });
+  const read1 = await fs.call("read_context_file", { path: "findings/churn.txt" });
+  const q1 = await fs.call("query_context", { text: "retention analysis" });
+  const { r: probe } = await rpcConnect(rpcPath(b, 2), (r) => r.call("probe", { dir: "/context" }));
+  const outsider = (await probe.call("probe", { dir: "/context" })).checks;
+  const st = await s.status();
+  await sleep(200);
+  const off1 = await shutdown(b, s);
+  const ev1 = sfsStarted(s);
+  // Not a check: the design leaves embeddings out (the model isn't in an
+  // app's share), so this records which ranking the guest actually got.
+  const embeddings = s.logs.filter((l) => l.src === "filesystem" && /embedding|transformers/i.test(l.line)).map((l) => l.line.slice(0, 300));
+  console.error(`note embeddings in the guest: ${embeddings.length ? embeddings.join(" | ") : "no embedding lines logged"}`);
+  const daemon = st.daemons.find((d) => d.name === "semantic-fs");
+  const hit1 = (q1.results ?? []).find((x) => x.path === "findings/churn.txt");
+  check(results, ev1?.mounted && ev1.listening && ev1.persistent && ev1.store === "/state/context", `semantic-fs started: mounted ${ev1?.mounted}, socket ${ev1?.listening}, store ${ev1?.store} (${ev1?.waitMs} ms)`);
+  check(results, ev1?.capsNarrowed === true, `post-mount capabilities narrowed (${ev1?.detail || "applied"})`);
+  check(results, daemon && st.daemonsCgroup.procs.includes(daemon.pid), `semantic-fs-daemon (pid ${daemon?.pid}) in /berth/daemons`);
+  check(results, s.logs.some((l) => l.src === "berth-init" && l.line.includes("semantic-fs serves /context")), "berth-init reports /context served from the state disk");
+  check(results, read1.content === "churn is highest in week 2", "filesystem: write_context_file then read_context_file through the FUSE mount");
+  check(results, hit1 && hit1.createdBy === "filesystem" && hit1.task === "retention analysis", `query_context finds it, written by filesystem: ${JSON.stringify(hit1)}`);
+  check(results, outsider.write_declared === "EACCES", `probe (no /context scope) writing /context: ${outsider.write_declared}`);
+  check(results, apps.every((a) => s.logs.some((l) => l.src === a && l.line.includes("ruleset=FullyEnforced"))), "all three apps FullyEnforced");
+  check(results, off1.exit.code === 0 && off1.powerOff?.unmountFailed?.length === 0, `clean shutdown (${off1.ms} ms, unmountFailed ${JSON.stringify(off1.powerOff?.unmountFailed)})`);
+
+  // Boot 2: the same disk.
+  b = await run("context", apps, { state: img });
+  s = await attach(b);
+  const { r: fs2, result: read2 } = await rpcConnect(rpcPath(b, 0), (r) => r.call("read_context_file", { path: "findings/churn.txt" }));
+  const q2 = await fs2.call("query_context", { text: "retention analysis" });
+  const off2 = await shutdown(b, s);
+  check(results, read2.content === "churn is highest in week 2", "boot 2: the context file is still there");
+  check(results, (q2.results ?? []).some((x) => x.path === "findings/churn.txt" && x.task === "retention analysis"), "boot 2: and so is its tag (the index is on the state disk)");
+  check(results, off2.exit.code === 0, `boot 2 clean shutdown (${off2.ms} ms)`);
+  rmSync(img, { force: true });
+
+  // Boot 3: no state disk.
+  b = await run("context-nostate", apps);
+  s = await attach(b);
+  const { r: fs3, result: q3 } = await rpcConnect(rpcPath(b, 0), (r) => r.call("query_context", { text: "retention analysis" }));
+  const read3 = await fs3.call("read_context_file", { path: "findings/churn.txt" }).then(() => "found", (e) => e.message);
+  const off3 = await shutdown(b, s);
+  const ev3 = sfsStarted(s);
+  check(results, ev3?.mounted && ev3.persistent === false && ev3.store === "/run/berth/context", `no state disk: /context on tmpfs (${ev3?.store})`);
+  check(results, (q3.results ?? []).length === 0 && /ENOENT/.test(read3), `and nothing from the other disk: ${(q3.results ?? []).length} results, read ${read3.slice(0, 60)}`);
+  check(results, off3.exit.code === 0, `clean shutdown (${off3.ms} ms)`);
+  return { results, started: [ev1, ev3], query: q1, embeddings };
+}
+
 const mode = process.argv[2] ?? "all";
-const modes = { single, multi, enforce, stdio, exits, bench, egress };
-const todo = mode === "all" ? ["single", "multi", "enforce", "stdio", "exits"] : [mode];
+const modes = { single, multi, enforce, stdio, exits, bench, egress, context };
+const todo = mode === "all" ? ["single", "multi", "enforce", "stdio", "exits", "context"] : [mode];
 let failed = false;
 const report = {};
 for (const m of todo) {

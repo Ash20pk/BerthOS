@@ -23,7 +23,7 @@ agent_init_sha256 = "9ec8b25e38d31ee82a28155304f730c0ec589b057d11fce2a56c6614559
 probe_sha256 = "6ec735d885b58861b33abdd70a5a4d48ecad803cc92bd94c02f876a3346453d0"
 # /sbin/berth-init and /usr/local/bin/context-bus-daemon: build-berth-init.sh,
 # from this tree (packages/vmm/init, packages/context-bus-daemon).
-berth_init_sha256 = "2b7762477f0300e76725ec0b3195be78bc4a2adad1bea20350def94eaa5bbb57"
+berth_init_sha256 = "6a75931869cdd4a5e3b5ad8e21d65881d7d1c7f395735911ccdf306662815ff7"
 context_bus_daemon_sha256 = "1138c3595142a3235145b530d0cf1157b0971aa2230d417befe0a6e783477544"
 # /usr/local/bin/semantic-fs-daemon: build-semantic-fs.sh, from
 # packages/semantic-fs-daemon at HEAD: the daemon that serves /context
@@ -47,5 +47,5 @@ init_path = "/sbin/berth-init"
 # builder.apk.lock the builder's (erofs-utils). .github/workflows/vm-artifacts.yml
 # rebuilds it on a Linux runner and fails on any other hash. berth-vmm
 # compiles this in; berth-vmm run boots it by default.
-image_sha256 = "7f361418e0c2ee635ff17683d48bfa019a7aa5197095966b15219f5d8b8a782f"
-image_size = 79454208
+image_sha256 = "30845aab208db74702ae745c46a97a2c0e7aaa5e11c06944e9914b52916064e7"
+image_size = 79466496

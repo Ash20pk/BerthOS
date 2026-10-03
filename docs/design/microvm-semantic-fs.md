@@ -1,6 +1,6 @@
 # semantic-fs in the microVM
 
-Status: step 1 done (feat/vm-semantic-fs-build); steps 2 to 5 to go. Closes the semantic-fs part of open problem 4 in [`microvm-runtime.md`](microvm-runtime.md#open-problems) and of open problem 3 in [`microvm-guest-init.md`](microvm-guest-init.md), and the "semantic-fs and `/context`" limit in [`../local-vm.md`](../local-vm.md#limits).
+Status: steps 1 and 2 done (feat/vm-semantic-fs-build, feat/vm-semantic-fs-init); steps 3 to 5 to go. Closes the semantic-fs part of open problem 4 in [`microvm-runtime.md`](microvm-runtime.md#open-problems) and of open problem 3 in [`microvm-guest-init.md`](microvm-guest-init.md), and the "semantic-fs and `/context`" limit in [`../local-vm.md`](../local-vm.md#limits).
 
 ## The problem
 
@@ -109,6 +109,15 @@ Each step is one branch with its own verification, in order:
    - after the daemon is killed, a query fails with an error naming the daemon, rather than returning nothing;
    - whether the embedding loaded, and so which ranking was used.
 5. **Release.** Run vm-artifacts for the new rootfs pin, then add the `VMM_PINS` line.
+
+## What step 2 found
+
+- **Boot cost: about 10 ms.** That is from spawning the daemon to its `post_mount_caps_narrowed` line, with the FUSE mount and the control socket both up (`daemon_started`'s `waitMs`). It is well under the 50 ms threshold in section 1, so the daemon starts on every boot.
+- **Capabilities narrow in the guest** as in a container: `capsNarrowed: true`.
+- **`/dev/fuse` appears by itself** from devtmpfs, as section 2 inferred.
+- **Embeddings fail in the guest, as section 7 expected,** but not for the reason it guessed: `@xenova/transformers` throws `ReferenceError: __filename is not defined` inside the ESM bundle, before it looks for the model. The SDK falls back to keyword ranking. `scripts/e2e.mjs context` records the lines.
+- **Precreate is unchanged.** `/context` simply isn't in `fresh_mounts` once it is a FUSE mount, so the pass leaves its root to the daemon. A declared path under it is created through the mount, as root, which gives it the daemon's `root:berth` ownership, as in a container.
+- **Not covered yet: the daemon dying while apps run.** berth-init records `daemon_exited`, and the SDK's queries then fail with an error naming the socket. The e2e has no way to kill a root process in the guest; step 4 adds one (a test-hook op on the control port, like `egress_raw`).
 
 ## Open questions
 
