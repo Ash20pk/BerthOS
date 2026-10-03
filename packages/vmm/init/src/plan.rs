@@ -40,6 +40,17 @@ pub const EGRESS_DIR: &str = "/run/berth/egress";
 pub const DIAL_SOCKET: &str = "/run/berth/egress/dial.sock";
 pub const EGRESS_POLICY: &str = "/run/berth/egress/policy.json";
 
+/// The GitHub API broker (github-api-broker.cjs, single-app as in a
+/// container): its uid (`berth-github`), the loopback port an app declares as
+/// network:connect:8092, the directory it writes its CA to (the policy
+/// compiler grants the app read access to it), and the root-owned copy of the
+/// app's policy it reads its github:* capabilities from.
+pub const GITHUB_UID: u32 = 9003;
+pub const GITHUB_PORT: u16 = 8092;
+pub const GITHUB_DIR: &str = "/run/berth/github";
+pub const GITHUB_POLICY: &str = "/run/berth/github/policy.json";
+pub const GITHUB_CERT_DIR: &str = "/run/berth/github-api-broker";
+
 /// semantic-fs-daemon's control socket, the SDK's default path (the apps reach
 /// it through the berth group), and the FUSE mount it serves.
 pub const SEMANTIC_FS_SOCKET: &str = "/tmp/berth-semantic-fs.sock";
@@ -346,6 +357,25 @@ pub fn egress_plan(apps: &[&Policy]) -> EgressPlan {
     }
 }
 
+pub fn declares_github(policy: &Policy) -> bool {
+    policy.declared.iter().any(|c| c.starts_with("github:"))
+}
+
+/// Which app the GitHub API broker serves. One, as entrypoint.sh starts it for
+/// a single-app container only: its CA is trusted process-wide by that app,
+/// and its policy is that app's.
+pub fn github_plan(apps: &[&Policy]) -> EgressPlan {
+    let wanting: Vec<usize> = (0..apps.len()).filter(|i| declares_github(apps[*i])).collect();
+    match wanting.as_slice() {
+        [] => EgressPlan::None,
+        [one] => EgressPlan::Broker(*one),
+        many => EgressPlan::Refused(format!(
+            "more than one app declares github:* ({}); the GitHub API broker serves one app, so none is started",
+            many.iter().map(|i| apps[*i].app_name.as_str()).collect::<Vec<_>>().join(", ")
+        )),
+    }
+}
+
 /// The app's own gid, the shared berth group, and tty for terminal:* apps
 /// (entrypoint.sh's addgroup calls, read back by export_app_identity).
 pub fn supplementary_gids(uid: u32, policy: &Policy) -> Vec<u32> {
@@ -397,7 +427,7 @@ pub fn invoke_grants(apps: &[(String, u32, &Policy)]) -> (Vec<InvokeGrant>, Vec<
 /// adduser cannot run. Users join `berth` (9999) and, for terminal:* apps,
 /// `tty` (5); if the image already has a group with that gid its member list
 /// is extended, otherwise the group is added.
-pub fn identity_files(passwd: &str, group: &str, apps: &[(String, u32, Vec<u32>)], with_bus: bool, with_egress: bool) -> (String, String) {
+pub fn identity_files(passwd: &str, group: &str, apps: &[(String, u32, Vec<u32>)], with_bus: bool, with_egress: bool, with_github: bool) -> (String, String) {
     let mut users: Vec<(String, u32, String)> = Vec::new();
     if with_bus {
         users.push(("berth-context-bus".into(), DAEMON_BUS_UID, "berth daemon".into()));
@@ -411,6 +441,9 @@ pub fn identity_files(passwd: &str, group: &str, apps: &[(String, u32, Vec<u32>)
     // directories (root:berth 2775).
     if with_egress {
         users.push(("berth-egress".into(), EGRESS_UID, "berth egress broker".into()));
+    }
+    if with_github {
+        users.push(("berth-github".into(), GITHUB_UID, "berth GitHub API broker".into()));
     }
     let tty: Vec<String> = apps.iter().filter(|(_, _, g)| g.contains(&TTY_GID)).map(|(n, _, _)| format!("berth-{n}")).collect();
     if !tty.is_empty() {
@@ -522,6 +555,18 @@ pub fn parse_runtime(file: Option<&str>) -> Result<Runtime, String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn one_github_broker_app() {
+        let gh = policy("github-assistant", &[], &["github:read:repos", "network:connect:8092"], None);
+        let notes = policy("notes", &[], &["filesystem:write:/workspace"], None);
+        assert_eq!(github_plan(&[&notes]), EgressPlan::None);
+        assert_eq!(github_plan(&[&notes, &gh]), EgressPlan::Broker(1));
+        let gh2 = policy("other", &[], &["github:write:issues"], None);
+        assert!(matches!(github_plan(&[&gh, &gh2]), EgressPlan::Refused(m) if m.contains("github-assistant, other")));
+        let (p, _) = identity_files("root:x:0:0::/:/bin/sh\n", "root:x:0:root\n", &[], false, false, true);
+        assert!(p.contains("berth-github:x:9003:9003:"));
+    }
 
     #[test]
     fn context_declarations() {
@@ -713,6 +758,7 @@ mod tests {
             &apps,
             true,
             false,
+            false,
         );
         assert_eq!(
             passwd.lines().collect::<Vec<_>>(),
@@ -739,7 +785,7 @@ mod tests {
     #[test]
     fn egress_identity_is_outside_the_shared_group() {
         let apps = [("a".to_string(), 10000, vec![10000, 9999])];
-        let (passwd, group) = identity_files("root:x:0:0::/:/bin/sh\n", "root:x:0:root\n", &apps, false, true);
+        let (passwd, group) = identity_files("root:x:0:0::/:/bin/sh\n", "root:x:0:root\n", &apps, false, true, false);
         assert!(passwd.lines().any(|l| l == "berth-egress:x:9002:9002:berth egress broker:/nonexistent:/sbin/nologin"));
         assert!(group.lines().any(|l| l == "berth-egress:x:9002:"));
         assert!(group.lines().any(|l| l == "berth:x:9999:berth-a"), "{group}");

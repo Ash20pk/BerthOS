@@ -56,6 +56,7 @@ const POLICY_COMPILER: &str = "/opt/berth/sdk-node/generate-capability-policy.mj
 const CONTEXT_BUS_DAEMON: &str = "/usr/local/bin/context-bus-daemon";
 const SEMANTIC_FS_DAEMON: &str = "/usr/local/bin/semantic-fs-daemon";
 const EGRESS_BROKER: &str = "/usr/local/bin/berth-egress-broker.cjs";
+const GITHUB_BROKER: &str = "/usr/local/bin/berth-github-api-broker.cjs";
 const NODE: &str = "/usr/bin/node";
 const PYTHON: &str = "/usr/bin/python3";
 /// berth_sdk for runtime: python apps (PYTHONPATH), as entrypoint.sh's BERTH_IMAGE_PYTHON_SDK.
@@ -147,6 +148,9 @@ struct Supervisor {
     egress_up: AtomicBool,
     /// semantic-fs-daemon serves /context: apps get BERTH_SEMANTIC_FS_SOCKET.
     semantic_fs_up: AtomicBool,
+    /// The app the GitHub API broker serves, once it listens: that app gets
+    /// BERTH_GITHUB_API_PROXY and NODE_EXTRA_CA_CERTS.
+    github_for: Mutex<Option<String>>,
     test_hooks: bool,
 }
 
@@ -267,6 +271,7 @@ fn main() {
         rpc: cfg.as_ref().map_or(RpcMode::Socket, |c| c.rpc),
         egress_up: AtomicBool::new(false),
         semantic_fs_up: AtomicBool::new(false),
+        github_for: Mutex::new(None),
         test_hooks: cfg.as_ref().is_ok_and(|c| c.test_hooks),
     }));
 
@@ -505,11 +510,27 @@ fn boot(sup: &'static Supervisor, cfg: &Config) -> Result<(), String> {
         }
     };
 
+    // --- The GitHub API broker: which app's github:* it enforces, if any. ---
+    let github_app = match plan::github_plan(&compiled.iter().map(|(_, p)| p).collect::<Vec<_>>()) {
+        plan::EgressPlan::None => None,
+        plan::EgressPlan::Broker(k) if Path::new(GITHUB_BROKER).exists() => Some(k),
+        plan::EgressPlan::Broker(k) => {
+            hub::info(&format!("WARNING: {} declares github:* but {GITHUB_BROKER} is not in this image; its GitHub calls have no broker", compiled[k].1.app_name));
+            hub::event("github_broker_refused", json!({ "reason": format!("{GITHUB_BROKER} is not in this image") }));
+            None
+        }
+        plan::EgressPlan::Refused(why) => {
+            hub::info(&format!("WARNING: {why}"));
+            hub::event("github_broker_refused", json!({ "reason": why }));
+            None
+        }
+    };
+
     // --- Identities and per-app directories (provision_app_identity). ---
     let with_bus = Path::new(CONTEXT_BUS_DAEMON).exists();
     let ident: Vec<(String, u32, Vec<u32>)> =
         compiled.iter().map(|(i, p)| (p.app_name.clone(), cfg.apps[*i].uid, plan::supplementary_gids(cfg.apps[*i].uid, p))).collect();
-    install_identities(&ident, with_bus, egress_app.is_some());
+    install_identities(&ident, with_bus, egress_app.is_some(), github_app.is_some());
     for (name, uid, _) in &ident {
         for (dir, mode) in [(format!("/run/berth/{name}"), 0o711), (format!("/run/berth/{name}/peers"), 0o711), (format!("/tmp/{name}"), 0o700)] {
             if let Err(e) = sys::install_dir(&dir, mode, *uid, *uid) {
@@ -566,6 +587,9 @@ fn boot(sup: &'static Supervisor, cfg: &Config) -> Result<(), String> {
     }
     if let Some(i) = egress_app {
         start_egress(sup, cfg, &cfg.apps[i]);
+    }
+    if let Some(k) = github_app {
+        start_github(sup, cfg, &cfg.apps[compiled[k].0], &compiled[k].1.app_name);
     }
     phase("daemons", json!({}));
 
@@ -674,10 +698,10 @@ fn compile_policies(apps: &[AppSpec]) -> Vec<Result<Policy, String>> {
         .collect()
 }
 
-fn install_identities(apps: &[(String, u32, Vec<u32>)], with_bus: bool, with_egress: bool) {
+fn install_identities(apps: &[(String, u32, Vec<u32>)], with_bus: bool, with_egress: bool, with_github: bool) {
     let passwd = std::fs::read_to_string("/etc/passwd").unwrap_or_default();
     let group = std::fs::read_to_string("/etc/group").unwrap_or_default();
-    let (p, g) = plan::identity_files(&passwd, &group, apps, with_bus, with_egress);
+    let (p, g) = plan::identity_files(&passwd, &group, apps, with_bus, with_egress, with_github);
     let _ = sys::install_dir("/run/berth/etc", 0o755, 0, 0);
     for (name, content) in [("passwd", p), ("group", g)] {
         let staged = format!("/run/berth/etc/{name}");
@@ -691,7 +715,7 @@ fn install_identities(apps: &[(String, u32, Vec<u32>)], with_bus: bool, with_egr
 
 /// The environment of one app's agent-init and runtime. Explicit: nothing of
 /// PID 1's own environment (the kernel command line's) is passed on.
-fn app_env(cfg: &Config, a: &AppSpec, policy: &Policy, runtime: Runtime, egress_up: bool, semantic_fs_up: bool) -> Vec<(String, String)> {
+fn app_env(cfg: &Config, a: &AppSpec, policy: &Policy, runtime: Runtime, egress_up: bool, semantic_fs_up: bool, github_for: Option<String>) -> Vec<(String, String)> {
     let name = &policy.app_name;
     let tmp = format!("/tmp/{name}");
     let gids = plan::supplementary_gids(a.uid, policy).iter().map(u32::to_string).collect::<Vec<_>>().join(",");
@@ -728,6 +752,12 @@ fn app_env(cfg: &Config, a: &AppSpec, policy: &Policy, runtime: Runtime, egress_
     // only an app that declared network:connect:8090 can connect to it.
     if egress_up {
         e.push(("BERTH_EGRESS_PROXY_URL".into(), format!("http://127.0.0.1:{}", plan::BROKER_PORT)));
+    }
+    // As entrypoint.sh: to the one app the broker serves. Its CA is trusted
+    // process-wide by that app, so no other app is told about it.
+    if github_for.as_deref() == Some(name.as_str()) {
+        e.push(("BERTH_GITHUB_API_PROXY".into(), format!("http://127.0.0.1:{}", plan::GITHUB_PORT)));
+        e.push(("NODE_EXTRA_CA_CERTS".into(), format!("{}/ca.crt", plan::GITHUB_CERT_DIR)));
     }
     let entry = format!("{}/dist/index.mjs", a.dir);
     if Path::new(&entry).exists() {
@@ -1014,6 +1044,111 @@ fn start_egress(sup: &'static Supervisor, cfg: &Config, a: &AppSpec) {
     );
 }
 
+/// The GitHub API broker for app `a` (github-api-broker.cjs): confined under
+/// agent-init as uid 9003 in /berth/daemons, TCP bind on 8092 only and no TCP
+/// connect at all. Its upstream is the egress relay's dial socket, which it
+/// reaches as a member of the egress group; the host dialer's allowlist holds
+/// api.github.com:443 (the CLI adds it for a github:* app). It writes its CA
+/// into GITHUB_CERT_DIR, which is then narrowed so that only this app may
+/// read ca.crt, never the keys.
+fn start_github(sup: &'static Supervisor, cfg: &Config, a: &AppSpec, app_name: &str) {
+    let refuse = |why: String| {
+        hub::info(&format!("WARNING: no GitHub API broker for {app_name}: {why}"));
+        hub::event("github_broker_refused", json!({ "reason": why }));
+    };
+    if let Err(e) = egress::serve_relay() {
+        return refuse(format!("cannot serve {}: {e}", plan::DIAL_SOCKET));
+    }
+    let home = "/tmp/berth-github";
+    let daemon_policy = "/run/berth/daemon-policy.github-api-broker.json";
+    let body = json!({
+        "appName": "github-api-broker",
+        "declaredCapabilities": ["daemon:github-api-broker"],
+        // /dev/null: openssl is spawned with stdio ignored, which opens it
+        // read-write (apps have it in their baseline for the same reason).
+        "writePaths": ["/dev/null", plan::GITHUB_CERT_DIR, home],
+        "readPaths": [],
+        "networkPorts": [],
+        "networkUnrestricted": false,
+        "bindPorts": [plan::GITHUB_PORT],
+    });
+    let prepared = sys::install_dir(plan::GITHUB_DIR, 0o750, 0, plan::GITHUB_UID)
+        .and_then(|_| std::fs::copy(policy_path(a), plan::GITHUB_POLICY).map(|_| ()))
+        .and_then(|_| sys::chown(plan::GITHUB_POLICY, 0, plan::GITHUB_UID))
+        .and_then(|_| sys::chmod(plan::GITHUB_POLICY, 0o640))
+        .and_then(|_| sys::install_dir(plan::GITHUB_CERT_DIR, 0o700, plan::GITHUB_UID, plan::GITHUB_UID))
+        .and_then(|_| sys::install_dir(home, 0o700, plan::GITHUB_UID, plan::GITHUB_UID))
+        .and_then(|_| {
+            std::fs::write(daemon_policy, body.to_string())?;
+            sys::chmod(daemon_policy, 0o600)
+        });
+    if let Err(e) = prepared {
+        return refuse(e.to_string());
+    }
+    let u = plan::GITHUB_UID.to_string();
+    let mut cmd = Command::new(AGENT_INIT);
+    cmd.arg(NODE)
+        .arg(GITHUB_BROKER)
+        .env_clear()
+        .envs([
+            ("PATH", PATH.to_string()),
+            ("HOME", home.to_string()),
+            ("TMPDIR", home.to_string()),
+            ("BERTH_BOOT_ID", hub::boot_id().to_string()),
+            ("BERTH_CAPABILITY_POLICY", daemon_policy.to_string()),
+            ("BERTH_APP_UID", u.clone()),
+            ("BERTH_APP_GID", u.clone()),
+            // The egress group: the dial socket is root:9002 0660.
+            ("BERTH_APP_SUPPLEMENTARY_GIDS", format!("{u},{}", plan::EGRESS_UID)),
+            ("BERTH_REQUIRE_ENFORCEMENT", if cfg.require_enforcement { "1" } else { "0" }.to_string()),
+            ("BERTH_GITHUB_API_POLICY", plan::GITHUB_POLICY.to_string()),
+            ("BERTH_GITHUB_API_BROKER_PORT", plan::GITHUB_PORT.to_string()),
+            ("BERTH_GITHUB_API_BROKER_CERT_DIR", plan::GITHUB_CERT_DIR.to_string()),
+            ("BERTH_GITHUB_API_DIALER_SOCKET", plan::DIAL_SOCKET.to_string()),
+        ])
+        .current_dir("/")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    unsafe { cmd.pre_exec(child_setup(None)) };
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => return refuse(format!("cannot start it: {e}")),
+    };
+    let pid = child.id() as i32;
+    let listening = Arc::new(AtomicBool::new(false));
+    if let Some(o) = child.stdout.take() {
+        relay::pipe_logs("github-api-broker".into(), "stdout", o, |_| {});
+    }
+    if let Some(e) = child.stderr.take() {
+        let l = listening.clone();
+        relay::pipe_logs("github-api-broker".into(), "stderr", e, move |line| {
+            if line.contains("[github-api-broker] listening on 127.0.0.1:") {
+                l.store(true, Ordering::SeqCst);
+            }
+        });
+    }
+    sup.daemons.lock().unwrap().push(("github-api-broker".into(), pid));
+    std::mem::forget(child);
+    let t = Instant::now();
+    // It mints a CA and a leaf key first (two RSA keys through openssl).
+    while t.elapsed() < Duration::from_secs(20) && !listening.load(Ordering::SeqCst) {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let up = listening.load(Ordering::SeqCst) && Path::new(&format!("{}/ca.crt", plan::GITHUB_CERT_DIR)).exists();
+    // entrypoint.sh's narrowing: the app's group may traverse to ca.crt
+    // (0644); the keys stay 0600, the broker's.
+    let narrowed = up && sys::chown(plan::GITHUB_CERT_DIR, plan::GITHUB_UID, a.uid).and_then(|_| sys::chmod(plan::GITHUB_CERT_DIR, 0o750)).is_ok();
+    if up && narrowed {
+        *sup.github_for.lock().unwrap() = Some(app_name.to_string());
+    }
+    hub::event(
+        "daemon_started",
+        json!({ "daemon": "github-api-broker", "pid": pid, "uid": plan::GITHUB_UID, "port": plan::GITHUB_PORT, "listening": up, "caShared": narrowed,
+                "forApp": app_name, "dialSocket": plan::DIAL_SOCKET, "waitMs": t.elapsed().as_millis() as u64 }),
+    );
+}
+
 fn start_app(sup: &'static Supervisor, cfg: &Config, a: &AppSpec, policy: &Policy) {
     let name = policy.app_name.clone();
     let refuse = |reason: String| {
@@ -1081,7 +1216,7 @@ fn start_app(sup: &'static Supervisor, cfg: &Config, a: &AppSpec, policy: &Polic
     cmd.args(&argv)
         .current_dir(&a.dir)
         .env_clear()
-        .envs(app_env(cfg, a, policy, runtime, sup.egress_up.load(Ordering::SeqCst), sup.semantic_fs_up.load(Ordering::SeqCst)))
+        .envs(app_env(cfg, a, policy, runtime, sup.egress_up.load(Ordering::SeqCst), sup.semantic_fs_up.load(Ordering::SeqCst), sup.github_for.lock().unwrap().clone()))
         .stdin(if cfg.rpc == RpcMode::Stdio { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

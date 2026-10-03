@@ -56,6 +56,7 @@ CHECK=${CHECK:-1}
 [ -f "$BUS" ] || { echo "CONTEXT_BUS_DAEMON=$BUS does not exist (run build-berth-init.sh)" >&2; exit 1; }
 [ -f "$SFS" ] || { echo "SEMANTIC_FS_DAEMON=$SFS does not exist (run build-semantic-fs.sh)" >&2; exit 1; }
 BROKER="$REPO_DIR/packages/docker-orchestrator/docker/egress-broker.cjs"
+GHBROKER="$REPO_DIR/packages/docker-orchestrator/docker/github-api-broker.cjs"
 
 # berth_sdk for runtime: python apps: the committed .py files only (no
 # __pycache__, nothing uncommitted), so the tree is a function of HEAD.
@@ -71,7 +72,7 @@ SDKPY_LIST="$ART/sdk-python-src.sha256"
 if [ "$CHECK" = 1 ]; then
     bad=0
     for c in "agent_init_sha256 $AI/agent-init" "probe_sha256 $AI/probe" "berth_init_sha256 $INIT" \
-        "context_bus_daemon_sha256 $BUS" "semantic_fs_daemon_sha256 $SFS" "egress_broker_sha256 $BROKER" "sdk_python_sha256 $SDKPY_LIST"; do
+        "context_bus_daemon_sha256 $BUS" "semantic_fs_daemon_sha256 $SFS" "egress_broker_sha256 $BROKER" "github_api_broker_sha256 $GHBROKER" "sdk_python_sha256 $SDKPY_LIST"; do
         key=${c%% *} file=${c#* }
         have=$(sha256_of "$file")
         if [ "$have" != "$(pin "$key")" ]; then
@@ -118,10 +119,12 @@ cp -R "$SDKPY/berth_sdk" "$F/opt/berth/sdk-python/"
 find "$F/opt/berth/sdk-python" -type d -exec chmod 0755 {} + && find "$F/opt/berth/sdk-python" -type f -exec chmod 0644 {} +
 # berth-init starts it confined (uid 9002) when one app declares network:host:.
 install -m 0644 "$BROKER" "$F/usr/local/bin/berth-egress-broker.cjs"
+# berth-init starts it confined (uid 9003) when one app declares github:*.
+install -m 0644 "$GHBROKER" "$F/usr/local/bin/berth-github-api-broker.cjs"
 
 sha() { sha256_of "$1"; }
 src_rev=$(git -C "$REPO_DIR" rev-parse HEAD)
-src_dirty=$(git -C "$REPO_DIR" status --porcelain -- packages/vmm packages/sdk packages/sdk-python/berth_sdk packages/manifest-schema packages/docker-orchestrator/docker/egress-broker.cjs | grep -q . && echo true || echo false)
+src_dirty=$(git -C "$REPO_DIR" status --porcelain -- packages/vmm packages/sdk packages/sdk-python/berth_sdk packages/manifest-schema packages/docker-orchestrator/docker/egress-broker.cjs packages/docker-orchestrator/docker/github-api-broker.cjs | grep -q . && echo true || echo false)
 # Recorded inside the image too (/etc/berth/build-inputs.json), minus the
 # image's own hash, which cannot be inside itself, and minus the git commit,
 # so that an unrelated commit does not change the image. The commit is in the
@@ -137,6 +140,7 @@ cat > "$F/etc/berth/build-inputs.json" <<EOF
   "contextBusDaemon": {"path": "/usr/local/bin/context-bus-daemon", "sha256": "$(sha "$BUS")"},
   "semanticFsDaemon": {"path": "/usr/local/bin/semantic-fs-daemon", "sha256": "$(sha "$SFS")"},
   "egressBroker": {"path": "/usr/local/bin/berth-egress-broker.cjs", "sha256": "$(sha "$BROKER")"},
+  "githubApiBroker": {"path": "/usr/local/bin/berth-github-api-broker.cjs", "sha256": "$(sha "$GHBROKER")"},
   "sdkPython": {"path": "/opt/berth/sdk-python/berth_sdk", "treeSha256": "$(sha "$SDKPY_LIST")"},
   "sdkNode": {
     "sourceRef": "$(pin policy_compiler_ref)", "sourceCommit": "$policy_commit",

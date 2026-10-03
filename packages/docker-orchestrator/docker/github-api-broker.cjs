@@ -34,7 +34,10 @@ const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 
 const PORT = Number(process.env.BERTH_GITHUB_API_BROKER_PORT || 8092);
-const POLICY_PATH = process.env.BERTH_CAPABILITY_POLICY || `${process.cwd()}/.berth/capability-policy.json`;
+// BERTH_GITHUB_API_POLICY first: under agent-init (a microVM's berth-init
+// confines the broker as its own uid), BERTH_CAPABILITY_POLICY is the
+// broker's own Landlock policy, not the app's.
+const POLICY_PATH = process.env.BERTH_GITHUB_API_POLICY || process.env.BERTH_CAPABILITY_POLICY || `${process.cwd()}/.berth/capability-policy.json`;
 // Not /tmp: this directory holds the private key of a CA the app process is
 // told to trust for every TLS connection it makes (NODE_EXTRA_CA_CERTS is
 // process-wide), and /tmp is world-writable and shared with every other app
@@ -56,6 +59,11 @@ const GITHUB_API_HOST = "api.github.com";
 const UPSTREAM_CONNECT_HOST = process.env.BERTH_GITHUB_API_UPSTREAM_HOST || GITHUB_API_HOST;
 const UPSTREAM_CONNECT_PORT = Number(process.env.BERTH_GITHUB_API_UPSTREAM_PORT || 443);
 const UPSTREAM_CA_PATH = process.env.BERTH_GITHUB_API_UPSTREAM_CA_PATH;
+// In a microVM there is no network: the outbound leg is a tunnel from the
+// host's egress dialer (berth-init's relay on this Unix socket, vsock 1026 to
+// berth-vmm), which applies its own allowlist and resolves the name itself.
+// The same "DIAL host port" protocol egress-broker.cjs speaks.
+const DIALER_SOCKET = process.env.BERTH_GITHUB_API_DIALER_SOCKET || null;
 
 function parseCapability(capability) {
   const parts = capability.split(":");
@@ -247,6 +255,48 @@ function upstreamAgentOptions() {
   return { ca: [...tls.rootCertificates, fs.readFileSync(UPSTREAM_CA_PATH, "utf-8")] };
 }
 
+/** A raw TCP tunnel to host:port from the host dialer (see egress-broker.cjs's dialViaHost). */
+function dialViaHost(host, port) {
+  return new Promise((resolve, reject) => {
+    const sock = net.connect({ path: DIALER_SOCKET });
+    let buf = Buffer.alloc(0);
+    let done = false;
+    const finish = (err) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      sock.off("data", onData);
+      if (err) {
+        sock.destroy();
+        reject(err);
+      } else {
+        resolve(sock);
+      }
+    };
+    const timer = setTimeout(() => finish(new Error(`no answer from the host dialer for ${host}:${port}`)), 20000);
+    const onData = (chunk) => {
+      buf = Buffer.concat([buf, chunk]);
+      const nl = buf.indexOf("\n");
+      if (nl === -1) {
+        if (buf.length > 1024) finish(new Error("host dialer answer too long"));
+        return;
+      }
+      const line = buf.subarray(0, nl).toString("utf8");
+      const rest = buf.subarray(nl + 1);
+      if (/^OK \S+$/.test(line)) {
+        if (rest.length > 0) sock.unshift(rest);
+        finish(null);
+        return;
+      }
+      finish(new Error(`host dialer refused ${host}:${port}: ${line.slice(0, 200)}`));
+    };
+    sock.on("data", onData);
+    sock.once("connect", () => sock.write(`DIAL ${host} ${port}\n`));
+    sock.on("error", (e) => finish(new Error(`host dialer: ${e.message}`)));
+    sock.once("close", () => finish(new Error("host dialer closed the connection")));
+  });
+}
+
 function handleRequest(req, res) {
   const route = routeFor(req.method, req.url);
 
@@ -273,28 +323,45 @@ function handleRequest(req, res) {
     `[github-api-broker] {"event":"allowed","method":${JSON.stringify(req.method)},"path":${JSON.stringify(normalizedPath)},"requested":${JSON.stringify(requested)}}`,
   );
 
-  const upstreamReq = https.request(
-    {
-      host: UPSTREAM_CONNECT_HOST,
-      port: UPSTREAM_CONNECT_PORT,
-      servername: GITHUB_API_HOST,
-      method: req.method,
-      // The normalized path, not req.url — forwarding the raw one is what let
-      // GitHub's edge resolve a `..` this broker had already checked past.
-      path: normalizedPath,
-      headers: { ...req.headers, host: GITHUB_API_HOST },
-      ...upstreamAgentOptions(),
-    },
-    (upstreamRes) => {
-      res.writeHead(upstreamRes.statusCode, upstreamRes.headers);
-      upstreamRes.pipe(res);
-    },
-  );
-  upstreamReq.on("error", (err) => {
+  const badGateway = (err) => {
     console.error(`[github-api-broker] upstream request error: ${err.message}`);
-    res.writeHead(502, { "content-type": "text/plain" }).end("bad gateway");
-  });
-  req.pipe(upstreamReq);
+    if (!res.headersSent) res.writeHead(502, { "content-type": "text/plain" });
+    res.end("bad gateway");
+  };
+  const forward = (tunnel) => {
+    const upstreamReq = https.request(
+      {
+        host: UPSTREAM_CONNECT_HOST,
+        port: UPSTREAM_CONNECT_PORT,
+        servername: GITHUB_API_HOST,
+        method: req.method,
+        // The normalized path, not req.url — forwarding the raw one is what let
+        // GitHub's edge resolve a `..` this broker had already checked past.
+        path: normalizedPath,
+        headers: { ...req.headers, host: GITHUB_API_HOST },
+        ...upstreamAgentOptions(),
+        // TLS over the dialer's tunnel. No agent: given one (even agent: false,
+        // which makes a fresh one), Node ignores createConnection and resolves
+        // the host itself.
+        ...(tunnel ? { createConnection: () => tls.connect({ socket: tunnel, servername: GITHUB_API_HOST, ...upstreamAgentOptions() }) } : {}),
+      },
+      (upstreamRes) => {
+        res.writeHead(upstreamRes.statusCode, upstreamRes.headers);
+        upstreamRes.pipe(res);
+      },
+    );
+    upstreamReq.on("error", badGateway);
+    req.pipe(upstreamReq);
+  };
+  if (DIALER_SOCKET) {
+    req.pause();
+    dialViaHost(UPSTREAM_CONNECT_HOST, UPSTREAM_CONNECT_PORT).then((tunnel) => {
+      forward(tunnel);
+      req.resume();
+    }, badGateway);
+  } else {
+    forward(null);
+  }
 }
 
 // Parses decrypted HTTP off each intercepted TLS connection by handing it to
@@ -329,5 +396,5 @@ proxyServer.on("connect", (req, clientSocket, head) => {
 });
 
 proxyServer.listen(PORT, "127.0.0.1", () => {
-  console.error(`[github-api-broker] listening on 127.0.0.1:${PORT}, intercepting ${GITHUB_API_HOST}`);
+  console.error(`[github-api-broker] listening on 127.0.0.1:${PORT}, intercepting ${GITHUB_API_HOST}${DIALER_SOCKET ? `; upstream through the host dialer at ${DIALER_SOCKET}` : ""}`);
 });
