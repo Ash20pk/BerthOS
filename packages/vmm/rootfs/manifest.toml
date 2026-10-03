@@ -25,6 +25,10 @@ probe_sha256 = "6ec735d885b58861b33abdd70a5a4d48ecad803cc92bd94c02f876a3346453d0
 # from this tree (packages/vmm/init, packages/context-bus-daemon).
 berth_init_sha256 = "2b7762477f0300e76725ec0b3195be78bc4a2adad1bea20350def94eaa5bbb57"
 context_bus_daemon_sha256 = "1138c3595142a3235145b530d0cf1157b0971aa2230d417befe0a6e783477544"
+# /usr/local/bin/semantic-fs-daemon: build-semantic-fs.sh, from
+# packages/semantic-fs-daemon at HEAD: the daemon that serves /context
+# (docs/design/microvm-semantic-fs.md).
+semantic_fs_daemon_sha256 = "469dce88701aae0a64f0ff481205ddec5004e1fb55925c449b4d754acb7e3a97"
 # /usr/local/bin/berth-egress-broker.cjs: packages/docker-orchestrator/docker/egress-broker.cjs.
 egress_broker_sha256 = "4ff162e8e2c86cc43a73caa02bd1a78e4fe620c2b18040334b79366402157d89"
 # /opt/berth/sdk-python/berth_sdk: packages/sdk-python/berth_sdk at HEAD, the
