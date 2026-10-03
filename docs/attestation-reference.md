@@ -98,7 +98,7 @@ A session run with `--runtime vm` (the [local microVM runtime](local-vm.md)) pro
 | `boot.imageDigest` | `sha256:<rootfs>`, the content-addressed base image the VM booted |
 | `boot.imageTag` | `rootfs-<first 12 hex>.erofs` |
 | `boot.runtime` | `berth-vmm` |
-| `boot.isolation` | `{ kind: "microvm", engine: "libkrun", hypervisor, kernel: { sha256, pinned, linux, configSha256, cmdline }, rootfs: { sha256, pinned, fstype, readOnly }, state: { chunkedSha256, sizeBytes, created }, tsi, nics, vcpus, memMiB }`, from berth-vmm's measurement and `vm_config` lines |
+| `boot.isolation` | `{ kind: "microvm", engine: "libkrun", hypervisor, kernel: { sha256, pinned, linux, configSha256, cmdline }, rootfs: { sha256, pinned, fstype, readOnly }, state: { chunkedSha256, sizeBytes, created }, tsi, nics, vcpus, memMiB, hostSandbox: { kind, applied, reason } }`, from berth-vmm's measurement, `vm_config` and `host_sandbox` lines. `hostSandbox` says whether berth-vmm confined itself on the host (`seatbelt` on macOS); a berth-vmm too old to say leaves it out |
 | `enforcement.rulesetReports` | agent-init's `capability_policy_applied` lines on the guest log port, for this boot. Only the first per app, and only from that app's own stream |
 | `enforcement.doctorProbe` | `enforcing` when the measured kernel is berth-vmm's pinned one and the running kernel lists `landlock` among its LSMs (berth-init's `boot_start`); `unsupported` when it doesn't; `unknown` for an unpinned kernel. Its `reason` says this is derived from the kernel's identity, not a behavioural probe run at this boot |
 | `policies` | empty: the policy is compiled inside the guest, and berth-init doesn't report its sha256 yet |

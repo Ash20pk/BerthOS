@@ -25,6 +25,7 @@ use std::process::exit;
 mod egress;
 mod pins;
 mod run;
+mod sandbox;
 mod secrets;
 mod sha256;
 
@@ -94,6 +95,14 @@ struct Opts {
     log_level: u32,
     exec: Vec<String>,
     egress: Option<egress::Config>,
+    /// `run` only: confine berth-vmm itself before the VM starts (sandbox.rs).
+    host_sandbox: Option<HostSandbox>,
+}
+
+struct HostSandbox {
+    run_dir: String,
+    /// --host-sandbox-probe: paths to try to read and write once confined.
+    probes: Vec<String>,
 }
 
 const USAGE: &str = "usage: berth-vmm run --app DIR [--app DIR...] [--state DISK] [run options]
@@ -169,6 +178,9 @@ fn parse(argv: Vec<String>) -> Opts {
         log_level: 1,
         exec: vec![],
         egress: None,
+        // The low-level form is for builder VMs, which need the network and a
+        // writable root; only `run` confines itself.
+        host_sandbox: None,
     };
     let mut egress_allow: Vec<String> = vec![];
     let mut egress_socket: Option<String> = None;
@@ -315,6 +327,39 @@ fn cvec(items: &[String]) -> (Vec<CString>, Vec<*const c_char>) {
     let mut ptrs: Vec<*const c_char> = owned.iter().map(|c| c.as_ptr()).collect();
     ptrs.push(std::ptr::null());
     (owned, ptrs)
+}
+
+/// Applies sandbox.rs's profile for this run and reports it on stderr as one
+/// `host_sandbox` line. Fails closed: a profile that doesn't apply stops the
+/// boot (`--no-host-sandbox` is the explicit way to run without one).
+fn confine(o: &Opts, hs: &HostSandbox, kernel: Option<&str>, rootfs: Option<&str>, state: Option<&str>) {
+    let canon = |p: &str| std::fs::canonicalize(p).map(|c| c.display().to_string()).unwrap_or_else(|e| die(&format!("host sandbox: {p}: {e}")));
+    let mut plan = sandbox::Plan { socket_dir: canon(&hs.run_dir), egress: o.egress.is_some(), ..Default::default() };
+    plan.read_files.extend(kernel.into_iter().chain(rootfs).chain(o.secrets.as_deref()).map(canon));
+    plan.read_dirs.extend(o.shares.iter().filter(|s| s.read_only).map(|s| canon(&s.path)));
+    plan.write_dirs.extend(o.shares.iter().filter(|s| !s.read_only).map(|s| canon(&s.path)));
+    plan.write_files.extend(state.map(canon));
+    plan.write_dirs.push(canon(&hs.run_dir));
+    let profile = sandbox::profile(&plan);
+    sandbox::apply(&profile).unwrap_or_else(|e| die(&format!("could not confine berth-vmm with its Seatbelt profile ({e}); --no-host-sandbox runs without one")));
+    let probes: Vec<String> = hs
+        .probes
+        .iter()
+        .map(|p| {
+            let (read, write) = sandbox::probe(p);
+            format!("{{\"path\":{},\"read\":{},\"write\":{}}}", json_str(p), json_str(&read), json_str(&write))
+        })
+        .collect();
+    let list = |v: &[String]| v.iter().map(|s| json_str(s)).collect::<Vec<_>>().join(",");
+    eprintln!(
+        "{{\"source\":\"berth-vmm\",\"event\":\"host_sandbox\",\"kind\":\"seatbelt\",\"applied\":true,\"read\":[{}],\"readWrite\":[{}],\"socketDir\":{},\"tcpOut\":{},\"profileBytes\":{},\"probes\":[{}]}}",
+        list(&[plan.read_files.clone(), plan.read_dirs.clone()].concat()),
+        list(&[plan.write_files.clone(), plan.write_dirs.clone()].concat()),
+        json_str(&plan.socket_dir),
+        plan.egress,
+        profile.len(),
+        probes.join(",")
+    );
 }
 
 fn json_str(s: &str) -> String {
@@ -508,6 +553,13 @@ fn main() {
         let (_ek, envp) = cvec(&env);
         let (_ak, argv) = cvec(&o.exec[1..]);
         check("krun_set_exec", krun_set_exec(ctx, cs(&o.exec[0]).as_ptr(), argv.as_ptr(), envp.as_ptr()));
+
+        // Confined from here on: what is left is libkrun opening what it was
+        // given. Before the measurement line, so a client that reads up to it
+        // has seen this one too.
+        if let Some(hs) = &o.host_sandbox {
+            confine(&o, hs, kernel.as_ref().map(|k| k.path.as_str()), rootfs.as_ref().map(|r| r.path.as_str()), state.as_ref().map(|s| s.path.as_str()));
+        }
 
         // One structured line describing what this VM was given; doctor/attestation
         // would record the same facts.

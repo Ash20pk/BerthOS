@@ -1,5 +1,7 @@
 (version 1)
-; Seatbelt profile for berth-vmm (spike). libkrun treats the VMM and the guest
+; Seatbelt profile for berth-vmm (spike). Superseded: `berth-vmm run` now builds
+; its own, with exact per-sandbox paths, in src/sandbox.rs. Nothing reads this
+; file; it stays as the record docs/design/microvm-spike.md describes. libkrun treats the VMM and the guest
 ; as one security context, so what this process can reach on the host is what
 ; a compromised guest could reach. Parameters (sandbox-exec -D):
 ;   ART      artifacts dir: kernel, rootfs image, app dir, run/ sockets, state/ disks

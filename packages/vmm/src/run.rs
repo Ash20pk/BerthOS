@@ -64,7 +64,16 @@ until the guest powers off ({\"op\":\"shutdown\"} on control.sock, or every app 
                         host[:port|:*] patterns, comma separated (repeatable).
                         Starts the egress dialer on <run-dir>/egress.sock behind
                         vsock 1026. Without it the guest has no way out at all
-  --egress-max-conns N  concurrent egress tunnels (default 64)";
+  --egress-max-conns N  concurrent egress tunnels (default 64)
+  --no-host-sandbox     don't confine berth-vmm itself. By default, just before
+                        the VM starts, it applies a Seatbelt profile allowing
+                        only this sandbox's kernel, rootfs, app directories,
+                        state and secrets disks and run directory (and outbound
+                        TCP for the egress dialer); see src/sandbox.rs
+  --host-sandbox-probe PATH
+                        after confining itself, try to read and write PATH and
+                        report the result in the host_sandbox line (repeatable;
+                        a diagnostic, used by scripts/e2e.mjs)";
 
 fn home() -> String {
     std::env::var("HOME").unwrap_or_else(|_| die("HOME is not set; pass --artifacts"))
@@ -103,6 +112,8 @@ pub fn opts(argv: &[String]) -> Opts {
     let mut log_level = 1;
     let mut egress_allow: Vec<String> = vec![];
     let mut egress_max: Option<usize> = None;
+    let mut host_sandbox = cfg!(target_os = "macos");
+    let mut probes: Vec<String> = vec![];
     let mut args = argv.iter().cloned();
     while let Some(a) = args.next() {
         let mut val = || args.next().unwrap_or_else(|| die(&format!("{a} needs a value")));
@@ -121,6 +132,8 @@ pub fn opts(argv: &[String]) -> Opts {
             "--log-level" => log_level = val().parse().unwrap_or_else(|_| die("bad --log-level")),
             "--egress-allow" => egress_allow.push(val()),
             "--egress-max-conns" => egress_max = Some(val().parse().unwrap_or_else(|_| die("bad --egress-max-conns"))),
+            "--no-host-sandbox" => host_sandbox = false,
+            "--host-sandbox-probe" => probes.push(val()),
             "-h" | "--help" => {
                 println!("{RUN_USAGE}");
                 std::process::exit(0);
@@ -130,6 +143,13 @@ pub fn opts(argv: &[String]) -> Opts {
     }
     if apps.is_empty() {
         die(&format!("run: at least one --app\n{RUN_USAGE}"));
+    }
+    if !host_sandbox {
+        eprintln!("{{\"source\":\"berth-vmm\",\"event\":\"host_sandbox\",\"kind\":null,\"applied\":false,\"reason\":{:?}}}",
+            if cfg!(target_os = "macos") { "--no-host-sandbox" } else { "no host sandbox on this platform yet" });
+        if !probes.is_empty() {
+            die("--host-sandbox-probe needs the host sandbox");
+        }
     }
     if apps.len() > MAX_APPS {
         die(&format!("run: at most {MAX_APPS} apps"));
@@ -249,6 +269,7 @@ pub fn opts(argv: &[String]) -> Opts {
         log_level,
         exec: vec![GUEST_INIT.into()],
         egress,
+        host_sandbox: host_sandbox.then(|| crate::HostSandbox { run_dir: run_dir.display().to_string(), probes }),
     }
 }
 

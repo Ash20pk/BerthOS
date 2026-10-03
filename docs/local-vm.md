@@ -190,6 +190,7 @@ An app whose `berth.yml` needs something the VM doesn't have yet is refused befo
 - **Native addons** (`.node` files) can't run in the guest, because they were built for your host, not for Linux on arm64. Bundling stops with that error.
 - **Files your app reads from its own directory** at run time, beyond `berth.yml`, aren't in the share. Only the bundle is.
 - **Architecture.** The pinned kernel and rootfs are built for arm64, and berth-vmm is published for macOS arm64 only.
+- **berth-vmm is confined too.** libkrun runs the VMM and the guest as one security context, so `berth-vmm run` puts itself under a Seatbelt profile that allows only this sandbox's files (and the network only for the egress dialer). `berth attest` records it as `boot.isolation.hostSandbox`. macOS only; `--no-host-sandbox` turns it off for debugging.
 - **`/app` is unmeasured.** The kernel, rootfs and state disk are hashed at every boot. Your bundle isn't yet.
 - **Policy digests.** `berth attest` records a VM boot with an empty `policies` list, because berth-init doesn't report the sha256 of the policy it compiled yet.
 

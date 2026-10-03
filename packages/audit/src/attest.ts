@@ -86,6 +86,13 @@ export interface BootIsolation {
   nics: number;
   vcpus?: number;
   memMiB?: number;
+  /**
+   * Whether berth-vmm confined itself on the host (a Seatbelt profile on
+   * macOS allowing only this sandbox's files): libkrun runs the VMM and the
+   * guest as one security context, so this bounds a guest that escaped the VM.
+   * Absent when the berth-vmm predates the report.
+   */
+  hostSandbox?: { kind: string | null; applied: boolean; reason?: string };
 }
 
 export interface AttestationRecord {
