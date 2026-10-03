@@ -65,6 +65,14 @@ test("isolation comes from berth-vmm's lines; a missing field is never read as o
   assert.equal(vmIsolation(record({ measurements: {} })), undefined);
 });
 
+test("isolation says whether berth-vmm confined itself, and claims nothing when it didn't say", () => {
+  assert.equal(vmIsolation(record())!.hostSandbox, undefined);
+  const on = vmIsolation(record({ hostSandbox: { source: "berth-vmm", event: "host_sandbox", kind: "seatbelt", applied: true } }))!;
+  assert.deepEqual(on.hostSandbox, { kind: "seatbelt", applied: true });
+  const off = vmIsolation(record({ hostSandbox: { kind: null, applied: false, reason: "--no-host-sandbox" } }))!;
+  assert.deepEqual(off.hostSandbox, { kind: null, applied: false, reason: "--no-host-sandbox" });
+});
+
 test("the probe: enforcing only for the pinned kernel running with landlock", () => {
   const iso = vmIsolation(record())!;
   assert.equal(vmDoctorProbe(iso, events).status, "enforcing");

@@ -16,7 +16,8 @@ import type { VmRecord } from "./sandbox.js";
  *  - resourceLimits: berth-init's cgroup_delegation / cgroup_limits_applied events.
  *  - isolation: berth-vmm's measurement line (kernel and rootfs by sha256,
  *    whether they were the pinned ones, the state disk's digest) and its
- *    vm_config line (TSI, NIC count, vCPUs, memory).
+ *    vm_config line (TSI, NIC count, vCPUs, memory), and its host_sandbox
+ *    line (whether berth-vmm confined itself on the host).
  *  - doctorProbe: the Docker path probes the host's kernel, because that
  *    kernel varies. Here the kernel is fixed by hash, and berth-init reports
  *    the LSMs the running kernel actually has (/sys/kernel/security/lsm). So
@@ -103,6 +104,7 @@ export function vmIsolation(record: VmRecord, platform: NodeJS.Platform = proces
   const r = m?.rootfs;
   if (!k || !r || typeof k.sha256 !== "string" || typeof r.sha256 !== "string") return undefined;
   const c = (record.vmConfig ?? {}) as Record<string, unknown>;
+  const h = record.hostSandbox;
   const s = m?.state;
   return {
     kind: "microvm",
@@ -124,6 +126,10 @@ export function vmIsolation(record: VmRecord, platform: NodeJS.Platform = proces
     nics: typeof c.nics === "number" ? c.nics : -1,
     ...(typeof c.cpus === "number" ? { vcpus: c.cpus } : {}),
     ...(typeof c.memMiB === "number" ? { memMiB: c.memMiB } : {}),
+    // A berth-vmm that predates the line says nothing, and nothing is claimed.
+    ...(h && typeof h.applied === "boolean"
+      ? { hostSandbox: { kind: str(h.kind) ?? null, applied: h.applied, ...(str(h.reason) ? { reason: str(h.reason) } : {}) } }
+      : {}),
   };
 }
 

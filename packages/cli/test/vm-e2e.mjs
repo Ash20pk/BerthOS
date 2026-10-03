@@ -441,6 +441,11 @@ check("a VM the MCP session booted is stopped when the client leaves", leftover.
     iso?.kind === "microvm" && iso.kernel?.pinned && iso.rootfs?.pinned && iso.tsi === false && iso.nics === 0,
     iso ? `kernel ${iso.kernel.sha256.slice(0, 12)}…, rootfs ${iso.rootfs.sha256.slice(0, 12)}…, image ${rec.boot.imageDigest.slice(0, 19)}…` : "",
   );
+  check(
+    "...and that berth-vmm confined itself on the host (Seatbelt)",
+    process.platform !== "darwin" || (iso?.hostSandbox?.applied === true && iso.hostSandbox.kind === "seatbelt"),
+    JSON.stringify(iso?.hostSandbox),
+  );
   const v = spawnSync(process.execPath, [join(repo, "scripts", "verify-attestation.mjs"), out], { encoding: "utf8" });
   check("scripts/verify-attestation.mjs accepts it", v.status === 0 && /^OK/.test(v.stdout), v.stdout + v.stderr);
 }

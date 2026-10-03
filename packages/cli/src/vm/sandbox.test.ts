@@ -139,10 +139,12 @@ test("only berth-vmm's own JSON lines are read from its stderr", () => {
       "berth-vmm: some warning",
       '{"source":"someone-else","event":"measurements"}',
       '{"source":"berth-vmm","event":"measurements","kernel":null}',
+      '{"source":"berth-vmm","event":"host_sandbox","kind":"seatbelt","applied":true}',
       "[",
     ].join("\n"),
   );
   assert.equal(lines.endpoints?.runDir, "/r");
+  assert.equal(lines.hostSandbox?.applied, true);
   assert.equal(lines.measurements?.kernel, null);
   assert.equal(lines.vmConfig, undefined);
 });

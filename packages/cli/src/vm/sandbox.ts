@@ -39,6 +39,8 @@ export interface VmmLines {
   endpoints?: Record<string, unknown>;
   vmConfig?: Record<string, unknown>;
   measurements?: Record<string, unknown>;
+  /** Whether berth-vmm confined itself on the host (its host_sandbox line). */
+  hostSandbox?: Record<string, unknown>;
 }
 
 export interface VmRecord {
@@ -55,6 +57,8 @@ export interface VmRecord {
   endpoints?: Record<string, unknown>;
   vmConfig?: Record<string, unknown>;
   measurements?: Record<string, unknown>;
+  /** Whether berth-vmm confined itself on the host (its host_sandbox line). */
+  hostSandbox?: Record<string, unknown>;
 }
 
 export interface StartOptions {
@@ -104,6 +108,7 @@ export function readVmmLines(text: string): VmmLines {
     if (v.event === "endpoints") out.endpoints = v;
     else if (v.event === "vm_config") out.vmConfig = v;
     else if (v.event === "measurements") out.measurements = v;
+    else if (v.event === "host_sandbox") out.hostSandbox = v;
   }
   return out;
 }
@@ -263,7 +268,8 @@ export class VmSandbox {
     const timings: StartTimings = { spawnMs: Date.now() - t0, readyMs: 0 };
     const readyTimeoutMs = options.readyTimeoutMs ?? 60_000;
     try {
-      // berth-vmm prints endpoints, vm_config and measurements, then boots.
+      // berth-vmm prints endpoints, host_sandbox, vm_config and measurements,
+      // then boots.
       // A refusal (bad pin, missing artifact, unsigned binary) exits here.
       const lines = await sandbox.waitForVmmLines(logPath, readyTimeoutMs, options.signal);
       Object.assign(record, lines);
@@ -550,7 +556,7 @@ export class VmSandbox {
       partial = lines.pop() ?? "";
       for (const line of lines) {
         const v = line.startsWith("{") ? parseObject(line) : undefined;
-        if (v && v.source === "berth-vmm" && typeof v.event === "string" && !["endpoints", "vm_config", "measurements"].includes(v.event)) fn(v);
+        if (v && v.source === "berth-vmm" && typeof v.event === "string" && !["endpoints", "vm_config", "measurements", "host_sandbox"].includes(v.event)) fn(v);
       }
     };
     const timer = setInterval(() => {
