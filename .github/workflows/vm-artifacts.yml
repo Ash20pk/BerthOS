@@ -6,9 +6,10 @@ name: VM artifacts
 # publishes them as a GitHub release `berth vm install` downloads from.
 #
 #   kernel   ubuntu-24.04-arm   scripts/build-kernel.sh: the guest kernel Image
-#   guest    ubuntu-24.04-arm   scripts/build-agent-init.sh, build-berth-init.sh:
-#                               agent-init, probe, berth-init, context-bus-daemon
-#                               (static aarch64 musl)
+#   guest    ubuntu-24.04-arm   scripts/build-agent-init.sh, build-berth-init.sh,
+#                               build-semantic-fs.sh: agent-init, probe, berth-init,
+#                               context-bus-daemon (static aarch64 musl) and
+#                               semantic-fs-daemon (static Go)
 #   rootfs   ubuntu-24.04-arm   scripts/build-rootfs.sh: the erofs base rootfs,
 #                               from the guest job's binaries
 #   vmm      macos-15 (arm64)   berth-vmm, linked against Homebrew libkrun,
@@ -166,12 +167,16 @@ jobs:
       - name: Build berth-init and context-bus-daemon, and check them against rootfs/manifest.toml
         run: CPUS=$(nproc) packages/vmm/scripts/build-berth-init.sh
 
+      - name: Build semantic-fs-daemon, and check it against rootfs/manifest.toml
+        run: CPUS=$(nproc) packages/vmm/scripts/build-semantic-fs.sh
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: guest
           path: |
             ${{ env.BERTH_VMM_ARTIFACTS }}/agent-init/
             ${{ env.BERTH_VMM_ARTIFACTS }}/berth-init-build/out/
+            ${{ env.BERTH_VMM_ARTIFACTS }}/semantic-fs-build/out/
           if-no-files-found: error
 
   rootfs:

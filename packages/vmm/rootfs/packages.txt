@@ -11,3 +11,6 @@ python3
 py3-yaml
 py3-pydantic
 py3-protobuf
+# fusermount3, which semantic-fs-daemon's FUSE library (bazil.org/fuse) execs
+# to mount /context. Only root runs it, so build-in-vm.sh drops its setuid bit.
+fuse3

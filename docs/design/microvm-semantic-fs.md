@@ -1,6 +1,6 @@
 # semantic-fs in the microVM
 
-Status: proposed. Closes the semantic-fs part of open problem 4 in [`microvm-runtime.md`](microvm-runtime.md#open-problems) and of open problem 3 in [`microvm-guest-init.md`](microvm-guest-init.md), and the "semantic-fs and `/context`" limit in [`../local-vm.md`](../local-vm.md#limits).
+Status: step 1 done (feat/vm-semantic-fs-build); steps 2 to 5 to go. Closes the semantic-fs part of open problem 4 in [`microvm-runtime.md`](microvm-runtime.md#open-problems) and of open problem 3 in [`microvm-guest-init.md`](microvm-guest-init.md), and the "semantic-fs and `/context`" limit in [`../local-vm.md`](../local-vm.md#limits).
 
 ## The problem
 
@@ -112,6 +112,6 @@ Each step is one branch with its own verification, in order:
 
 ## Open questions
 
-- Does Alpine 3.24's `go` meet `go 1.26`? If not, the builder pins a Go toolchain tarball by sha256 instead of using apk.
-- Does `fuse3` pull in anything beyond `fusermount3` and `libfuse3`? If so, take the direct-`mount(2)` alternative from section 2.
+- ~~Does Alpine 3.24's `go` meet `go 1.26`?~~ Yes: Alpine ships go 1.26.8 (`guest/semantic-fs.apk.lock`). The daemon builds to `469dce88…` from two fresh builder roots (feat/vm-semantic-fs-build).
+- ~~Does `fuse3` pull in anything beyond `fusermount3` and `libfuse3`?~~ Only `fuse-common` besides `fuse3` and `fuse3-libs`. It went in, with the setuid bit removed, and the image build now refuses any setuid or setgid file. rootfs `7f361418…` (79.5 MB, +4.7 MB).
 - Should the daemon also put itself under a Landlock ruleset after mounting, limited to its data dir, the index and its socket? Docker doesn't, but in the guest nothing stops us. This would be a separate change to the daemon, worth doing for both paths at once.

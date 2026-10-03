@@ -26,8 +26,8 @@ export const KERNEL_SHA256 = "8f79e8dae97ebc0ab8fcdc4ad209bb025ec967be82c713503e
 export const KERNEL_SIZE = 23668744;
 export const KERNEL_LINUX = "6.12.109";
 export const KERNEL_CONFIG_SHA256 = "e3f33c2bd4bffa16e52a066c325967e4bde091f20063e6eb5b81e8a2efac4dc8";
-export const ROOTFS_SHA256 = "322ee4f323f591b4fe2adaf3e305f2f06f8b8fe8cf7d79b9ee30e327ed0868eb";
-export const ROOTFS_SIZE = 74743808;
+export const ROOTFS_SHA256 = "7f361418e0c2ee635ff17683d48bfa019a7aa5197095966b15219f5d8b8a782f";
+export const ROOTFS_SIZE = 79454208;
 /** The libkrun berth-vmm is built against (packages/vmm/src/main.rs declares its API at this version). */
 export const LIBKRUN_VERSION = "1.19.6";
 
@@ -66,7 +66,10 @@ export type VmmPlatform = "darwin-arm64";
  * attribute only on a file that matched.
  *
  * darwin-arm64 is from release vm-artifacts-8f79e8da-322ee4f3 (run
- * 37093509858), and two runs built the same bytes.
+ * 37093509858), and two runs built the same bytes. It compiles in that
+ * release's rootfs pin, not ROOTFS_SHA256 above, and `berth vm install` takes
+ * the pins from the binary, so it installs the rootfs it boots. The next
+ * release replaces it.
  */
 export const VMM_PINS: Partial<Record<VmmPlatform, { sha256: string; size: number }>> = {
   "darwin-arm64": { sha256: "b2e49ac22ce4e4042f6ababc782dd008cda839f77ebfc3bf20bea3c64208715e", size: 633408 },
