@@ -1,0 +1,12 @@
+# The browser layer: what a browser:* app (apps/browser-native) needs beyond
+# the base, the container image's set (packages/docker-orchestrator/docker/
+# base.Dockerfile) less chromedriver, which Playwright doesn't use: Chromium,
+# Xvfb to draw into, x11vnc and websockify/noVNC to show a human that display,
+# dbus, which Chromium asks for, and a font.
+chromium
+xvfb
+x11vnc
+websockify
+novnc
+dbus
+ttf-freefont

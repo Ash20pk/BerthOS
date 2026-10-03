@@ -35,11 +35,22 @@ if [ -d /in/files ]; then
     cp -a /in/files/. "$R/"
     (cd /in/files && find .) | while read -r p; do chown -h 0:0 "$R/$p"; done
 fi
-rm -rf "$R/var/cache/apk"/* "$R/tmp"/* "$R/var/log/apk.log" "$R/root/.ash_history"
+# Caches a package's install script builds (fontconfig's records the time it
+# ran) are not inputs: dropped, so the image depends only on the packages.
+# Their programs rebuild them at run time where they need to.
+rm -rf "$R/var/cache"/* "$R/tmp"/* "$R/var/log/apk.log" "$R/root/.ash_history"
+cp -a "$BASE/var/cache/." "$R/var/cache/" 2>/dev/null || true
+# dbus's install script writes a random machine-id. An image has none; nothing
+# in a sandbox needs one to be stable.
+[ -e "$BASE/etc/machine-id" ] || rm -f "$R/etc/machine-id"
 find "$R/dev" -mindepth 1 ! -type c ! -type b ! -type d -exec rm -f {} +
-# As in the base: nothing setuid or setgid.
-suid=$(find "$R" -xdev -type f \( -perm -4000 -o -perm -2000 \))
-[ -z "$suid" ] || { echo "setuid/setgid files in the layer:" >&2; echo "$suid" >&2; exit 1; }
+# As in the base: nothing setuid or setgid. Packages ship some (Chromium's
+# chrome-sandbox, dbus's launch helper); nothing in a sandbox uses them (apps
+# run with no_new_privs, Chromium with --no-sandbox), so their bits go, and
+# the list is kept with the build.
+find "$R" -xdev -type f \( -perm -4000 -o -perm -2000 \) | sed "s#^$R##" | LC_ALL=C sort > /out/setuid-stripped.txt
+while read -r f; do chmod u-s,g-s "$R$f"; done < /out/setuid-stripped.txt
+[ ! -s /out/setuid-stripped.txt ] || { echo "setuid/setgid bits removed:"; cat /out/setuid-stripped.txt; }
 
 # The delta. A layer is laid over the base read-only, with no whiteouts, so
 # it may add and change files but never remove one.
