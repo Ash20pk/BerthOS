@@ -16,8 +16,8 @@ Docker is still the default. The VM runtime runs filesystem-only Node and Python
 
 - **macOS on Apple silicon** (Hypervisor.framework), or **Linux with KVM** (`/dev/kvm` readable and writable).
 - **libkrun 1.19.6**. On macOS: `brew tap libkrun/krun && brew install libkrun`. Newer Homebrew asks you to trust a third-party tap's formulae first: `brew trust --formula libkrun/krun/libkrun libkrun/krun/libkrunfw libkrun/krun/virglrenderer-krun`.
-- **berth-vmm**, the small launcher that runs one VM per process. `berth vm install` downloads it on macOS arm64 once a published build is pinned in the CLI (see below). Otherwise build it from `packages/vmm` with `cargo build --release`. On macOS it has to be signed with the hypervisor entitlement. The published build is, and the build scripts sign a local one. `berth doctor` prints the `codesign` command if it isn't.
-- **The pinned kernel and rootfs**, about 70 MB, installed with `berth vm install`.
+- **berth-vmm**, the small launcher that runs one VM per process. `berth vm install` downloads it on macOS arm64. On other platforms, build it from `packages/vmm` with `cargo build --release`. On macOS it has to be signed with the hypervisor entitlement. The published build is, and the build scripts sign a local one. `berth doctor` prints the `codesign` command if it isn't.
+- **The pinned kernel and rootfs**, about 100 MB, installed with `berth vm install`.
 
 ## Install
 
