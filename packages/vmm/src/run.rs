@@ -12,6 +12,9 @@
 //   <run-dir>/rpc-<i>.sock   vsock 5000+i: app i's RPC (line JSON)
 //   <run-dir>/egress.sock    vsock 1026, guest connects out: the egress dialer
 //                            (only with --egress-allow; egress.rs)
+//   <run-dir>/publish-<port>.sock
+//                            vsock 2000+i: guest TCP port <port> (--publish),
+//                            which berth-init relays to 127.0.0.1:<port>
 //   <run-dir>/console.log    the guest console (hvc0)
 //
 // Before the VM starts it prints one `endpoints` line on stderr with these
@@ -26,6 +29,9 @@ pub const GUEST_INIT: &str = "/sbin/berth-init";
 pub const CONTROL_PORT: u32 = 1024;
 pub const LOG_PORT: u32 = 1025;
 pub const RPC_PORT_BASE: u32 = 5000;
+/// berth-init's plan::PUBLISH_PORT_BASE and MAX_PUBLISHED.
+pub const PUBLISH_PORT_BASE: u32 = 2000;
+const MAX_PUBLISHED: usize = 8;
 /// berth-init's own limit (plan::MAX_APPS).
 const MAX_APPS: usize = 64;
 /// sockaddr_un.sun_path on macOS is 104 bytes, NUL included.
@@ -73,7 +79,11 @@ until the guest powers off ({\"op\":\"shutdown\"} on control.sock, or every app 
   --host-sandbox-probe PATH
                         after confining itself, try to read and write PATH and
                         report the result in the host_sandbox line (repeatable;
-                        a diagnostic, used by scripts/e2e.mjs)";
+                        a diagnostic, used by scripts/e2e.mjs)
+  --publish PORT        make guest TCP port PORT reachable from the host, as
+                        <run-dir>/publish-<PORT>.sock (repeatable, at most 8):
+                        berth-init relays each connection to 127.0.0.1:PORT in
+                        the guest. For a web view an app serves, e.g. ttyd";
 
 fn home() -> String {
     std::env::var("HOME").unwrap_or_else(|_| die("HOME is not set; pass --artifacts"))
@@ -114,6 +124,7 @@ pub fn opts(argv: &[String]) -> Opts {
     let mut egress_max: Option<usize> = None;
     let mut host_sandbox = cfg!(target_os = "macos");
     let mut probes: Vec<String> = vec![];
+    let mut publish: Vec<u16> = vec![];
     let mut args = argv.iter().cloned();
     while let Some(a) = args.next() {
         let mut val = || args.next().unwrap_or_else(|| die(&format!("{a} needs a value")));
@@ -134,6 +145,13 @@ pub fn opts(argv: &[String]) -> Opts {
             "--egress-max-conns" => egress_max = Some(val().parse().unwrap_or_else(|_| die("bad --egress-max-conns"))),
             "--no-host-sandbox" => host_sandbox = false,
             "--host-sandbox-probe" => probes.push(val()),
+            "--publish" => {
+                let p: u16 = val().parse().ok().filter(|p| *p > 0).unwrap_or_else(|| die("bad --publish: a TCP port"));
+                if publish.contains(&p) {
+                    die(&format!("--publish {p} twice"));
+                }
+                publish.push(p);
+            }
             "-h" | "--help" => {
                 println!("{RUN_USAGE}");
                 std::process::exit(0);
@@ -154,8 +172,11 @@ pub fn opts(argv: &[String]) -> Opts {
     if apps.len() > MAX_APPS {
         die(&format!("run: at most {MAX_APPS} apps"));
     }
-    if env.iter().any(|e| ["BERTH_VM_APPS=", "BERTH_STATE_DEV=", "BERTH_SECRETS_DEV="].iter().any(|k| e.starts_with(k))) {
-        die("run: BERTH_VM_APPS, BERTH_STATE_DEV and BERTH_SECRETS_DEV are set by run itself");
+    if env.iter().any(|e| ["BERTH_VM_APPS=", "BERTH_STATE_DEV=", "BERTH_SECRETS_DEV=", "BERTH_VM_PUBLISH="].iter().any(|k| e.starts_with(k))) {
+        die("run: BERTH_VM_APPS, BERTH_STATE_DEV, BERTH_SECRETS_DEV and BERTH_VM_PUBLISH are set by run itself");
+    }
+    if publish.len() > MAX_PUBLISHED {
+        die(&format!("run: at most {MAX_PUBLISHED} --publish ports"));
     }
 
     // The pinned artifacts.
@@ -217,11 +238,18 @@ pub fn opts(argv: &[String]) -> Opts {
     for (i, p) in rpc.iter().enumerate() {
         vsocks.push(Vsock { port: RPC_PORT_BASE + i as u32, path: p.clone(), listen: true });
     }
+    let published: Vec<(u16, String)> = publish.iter().map(|p| (*p, sock(format!("publish-{p}.sock")))).collect();
+    for (i, (_, path)) in published.iter().enumerate() {
+        vsocks.push(Vsock { port: PUBLISH_PORT_BASE + i as u32, path: path.clone(), listen: true });
+    }
     let console = (!console_stderr).then(|| run_dir.join("console.log").display().to_string());
     // The dialer itself is started (and vsock 1026 mapped) by main, from this.
     let egress = (!egress_allow.is_empty()).then(|| crate::egress_config(&egress_allow, sock("egress.sock".into()).into(), egress_max));
 
     let mut guest_env = vec![format!("BERTH_VM_APPS={}", tags.join(","))];
+    if !publish.is_empty() {
+        guest_env.push(format!("BERTH_VM_PUBLISH={}", publish.iter().map(u16::to_string).collect::<Vec<_>>().join(",")));
+    }
     guest_env.extend(env);
     crate::check_guest_env(&guest_env);
 
@@ -232,7 +260,7 @@ pub fn opts(argv: &[String]) -> Opts {
         .map(|(i, tag)| format!("{{\"index\":{i},\"tag\":{},\"app\":{},\"port\":{},\"socket\":{}}}", j(tag), j(&shares[i].path), RPC_PORT_BASE + i as u32, j(&rpc[i])))
         .collect();
     eprintln!(
-        "{{\"source\":\"berth-vmm\",\"event\":\"endpoints\",\"runDir\":{},\"control\":{},\"logs\":{},\"rpc\":[{}],\"console\":{},\"egress\":{}}}",
+        "{{\"source\":\"berth-vmm\",\"event\":\"endpoints\",\"runDir\":{},\"control\":{},\"logs\":{},\"rpc\":[{}],\"console\":{},\"egress\":{},\"published\":[{}]}}",
         j(&run_dir.display().to_string()),
         j(&control),
         j(&logs),
@@ -243,7 +271,8 @@ pub fn opts(argv: &[String]) -> Opts {
             crate::egress::EGRESS_PORT,
             j(&e.socket.display().to_string()),
             e.allow.iter().map(|p| j(&p.display())).collect::<Vec<_>>().join(",")
-        ))
+        )),
+        published.iter().map(|(p, path)| format!("{{\"port\":{p},\"socket\":{}}}", j(path))).collect::<Vec<_>>().join(",")
     );
 
     Opts {

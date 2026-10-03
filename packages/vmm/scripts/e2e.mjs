@@ -62,6 +62,8 @@ import { spawn, execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import net from "node:net";
+import http from "node:http";
+import { gunzipSync } from "node:zlib";
 import os from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -792,7 +794,14 @@ async function github() {
 
 async function terminal() {
   const results = [];
-  const b = await run("terminal", ["terminal"], { state: join(RUN, "terminal-state.img") });
+  // ttyd's credential, as the CLI sends it: on the secrets disk, to this app.
+  const credential = `berth:${Math.random().toString(36).slice(2)}`;
+  const secrets = join(RUN, "terminal-secrets.img");
+  const body = Buffer.from(`BERTHSEC1\n${JSON.stringify({ shared: {}, apps: { terminal: { BERTH_TERMINAL_CREDENTIAL: credential } } })}`);
+  const disk = Buffer.alloc(Math.ceil((body.length + 1) / 512) * 512);
+  body.copy(disk);
+  writeFileSync(secrets, disk, { mode: 0o600 });
+  const b = await run("terminal", ["terminal"], { state: join(RUN, "terminal-state.img"), extra: ["--secrets", secrets, "--publish", "7681"] });
   const s = await attach(b);
   const { r, result: first } = await rpcConnect(rpcPath(b, 0), (x) => x.call("run_command", { command: "echo hello; pwd; id -u; id -G" }, 30000));
   const lines = String(first?.output ?? "").split(/\r?\n/).map((l) => l.trim());
@@ -806,8 +815,35 @@ async function terminal() {
   await sleep(300);
   const back = await r.call("run_command", { command: "echo back" });
   const screen = await r.call("read_screen");
+  // ttyd, from the host side of the published socket.
+  const published = b.ep.published?.find((p) => p.port === 7681)?.socket;
+  const get = (auth) =>
+    new Promise((resolve) => {
+      // As a browser asks: ttyd serves its page gzipped.
+      // agent: false, a connection per request: ttyd closes after a 401, and
+      // a kept-alive one would be reused closed.
+      const req = http.request({ socketPath: published, agent: false, path: "/", headers: { host: "127.0.0.1", "accept-encoding": "gzip", ...(auth ? { authorization: `Basic ${Buffer.from(auth).toString("base64")}` } : {}) } }, (res) => {
+        const chunks = [];
+        res.on("data", (d) => chunks.push(d));
+        res.on("end", () => {
+          const raw = Buffer.concat(chunks);
+          const text = res.headers["content-encoding"] === "gzip" ? gunzipSync(raw).toString("utf8") : raw.toString("utf8");
+          resolve({ status: res.statusCode, text });
+        });
+      });
+      req.on("error", (e) => resolve({ status: -1, text: e.message }));
+      req.end();
+    });
+  let anon = { status: -1 };
+  for (let i = 0; i < 40 && anon.status === -1; i++) {
+    anon = await get(null);
+    if (anon.status === -1) await sleep(250);
+  }
+  const authed = await get(credential);
+  const wrong = await get("berth:wrong");
   const off = await shutdown(b, s);
   rmSync(join(RUN, "terminal-state.img"), { force: true });
+  rmSync(secrets, { force: true });
   check(results, lines.includes("hello") && lines.includes("/workspace") && lines.includes("10000"), `run_command: the shell runs in /workspace as the app's uid (${lines.filter(Boolean).slice(0, 4).join(" | ")})`);
   check(results, lines.some((l) => /(^| )5( |$)/.test(l)), "...in the tty group, for its pty");
   check(results, /Permission denied/.test(denied.output) && /rc=1/.test(denied.output), `a write outside what the app declared, from the shell, is refused by Landlock: ${denied.output.trim().split("\n").slice(-2).join(" | ")}`);
@@ -815,6 +851,10 @@ async function terminal() {
   check(results, /back/.test(back.output), "send_keys: C-c interrupted a running command, and the shell answers again");
   check(results, typeof screen?.text === "string" && /back/.test(screen.text), "read_screen shows the session");
   check(results, s.logs.some((l) => l.src === "terminal" && l.line.includes("ruleset=FullyEnforced")), "terminal: FullyEnforced");
+  check(results, typeof published === "string" && s.events.some((e) => e.event === "port_published" && e.port === 7681), `port 7681 published as ${published}`);
+  check(results, anon.status === 401 && wrong.status === 401, `ttyd through it refuses no credential (${anon.status}) and a wrong one (${wrong.status})`);
+  check(results, authed.status === 200 && /ttyd/i.test(authed.text), `and serves its page with the credential from the secrets disk (${authed.status}, ${authed.text.length} bytes)`);
+  check(results, !s.logs.some((l) => l.line.includes(credential.split(":")[1])), "the credential is in no log line");
   check(results, off.exit.code === 0, `clean shutdown (${off.ms} ms)`);
   return { results, first, denied };
 }

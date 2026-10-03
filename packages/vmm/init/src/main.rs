@@ -36,6 +36,7 @@ mod cgroup;
 mod egress;
 mod hub;
 mod plan;
+mod publish;
 mod relay;
 mod secrets;
 mod sha256;
@@ -86,6 +87,7 @@ struct Config {
     grace: Duration,
     context_bus_socket: String,
     test_hooks: bool,
+    publish: Vec<u16>,
 }
 
 impl Config {
@@ -102,6 +104,7 @@ impl Config {
             grace: Duration::from_millis(env("BERTH_VM_STOP_GRACE_MS").and_then(|v| v.parse().ok()).unwrap_or(3000)),
             context_bus_socket: env("BERTH_CONTEXT_BUS_SOCKET").unwrap_or_else(|| "/tmp/berth-context-bus.sock".into()),
             test_hooks: plan::flag(env("BERTH_VM_TEST_HOOKS").as_deref(), false),
+            publish: plan::parse_publish(env("BERTH_VM_PUBLISH").as_deref())?,
         })
     }
 }
@@ -611,6 +614,9 @@ fn boot(sup: &'static Supervisor, cfg: &Config) -> Result<(), String> {
         start_embeddings(sup, cfg);
     }
     phase("daemons", json!({}));
+
+    // --- Ports published to the host, listening before the apps that serve them. ---
+    publish::serve(&cfg.publish);
 
     // --- The apps. ---
     for (i, policy) in &compiled {

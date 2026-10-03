@@ -26,6 +26,27 @@ pub const MAX_APPS: usize = 64;
 pub const CONTROL_PORT: u32 = 1024;
 pub const LOG_PORT: u32 = 1025;
 pub const RPC_PORT_BASE: u32 = 5000;
+/// Guest TCP ports published to the host (publish.rs): vsock 2000 + i.
+pub const PUBLISH_PORT_BASE: u32 = 2000;
+pub const MAX_PUBLISHED: usize = 8;
+
+/// BERTH_VM_PUBLISH: the guest TCP ports berth-vmm run --publish maps to the
+/// host, comma separated, at most MAX_PUBLISHED, each once.
+pub fn parse_publish(v: Option<&str>) -> Result<Vec<u16>, String> {
+    let Some(v) = v.filter(|v| !v.is_empty()) else { return Ok(vec![]) };
+    let mut out = Vec::new();
+    for p in v.split(',') {
+        let port: u16 = p.trim().parse().ok().filter(|n| *n > 0).ok_or_else(|| format!("BERTH_VM_PUBLISH: {p:?} is not a port"))?;
+        if out.contains(&port) {
+            return Err(format!("BERTH_VM_PUBLISH: port {port} twice"));
+        }
+        out.push(port);
+    }
+    if out.len() > MAX_PUBLISHED {
+        return Err(format!("BERTH_VM_PUBLISH: at most {MAX_PUBLISHED} ports"));
+    }
+    Ok(out)
+}
 /// The one port where the guest connects out: the host's egress dialer
 /// (docs/design/microvm-egress.md). Below RPC_PORT_BASE, so no app index
 /// can ever reach it.
@@ -616,6 +637,17 @@ mod tests {
         assert!(is_fuse_mount(mounts, "/context"));
         assert!(!is_fuse_mount("tmpfs /context tmpfs rw 0 0\n", "/context"));
         assert!(!is_fuse_mount(mounts, "/workspace"));
+    }
+
+    #[test]
+    fn published_ports() {
+        assert_eq!(parse_publish(None), Ok(vec![]));
+        assert_eq!(parse_publish(Some("7681")), Ok(vec![7681]));
+        assert_eq!(parse_publish(Some("7681,6080")), Ok(vec![7681, 6080]));
+        assert!(parse_publish(Some("7681,7681")).unwrap_err().contains("twice"));
+        assert!(parse_publish(Some("0")).is_err());
+        assert!(parse_publish(Some("http")).is_err());
+        assert!(parse_publish(Some("1,2,3,4,5,6,7,8,9")).unwrap_err().contains("at most"));
     }
 
     #[test]
