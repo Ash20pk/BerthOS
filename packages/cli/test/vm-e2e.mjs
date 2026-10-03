@@ -16,6 +16,11 @@
 //   berth dev --runtime vm (python)       a runtime: python app: its exports answer, it may
 //                                         write where it declared and nowhere else, and a
 //                                         declared secret reaches it
+//   berth dev --runtime vm (/context)     a copy of apps/filesystem: a context file written,
+//                                         tagged and found by query, attributed by the kernel's
+//                                         identity (fs-e2e) though the app calls itself
+//                                         "filesystem"; after berth dev restarts, the file and
+//                                         its tag are still there (state disk)
 //   berth attest <run>                    ACTIVE, isolation microvm, and the shipped
 //                                         verifier accepts the record
 //
@@ -24,7 +29,7 @@
 // Nothing outside ~/.berth (or $BERTH_HOME) and a temp dir is written; the sandboxes are named
 // berth-dev-notes-e2e and stopped at the end.
 import { spawn, spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, appendFileSync, existsSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, appendFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -341,6 +346,63 @@ app = define_app(_setup)
   }
   d.kill("SIGINT");
   await new Promise((r) => (d.exitCode !== null ? r() : d.once("exit", r)));
+}
+
+// --- 3d. /context -------------------------------------------------------------------
+// semantic-fs in the guest (docs/design/microvm-semantic-fs.md), through the CLI.
+{
+  const ws = mkdtempSync(join(tmpdir(), "berth-vm-e2e-ctx-"));
+  const app = join(ws, "fs-e2e");
+  cpSync(join(repo, "apps", "filesystem", "src"), join(app, "src"), { recursive: true });
+  cpSync(join(repo, "apps", "filesystem", "package.json"), join(app, "package.json"));
+  writeFileSync(join(app, "berth.yml"), readFileSync(join(repo, "apps", "filesystem", "berth.yml"), "utf8").replace(/^name: filesystem$/m, "name: fs-e2e"));
+  const box = "berth-dev-fs-e2e";
+  run(["vm", "stop", box]);
+  // Its state disk too, so the first boot starts with an empty /context.
+  rmSync(join(process.env.BERTH_HOME ?? join(process.env.HOME, ".berth"), "vm", "state", "fs-e2e.img"), { force: true });
+  const boot = async () => {
+    let out = "";
+    const d = spawn(process.execPath, [berth, "dev", "--runtime", "vm"], { cwd: app, stdio: ["ignore", "pipe", "pipe"] });
+    d.stdout.on("data", (x) => (out += x));
+    d.stderr.on("data", (x) => (out += x));
+    const end = Date.now() + 60_000;
+    while (Date.now() < end && !/VM ready in \d+ ms/.test(out) && d.exitCode === null) await sleep(50);
+    return { d, up: /VM ready in \d+ ms/.test(out), out: () => out };
+  };
+  const stop = async (d) => {
+    d.kill("SIGINT");
+    await new Promise((r) => (d.exitCode !== null ? r() : d.once("exit", r)));
+  };
+  const call = (exp, input) => {
+    const r = run(["rpc", "fs-e2e", "--runtime", "vm", "--export", exp, "--input", JSON.stringify(input)]);
+    try {
+      if (r.status !== 0) return { error: r.stdout + r.stderr };
+      // An export with no output answers null.
+      return (r.stdout.trim() ? JSON.parse(r.stdout) : null) ?? {};
+    } catch {
+      return { error: r.stdout + r.stderr };
+    }
+  };
+  let b = await boot();
+  check("berth dev --runtime vm boots an app that declares /context", b.up, b.up ? "" : b.out().slice(-2000));
+  if (b.up) {
+    const w = call("write_context_file", { path: "plans/q4.md", content: "ship attestation in Q4" });
+    const t = call("tag_context_file", { path: "plans/q4.md", task: "release planning", relatedApps: ["notes"] });
+    const q = call("query_context", { text: "release planning" });
+    const hit = (q.results ?? []).find((x) => x.path === "plans/q4.md");
+    check("write_context_file and tag_context_file answer", !w.error && !t.error, JSON.stringify({ w, t }));
+    check("query_context finds it, written by fs-e2e: the kernel's name for the caller, not the one it claims", hit?.createdBy === "fs-e2e" && hit.task === "release planning", JSON.stringify(q));
+    await stop(b.d);
+    b = await boot();
+    const r = b.up ? call("read_context_file", { path: "plans/q4.md" }) : {};
+    const q2 = b.up ? call("query_context", { text: "release planning" }) : {};
+    check(
+      "after berth dev restarts, the context file and its tag are still there",
+      r.content === "ship attestation in Q4" && (q2.results ?? []).some((x) => x.path === "plans/q4.md" && x.task === "release planning"),
+      JSON.stringify({ r, q2 }) + (b.up ? "" : b.out().slice(-1000)),
+    );
+  }
+  await stop(b.d);
 }
 
 // --- 4. mcp ---------------------------------------------------------------------
