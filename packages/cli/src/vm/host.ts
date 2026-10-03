@@ -268,8 +268,9 @@ const featureCache = new Map<string, VmFeatures>();
 
 /**
  * What this berth-vmm can do beyond the base `run`: options from its own
- * `run --help`, and python3 when the rootfs manifest compiled into it pins
- * berth_sdk (sdk_python_sha256, feat/vm-python).
+ * `run --help`, python3 when the rootfs manifest compiled into it pins
+ * berth_sdk (sdk_python_sha256, feat/vm-python), and /context when it pins
+ * semantic-fs-daemon (semantic_fs_daemon_sha256, feat/vm-semantic-fs-init).
  */
 export function vmmFeatures(vmm: string, run = spawnSync, read: (path: string) => Buffer = readBytes): VmFeatures {
   const cached = featureCache.get(vmm);
@@ -277,10 +278,13 @@ export function vmmFeatures(vmm: string, run = spawnSync, read: (path: string) =
   const r = run(vmm, ["run", "--help"], { encoding: "utf8", timeout: 5_000 });
   const help = `${r.stdout ?? ""}${r.stderr ?? ""}`;
   let python = false;
+  let semanticFs = false;
   try {
-    python = /^[0-9a-f]{64}$/.test(manifestsInBinary(read(vmm)).rootfs?.sdk_python_sha256 ?? "");
+    const rootfs = manifestsInBinary(read(vmm)).rootfs;
+    python = /^[0-9a-f]{64}$/.test(rootfs?.sdk_python_sha256 ?? "");
+    semanticFs = /^[0-9a-f]{64}$/.test(rootfs?.semantic_fs_daemon_sha256 ?? "");
   } catch {}
-  const features = { egress: help.includes("--egress-allow"), secrets: help.includes("--secrets"), python };
+  const features = { egress: help.includes("--egress-allow"), secrets: help.includes("--secrets"), python, semanticFs };
   featureCache.set(vmm, features);
   return features;
 }

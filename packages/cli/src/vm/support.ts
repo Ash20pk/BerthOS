@@ -7,7 +7,8 @@ import type { BerthManifest } from "@berthos/manifest-schema";
  * into a sandbox where the first call that needs it fails.
  *
  * Update this list as the guest gains each part (the egress broker is on
- * feat/vm-egress, the secrets disk on feat/vm-secrets, python3 on feat/vm-python).
+ * feat/vm-egress, the secrets disk on feat/vm-secrets, python3 on feat/vm-python,
+ * semantic-fs on feat/vm-semantic-fs-init).
  */
 export interface VmFeatures {
   /** berth-vmm has the host egress dialer (`run --egress-allow`, feat/vm-egress). */
@@ -19,9 +20,16 @@ export interface VmFeatures {
   secrets: boolean;
   /** berth-vmm's pinned rootfs has python3 and berth_sdk (feat/vm-python). */
   python: boolean;
+  /**
+   * berth-vmm's pinned rootfs has semantic-fs-daemon, which berth-init starts
+   * to serve /context (feat/vm-semantic-fs-init).
+   */
+  semanticFs: boolean;
 }
 
-export function vmUnsupported(manifest: BerthManifest, features: VmFeatures = { egress: false, secrets: false, python: false }): string[] {
+const NO_FEATURES: VmFeatures = { egress: false, secrets: false, python: false, semanticFs: false };
+
+export function vmUnsupported(manifest: BerthManifest, features: VmFeatures = NO_FEATURES): string[] {
   const reasons: string[] = [];
   const m = manifest as BerthManifest & { runtime?: string; secrets?: string[] };
   if (m.runtime === "python" && !features.python) reasons.push("runtime: python (this berth-vmm's image has no python3 or berth_sdk; update it with `berth vm install`)");
@@ -41,7 +49,9 @@ export function vmUnsupported(manifest: BerthManifest, features: VmFeatures = { 
     }
     else if (ns === "browser") reasons.push(`${cap} (no browser or display in the VM image)`);
     else if (ns === "terminal") reasons.push(`${cap} (no terminal service in the VM)`);
-    else if (ns === "filesystem" && (scope === "/context" || scope.startsWith("/context/"))) reasons.push(`${cap} (no semantic-fs in the VM, so no /context)`);
+    else if (ns === "filesystem" && (scope === "/context" || scope.startsWith("/context/")) && !features.semanticFs) {
+      reasons.push(`${cap} (this berth-vmm's image has no semantic-fs, so no /context; update it with \`berth vm install\`)`);
+    }
     else if (ns !== "filesystem") reasons.push(`${cap} (a ${ns}:${action} capability is served through the egress broker or a host service, which the VM doesn't have yet)`);
   }
   return reasons;
