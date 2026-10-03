@@ -3,12 +3,13 @@ import type { BerthManifest } from "@berthos/manifest-schema";
 import { artifactsPresent, installArtifacts } from "./artifacts.js";
 import { bundleApp, type BundledApp } from "./bundle.js";
 import { readConfigFile, resolveArtifactsDir, resolveArtifactsUrl } from "./config.js";
-import { activePins, checkHost, vmmFeatures } from "./host.js";
+import { activePins, checkHost, vmmFeatures, vmmLayerPins } from "./host.js";
+import { releasePair } from "./artifacts.js";
 import { vmHome, vmStateDisk } from "./paths.js";
 import { VmSandbox, type StartTimings } from "./sandbox.js";
 import type { ReadyResult } from "./control.js";
 import type { GuestLogLine } from "./guest-lines.js";
-import { dialerAllowList, egressAllowList, vmUnsupported, vmUnsupportedMessage } from "./support.js";
+import { dialerAllowList, egressAllowList, layersFor, vmUnsupported, vmUnsupportedMessage } from "./support.js";
 import { vmSecrets, type VmSecrets } from "./secrets.js";
 
 /**
@@ -52,6 +53,35 @@ export async function ensureArtifacts(log: (message: string) => void, vmm: strin
     for (const r of results) log(`  ${r.kind}: ${r.source} ${r.sha256.slice(0, 12)}… in ${r.ms} ms`);
   } catch (err) {
     throw new VmHostError(`${err instanceof Error ? err.message : String(err)}\nInstall them with \`berth vm install --from <dir>\` (a packages/vmm build's artifacts directory).`);
+  }
+}
+
+/**
+ * Installs the optional layers `names` this berth-vmm pins, when they aren't
+ * yet: downloaded once, from the same release as the kernel and rootfs, and
+ * checked like them. Says what and how big first; the browser is hundreds of MB.
+ */
+export async function ensureLayers(names: string[], vmm: string, log: (message: string) => void, needer = "this sandbox"): Promise<void> {
+  const pins = vmmLayerPins(vmm);
+  for (const name of names) {
+    const pin = pins[name];
+    if (!pin) throw new VmHostError(`this berth-vmm pins no ${name} layer; update it with \`berth vm install\``);
+    if (artifactsPresent(undefined, [pin])) continue;
+    const config = readConfigFile();
+    const from = resolveArtifactsDir(undefined, process.env, config);
+    log(`the ${name} layer (${Math.round(pin.size / 1048576)} MB) is needed by ${needer}; installing it once into ${vmHome()}...`);
+    try {
+      const [r] = await installArtifacts({
+        ...(from && existsSync(from) ? { from } : {}),
+        urlTemplate: resolveArtifactsUrl(undefined, process.env, config),
+        release: releasePair(activePins(vmm)),
+        pins: [pin],
+        log,
+      });
+      log(`  layer ${name}: ${r!.source} ${r!.sha256.slice(0, 12)}… in ${r!.ms} ms`);
+    } catch (err) {
+      throw new VmHostError(`${err instanceof Error ? err.message : String(err)}\nInstall it with \`berth vm install --layer ${name}\`.`);
+    }
   }
 }
 
@@ -125,7 +155,9 @@ export async function bootVm(options: BootVmOptions): Promise<{ sandbox: VmSandb
     secrets.perApp[term.name] = { ...(secrets.perApp[term.name] ?? {}), BERTH_TERMINAL_CREDENTIAL: options.terminalCredential! };
   }
   const egress = egressArgs(options.apps.map((a) => a.manifest), options.vmm);
-  const extraArgs = [...(egress.extraArgs ?? []), ...(publishTerminal ? ["--publish", String(TERMINAL_PORT)] : [])];
+  const layers = layersFor(options.apps.map((a) => a.manifest));
+  await ensureLayers(layers, options.vmm, options.log, options.apps.filter((a) => layersFor([a.manifest]).length > 0).map((a) => a.name).join(", "));
+  const extraArgs = [...(egress.extraArgs ?? []), ...(publishTerminal ? ["--publish", String(TERMINAL_PORT)] : []), ...layers.flatMap((l) => ["--layer", l])];
   const { sandbox, ready, timings } = await VmSandbox.start({
     name: options.name,
     vmm: options.vmm,
@@ -151,6 +183,9 @@ export async function bootVm(options: BootVmOptions): Promise<{ sandbox: VmSandb
  * berth-init's daemon reserve leaves too little for it and the app together.
  */
 export function vmMemMiB(manifests: BerthManifest[]): number | undefined {
+  // Chromium, Xvfb and the app together: the container path's experience is
+  // that less than 2 GiB stalls renderers.
+  if (layersFor(manifests).includes("browser")) return 2048;
   const context = manifests.some((m) => m.capabilities.some((c) => /^filesystem:(read|write):\/context(\/|$)/.test(c)));
   return context && manifests.length === 1 ? 768 : undefined;
 }

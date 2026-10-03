@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { BerthManifest } from "@berthos/manifest-schema";
-import { dialerAllowList, egressAllowList, vmUnsupported } from "./support.js";
+import { dialerAllowList, egressAllowList, layersFor, vmUnsupported } from "./support.js";
 
 const m = (extra: Partial<BerthManifest> & Record<string, unknown>) => ({ name: "a", version: "1", capabilities: [], exports: [], ...extra }) as unknown as BerthManifest;
 
@@ -61,11 +61,18 @@ test("browser:navigate is an egress host pattern in the VM; the rest of browser:
   const f = { egress: true, secrets: true, python: true, semanticFs: true };
   assert.deepEqual(vmUnsupported(m({ capabilities: ["browser:navigate:*.github.com"] }), f), []);
   assert.equal(vmUnsupported(m({ capabilities: ["browser:navigate:*.github.com"] })).length, 1, "not without the egress dialer");
-  assert.match(vmUnsupported(m({ capabilities: ["browser:screenshot:*"] }), f).join(), /no browser or display/);
+  assert.match(vmUnsupported(m({ capabilities: ["browser:screenshot:*"] }), f).join(), /no browser layer/);
+  assert.deepEqual(vmUnsupported(m({ capabilities: ["browser:screenshot:*"] }), { ...f, layers: ["browser"] }), []);
 });
 
 test("a terminal:* app runs with a berth-vmm whose image has tmux", () => {
   const app = m({ capabilities: ["filesystem:write:/workspace", "terminal:attach:*"] });
   assert.match(vmUnsupported(app).join(), /no tmux.*berth vm install/);
   assert.deepEqual(vmUnsupported(app, { egress: false, secrets: false, python: false, semanticFs: false, terminal: true }), []);
+});
+
+test("the browser layer is for browser: capabilities other than navigate", () => {
+  assert.deepEqual(layersFor([m({ capabilities: ["browser:navigate:*", "browser:screenshot:*"] })]), ["browser"]);
+  assert.deepEqual(layersFor([m({ capabilities: ["browser:navigate:*.github.com", "github:read:repos"] })]), []);
+  assert.deepEqual(layersFor([m({ capabilities: ["filesystem:write:/workspace"] })]), []);
 });

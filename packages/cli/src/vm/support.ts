@@ -24,6 +24,8 @@ export interface VmFeatures {
   terminal?: boolean;
   /** berth-vmm takes `run --publish PORT` (feat/vm-ttyd): a guest port reachable from the host. */
   publish?: boolean;
+  /** The optional layers this berth-vmm can attach (`run --layer`, feat/vm-layers). */
+  layers?: string[];
   /**
    * berth-vmm's pinned rootfs has the GitHub API broker and openssl, which
    * berth-init starts for a github:* app (feat/vm-github-broker).
@@ -59,7 +61,8 @@ export function vmUnsupported(manifest: BerthManifest, features: VmFeatures = NO
     // A navigate scope is a host pattern the egress broker enforces (docs/local-vm.md,
     // "Network"); what needs Chromium and a display is everything else under browser:.
     else if (ns === "browser" && action === "navigate" && features.egress) continue;
-    else if (ns === "browser") reasons.push(`${cap} (no browser or display in the VM image)`);
+    else if (ns === "browser" && features.layers?.includes("browser")) continue;
+    else if (ns === "browser") reasons.push(`${cap} (this berth-vmm has no browser layer; update it with \`berth vm install\`)`);
     else if (ns === "terminal" && features.terminal) continue;
     else if (ns === "terminal") reasons.push(`${cap} (this berth-vmm's image has no tmux; update it with \`berth vm install\`)`);
     else if (ns === "filesystem" && (scope === "/context" || scope.startsWith("/context/")) && !features.semanticFs) {
@@ -76,6 +79,16 @@ export function vmUnsupported(manifest: BerthManifest, features: VmFeatures = NO
     else if (ns !== "filesystem") reasons.push(`${cap} (a ${ns}:${action} capability is served through the egress broker or a host service, which the VM doesn't have yet)`);
   }
   return reasons;
+}
+
+/**
+ * The optional layers a set of apps needs (docs/design/microvm-layers.md): the
+ * browser for any browser: capability but navigate, which is only a host
+ * pattern for the egress broker.
+ */
+export function layersFor(manifests: BerthManifest[]): string[] {
+  const browser = manifests.some((m) => m.capabilities.some((c) => c.startsWith("browser:") && !c.startsWith("browser:navigate:")));
+  return browser ? ["browser"] : [];
 }
 
 export function vmUnsupportedMessage(name: string, reasons: string[]): string {

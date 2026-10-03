@@ -7,7 +7,7 @@
  * and `berth doctor` checks that the berth-vmm binary it finds carries them.
  */
 export interface ArtifactPin {
-  kind: "kernel" | "rootfs" | "vmm";
+  kind: "kernel" | "rootfs" | "vmm" | "layer";
   sha256: string;
   size: number;
   /** The file name inside the artifacts directory. */
@@ -26,8 +26,8 @@ export const KERNEL_SHA256 = "8f79e8dae97ebc0ab8fcdc4ad209bb025ec967be82c713503e
 export const KERNEL_SIZE = 23668744;
 export const KERNEL_LINUX = "6.12.109";
 export const KERNEL_CONFIG_SHA256 = "e3f33c2bd4bffa16e52a066c325967e4bde091f20063e6eb5b81e8a2efac4dc8";
-export const ROOTFS_SHA256 = "15a8892b56260aa983a4cc8792260180e7618cc84c68f7cf98aff072c971f541";
-export const ROOTFS_SIZE = 109654016;
+export const ROOTFS_SHA256 = "a227182870e83ea74978dc2fecaad15a27cc37e5617f53ffb5f62597c0b30f05";
+export const ROOTFS_SIZE = 109662208;
 /** The libkrun berth-vmm is built against (packages/vmm/src/main.rs declares its API at this version). */
 export const LIBKRUN_VERSION = "1.19.6";
 
@@ -38,6 +38,30 @@ export function kernelPin(sha256: string, size: number): ArtifactPin {
 export function rootfsPin(sha256: string, size: number): ArtifactPin {
   const file = `rootfs-${sha256}.erofs`;
   return { kind: "rootfs", sha256, size, file, relPath: `rootfs/${file}`, asset: file };
+}
+
+/**
+ * An optional layer (docs/design/microvm-layers.md): `layer-<name>-<sha256>.erofs`
+ * under layers/, the same name as a release asset. `base` is the rootfs it was
+ * built for; berth-vmm attaches it on no other.
+ */
+export function layerPin(name: string, sha256: string, size: number, base: string): ArtifactPin & { name: string; base: string } {
+  const file = `layer-${name}-${sha256}.erofs`;
+  return { kind: "layer", name, base, sha256, size, file, relPath: `layers/${file}`, asset: file };
+}
+
+/** The layers a rootfs manifest pins (layer_<name>_sha256 / _size / _base). */
+export function layerPinsFromManifest(m: Record<string, string> | undefined): Record<string, ArtifactPin & { name: string; base: string }> {
+  const out: Record<string, ArtifactPin & { name: string; base: string }> = {};
+  for (const key of Object.keys(m ?? {})) {
+    const name = /^layer_([a-z]+)_sha256$/.exec(key)?.[1];
+    if (!name) continue;
+    const sha = m![key]!;
+    const base = m![`layer_${name}_base`] ?? "";
+    const size = Number(m![`layer_${name}_size`]);
+    if (/^[0-9a-f]{64}$/.test(sha) && /^[0-9a-f]{64}$/.test(base) && Number.isInteger(size)) out[name] = layerPin(name, sha, size, base);
+  }
+  return out;
 }
 
 export const KERNEL_PIN: ArtifactPin = kernelPin(KERNEL_SHA256, KERNEL_SIZE);

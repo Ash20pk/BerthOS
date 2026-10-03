@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_ARTIFACTS_URL } from "./config.js";
-import { KERNEL_CONFIG_SHA256, KERNEL_LINUX, KERNEL_SHA256, KERNEL_SIZE, ROOTFS_SHA256, ROOTFS_SIZE, VMM_PINS, manifestsInBinary, pinsFromManifests } from "./pins.js";
+import { layerPinsFromManifest, KERNEL_CONFIG_SHA256, KERNEL_LINUX, KERNEL_SHA256, KERNEL_SIZE, ROOTFS_SHA256, ROOTFS_SIZE, VMM_PINS, manifestsInBinary, pinsFromManifests } from "./pins.js";
 
 const vmm = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "vmm");
 const get = (manifest: string, key: string) => manifest.split("\n").map((l) => l.split("=")).find(([k]) => k!.trim() === key)?.[1]?.trim().replace(/^"|"$/g, "");
@@ -20,6 +20,9 @@ test("the CLI's pins are the ones berth-vmm compiles in (packages/vmm manifests)
   assert.equal(Number(get(rootfs, "image_size")), ROOTFS_SIZE);
   // The kernel manifest's dist_url is the CLI's default template, for the kernel.
   assert.equal(get(kernel, "dist_url"), DEFAULT_ARTIFACTS_URL.replace("{asset}", "Image-{image_sha256}"));
+  // Every layer is pinned in full, and for this base.
+  const layers = layerPinsFromManifest(Object.fromEntries(rootfs.split("\n").map((l) => l.split("=")).filter((kv) => kv.length === 2).map(([k, v]) => [k!.trim(), v!.trim().replace(/^"|"$/g, "")])));
+  for (const l of Object.values(layers)) assert.equal(l.base, ROOTFS_SHA256, `layer ${l.name} was built for this rootfs`);
   // A pinned berth-vmm was built for this pair (the release it is published in).
   for (const p of Object.values(VMM_PINS)) assert.match(p!.sha256, /^[0-9a-f]{64}$/);
 });
