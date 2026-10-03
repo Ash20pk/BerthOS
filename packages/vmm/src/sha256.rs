@@ -248,6 +248,43 @@ mod portable {
 
 pub use imp::Hasher;
 
+/// A directory tree's digest: the sha256 of its `<sha256>  <relative path>`
+/// lines, one per regular file, sorted by path (the form the rootfs manifest's
+/// sdk_python_sha256 uses). A symlink is a line too, `-> <target>` in place of
+/// the hash, so retargeting one changes the digest; anything else (sockets,
+/// devices) is refused. Returns (digest, files, bytes).
+pub fn tree(dir: &str) -> io::Result<([u8; 32], u64, u64)> {
+    fn walk(root: &std::path::Path, dir: &std::path::Path, out: &mut Vec<(String, String)>, bytes: &mut u64) -> io::Result<()> {
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            let rel = path.strip_prefix(root).map_err(|e| io::Error::other(e.to_string()))?.to_string_lossy().into_owned();
+            let ty = entry.file_type()?;
+            if ty.is_symlink() {
+                out.push((rel, format!("-> {}", std::fs::read_link(&path)?.to_string_lossy())));
+            } else if ty.is_dir() {
+                walk(root, &path, out, bytes)?;
+            } else if ty.is_file() {
+                *bytes += entry.metadata()?.len();
+                out.push((rel, hex(&file(&path.to_string_lossy())?)));
+            } else {
+                return Err(io::Error::other(format!("{rel} is not a file, directory or symlink")));
+            }
+        }
+        Ok(())
+    }
+    let root = std::path::Path::new(dir);
+    let mut lines = Vec::new();
+    let mut bytes = 0;
+    walk(root, root, &mut lines, &mut bytes)?;
+    lines.sort();
+    let mut h = Hasher::new();
+    for (rel, sum) in &lines {
+        h.update(format!("{sum}  {rel}\n").as_bytes());
+    }
+    Ok((h.finish(), lines.len() as u64, bytes))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -260,6 +297,29 @@ mod tests {
             "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1",
         ),
     ];
+
+    #[test]
+    fn tree_digest_follows_names_and_contents() {
+        let base = std::env::temp_dir().join(format!("berth-tree-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("dist")).unwrap();
+        std::fs::write(base.join("berth.yml"), "name: a\n").unwrap();
+        std::fs::write(base.join("dist/index.mjs"), "x").unwrap();
+        let d = |p: &std::path::Path| tree(&p.to_string_lossy()).unwrap();
+        let (a, files, bytes) = d(&base);
+        assert_eq!((files, bytes), (2, 9));
+        // The same as hashing the listing by hand.
+        let mut h = Hasher::new();
+        h.update(format!("{}  berth.yml\n{}  dist/index.mjs\n", hex(&file(&base.join("berth.yml").to_string_lossy()).unwrap()), hex(&file(&base.join("dist/index.mjs").to_string_lossy()).unwrap())).as_bytes());
+        assert_eq!(a, h.finish());
+        std::fs::write(base.join("dist/index.mjs"), "y").unwrap();
+        assert_ne!(d(&base).0, a, "a changed file changes the digest");
+        std::fs::write(base.join("dist/index.mjs"), "x").unwrap();
+        assert_eq!(d(&base).0, a);
+        std::fs::rename(base.join("dist/index.mjs"), base.join("dist/other.mjs")).unwrap();
+        assert_ne!(d(&base).0, a, "a renamed file changes it");
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
     #[test]
     fn known_vectors_both_impls() {

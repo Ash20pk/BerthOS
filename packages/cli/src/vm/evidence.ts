@@ -1,4 +1,4 @@
-import type { BootIsolation, DoctorProbeResult, RulesetReport } from "@berthos/audit";
+import type { BootIsolation, DoctorProbeResult, PolicyDigest, RulesetReport } from "@berthos/audit";
 import type { BootEvidence, ResourceLimitsEvidence } from "@berthos/docker-orchestrator";
 import { parseObject, type ControlEvent, type GuestLogLine } from "./guest-lines.js";
 import type { VmRecord } from "./sandbox.js";
@@ -26,9 +26,12 @@ import type { VmRecord } from "./sandbox.js";
  *    "unknown" for an unpinned kernel. It says so in its reason; it is not a
  *    behavioural probe run at this boot (the vmm e2e's enforce suite is, for
  *    this kernel).
- *  - policies: empty. The policy file is compiled inside the guest, at
- *    /run/berth/policy, and berth-init does not report its sha256 yet; the
- *    record says so through an empty list rather than a host-side recompile.
+ *  - policies: berth-init's policy_digest events, one per app: the sha256 of
+ *    the policy file it compiled at /run/berth/policy, over the bytes
+ *    agent-init reads. An older berth-init reports none, and the list is
+ *    empty rather than filled by a host-side recompile.
+ *  - isolation.apps: each app share's tree digest from berth-vmm's
+ *    measurement line, i.e. the code /app held at boot.
  *  - imageDigest: the rootfs's sha256, the VM's equivalent of an image.
  */
 
@@ -102,6 +105,7 @@ export function vmIsolation(record: VmRecord, platform: NodeJS.Platform = proces
     | undefined;
   const k = m?.kernel;
   const r = m?.rootfs;
+  const apps = Array.isArray((m as { apps?: unknown } | undefined)?.apps) ? ((m as { apps: Record<string, unknown>[] }).apps) : [];
   if (!k || !r || typeof k.sha256 !== "string" || typeof r.sha256 !== "string") return undefined;
   const c = (record.vmConfig ?? {}) as Record<string, unknown>;
   const h = record.hostSandbox;
@@ -130,6 +134,14 @@ export function vmIsolation(record: VmRecord, platform: NodeJS.Platform = proces
     ...(h && typeof h.applied === "boolean"
       ? { hostSandbox: { kind: str(h.kind) ?? null, applied: h.applied, ...(str(h.reason) ? { reason: str(h.reason) } : {}) } }
       : {}),
+    // A berth-vmm that predates app measurement reports none, and none are claimed.
+    ...(apps.some((a) => typeof a.treeSha256 === "string")
+      ? {
+          apps: apps
+            .filter((a) => typeof a.treeSha256 === "string" && HEX64.test(a.treeSha256 as string))
+            .map((a) => ({ tag: str(a.tag) ?? "", treeSha256: a.treeSha256 as string, files: typeof a.files === "number" ? a.files : 0, bytes: typeof a.bytes === "number" ? a.bytes : 0 })),
+        }
+      : {}),
   };
 }
 
@@ -148,6 +160,22 @@ export function vmDoctorProbe(isolation: BootIsolation | undefined, events: Cont
   };
 }
 
+const HEX64 = /^[0-9a-f]{64}$/;
+
+/** berth-init's policy_digest events, first per app, for the apps this sandbox runs. */
+export function vmPolicyDigests(events: ControlEvent[], apps: string[]): PolicyDigest[] {
+  const out: PolicyDigest[] = [];
+  for (const e of events) {
+    const app = str(e.app);
+    const path = str(e.path);
+    const sha256 = str(e.sha256);
+    if (e.event !== "policy_digest" || !app || !path || !sha256 || !HEX64.test(sha256)) continue;
+    if (!apps.includes(app) || out.some((p) => p.app === app)) continue;
+    out.push({ app, path, sha256 });
+  }
+  return out;
+}
+
 export function vmBootEvidence(input: VmEvidenceInput): BootEvidence {
   const { record, bootId } = input;
   const lines = input.logLines.length > 0 ? input.logLines : consoleLines(input.consoleText ?? "");
@@ -160,7 +188,7 @@ export function vmBootEvidence(input: VmEvidenceInput): BootEvidence {
     imageDigest: rootfs ? `sha256:${rootfs}` : "unknown",
     runtime: "berth-vmm",
     rulesetReports: vmRulesetReports(lines, bootId),
-    policies: [],
+    policies: vmPolicyDigests(input.controlEvents, record.apps.map((a) => a.name)),
     doctorProbe: vmDoctorProbe(isolation, input.controlEvents),
     resourceLimits: vmResourceLimits(input.controlEvents),
     ...(isolation ? { isolation } : {}),
