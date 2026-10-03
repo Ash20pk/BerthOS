@@ -38,6 +38,7 @@ mod hub;
 mod plan;
 mod relay;
 mod secrets;
+mod sha256;
 mod sys;
 
 use cgroup::Cgroups;
@@ -572,9 +573,16 @@ fn boot(sup: &'static Supervisor, cfg: &Config) -> Result<(), String> {
         }
     }
     // secure_capability_policy: readable by the app, never writable by it.
-    for (i, _) in &compiled {
+    // Then its digest, over the bytes agent-init will read (the container
+    // path's POLICY_DIGEST_SCRIPT, done here because only berth-init sees
+    // the file): what `berth attest` records under policies.
+    for (i, p) in &compiled {
         let path = policy_path(&cfg.apps[*i]);
         let _ = sys::chown(&path, 0, cfg.apps[*i].uid).and_then(|_| sys::chmod(&path, 0o640));
+        match std::fs::read(&path) {
+            Ok(bytes) => hub::event("policy_digest", json!({ "app": p.app_name, "path": path, "sha256": sha256::of(&bytes) })),
+            Err(e) => hub::info(&format!("WARNING: could not read {path} to hash it: {e}")),
+        }
     }
     phase("identities", json!({}));
 

@@ -55,7 +55,8 @@
 // ROUNDS (bench, default 6: the first round is a warm-up), SPIKE_ART (the
 // spike's artifacts, for the bench control), VERBOSE=1.
 import { spawn, execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import net from "node:net";
 import os from "node:os";
 import { dirname, join } from "node:path";
@@ -277,6 +278,20 @@ function check(results, cond, what) {
 }
 
 const hex64 = (s) => typeof s === "string" && /^[0-9a-f]{64}$/.test(s);
+/** sha256 of a share's sorted "<sha256>  <path>" lines: berth-vmm's tree digest, computed independently. */
+function treeDigest(dir) {
+  const lines = [];
+  const walk = (d, rel) => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const r = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory()) walk(join(d, e.name), r);
+      else if (e.isFile()) lines.push([r, createHash("sha256").update(readFileSync(join(d, e.name))).digest("hex")]);
+    }
+  };
+  walk(dir, "");
+  lines.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  return createHash("sha256").update(lines.map(([r, h]) => `${h}  ${r}\n`).join("")).digest("hex");
+}
 const rpcPath = (b, i) => b.ep.rpc[i].socket;
 
 async function single() {
@@ -359,6 +374,10 @@ async function multi() {
   check(results, ["notes", "filesystem", "probe"].every((a) => s.logs.some((l) => l.src === "context-bus" && l.line.includes(`registered as "${a}"`))), "the daemon registered each app by its berth-<app> peer identity");
   check(results, off.exit.code === 0, `clean shutdown (${off.ms} ms)`);
   check(results, notes.bad.length + fs.bad.length + probe.bad.length === 0, "RPC streams clean");
+  const measured = b.vmm.measurements?.apps ?? [];
+  check(results, apps.every((a) => measured.find((m) => m.path?.endsWith(`/${a}`))?.treeSha256 === treeDigest(join(APPS, a))), `berth-vmm measured each app share, matching an independent hash (${measured.map((m) => `${m.tag} ${m.treeSha256?.slice(0, 12)}, ${m.files} files`).join("; ")})`);
+  const digests = s.events.filter((e) => e.event === "policy_digest");
+  check(results, apps.every((a) => digests.some((d) => d.app === a && hex64(d.sha256) && d.path === `/run/berth/policy/${a}.json`)), `berth-init reported each compiled policy's sha256 (${digests.map((d) => `${d.app} ${d.sha256?.slice(0, 12)}`).join(", ")})`);
   return { results, status: st, inspect: insp };
 }
 

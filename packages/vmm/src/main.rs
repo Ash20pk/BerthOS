@@ -622,8 +622,28 @@ fn main() {
                 s.hashed_bytes
             )
         });
+        // Each read-only share: what /app (or /app/<tag>) held when it booted.
+        // A virtio-fs share stays live (berth dev reloads by rebooting on a new
+        // bundle), so this is the code at boot, not a seal.
+        let apps_json: Vec<String> = o
+            .shares
+            .iter()
+            .filter(|s| s.read_only)
+            .map(|s| {
+                let t = std::time::Instant::now();
+                let (d, files, bytes) = sha256::tree(&s.path).unwrap_or_else(|e| die(&format!("cannot measure app share {}: {e}", s.path)));
+                format!(
+                    "{{\"tag\":{},\"path\":{},\"treeSha256\":{},\"files\":{files},\"bytes\":{bytes},\"hashMs\":{}}}",
+                    json_str(&s.tag),
+                    json_str(&s.path),
+                    json_str(&sha256::hex(&d)),
+                    t.elapsed().as_millis()
+                )
+            })
+            .collect();
         eprintln!(
-            "{{\"source\":\"berth-vmm\",\"event\":\"measurements\",\"kernel\":{kernel_json},\"rootfs\":{rootfs_json},\"state\":{state_json}}}"
+            "{{\"source\":\"berth-vmm\",\"event\":\"measurements\",\"kernel\":{kernel_json},\"rootfs\":{rootfs_json},\"state\":{state_json},\"apps\":[{}]}}",
+            apps_json.join(",")
         );
 
         // Only returns on a configuration error.
