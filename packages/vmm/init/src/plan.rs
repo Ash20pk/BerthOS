@@ -119,6 +119,21 @@ pub const CONTEXT_MOUNT: &str = "/context";
 /// apps on (group berth, 0660). The directory is /run/berth/<its policy's
 /// appName>, the one place under /run/berth agent-init lets a policy write.
 pub const EMBED_UID: u32 = 9004;
+
+/// The display stack for a browser:* app with the browser layer: Xvfb, x11vnc
+/// and websockify/noVNC as `berth-display` (entrypoint.sh's set, as root
+/// there), the X display apps draw into, and the ports x11vnc and noVNC bind.
+pub const DISPLAY_UID: u32 = 9005;
+pub const DISPLAY_DIR: &str = "/run/berth/display-daemon";
+pub const DISPLAY: &str = ":99";
+pub const VNC_PORT: u16 = 5900;
+pub const NOVNC_PORT: u16 = 6080;
+pub const CHROME_BIN: &str = "/usr/bin/chromium-browser";
+
+/// Whether a policy needs a display: any browser: capability but navigate.
+pub fn declares_display(policy: &Policy) -> bool {
+    policy.declared.iter().any(|c| c.starts_with("browser:") && !c.starts_with("browser:navigate:"))
+}
 pub const EMBED_DIR: &str = "/run/berth/embeddings-daemon";
 pub const EMBED_SOCKET: &str = "/run/berth/embeddings-daemon/embed.sock";
 
@@ -493,13 +508,16 @@ pub fn invoke_grants(apps: &[(String, u32, &Policy)]) -> (Vec<InvokeGrant>, Vec<
 /// adduser cannot run. Users join `berth` (9999) and, for terminal:* apps,
 /// `tty` (5); if the image already has a group with that gid its member list
 /// is extended, otherwise the group is added.
-pub fn identity_files(passwd: &str, group: &str, apps: &[(String, u32, Vec<u32>)], with_bus: bool, with_egress: bool, with_github: bool, with_embeddings: bool) -> (String, String) {
+pub fn identity_files(passwd: &str, group: &str, apps: &[(String, u32, Vec<u32>)], with_bus: bool, with_egress: bool, with_github: bool, with_embeddings: bool, with_display: bool) -> (String, String) {
     let mut users: Vec<(String, u32, String)> = Vec::new();
     if with_bus {
         users.push(("berth-context-bus".into(), DAEMON_BUS_UID, "berth daemon".into()));
     }
     for (name, uid, _) in apps {
         users.push((format!("berth-{name}"), *uid, format!("berth app {name}")));
+    }
+    if with_display {
+        users.push(("berth-display".into(), DISPLAY_UID, "berth display (Xvfb, x11vnc, noVNC)".into()));
     }
     // In `berth` too: it gives its socket to the group, so every app may connect.
     if with_embeddings {
@@ -634,13 +652,13 @@ mod tests {
         assert_eq!(github_plan(&[&notes, &gh]), EgressPlan::Broker(1));
         let gh2 = policy("other", &[], &["github:write:issues"], None);
         assert!(matches!(github_plan(&[&gh, &gh2]), EgressPlan::Refused(m) if m.contains("github-assistant, other")));
-        let (p, _) = identity_files("root:x:0:0::/:/bin/sh\n", "root:x:0:root\n", &[], false, false, true, false);
+        let (p, _) = identity_files("root:x:0:0::/:/bin/sh\n", "root:x:0:root\n", &[], false, false, true, false, false);
         assert!(p.contains("berth-github:x:9003:9003:"));
     }
 
     #[test]
     fn embeddings_daemon_identity() {
-        let (p, g) = identity_files("root:x:0:0::/:/bin/sh\n", "root:x:0:root\n", &[], false, false, false, true);
+        let (p, g) = identity_files("root:x:0:0::/:/bin/sh\n", "root:x:0:root\n", &[], false, false, false, true, false);
         assert!(p.contains("berth-embeddings:x:9004:9004:"));
         assert!(g.lines().any(|l| l.starts_with("berth:x:9999:") && l.contains("berth-embeddings")), "{g}");
     }
@@ -674,6 +692,14 @@ mod tests {
         assert!(is_fuse_mount(mounts, "/context"));
         assert!(!is_fuse_mount("tmpfs /context tmpfs rw 0 0\n", "/context"));
         assert!(!is_fuse_mount(mounts, "/workspace"));
+    }
+
+    #[test]
+    fn who_needs_a_display() {
+        assert!(declares_display(&policy("browser-native", &[], &["browser:navigate:*", "browser:screenshot:*"], None)));
+        assert!(!declares_display(&policy("gh", &[], &["browser:navigate:*.github.com"], None)));
+        let (p, _) = identity_files("root:x:0:0::/:/bin/sh\n", "root:x:0:root\n", &[], false, false, false, false, true);
+        assert!(p.contains("berth-display:x:9005:9005:"));
     }
 
     #[test]
@@ -867,6 +893,7 @@ mod tests {
             false,
             false,
             false,
+            false,
         );
         assert_eq!(
             passwd.lines().collect::<Vec<_>>(),
@@ -893,7 +920,7 @@ mod tests {
     #[test]
     fn egress_identity_is_outside_the_shared_group() {
         let apps = [("a".to_string(), 10000, vec![10000, 9999])];
-        let (passwd, group) = identity_files("root:x:0:0::/:/bin/sh\n", "root:x:0:root\n", &apps, false, true, false, false);
+        let (passwd, group) = identity_files("root:x:0:0::/:/bin/sh\n", "root:x:0:root\n", &apps, false, true, false, false, false);
         assert!(passwd.lines().any(|l| l == "berth-egress:x:9002:9002:berth egress broker:/nonexistent:/sbin/nologin"));
         assert!(group.lines().any(|l| l == "berth-egress:x:9002:"));
         assert!(group.lines().any(|l| l == "berth:x:9999:berth-a"), "{group}");

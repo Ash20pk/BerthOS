@@ -160,6 +160,8 @@ struct Supervisor {
     github_for: Mutex<Option<String>>,
     /// The embeddings daemon listens: apps get BERTH_EMBEDDINGS_SOCKET.
     embeddings_up: AtomicBool,
+    /// The apps that draw on the display (Xvfb up): they get DISPLAY and CHROME_BIN.
+    display_for: Mutex<Vec<String>>,
     test_hooks: bool,
 }
 
@@ -282,6 +284,7 @@ fn main() {
         semantic_fs_up: AtomicBool::new(false),
         github_for: Mutex::new(None),
         embeddings_up: AtomicBool::new(false),
+        display_for: Mutex::new(Vec::new()),
         test_hooks: cfg.as_ref().is_ok_and(|c| c.test_hooks),
     }));
 
@@ -549,7 +552,13 @@ fn boot(sup: &'static Supervisor, cfg: &Config) -> Result<(), String> {
     let with_bus = Path::new(CONTEXT_BUS_DAEMON).exists();
     let ident: Vec<(String, u32, Vec<u32>)> =
         compiled.iter().map(|(i, p)| (p.app_name.clone(), cfg.apps[*i].uid, plan::supplementary_gids(cfg.apps[*i].uid, p))).collect();
-    install_identities(&ident, with_bus, egress_app.is_some(), github_app.is_some(), with_embeddings);
+    // --- The display stack: for browser:* apps, when the browser layer is attached. ---
+    let display_apps: Vec<(usize, String)> = if cfg.layers.iter().any(|(n, _)| n == "browser") {
+        compiled.iter().filter(|(_, p)| plan::declares_display(p)).map(|(i, p)| (*i, p.app_name.clone())).collect()
+    } else {
+        vec![]
+    };
+    install_identities(&ident, with_bus, egress_app.is_some(), github_app.is_some(), with_embeddings, !display_apps.is_empty());
     for (name, uid, _) in &ident {
         for (dir, mode) in [(format!("/run/berth/{name}"), 0o711), (format!("/run/berth/{name}/peers"), 0o711), (format!("/tmp/{name}"), 0o700)] {
             if let Err(e) = sys::install_dir(&dir, mode, *uid, *uid) {
@@ -619,6 +628,13 @@ fn boot(sup: &'static Supervisor, cfg: &Config) -> Result<(), String> {
     }
     if with_embeddings {
         start_embeddings(sup, cfg);
+    }
+    if let Some((_, name)) = display_apps.first() {
+        // The VNC password is the browser app's, from the secrets disk (the
+        // CLI generates it per session); without one, no VNC is served.
+        let password = secrets::loaded().for_app(name).into_iter().find(|(k, _)| k == "BERTH_VNC_PASSWORD").map(|(_, v)| v);
+        start_display(sup, cfg, password.as_deref());
+        *sup.display_for.lock().unwrap() = display_apps.iter().map(|(_, n)| n.clone()).collect();
     }
     phase("daemons", json!({}));
 
@@ -752,10 +768,10 @@ fn compile_policies(apps: &[AppSpec]) -> Vec<Result<Policy, String>> {
         .collect()
 }
 
-fn install_identities(apps: &[(String, u32, Vec<u32>)], with_bus: bool, with_egress: bool, with_github: bool, with_embeddings: bool) {
+fn install_identities(apps: &[(String, u32, Vec<u32>)], with_bus: bool, with_egress: bool, with_github: bool, with_embeddings: bool, with_display: bool) {
     let passwd = std::fs::read_to_string("/etc/passwd").unwrap_or_default();
     let group = std::fs::read_to_string("/etc/group").unwrap_or_default();
-    let (p, g) = plan::identity_files(&passwd, &group, apps, with_bus, with_egress, with_github, with_embeddings);
+    let (p, g) = plan::identity_files(&passwd, &group, apps, with_bus, with_egress, with_github, with_embeddings, with_display);
     let _ = sys::install_dir("/run/berth/etc", 0o755, 0, 0);
     for (name, content) in [("passwd", p), ("group", g)] {
         let staged = format!("/run/berth/etc/{name}");
@@ -769,7 +785,7 @@ fn install_identities(apps: &[(String, u32, Vec<u32>)], with_bus: bool, with_egr
 
 /// The environment of one app's agent-init and runtime. Explicit: nothing of
 /// PID 1's own environment (the kernel command line's) is passed on.
-fn app_env(cfg: &Config, a: &AppSpec, policy: &Policy, runtime: Runtime, egress_up: bool, semantic_fs_up: bool, github_for: Option<String>, embeddings_up: bool) -> Vec<(String, String)> {
+fn app_env(cfg: &Config, a: &AppSpec, policy: &Policy, runtime: Runtime, egress_up: bool, semantic_fs_up: bool, github_for: Option<String>, embeddings_up: bool, display: bool) -> Vec<(String, String)> {
     let name = &policy.app_name;
     let tmp = format!("/tmp/{name}");
     let gids = plan::supplementary_gids(a.uid, policy).iter().map(u32::to_string).collect::<Vec<_>>().join(",");
@@ -825,6 +841,11 @@ fn app_env(cfg: &Config, a: &AppSpec, policy: &Policy, runtime: Runtime, egress_
     // app loading the model in-process would need about 200 MB.
     if embeddings_up {
         e.push(("BERTH_EMBEDDINGS_SOCKET".into(), plan::EMBED_SOCKET.into()));
+    }
+    // As base.Dockerfile sets for a container: where to draw, and which Chromium.
+    if display {
+        e.push(("DISPLAY".into(), plan::DISPLAY.into()));
+        e.push(("CHROME_BIN".into(), plan::CHROME_BIN.into()));
     }
     if runtime == Runtime::Python {
         // What entrypoint.sh exports for a Python app's own process. The
@@ -1007,6 +1028,129 @@ fn start_semantic_fs(sup: &'static Supervisor, cfg: &Config, state_disk: bool) -
     hub::info(&format!("semantic-fs serves /context ({}), backed by {store}", if state_disk { "kept on the state disk" } else { "tmpfs, gone at power off" }));
     sup.semantic_fs_up.store(true, Ordering::SeqCst);
     Ok(())
+}
+
+/// One display-stack daemon (Xvfb, x11vnc, websockify) under agent-init as
+/// berth-display, in /berth/daemons. They share one policy: write /tmp (Xvfb's
+/// socket in /tmp/.X11-unix and its compiled keymaps; apps' own /tmp/<app>
+/// are 0700 theirs), their directory and /dev/null; bind 5900 and 6080;
+/// connect only to 5900 (websockify to x11vnc). Returns the pid, and whether
+/// `ready` appeared on its stderr within `wait`.
+fn spawn_display_daemon(sup: &'static Supervisor, cfg: &Config, name: &str, argv: &[&str], ready: &'static str, wait: Duration) -> Option<(i32, bool)> {
+    let u = plan::DISPLAY_UID.to_string();
+    let mut cmd = Command::new(AGENT_INIT);
+    cmd.args(argv)
+        .env_clear()
+        .envs([
+            ("PATH", PATH.to_string()),
+            ("HOME", "/tmp/berth-display".to_string()),
+            ("TMPDIR", "/tmp/berth-display".to_string()),
+            ("BERTH_BOOT_ID", hub::boot_id().to_string()),
+            ("BERTH_CAPABILITY_POLICY", format!("{}/policy.json", plan::DISPLAY_DIR)),
+            ("BERTH_APP_UID", u.clone()),
+            ("BERTH_APP_GID", u.clone()),
+            ("BERTH_APP_SUPPLEMENTARY_GIDS", u),
+            ("BERTH_REQUIRE_ENFORCEMENT", if cfg.require_enforcement { "1" } else { "0" }.to_string()),
+            ("DISPLAY", plan::DISPLAY.to_string()),
+        ])
+        .current_dir("/")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    unsafe { cmd.pre_exec(child_setup(None)) };
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            hub::info(&format!("WARNING: could not start {name}: {e}"));
+            return None;
+        }
+    };
+    let pid = child.id() as i32;
+    let seen = Arc::new(AtomicBool::new(false));
+    for (stream, pipe) in [("stdout", child.stdout.take().map(|p| Box::new(p) as Box<dyn std::io::Read + Send>)), ("stderr", child.stderr.take().map(|p| Box::new(p) as Box<dyn std::io::Read + Send>))] {
+        if let Some(p) = pipe {
+            let s = seen.clone();
+            relay::pipe_logs(name.into(), stream, p, move |line| {
+                if line.contains(ready) {
+                    s.store(true, Ordering::SeqCst);
+                }
+            });
+        }
+    }
+    sup.daemons.lock().unwrap().push((name.into(), pid));
+    std::mem::forget(child);
+    let t = Instant::now();
+    while t.elapsed() < wait && !seen.load(Ordering::SeqCst) {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    Some((pid, seen.load(Ordering::SeqCst)))
+}
+
+/// The display a browser:* app draws into, and, with a VNC password, the
+/// noVNC view a human watches it through (entrypoint.sh's start_display).
+fn start_display(sup: &'static Supervisor, cfg: &Config, vnc_password: Option<&str>) {
+    let refuse = |why: String| {
+        hub::info(&format!("WARNING: no display for the browser: {why}"));
+        hub::event("display_refused", json!({ "reason": why }));
+    };
+    let body = json!({
+        "appName": "display-daemon",
+        "declaredCapabilities": ["daemon:display"],
+        "writePaths": ["/tmp", plan::DISPLAY_DIR, "/dev/null"],
+        "readPaths": [],
+        "networkPorts": [plan::VNC_PORT],
+        "networkUnrestricted": false,
+        "bindPorts": [plan::VNC_PORT, plan::NOVNC_PORT],
+    });
+    let passwd = format!("{}/vncpasswd", plan::DISPLAY_DIR);
+    let prepared = sys::install_dir(plan::DISPLAY_DIR, 0o700, plan::DISPLAY_UID, plan::DISPLAY_UID)
+        .and_then(|_| sys::install_dir("/tmp/.X11-unix", 0o1777, 0, 0))
+        .and_then(|_| sys::install_dir("/tmp/berth-display", 0o700, plan::DISPLAY_UID, plan::DISPLAY_UID))
+        .and_then(|_| {
+            let path = format!("{}/policy.json", plan::DISPLAY_DIR);
+            std::fs::write(&path, body.to_string())?;
+            sys::chown(&path, 0, 0)?;
+            sys::chmod(&path, 0o644)
+        });
+    if let Err(e) = prepared {
+        return refuse(e.to_string());
+    }
+    let display = plan::DISPLAY;
+    let Some((xvfb, up)) = spawn_display_daemon(sup, cfg, "xvfb", &["/usr/bin/Xvfb", display, "-screen", "0", "1280x800x24", "-nolisten", "tcp", "-nolock"], "", Duration::from_millis(0))
+    else {
+        return refuse("Xvfb did not start".into());
+    };
+    let _ = up;
+    let socket = format!("/tmp/.X11-unix/X{}", &display[1..]);
+    let t = Instant::now();
+    while t.elapsed() < Duration::from_secs(10) && !Path::new(&socket).exists() {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let x_up = Path::new(&socket).exists();
+    let mut vnc = false;
+    if let (true, Some(pw)) = (x_up, vnc_password) {
+        // x11vnc's own password file format. Written by root before any app
+        // starts, so the password on this short-lived command line is visible
+        // to nothing in the sandbox.
+        let stored = Command::new("/usr/bin/x11vnc").args(["-storepasswd", pw, &passwd]).env_clear().env("PATH", PATH).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
+        if stored.is_ok_and(|s| s.success()) && sys::chown(&passwd, plan::DISPLAY_UID, plan::DISPLAY_UID).and_then(|_| sys::chmod(&passwd, 0o600)).is_ok() {
+            let vnc_port = plan::VNC_PORT.to_string();
+            let novnc_port = plan::NOVNC_PORT.to_string();
+            let upstream = format!("localhost:{}", plan::VNC_PORT);
+            let x11vnc = spawn_display_daemon(sup, cfg, "x11vnc", &["/usr/bin/x11vnc", "-display", display, "-forever", "-shared", "-rfbauth", &passwd, "-rfbport", &vnc_port, "-localhost"], "PORT=", Duration::from_secs(10));
+            let ws = spawn_display_daemon(sup, cfg, "websockify", &["/usr/bin/websockify", "--web=/usr/share/novnc", &novnc_port, &upstream], "proxying from", Duration::from_secs(10));
+            vnc = x11vnc.is_some_and(|(_, ok)| ok) && ws.is_some_and(|(_, ok)| ok);
+        } else {
+            hub::info("WARNING: could not store the VNC password; serving no VNC view");
+        }
+    }
+    hub::event(
+        "daemon_started",
+        json!({ "daemon": "display", "pid": xvfb, "uid": plan::DISPLAY_UID, "display": display, "xUp": x_up, "vnc": vnc, "novncPort": if vnc { Some(plan::NOVNC_PORT) } else { None }, "waitMs": t.elapsed().as_millis() as u64 }),
+    );
+    if !x_up {
+        hub::info(&format!("WARNING: Xvfb made no {socket} in 10 s; a browser app has nothing to draw into"));
+    }
 }
 
 /// The embeddings daemon (EMBEDDINGS_DIR/daemon.mjs): one model for the
@@ -1360,7 +1504,17 @@ fn start_app(sup: &'static Supervisor, cfg: &Config, a: &AppSpec, policy: &Polic
     cmd.args(&argv)
         .current_dir(&a.dir)
         .env_clear()
-        .envs(app_env(cfg, a, policy, runtime, sup.egress_up.load(Ordering::SeqCst), sup.semantic_fs_up.load(Ordering::SeqCst), sup.github_for.lock().unwrap().clone(), sup.embeddings_up.load(Ordering::SeqCst)))
+        .envs(app_env(
+            cfg,
+            a,
+            policy,
+            runtime,
+            sup.egress_up.load(Ordering::SeqCst),
+            sup.semantic_fs_up.load(Ordering::SeqCst),
+            sup.github_for.lock().unwrap().clone(),
+            sup.embeddings_up.load(Ordering::SeqCst),
+            sup.display_for.lock().unwrap().contains(&policy.app_name),
+        ))
         .stdin(if cfg.rpc == RpcMode::Stdio { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
