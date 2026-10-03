@@ -88,6 +88,7 @@ struct Config {
     context_bus_socket: String,
     test_hooks: bool,
     publish: Vec<u16>,
+    layers: Vec<(String, String)>,
 }
 
 impl Config {
@@ -105,6 +106,7 @@ impl Config {
             context_bus_socket: env("BERTH_CONTEXT_BUS_SOCKET").unwrap_or_else(|| "/tmp/berth-context-bus.sock".into()),
             test_hooks: plan::flag(env("BERTH_VM_TEST_HOOKS").as_deref(), false),
             publish: plan::parse_publish(env("BERTH_VM_PUBLISH").as_deref())?,
+            layers: plan::parse_layers(env("BERTH_VM_LAYERS").as_deref())?,
         })
     }
 }
@@ -381,6 +383,11 @@ fn boot(sup: &'static Supervisor, cfg: &Config) -> Result<(), String> {
         hub::event("secrets", json!({ "device": dev, "names": s.names() }));
     }
 
+    // --- Optional layers, laid over the base before anything runs from it. ---
+    if !cfg.layers.is_empty() {
+        mount_layers(&cfg.layers)?;
+    }
+
     // --- Filesystems the apps see. ---
     let mut fresh_mounts: Vec<&str> = Vec::new();
     let state_disk = env("BERTH_STATE_DEV").is_some();
@@ -623,6 +630,28 @@ fn boot(sup: &'static Supervisor, cfg: &Config) -> Result<(), String> {
         start_app(sup, cfg, &cfg.apps[*i], policy);
     }
     phase("apps_started", json!({}));
+    Ok(())
+}
+
+/// Mounts each layer read-only at /run/layers/<name> and lays its directories
+/// over the base's (plan::layer_overlays). A layer that doesn't mount fails
+/// the boot: an app that needs it would otherwise start without its files.
+fn mount_layers(layers: &[(String, String)]) -> Result<(), String> {
+    let ro = libc::MS_RDONLY | libc::MS_NOSUID | libc::MS_NODEV;
+    for (name, dev) in layers {
+        let dir = format!("{}/{name}", plan::LAYERS_DIR);
+        std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {dir}: {e}"))?;
+        sys::mount(dev, &dir, "erofs", ro, None).map_err(|e| format!("cannot mount layer {name} ({dev}) on {dir}: {e}"))?;
+    }
+    let names: Vec<String> = layers.iter().map(|(n, _)| n.clone()).collect();
+    let overlays = plan::layer_overlays(&names, &|p| Path::new(p).is_dir());
+    for (target, opts) in &overlays {
+        sys::mount("overlay", target, "overlay", ro, Some(opts)).map_err(|e| format!("cannot lay the layers over {target} ({opts}): {e}"))?;
+    }
+    hub::event(
+        "layers_mounted",
+        json!({ "layers": layers.iter().map(|(n, d)| json!({ "name": n, "device": d })).collect::<Vec<_>>(), "overlays": overlays.iter().map(|(t, _)| t.clone()).collect::<Vec<_>>() }),
+    );
     Ok(())
 }
 

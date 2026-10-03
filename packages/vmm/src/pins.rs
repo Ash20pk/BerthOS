@@ -8,6 +8,9 @@
 //    must hash to it.
 //  - The state disk is the sandbox's own: created sparse on first use, with a
 //    fixed size that is its cap.
+//  - An optional layer (docs/design/microvm-layers.md) is pinned in the rootfs
+//    manifest (layer_<name>_sha256/_size/_base) and boots only on the base it
+//    was built for: its files are laid over that base's, read-only.
 use crate::sha256;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom};
@@ -84,6 +87,64 @@ pub fn verify_kernel(path: &str, block_root: bool) -> Result<Kernel, String> {
         config_sha256: need("config_sha256")?.into(),
         hash_ms,
     })
+}
+
+/// A layer this berth-vmm will attach: its pin, and the base rootfs it was built for.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LayerPin {
+    pub name: String,
+    pub sha256: String,
+    pub size: u64,
+    pub base: String,
+}
+
+pub fn layer_pin(name: &str) -> Option<LayerPin> {
+    layer_pin_in(ROOTFS_MANIFEST, name)
+}
+
+pub fn layer_pin_in(manifest: &str, name: &str) -> Option<LayerPin> {
+    let get = |k: &str| manifest_get(manifest, &format!("layer_{name}_{k}"));
+    let sha256 = get("sha256").filter(|s| is_hex64(s))?.to_string();
+    let base = get("base").filter(|s| is_hex64(s))?.to_string();
+    let size = get("size")?.parse().ok()?;
+    Some(LayerPin { name: name.into(), sha256, size, base })
+}
+
+/// The layers pinned in this berth-vmm's rootfs manifest, by name.
+pub fn layer_names() -> Vec<String> {
+    ROOTFS_MANIFEST
+        .lines()
+        .filter_map(|l| l.split_once('=').map(|(k, _)| k.trim()))
+        .filter_map(|k| k.strip_prefix("layer_").and_then(|r| r.strip_suffix("_sha256")))
+        .filter(|n| layer_pin(n).is_some())
+        .map(String::from)
+        .collect()
+}
+
+pub struct Layer {
+    pub name: String,
+    pub path: String,
+    pub sha256: String,
+    pub hash_ms: u128,
+}
+
+/// Checks a layer image against its pin, and that it was built for the base
+/// being booted: a layer's libraries are linked against that base's.
+pub fn verify_layer(name: &str, path: &str, booted_rootfs: &str) -> Result<Layer, String> {
+    let pin = layer_pin(name).ok_or_else(|| format!("no layer {name:?} is pinned in this berth-vmm (rootfs/manifest.toml has {:?})", layer_names()))?;
+    if pin.base != booted_rootfs {
+        return Err(format!("layer {name} was built for rootfs {}, not the {} being booted; refusing to attach it", &pin.base[..12], &booted_rootfs[..12.min(booted_rootfs.len())]));
+    }
+    let t = Instant::now();
+    let got = sha256::hex(&sha256::file(path).map_err(|e| format!("cannot read layer {path}: {e}"))?);
+    let hash_ms = t.elapsed().as_millis();
+    if got != pin.sha256 {
+        return Err(format!("layer {path} has sha256 {got}, but layer {name} is pinned to {}; refusing to attach it", pin.sha256));
+    }
+    if fstype_of(path)? != "erofs" {
+        return Err(format!("layer {path} is not an erofs image"));
+    }
+    Ok(Layer { name: name.into(), path: path.into(), sha256: got, hash_ms })
 }
 
 pub struct Rootfs {
@@ -212,6 +273,15 @@ fn open_state_unmeasured(path: &str, size_mib: u64) -> Result<State, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn layer_pins_from_the_manifest() {
+        let m = format!("image_sha256 = \"{}\"\nlayer_example_sha256 = \"{}\"\nlayer_example_size = 471040\nlayer_example_base = \"{}\"\nlayer_bad_sha256 = \"nothex\"\n", "a".repeat(64), "b".repeat(64), "a".repeat(64));
+        let p = layer_pin_in(&m, "example").unwrap();
+        assert_eq!((p.sha256.as_str(), p.size, p.base.as_str()), ("b".repeat(64).as_str(), 471040, "a".repeat(64).as_str()));
+        assert!(layer_pin_in(&m, "bad").is_none());
+        assert!(layer_pin_in(&m, "missing").is_none());
+    }
 
     #[test]
     fn manifest_has_what_berth_vmm_needs() {

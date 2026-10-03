@@ -26,6 +26,43 @@ pub const MAX_APPS: usize = 64;
 pub const CONTROL_PORT: u32 = 1024;
 pub const LOG_PORT: u32 = 1025;
 pub const RPC_PORT_BASE: u32 = 5000;
+/// Optional layers (docs/design/microvm-layers.md): where each is mounted, and
+/// the base directories a layer may lay files over. Everything else (/dev,
+/// /proc, /run, /tmp, /app, /workspace, /context, /state) is berth-init's own.
+pub const LAYERS_DIR: &str = "/run/layers";
+pub const LAYER_OVERLAY_DIRS: [&str; 7] = ["bin", "etc", "lib", "opt", "sbin", "usr", "var"];
+
+/// BERTH_VM_LAYERS: `name=/dev/vdX,...`, as berth-vmm run --layer sets it.
+pub fn parse_layers(v: Option<&str>) -> Result<Vec<(String, String)>, String> {
+    let Some(v) = v.filter(|v| !v.is_empty()) else { return Ok(vec![]) };
+    let mut out: Vec<(String, String)> = Vec::new();
+    for item in v.split(',') {
+        let (name, dev) = item.split_once('=').ok_or_else(|| format!("BERTH_VM_LAYERS: {item:?} is not name=/dev/vdX"))?;
+        if name.is_empty() || !name.bytes().all(|b| b.is_ascii_lowercase()) || out.iter().any(|(n, _)| n == name) {
+            return Err(format!("BERTH_VM_LAYERS: bad or repeated layer name {name:?}"));
+        }
+        if !dev.starts_with("/dev/vd") || dev.len() != 8 || !dev.as_bytes()[7].is_ascii_lowercase() {
+            return Err(format!("BERTH_VM_LAYERS: {dev:?} is not a virtio block device"));
+        }
+        out.push((name.into(), dev.into()));
+    }
+    Ok(out)
+}
+
+/// The overlay mounts for a set of mounted layers, in attach order:
+/// (target, overlayfs options). A later layer sits above an earlier one, and
+/// the base's own directory is the lowest. `has(layer_dir)` says whether a
+/// layer has that directory. Read-only, so no upperdir: two lowers or more.
+pub fn layer_overlays(names: &[String], has: &dyn Fn(&str) -> bool) -> Vec<(String, String)> {
+    LAYER_OVERLAY_DIRS
+        .iter()
+        .filter_map(|d| {
+            let lowers: Vec<String> = names.iter().rev().map(|n| format!("{LAYERS_DIR}/{n}/{d}")).filter(|p| has(p)).collect();
+            (!lowers.is_empty()).then(|| (format!("/{d}"), format!("lowerdir={}:/{d}", lowers.join(":"))))
+        })
+        .collect()
+}
+
 /// Guest TCP ports published to the host (publish.rs): vsock 2000 + i.
 pub const PUBLISH_PORT_BASE: u32 = 2000;
 pub const MAX_PUBLISHED: usize = 8;
@@ -637,6 +674,25 @@ mod tests {
         assert!(is_fuse_mount(mounts, "/context"));
         assert!(!is_fuse_mount("tmpfs /context tmpfs rw 0 0\n", "/context"));
         assert!(!is_fuse_mount(mounts, "/workspace"));
+    }
+
+    #[test]
+    fn layers_and_their_overlays() {
+        assert_eq!(parse_layers(None), Ok(vec![]));
+        assert_eq!(parse_layers(Some("browser=/dev/vdd")), Ok(vec![("browser".into(), "/dev/vdd".into())]));
+        assert!(parse_layers(Some("browser=/dev/sda")).is_err());
+        assert!(parse_layers(Some("a=/dev/vdc,a=/dev/vdd")).is_err());
+        assert!(parse_layers(Some("../x=/dev/vdc")).is_err());
+        let names = vec!["example".to_string(), "browser".to_string()];
+        let present = ["/run/layers/example/usr", "/run/layers/browser/usr", "/run/layers/browser/etc"];
+        let got = layer_overlays(&names, &|p| present.contains(&p));
+        assert_eq!(
+            got,
+            vec![
+                ("/etc".into(), "lowerdir=/run/layers/browser/etc:/etc".into()),
+                ("/usr".into(), "lowerdir=/run/layers/browser/usr:/run/layers/example/usr:/usr".into()),
+            ]
+        );
     }
 
     #[test]

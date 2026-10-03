@@ -44,6 +44,11 @@
 //                          (run_command, send_keys, read_screen) as the app's
 //                          uid, in the tty group, under the app's Landlock
 //                          rules; without ttyd, which has no port out of a VM
+//   node e2e.mjs layer     an optional layer (the pinned example, figlet) laid over
+//                          the base: its files in the guest, the base's still
+//                          there, nothing writable, the measurement line naming
+//                          it; an unpinned layer, and one built for another
+//                          base, refused (docs/design/microvm-layers.md)
 //   node e2e.mjs all       single, multi, enforce, stdio, exits, context, host, terminal
 //   node e2e.mjs egress    network:host: through the in-guest broker and the
 //                          host dialer on vsock 1026 (real network: fetches
@@ -58,7 +63,7 @@
 // Env: BERTH_VMM_ARTIFACTS (default ../../../vm-runtime-artifacts), CPUS, MEM,
 // ROUNDS (bench, default 6: the first round is a warm-up), SPIKE_ART (the
 // spike's artifacts, for the bench control), VERBOSE=1.
-import { spawn, execFileSync } from "node:child_process";
+import { spawn, spawnSync, execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import net from "node:net";
@@ -859,9 +864,36 @@ async function terminal() {
   return { results, first, denied };
 }
 
+async function layer() {
+  const results = [];
+  const pinnedLayer = (name) => pinned("rootfs/manifest.toml", `layer_${name}_sha256`);
+  const b = await run("layer", ["terminal"], { extra: ["--layer", "example"] });
+  const s = await attach(b);
+  const { r, result: fig } = await rpcConnect(rpcPath(b, 0), (x) => x.call("run_command", { command: "figlet -f small hi; echo rc=$?" }, 30000));
+  const base = await r.call("run_command", { command: "node --version && test -x /usr/bin/tmux && echo base-ok" });
+  const write = await r.call("run_command", { command: "touch /usr/bin/berth-x 2>&1; echo rc=$?" });
+  const off = await shutdown(b, s);
+  const m = b.vmm.measurements?.layers ?? [];
+  const mounted = s.events.find((e) => e.event === "layers_mounted");
+  check(results, /rc=0/.test(fig.output) && fig.output.split("\n").length > 3, `figlet, from the layer, runs in the guest:\n${fig.output.split("\n").slice(0, 4).join("\n")}`);
+  check(results, /base-ok/.test(base.output), "the base's own files are still there under the overlay");
+  check(results, /Read-only file system|Permission denied/.test(write.output) && /rc=1/.test(write.output), `nothing under the overlay is writable: ${write.output.trim().split("\n")[0]}`);
+  check(results, m.length === 1 && m[0].name === "example" && m[0].sha256 === pinnedLayer("example") && m[0].pinned, `the measurement line names the layer (${m[0]?.sha256?.slice(0, 12)}, ${m[0]?.hashMs} ms)`);
+  check(results, mounted?.overlays?.includes("/usr"), `berth-init laid it over ${JSON.stringify(mounted?.overlays)}`);
+  check(results, off.exit.code === 0, `clean shutdown (${off.ms} ms)`);
+  // Refusals, before any VM: a layer that isn't pinned, and a pinned one whose base isn't the one booted.
+  const refuse = (args) => spawnSync(VMM, ["run", "--artifacts", ART, "--run-dir", join(RUN, "layer-refused"), "--app", join(APPS, "notes"), ...args], { encoding: "utf8" });
+  const unpinned = refuse(["--layer", "nosuch"]);
+  check(results, unpinned.status !== 0 && /no layer "nosuch" is pinned/.test(unpinned.stderr), `an unpinned layer is refused: ${unpinned.stderr.trim().split("\n")[0]}`);
+  const other = join(ART, "rootfs", readdirSync(join(ART, "rootfs")).find((f) => f.endsWith(".erofs") && !f.includes(ROOTFS_PIN)) ?? "none.erofs");
+  const wrongBase = existsSync(other) ? refuse(["--rootfs", other, "--layer", "example"]) : { status: 0, stderr: "no other rootfs to try" };
+  check(results, wrongBase.status !== 0 && /was built for rootfs/.test(wrongBase.stderr), `a layer on a base it wasn't built for is refused: ${wrongBase.stderr.trim().split("\n")[0]}`);
+  return { results, measured: m };
+}
+
 const mode = process.argv[2] ?? "all";
-const modes = { single, multi, enforce, stdio, exits, bench, egress, context, host, github, terminal };
-const todo = mode === "all" ? ["single", "multi", "enforce", "stdio", "exits", "context", "host", "terminal"] : [mode];
+const modes = { single, multi, enforce, stdio, exits, bench, egress, context, host, github, terminal, layer };
+const todo = mode === "all" ? ["single", "multi", "enforce", "stdio", "exits", "context", "host", "terminal", "layer"] : [mode];
 let failed = false;
 const report = {};
 for (const m of todo) {
