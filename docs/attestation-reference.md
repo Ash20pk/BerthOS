@@ -73,7 +73,7 @@ The same checks are available as `verifyAttestation()` in `@berthos/audit`. Each
 | `enforcement.rulesetReports` | What the kernel reported when each app's Landlock policy was applied at this boot: `FullyEnforced`, `PartiallyEnforced` or `NotEnforced`. |
 | `enforcement.doctorProbe` | A fresh run of the `berth doctor` probe for this image and runtime: `enforcing`, `present_not_enforcing`, `unsupported` or `unknown`. |
 | `enforcement.status` | The verdict, computed from the two measurements above. |
-| `policies[]` | sha256 of each app's enforced policy file, computed inside the container. |
+| `policies[]` | sha256 of each app's enforced policy file, computed inside the container (or, in a microVM, by berth-init). |
 | `recordSha256` | sha256 over the canonical JSON of every other field. |
 
 The boot evidence `berth attest` gathers (and `berth mcp` records with a run) also has `resourceLimits`: whether this boot gave each app its own cgroup and, per app, the limits the kernel held after `entrypoint.sh` wrote them. It isn't a field of the record. The declared limits are already covered by `policies[]`, because each app's `cgroupLimits` is in the policy file that gets hashed. See [resource limits](./resource-limits.md).
@@ -98,10 +98,10 @@ A session run with `--runtime vm` (the [local microVM runtime](local-vm.md)) pro
 | `boot.imageDigest` | `sha256:<rootfs>`, the content-addressed base image the VM booted |
 | `boot.imageTag` | `rootfs-<first 12 hex>.erofs` |
 | `boot.runtime` | `berth-vmm` |
-| `boot.isolation` | `{ kind: "microvm", engine: "libkrun", hypervisor, kernel: { sha256, pinned, linux, configSha256, cmdline }, rootfs: { sha256, pinned, fstype, readOnly }, state: { chunkedSha256, sizeBytes, created }, tsi, nics, vcpus, memMiB, hostSandbox: { kind, applied, reason } }`, from berth-vmm's measurement, `vm_config` and `host_sandbox` lines. `hostSandbox` says whether berth-vmm confined itself on the host (`seatbelt` on macOS); a berth-vmm too old to say leaves it out |
+| `boot.isolation` | `{ kind: "microvm", engine: "libkrun", hypervisor, kernel: { sha256, pinned, linux, configSha256, cmdline }, rootfs: { sha256, pinned, fstype, readOnly }, state: { chunkedSha256, sizeBytes, created }, tsi, nics, vcpus, memMiB, hostSandbox: { kind, applied, reason }, apps: [{ tag, treeSha256, files, bytes }] }`, from berth-vmm's measurement, `vm_config` and `host_sandbox` lines. `hostSandbox` says whether berth-vmm confined itself on the host (`seatbelt` on macOS). `apps` is each app share's digest at boot (the sha256 of its sorted `<sha256>  <path>` file listing). A berth-vmm too old to report either leaves it out |
 | `enforcement.rulesetReports` | agent-init's `capability_policy_applied` lines on the guest log port, for this boot. Only the first per app, and only from that app's own stream |
 | `enforcement.doctorProbe` | `enforcing` when the measured kernel is berth-vmm's pinned one and the running kernel lists `landlock` among its LSMs (berth-init's `boot_start`); `unsupported` when it doesn't; `unknown` for an unpinned kernel. Its `reason` says this is derived from the kernel's identity, not a behavioural probe run at this boot |
-| `policies` | empty: the policy is compiled inside the guest, and berth-init doesn't report its sha256 yet |
+| `policies` | berth-init's `policy_digest` events: the sha256 of each app's policy as compiled in the guest (`/run/berth/policy/<tag>.json`), over the bytes agent-init reads |
 
 `boot.isolation` is an extension field (spec §2.2). It is covered by `recordSha256`, older verifiers pass it through, and it never changes the verdict. `berth attest --vm <name>` reads a running VM sandbox live, as `--container` does for Docker.
 

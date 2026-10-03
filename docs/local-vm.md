@@ -193,8 +193,8 @@ An app whose `berth.yml` needs something the VM doesn't have yet is refused befo
 - **Files your app reads from its own directory** at run time, beyond `berth.yml`, aren't in the share. Only the bundle is.
 - **Architecture.** The pinned kernel and rootfs are built for arm64, and berth-vmm is published for macOS arm64 only.
 - **berth-vmm is confined too.** libkrun runs the VMM and the guest as one security context, so `berth-vmm run` puts itself under a Seatbelt profile that allows only this sandbox's files (and the network only for the egress dialer). `berth attest` records it as `boot.isolation.hostSandbox`. macOS only; `--no-host-sandbox` turns it off for debugging.
-- **`/app` is unmeasured.** The kernel, rootfs and state disk are hashed at every boot. Your bundle isn't yet.
-- **Policy digests.** `berth attest` records a VM boot with an empty `policies` list, because berth-init doesn't report the sha256 of the policy it compiled yet.
+- **`/app` is measured at boot, and it stays live.** berth-vmm hashes each app share before the VM starts and records it as `boot.isolation.apps` (the sha256 of its sorted file listing). The share is virtio-fs, so a change after boot isn't in that digest; `berth dev` reboots on a new bundle, which measures it again.
+- **Policy digests** are berth-init's: it hashes each app's compiled policy, the bytes agent-init reads, and `berth attest` records them under `policies`, as for a container.
 
 ## Troubleshooting
 
