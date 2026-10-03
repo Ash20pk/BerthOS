@@ -21,6 +21,8 @@
 //                                         identity (fs-e2e) though the app calls itself
 //                                         "filesystem"; after berth dev restarts, the file and
 //                                         its tag are still there (state disk)
+//   berth mcp --runtime vm --env           a declared secret reaches the app through MCP's
+//                                         own boot, and an attach says --env was not applied
 //   berth attest <run>                    ACTIVE, isolation microvm, and the shipped
 //                                         verifier accepts the record
 //
@@ -425,6 +427,52 @@ check(
 check("each MCP session recorded its boot evidence", mcpRuns.every((r) => r.evidence));
 const leftover = run(["vm", "status", sandbox]);
 check("a VM the MCP session booted is stopped when the client leaves", leftover.status !== 0, leftover.stdout);
+
+// --- 4b. mcp --env ------------------------------------------------------------------
+{
+  const ws = mkdtempSync(join(tmpdir(), "berth-vm-e2e-mcpenv-"));
+  const app = join(ws, "mcpenv-e2e");
+  mkdirSync(join(app, "src"), { recursive: true });
+  cpSync(join(repo, "apps", "notes", "package.json"), join(app, "package.json"));
+  writeFileSync(join(app, "berth.yml"), "name: mcpenv-e2e\nversion: 0.1.0\ndescription: a secret through berth mcp\ncapabilities: []\nsecrets:\n  - E2E_MCP_TOKEN\nexports:\n  - name: secret_status\n    input: { name: string }\n    output: { set: boolean, length: number }\n");
+  writeFileSync(
+    join(app, "src", "index.ts"),
+    `import { defineApp } from "@berthos/sdk";\nimport { z } from "zod";\nexport default defineApp((app) => {\n  app.export({\n    name: "secret_status",\n    input: z.object({ name: z.string() }),\n    output: z.object({ set: z.boolean(), length: z.number() }),\n    handler: async ({ name }) => ({ set: process.env[name] !== undefined, length: process.env[name]?.length ?? 0 }),\n  });\n});\n`,
+  );
+  const token = `mcp-${Math.random().toString(36).slice(2)}`;
+  run(["vm", "stop", "berth-dev-mcpenv-e2e"]);
+  const { Client } = await import(join(cliDir, "node_modules", "@modelcontextprotocol", "sdk", "dist", "esm", "client", "index.js"));
+  const { StdioClientTransport } = await import(join(cliDir, "node_modules", "@modelcontextprotocol", "sdk", "dist", "esm", "client", "stdio.js"));
+  const session = async (extra) => {
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [berth, "mcp", "--runtime", "vm", "--app", "mcpenv-e2e", "--app-dir", app, "--no-audit", ...extra],
+      env: { ...Object.fromEntries(Object.entries(process.env).filter(([, v]) => v !== undefined)), E2E_MCP_TOKEN: token },
+      stderr: "pipe",
+    });
+    let err = "";
+    transport.stderr?.on("data", (d) => (err += d));
+    const client = new Client({ name: "berth-vm-e2e-env", version: "0.0.1" });
+    await client.connect(transport);
+    return { client, err: () => err };
+  };
+  const a = await session(["--env", "E2E_MCP_TOKEN"]);
+  const r = await a.client.callTool({ name: "secret_status", arguments: { name: "E2E_MCP_TOKEN" } });
+  let got;
+  try {
+    got = JSON.parse(r.content?.[0]?.text ?? "");
+  } catch {}
+  check("berth mcp --runtime vm --env NAME: the app that declares it gets it", got?.set === true && got.length === token.length, JSON.stringify(got) + a.err().slice(-600));
+  check("...and the value is not in berth mcp's output", !a.err().includes(token));
+  // A second session attaches to the first one's VM.
+  const b = await session(["--env", "E2E_MCP_TOKEN"]);
+  await b.client.callTool({ name: "secret_status", arguments: { name: "E2E_MCP_TOKEN" } });
+  check("a session that attaches says its --env was not applied", /--env\/--env-file were not applied/.test(b.err()), b.err().slice(-400));
+  await b.client.close();
+  await a.client.close();
+  await sleep(500);
+  run(["vm", "stop", "berth-dev-mcpenv-e2e"]);
+}
 
 // --- 5. attest ---------------------------------------------------------------------
 {
