@@ -63,3 +63,9 @@ test("browser:navigate is an egress host pattern in the VM; the rest of browser:
   assert.equal(vmUnsupported(m({ capabilities: ["browser:navigate:*.github.com"] })).length, 1, "not without the egress dialer");
   assert.match(vmUnsupported(m({ capabilities: ["browser:screenshot:*"] }), f).join(), /no browser or display/);
 });
+
+test("a terminal:* app runs with a berth-vmm whose image has tmux", () => {
+  const app = m({ capabilities: ["filesystem:write:/workspace", "terminal:attach:*"] });
+  assert.match(vmUnsupported(app).join(), /no tmux.*berth vm install/);
+  assert.deepEqual(vmUnsupported(app, { egress: false, secrets: false, python: false, semanticFs: false, terminal: true }), []);
+});
