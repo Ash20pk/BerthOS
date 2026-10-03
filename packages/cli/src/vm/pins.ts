@@ -65,10 +65,12 @@ export type VmmPlatform = "darwin-arm64";
  * `berth vm install` refuses any other bytes, and clears macOS's quarantine
  * attribute only on a file that matched.
  *
- * Empty until the first release is built: the sha256 of a binary CI builds
- * cannot be known before CI builds it.
+ * darwin-arm64 is from release vm-artifacts-8f79e8da-322ee4f3 (run
+ * 37093509858), and two runs built the same bytes.
  */
-export const VMM_PINS: Partial<Record<VmmPlatform, { sha256: string; size: number }>> = {};
+export const VMM_PINS: Partial<Record<VmmPlatform, { sha256: string; size: number }>> = {
+  "darwin-arm64": { sha256: "b2e49ac22ce4e4042f6ababc782dd008cda839f77ebfc3bf20bea3c64208715e", size: 633408 },
+};
 
 export function vmmPin(platform: string = `${process.platform}-${process.arch}`, pins: Partial<Record<string, { sha256: string; size: number }>> = VMM_PINS): ArtifactPin | undefined {
   const p = pins[platform];
