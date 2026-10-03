@@ -1,6 +1,6 @@
 # Optional layers for the microVM, and embeddings
 
-Status: proposed. Covers the browser (the last capability the VM refuses) and a proposal for embeddings.
+Status: layers and the browser layer built (feat/vm-layers); embeddings still a proposal. Covers the browser (the last capability the VM refused) and a proposal for embeddings.
 
 ## The problem
 
@@ -91,8 +91,19 @@ If a static model ranks those cases as well, switch. If not, keep A as built and
 2. **The browser layer.** The packages, playwright-core, `berth-init`'s display stack, `--publish` for noVNC, 2048 MiB, and the e2e `browser` mode.
 3. **Embeddings.** The spike above, then D or B.
 
+## What building it found
+
+- **The browser layer is 478.5 MB** (456 MiB, 5,789 paths), above the 350–450 estimate. The example layer (figlet) is 460 KB.
+- **A layer depends only on its packages and staged files.** The same layer image came out on three different bases as `berth-init` changed. The base pin still binds it to one rootfs, which costs a rebuild in CI and changes nothing else.
+- **Making it reproducible took two fixes,** found by extracting two builds and diffing them. Fontconfig's caches record when they were built, so `/var/cache` is dropped from a layer; the programs that use those caches rebuild them at run time. And dbus's install script writes a random `/etc/machine-id`, which is removed when the base has none.
+- **Packages bring setuid helpers** (Chromium's `chrome-sandbox`, dbus's launch helper). The build strips the bits and lists the files in `layer-<name>-<sha>.setuid-stripped.txt`. Nothing in a sandbox could use them: apps run with `no_new_privs`, and Chromium with `--no-sandbox`.
+- **Xvfb writes its compiled keymaps under `/tmp`,** so the display daemon's policy may write `/tmp`. Apps' own `/tmp/<app>` directories are 0700 and theirs.
+- **Overlayfs over `/usr` and Landlock get along:** the apps' baseline rules on `/usr` cover the layer's files, and nothing under the overlay is writable (`EROFS`).
+- **Chromium runs under the VM's seccomp filter and `no_new_privs` with `--no-sandbox`,** as in a container. The test boots browser-native, loads example.com through the egress broker and the host dialer, and gets the broker's refusal for the metadata address.
+- **Resumable downloads** came first, in #256: a stalled download is retried and resumed with a Range request.
+
 ## Open questions
 
-- How well does overlayfs over `/usr` sit with Landlock rules that name `/usr`? It should, since rules follow the mounted tree, but this needs a check in step 1.
-- Does Alpine's `chromium` run under the VM's seccomp filter and `no_new_privs`? Chromium's own sandbox wants user namespaces, which agent-init's filter refuses. A container runs it with `--no-sandbox` for the same reason, and the VM would too, so the app's Landlock domain is Chromium's sandbox, as it is now.
-- Should layer downloads be resumable? A 400 MB download on a poor connection argues for HTTP range requests in `installArtifacts`.
+- **Every rootfs bump rebuilds every layer in CI** (about 10 minutes for the browser), only to move its base pin. The image itself doesn't change, and since its file is named by its own hash, an installed layer is reused, not downloaded again. Pinning a layer to the base's package set, rather than to the base image's hash, would save the rebuild; it needs a hash of the base's apk database in the manifest.
+- **Only one layer, the browser, is published for apps.** The example layer ships too, so CI and the e2e can prove the mechanism; it is 460 KB.
+- **The display stack runs whenever the browser layer is attached,** even for a sandbox that only drives Chromium headless (`BERTH_TEST_MODE`). Starting it lazily, on the app's first display connection, would save about 40 MB.
