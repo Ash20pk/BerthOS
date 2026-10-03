@@ -211,3 +211,85 @@ test("no berth-vmm is pinned for a platform it isn't published for", () => {
   assert.equal(vmmPin("linux-x64", {}), undefined);
   assert.equal(vmmPin("linux-arm64", { "darwin-arm64": { sha256: "d".repeat(64), size: 1 } }), undefined);
 });
+
+/**
+ * A server that sends `cut` bytes of the body and then goes silent without
+ * closing, on the first `stalls` requests, as a CDN connection that stopped
+ * did. Later requests honour Range (or, with `ignoreRange`, send all of it).
+ */
+async function stallingServer(body: Buffer, opts: { cut: number; stalls: number; ignoreRange?: boolean }) {
+  const ranges: (string | undefined)[] = [];
+  const open: import("node:http").ServerResponse[] = [];
+  const server = createServer((req, res) => {
+    ranges.push(req.headers.range);
+    if (ranges.length <= opts.stalls) {
+      res.writeHead(200, { "content-length": String(body.length) });
+      res.write(body.subarray(0, opts.cut));
+      open.push(res);
+      return;
+    }
+    const m = /^bytes=(\d+)-$/.exec(req.headers.range ?? "");
+    if (m && !opts.ignoreRange) {
+      const from = Number(m[1]);
+      res.writeHead(206, { "content-length": String(body.length - from), "content-range": `bytes ${from}-${body.length - 1}/${body.length}` });
+      res.end(body.subarray(from));
+    } else {
+      res.writeHead(200, { "content-length": String(body.length) });
+      res.end(body);
+    }
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const close = () => {
+    for (const r of open) r.destroy();
+    server.close();
+  };
+  return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, ranges, close };
+}
+
+test("a download that stalls is aborted and resumed where it stopped, and still checked against the pin", async () => {
+  process.env.BERTH_VM_DOWNLOAD_STALL_MS = "300";
+  const f = fixture();
+  const k = f.pins[0]!;
+  const s = await stallingServer(f.kernel, { cut: 700, stalls: 1 });
+  const logs: string[] = [];
+  try {
+    const [r] = await installArtifacts({ root: f.dest, urlTemplate: `${s.url}/{asset}`, pins: [k], log: (m) => logs.push(m) });
+    assert.equal(r!.source, "downloaded");
+    assert.deepEqual(readFileSync(join(f.dest, k.relPath)), f.kernel);
+    assert.deepEqual(s.ranges, [undefined, "bytes=700-"], "the retry asked for the rest");
+    assert.ok(logs.some((l) => /stalled: no data for 300 ms at 700 of \d+ bytes; retrying \(2 of 4\), resuming/.test(l)), logs.join("\n"));
+  } finally {
+    s.close();
+    delete process.env.BERTH_VM_DOWNLOAD_STALL_MS;
+  }
+});
+
+test("a retry the server answers with the whole file (no range support) starts over", async () => {
+  process.env.BERTH_VM_DOWNLOAD_STALL_MS = "300";
+  const f = fixture();
+  const k = f.pins[0]!;
+  const s = await stallingServer(f.kernel, { cut: 700, stalls: 1, ignoreRange: true });
+  try {
+    await installArtifacts({ root: f.dest, urlTemplate: `${s.url}/{asset}`, pins: [k] });
+    assert.deepEqual(readFileSync(join(f.dest, k.relPath)), f.kernel, "not the first 700 bytes twice");
+  } finally {
+    s.close();
+    delete process.env.BERTH_VM_DOWNLOAD_STALL_MS;
+  }
+});
+
+test("a download that keeps stalling fails, saying so, and leaves nothing behind", async () => {
+  process.env.BERTH_VM_DOWNLOAD_STALL_MS = "200";
+  const f = fixture();
+  const k = f.pins[0]!;
+  const s = await stallingServer(f.kernel, { cut: 100, stalls: 99 });
+  try {
+    await assert.rejects(installArtifacts({ root: f.dest, urlTemplate: `${s.url}/{asset}`, pins: [k] }), /stalled: no data for 200 ms \(after 4 attempts\)/);
+    assert.equal(s.ranges.length, 4);
+    assert.ok(!existsSync(join(f.dest, k.relPath)));
+    assert.deepEqual(readdirSync(dirname(join(f.dest, k.relPath))), [], "no partial file left");
+  } finally {
+    s.close();
+    delete process.env.BERTH_VM_DOWNLOAD_STALL_MS;
+  }
+});

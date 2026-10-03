@@ -193,7 +193,7 @@ async function installOne(pin: ArtifactPin, options: InstallOptions): Promise<In
       const url = expandUrlTemplate(options.urlTemplate, pin, options.release);
       log(`${pin.kind}: downloading ${url}`);
       try {
-        const sha = await download(url, tmp, pin, options.fetch ?? fetch);
+        const sha = await download(url, tmp, pin, options.fetch ?? fetch, log);
         if (sha === pin.sha256) {
           await finish(pin, tmp, options);
           await rename(tmp, dest);
@@ -211,36 +211,90 @@ async function installOne(pin: ArtifactPin, options: InstallOptions): Promise<In
   throw new Error(`could not install the pinned ${pin.kind} (${pin.sha256}):\n  ${problems.join("\n  ")}`);
 }
 
+/** No bytes for this long (from the request, or since the last chunk) aborts an attempt. */
+const STALL_MS = (): number => Number(process.env.BERTH_VM_DOWNLOAD_STALL_MS) || 30_000;
+/** Attempts per artifact, the later ones resuming where the last stopped. */
+const DOWNLOAD_ATTEMPTS = 4;
+
 /**
- * Streams `url` (http(s), or file: for a local mirror) to `dest`, hashing as it
- * goes. Refuses a body larger than the pin says. GitHub release downloads
- * redirect to a CDN; the redirect is followed and the bytes are what is checked.
+ * Fetches `url` (http(s), or file: for a local mirror) to `dest` and returns
+ * the sha256 of the whole file. GitHub release downloads redirect to a CDN;
+ * the redirect is followed and the bytes are what is checked.
+ *
+ * A CDN connection can stop sending without closing, which used to hang an
+ * install for good. So an attempt is aborted when no bytes arrive for
+ * STALL_MS, and retried (up to DOWNLOAD_ATTEMPTS, with a short backoff),
+ * asking for the rest with a Range request: a 206 whose Content-Range starts
+ * where the file ends is appended, anything else starts over. A body larger
+ * than the pin is refused at any point. The hash is taken over the finished
+ * file, so a resumed download is checked exactly like a whole one.
  */
-async function download(url: string, dest: string, pin: ArtifactPin, fetchImpl: typeof fetch): Promise<string> {
-  let body: Readable;
-  let declared = NaN;
+async function download(url: string, dest: string, pin: ArtifactPin, fetchImpl: typeof fetch, log: (message: string) => void = () => {}): Promise<string> {
   if (url.startsWith("file:")) {
     const path = fileURLToPath(url);
-    declared = (await stat(path)).size;
-    body = createReadStream(path);
-  } else {
-    const response = await fetchImpl(url, { redirect: "follow" });
+    const size = (await stat(path)).size;
+    if (size !== pin.size) throw new Error(`size ${size}, but the pinned ${pin.kind} is ${pin.size} bytes`);
+    await pipeline(createReadStream(path), createWriteStream(dest, { mode: 0o644 }));
+    return sha256File(dest);
+  }
+  await rm(dest, { force: true });
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await downloadAttempt(url, dest, pin, fetchImpl);
+      break;
+    } catch (err) {
+      const have = existsSync(dest) ? statSync(dest).size : 0;
+      const why = err instanceof Error ? err.message : String(err);
+      if (err instanceof RefusedDownload || attempt >= DOWNLOAD_ATTEMPTS) {
+        throw new Error(attempt > 1 ? `${why} (after ${attempt} attempts)` : why);
+      }
+      log(`${pin.kind}: ${why} at ${have} of ${pin.size} bytes; retrying (${attempt + 1} of ${DOWNLOAD_ATTEMPTS})${have > 0 ? ", resuming" : ""}`);
+      await new Promise((r) => setTimeout(r, 500 * 2 ** (attempt - 1)));
+    }
+  }
+  const size = statSync(dest).size;
+  if (size !== pin.size) throw new Error(`got ${size} bytes, the pinned ${pin.kind} is ${pin.size}`);
+  return sha256File(dest);
+}
+
+/** What retrying can't fix: the server sends something other than the pinned file. */
+class RefusedDownload extends Error {}
+
+async function downloadAttempt(url: string, dest: string, pin: ArtifactPin, fetchImpl: typeof fetch): Promise<void> {
+  const have = existsSync(dest) ? statSync(dest).size : 0;
+  if (have === pin.size) return;
+  const controller = new AbortController();
+  let timer: NodeJS.Timeout | undefined;
+  let received = 0;
+  const stall = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => controller.abort(new Error(`stalled: no data for ${STALL_MS() >= 1000 ? `${Math.round(STALL_MS() / 1000)} s` : `${STALL_MS()} ms`}`)), STALL_MS());
+  };
+  stall();
+  try {
+    const response = await fetchImpl(url, { redirect: "follow", signal: controller.signal, ...(have > 0 ? { headers: { range: `bytes=${have}-` } } : {}) });
     if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
-    declared = Number(response.headers.get("content-length") ?? NaN);
-    body = Readable.fromWeb(response.body as import("node:stream/web").ReadableStream<Uint8Array>);
+    // A 206 for exactly the rest appends; a 200 (the server ignored the
+    // range) or a range that doesn't start where the file ends starts over.
+    const range = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(response.headers.get("content-range") ?? "");
+    const resume = response.status === 206 && range !== null && Number(range[1]) === have && Number(range[3]) === pin.size;
+    if (response.status === 206 && !resume) throw new Error(`the server answered a range request with ${response.headers.get("content-range") ?? "no Content-Range"}`);
+    const start = resume ? have : 0;
+    const declared = Number(response.headers.get("content-length") ?? NaN);
+    if (Number.isFinite(declared) && start + declared !== pin.size) {
+      throw new RefusedDownload(`content-length ${declared}${start ? ` from byte ${start}` : ""}, but the pinned ${pin.kind} is ${pin.size} bytes`);
+    }
+    const body = Readable.fromWeb(response.body as import("node:stream/web").ReadableStream<Uint8Array>);
+    body.on("data", (chunk: Buffer) => {
+      received += chunk.length;
+      if (start + received > pin.size) body.destroy(new RefusedDownload(`more than the pinned ${pin.size} bytes`));
+      else stall();
+    });
+    await pipeline(body, createWriteStream(dest, { mode: 0o644, flags: start > 0 ? "a" : "w" }));
+  } catch (err) {
+    // The abort's reason is the stall error; surface that, not "aborted".
+    throw controller.signal.aborted && controller.signal.reason instanceof Error ? controller.signal.reason : err;
+  } finally {
+    clearTimeout(timer);
   }
-  if (Number.isFinite(declared) && declared !== pin.size) {
-    body.destroy();
-    throw new Error(`${url.startsWith("file:") ? "size" : "content-length"} ${declared}, but the pinned ${pin.kind} is ${pin.size} bytes`);
-  }
-  const hash = createHash("sha256");
-  let bytes = 0;
-  body.on("data", (chunk: Buffer) => {
-    bytes += chunk.length;
-    if (bytes > pin.size) body.destroy(new Error(`more than the pinned ${pin.size} bytes`));
-    else hash.update(chunk);
-  });
-  await pipeline(body, createWriteStream(dest, { mode: 0o644 }));
-  if (bytes !== pin.size) throw new Error(`got ${bytes} bytes, the pinned ${pin.kind} is ${pin.size}`);
-  return hash.digest("hex");
 }

@@ -42,7 +42,7 @@ That is `https://github.com/Ash20pk/BerthOS/releases/download/vm-artifacts-8f79e
 
 berth-vmm is downloaded only when the CLI pins its sha256 for your platform (macOS arm64 is the only published one). A build from CI can't be pinned until CI has built it, so a CLI released before the first artifacts release has no pin, and says so. Then build berth-vmm and pass `--vmm`, or download it by hand (below).
 
-A download is checked against the pinned size as it streams, and against the sha256 before it's renamed into place, so nothing unverified is ever at the final path.
+A download is checked against the pinned size as it streams, and against the sha256 before it's renamed into place, so nothing unverified is ever at the final path. A download that receives nothing for 30 seconds is aborted and retried, up to four attempts, resuming with an HTTP range request where the server supports one (GitHub's CDN does) and starting over where it doesn't. `BERTH_VM_DOWNLOAD_STALL_MS` changes the 30 seconds.
 
 ### Sources, in order
 
