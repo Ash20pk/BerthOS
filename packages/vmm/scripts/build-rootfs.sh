@@ -68,11 +68,18 @@ find "$SDKPY/berth_sdk" -type f ! -name '*.py' -exec rm -f {} +
 SDKPY_LIST="$ART/sdk-python-src.sha256"
 (cd "$SDKPY" && find berth_sdk -type f | LC_ALL=C sort | while read -r f; do echo "$(sha256_of "$f")  $f"; done) > "$SDKPY_LIST"
 
+# The embeddings kit (bundle-embeddings.mjs): transformers as one ES module,
+# its WASM runtime and the model, hashed as a tree like berth_sdk above.
+EMB="$ART/embeddings-kit"
+node "$VMM_DIR/scripts/bundle-embeddings.mjs" "$EMB" "$NM" > "$ART/embeddings-kit.json"
+EMB_LIST="$ART/embeddings-kit.sha256"
+(cd "$EMB" && find . -type f | sed 's#^\./##' | LC_ALL=C sort | while read -r f; do echo "$(sha256_of "$f")  $f"; done) > "$EMB_LIST"
+
 # The inputs must be the pinned ones before any time goes into an image.
 if [ "$CHECK" = 1 ]; then
     bad=0
     for c in "agent_init_sha256 $AI/agent-init" "probe_sha256 $AI/probe" "berth_init_sha256 $INIT" \
-        "context_bus_daemon_sha256 $BUS" "semantic_fs_daemon_sha256 $SFS" "egress_broker_sha256 $BROKER" "github_api_broker_sha256 $GHBROKER" "sdk_python_sha256 $SDKPY_LIST"; do
+        "context_bus_daemon_sha256 $BUS" "semantic_fs_daemon_sha256 $SFS" "egress_broker_sha256 $BROKER" "github_api_broker_sha256 $GHBROKER" "sdk_python_sha256 $SDKPY_LIST" "embeddings_sha256 $EMB_LIST"; do
         key=${c%% *} file=${c#* }
         have=$(sha256_of "$file")
         if [ "$have" != "$(pin "$key")" ]; then
@@ -116,6 +123,10 @@ install -m 0644 "$B/bundle/generate-capability-policy.mjs" "$B/bundle/run-lifecy
 # berth-init starts a runtime: python app as python3 -m berth_sdk.runtime with
 # PYTHONPATH=/opt/berth/sdk-python, as entrypoint.sh does in a container.
 cp -R "$SDKPY/berth_sdk" "$F/opt/berth/sdk-python/"
+# Read-only for everyone, under /usr: in every app's baseline read paths.
+mkdir -p "$F/usr/share/berth"
+cp -R "$EMB" "$F/usr/share/berth/embeddings"
+find "$F/usr/share/berth" -type d -exec chmod 0755 {} + && find "$F/usr/share/berth" -type f -exec chmod 0644 {} +
 find "$F/opt/berth/sdk-python" -type d -exec chmod 0755 {} + && find "$F/opt/berth/sdk-python" -type f -exec chmod 0644 {} +
 # berth-init starts it confined (uid 9002) when one app declares network:host:.
 install -m 0644 "$BROKER" "$F/usr/local/bin/berth-egress-broker.cjs"
@@ -142,6 +153,7 @@ cat > "$F/etc/berth/build-inputs.json" <<EOF
   "egressBroker": {"path": "/usr/local/bin/berth-egress-broker.cjs", "sha256": "$(sha "$BROKER")"},
   "githubApiBroker": {"path": "/usr/local/bin/berth-github-api-broker.cjs", "sha256": "$(sha "$GHBROKER")"},
   "sdkPython": {"path": "/opt/berth/sdk-python/berth_sdk", "treeSha256": "$(sha "$SDKPY_LIST")"},
+  "embeddings": {"path": "/usr/share/berth/embeddings", "treeSha256": "$(sha "$EMB_LIST")", "build": $(cat "$ART/embeddings-kit.json")},
   "sdkNode": {
     "sourceRef": "$(pin policy_compiler_ref)", "sourceCommit": "$policy_commit",
     "bundle": $bundled,
@@ -185,11 +197,12 @@ cp "$B/out/packages.lock" "$D/rootfs-$h.packages.lock"
 cp "$B/out/apk.lock" "$D/rootfs-$h.builder.apk.lock"
 echo "$name" > "$D/LATEST"
 
-rm -rf "$B" "$SDKPY"
+rm -rf "$B" "$SDKPY" "$EMB"
 echo "rootfs $D/$name ($size bytes)"
 if [ "${UPDATE_MANIFEST:-0}" = 1 ]; then
     sed_inplace "$M" -e "s/^image_sha256 = .*/image_sha256 = \"$h\"/" -e "s/^image_size = .*/image_size = $size/" \
-        -e "s/^sdk_python_sha256 = .*/sdk_python_sha256 = \"$(sha "$SDKPY_LIST")\"/"
+        -e "s/^sdk_python_sha256 = .*/sdk_python_sha256 = \"$(sha "$SDKPY_LIST")\"/" \
+        -e "s/^embeddings_sha256 = .*/embeddings_sha256 = \"$(sha "$EMB_LIST")\"/"
     cp "$D/rootfs-$h.packages.lock" "$VMM_DIR/rootfs/apk.lock"
     cp "$D/rootfs-$h.builder.apk.lock" "$VMM_DIR/rootfs/builder.apk.lock"
     echo "rootfs/manifest.toml updated; rebuild berth-vmm so it embeds the new pin"

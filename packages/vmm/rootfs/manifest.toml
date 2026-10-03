@@ -23,7 +23,7 @@ agent_init_sha256 = "9ec8b25e38d31ee82a28155304f730c0ec589b057d11fce2a56c6614559
 probe_sha256 = "6ec735d885b58861b33abdd70a5a4d48ecad803cc92bd94c02f876a3346453d0"
 # /sbin/berth-init and /usr/local/bin/context-bus-daemon: build-berth-init.sh,
 # from this tree (packages/vmm/init, packages/context-bus-daemon).
-berth_init_sha256 = "80ac395ac2b4facc8762334622c814c6f32a1aff0415d3c71c2ed0edc25d3d93"
+berth_init_sha256 = "9a305f88cb5a3b98a1a54c76277ab6f3bdc5d38481e64767d98c7c0555e9455b"
 context_bus_daemon_sha256 = "1138c3595142a3235145b530d0cf1157b0971aa2230d417befe0a6e783477544"
 # /usr/local/bin/semantic-fs-daemon: build-semantic-fs.sh, from
 # packages/semantic-fs-daemon at HEAD: the daemon that serves /context
@@ -35,6 +35,10 @@ github_api_broker_sha256 = "0a809855c067d76b2074746b2390f6b204d1d80a7cafdc8cea43
 egress_broker_sha256 = "4ff162e8e2c86cc43a73caa02bd1a78e4fe620c2b18040334b79366402157d89"
 # /opt/berth/sdk-python/berth_sdk: packages/sdk-python/berth_sdk at HEAD, the
 # .py files only. The pin is the sha256 of "<sha256>  <path>" lines, sorted.
+# /usr/share/berth/embeddings: bundle-embeddings.mjs, from the lockfile's
+# @xenova/transformers and onnxruntime-web and packages/sdk/models. The pin is
+# the sha256 of its "<sha256>  <path>" lines, sorted, like sdk_python_sha256.
+embeddings_sha256 = "d31bbb0d518318f4aa8ec7aa4effcf9f66165b5120b47a4c8d91b8b194b0d5bb"
 sdk_python_sha256 = "378ff0d0b7820c5be5359435b975bcf43c74a3f3a4362a93540d40769f93105a"
 # /opt/berth/sdk-node: bundle-sdk-node.mjs, from packages/sdk and
 # packages/manifest-schema at this commit (main contains it), with the
@@ -49,5 +53,5 @@ init_path = "/sbin/berth-init"
 # builder.apk.lock the builder's (erofs-utils). .github/workflows/vm-artifacts.yml
 # rebuilds it on a Linux runner and fails on any other hash. berth-vmm
 # compiles this in; berth-vmm run boots it by default.
-image_sha256 = "9c99c9dd4bba677e76ece2e9ae2a3cbde8dacdfd06e48e5fe0f202f208287d3b"
-image_size = 79466496
+image_sha256 = "5f8629c87bf8c97263d3cd6d786b5a7b4db38fa2c24b835ff7ac58e34e3a0048"
+image_size = 107507712

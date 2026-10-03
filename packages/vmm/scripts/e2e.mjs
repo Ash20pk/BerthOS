@@ -644,16 +644,21 @@ async function context() {
   await fs.call("tag_context_file", { path: "findings/churn.txt", task: "retention analysis", relatedApps: ["notes"] });
   const read1 = await fs.call("read_context_file", { path: "findings/churn.txt" });
   const q1 = await fs.call("query_context", { text: "retention analysis" });
+  // By meaning: no word of the query is in either tag or path, so only the
+  // embedding can rank auth-fix.md in, and keep budget.md out.
+  await fs.call("write_context_file", { path: "auth-fix.md", content: "rotated the session signing key" });
+  await fs.call("tag_context_file", { path: "auth-fix.md", task: "login token expiry bug", relatedApps: [] });
+  await fs.call("write_context_file", { path: "budget.md", content: "Q4 spend" });
+  await fs.call("tag_context_file", { path: "budget.md", task: "quarterly marketing plan", relatedApps: [] });
+  const qSemantic = await fs.call("query_context", { text: "authentication credentials timing out" });
   const { r: probe } = await rpcConnect(rpcPath(b, 2), (r) => r.call("probe", { dir: "/context" }));
   const outsider = (await probe.call("probe", { dir: "/context" })).checks;
   const st = await s.status();
   await sleep(200);
   const off1 = await shutdown(b, s);
   const ev1 = sfsStarted(s);
-  // Not a check: the design leaves embeddings out (the model isn't in an
-  // app's share), so this records which ranking the guest actually got.
   const embeddings = s.logs.filter((l) => l.src === "filesystem" && /embedding|transformers/i.test(l.line)).map((l) => l.line.slice(0, 300));
-  console.error(`note embeddings in the guest: ${embeddings.length ? embeddings.join(" | ") : "no embedding lines logged"}`);
+  const semanticPaths = (qSemantic.results ?? []).map((x) => x.path);
   const daemon = st.daemons.find((d) => d.name === "semantic-fs");
   const hit1 = (q1.results ?? []).find((x) => x.path === "findings/churn.txt");
   check(results, ev1?.mounted && ev1.listening && ev1.persistent && ev1.store === "/state/context", `semantic-fs started: mounted ${ev1?.mounted}, socket ${ev1?.listening}, store ${ev1?.store} (${ev1?.waitMs} ms)`);
@@ -663,6 +668,10 @@ async function context() {
   check(results, read1.content === "churn is highest in week 2", "filesystem: write_context_file then read_context_file through the FUSE mount");
   check(results, hit1 && hit1.createdBy === "filesystem" && hit1.task === "retention analysis", `query_context finds it, written by filesystem: ${JSON.stringify(hit1)}`);
   check(results, outsider.write_declared === "EACCES", `probe (no /context scope) writing /context: ${outsider.write_declared}`);
+  const emb = s.events.find((e) => e.event === "daemon_started" && e.daemon === "embeddings");
+  check(results, emb?.listening && emb.uid === 9004 && s.logs.some((l) => l.src === "embeddings" && l.line.includes("ruleset=FullyEnforced")), `one embeddings daemon for the sandbox, uid ${emb?.uid}, FullyEnforced`);
+  check(results, !embeddings.some((l) => /failed/.test(l)) && s.logs.some((l) => l.src === "embeddings" && /loaded in \d+ ms/.test(l.line)), `the model loaded once, in the daemon (${s.logs.find((l) => l.src === "embeddings" && /loaded in/.test(l.line))?.line.slice(-40)})`);
+  check(results, semanticPaths.includes("auth-fix.md") && !semanticPaths.includes("budget.md"), `a query sharing no word with the tag finds it by meaning, and not the unrelated file (${JSON.stringify(semanticPaths)})`);
   check(results, apps.every((a) => s.logs.some((l) => l.src === a && l.line.includes("ruleset=FullyEnforced"))), "all three apps FullyEnforced");
   check(results, off1.exit.code === 0 && off1.powerOff?.unmountFailed?.length === 0, `clean shutdown (${off1.ms} ms, unmountFailed ${JSON.stringify(off1.powerOff?.unmountFailed)})`);
 

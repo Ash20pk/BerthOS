@@ -56,6 +56,14 @@ pub const GITHUB_CERT_DIR: &str = "/run/berth/github-api-broker";
 pub const SEMANTIC_FS_SOCKET: &str = "/tmp/berth-semantic-fs.sock";
 pub const CONTEXT_MOUNT: &str = "/context";
 
+/// The embeddings daemon (packages/vmm/guest/embeddings-daemon.mjs): its uid
+/// (`berth-embeddings`), and the directory and socket it serves the sandbox's
+/// apps on (group berth, 0660). The directory is /run/berth/<its policy's
+/// appName>, the one place under /run/berth agent-init lets a policy write.
+pub const EMBED_UID: u32 = 9004;
+pub const EMBED_DIR: &str = "/run/berth/embeddings-daemon";
+pub const EMBED_SOCKET: &str = "/run/berth/embeddings-daemon/embed.sock";
+
 /// Where semantic-fs keeps /context's backing files and its index: on the
 /// state disk when there is one, so /context persists across boots as
 /// /workspace does; on /run's tmpfs otherwise. Root-only (0700): the apps see
@@ -427,13 +435,17 @@ pub fn invoke_grants(apps: &[(String, u32, &Policy)]) -> (Vec<InvokeGrant>, Vec<
 /// adduser cannot run. Users join `berth` (9999) and, for terminal:* apps,
 /// `tty` (5); if the image already has a group with that gid its member list
 /// is extended, otherwise the group is added.
-pub fn identity_files(passwd: &str, group: &str, apps: &[(String, u32, Vec<u32>)], with_bus: bool, with_egress: bool, with_github: bool) -> (String, String) {
+pub fn identity_files(passwd: &str, group: &str, apps: &[(String, u32, Vec<u32>)], with_bus: bool, with_egress: bool, with_github: bool, with_embeddings: bool) -> (String, String) {
     let mut users: Vec<(String, u32, String)> = Vec::new();
     if with_bus {
         users.push(("berth-context-bus".into(), DAEMON_BUS_UID, "berth daemon".into()));
     }
     for (name, uid, _) in apps {
         users.push((format!("berth-{name}"), *uid, format!("berth app {name}")));
+    }
+    // In `berth` too: it gives its socket to the group, so every app may connect.
+    if with_embeddings {
+        users.push(("berth-embeddings".into(), EMBED_UID, "berth embeddings daemon".into()));
     }
     let mut extra: BTreeMap<u32, Vec<String>> = BTreeMap::new();
     extra.insert(SHARED_GID, users.iter().map(|u| u.0.clone()).collect());
@@ -564,8 +576,15 @@ mod tests {
         assert_eq!(github_plan(&[&notes, &gh]), EgressPlan::Broker(1));
         let gh2 = policy("other", &[], &["github:write:issues"], None);
         assert!(matches!(github_plan(&[&gh, &gh2]), EgressPlan::Refused(m) if m.contains("github-assistant, other")));
-        let (p, _) = identity_files("root:x:0:0::/:/bin/sh\n", "root:x:0:root\n", &[], false, false, true);
+        let (p, _) = identity_files("root:x:0:0::/:/bin/sh\n", "root:x:0:root\n", &[], false, false, true, false);
         assert!(p.contains("berth-github:x:9003:9003:"));
+    }
+
+    #[test]
+    fn embeddings_daemon_identity() {
+        let (p, g) = identity_files("root:x:0:0::/:/bin/sh\n", "root:x:0:root\n", &[], false, false, false, true);
+        assert!(p.contains("berth-embeddings:x:9004:9004:"));
+        assert!(g.lines().any(|l| l.starts_with("berth:x:9999:") && l.contains("berth-embeddings")), "{g}");
     }
 
     #[test]
@@ -759,6 +778,7 @@ mod tests {
             true,
             false,
             false,
+            false,
         );
         assert_eq!(
             passwd.lines().collect::<Vec<_>>(),
@@ -785,7 +805,7 @@ mod tests {
     #[test]
     fn egress_identity_is_outside_the_shared_group() {
         let apps = [("a".to_string(), 10000, vec![10000, 9999])];
-        let (passwd, group) = identity_files("root:x:0:0::/:/bin/sh\n", "root:x:0:root\n", &apps, false, true, false);
+        let (passwd, group) = identity_files("root:x:0:0::/:/bin/sh\n", "root:x:0:root\n", &apps, false, true, false, false);
         assert!(passwd.lines().any(|l| l == "berth-egress:x:9002:9002:berth egress broker:/nonexistent:/sbin/nologin"));
         assert!(group.lines().any(|l| l == "berth-egress:x:9002:"));
         assert!(group.lines().any(|l| l == "berth:x:9999:berth-a"), "{group}");
