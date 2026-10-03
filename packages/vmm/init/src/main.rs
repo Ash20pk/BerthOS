@@ -54,6 +54,7 @@ use std::time::{Duration, Instant};
 const AGENT_INIT: &str = "/usr/local/bin/agent-init";
 const POLICY_COMPILER: &str = "/opt/berth/sdk-node/generate-capability-policy.mjs";
 const CONTEXT_BUS_DAEMON: &str = "/usr/local/bin/context-bus-daemon";
+const SEMANTIC_FS_DAEMON: &str = "/usr/local/bin/semantic-fs-daemon";
 const EGRESS_BROKER: &str = "/usr/local/bin/berth-egress-broker.cjs";
 const NODE: &str = "/usr/bin/node";
 const PYTHON: &str = "/usr/bin/python3";
@@ -144,6 +145,8 @@ struct Supervisor {
     rpc: RpcMode,
     /// The egress broker is up: apps get BERTH_EGRESS_PROXY_URL.
     egress_up: AtomicBool,
+    /// semantic-fs-daemon serves /context: apps get BERTH_SEMANTIC_FS_SOCKET.
+    semantic_fs_up: AtomicBool,
     test_hooks: bool,
 }
 
@@ -253,6 +256,7 @@ fn main() {
         cgroups: Mutex::new(None),
         rpc: cfg.as_ref().map_or(RpcMode::Socket, |c| c.rpc),
         egress_up: AtomicBool::new(false),
+        semantic_fs_up: AtomicBool::new(false),
         test_hooks: cfg.as_ref().is_ok_and(|c| c.test_hooks),
     }));
 
@@ -356,6 +360,7 @@ fn boot(sup: &'static Supervisor, cfg: &Config) -> Result<(), String> {
 
     // --- Filesystems the apps see. ---
     let mut fresh_mounts: Vec<&str> = Vec::new();
+    let state_disk = env("BERTH_STATE_DEV").is_some();
     match env("BERTH_STATE_DEV") {
         // feat/vm-image's per-sandbox state disk: ext4, formatted on first
         // boot, /state/workspace bound onto /workspace so it survives a reboot.
@@ -366,9 +371,15 @@ fn boot(sup: &'static Supervisor, cfg: &Config) -> Result<(), String> {
     }
     // Either way its root is (re)owned by the precreate pass each boot.
     fresh_mounts.push("/workspace");
-    match sys::ensure_mount("tmpfs", "/context", "tmpfs", nsd, Some("mode=0755")) {
-        Ok(_) => fresh_mounts.push("/context"),
-        Err(e) => hub::info(&format!("no /context in this image ({e}); an app declaring /context cannot write it")),
+    // /context is semantic-fs-daemon's FUSE mount, started once cgroups are
+    // up (below). An image without the daemon gets the plain tmpfs it had
+    // before: nothing indexed, nothing kept across a reboot.
+    let with_semantic_fs = Path::new(SEMANTIC_FS_DAEMON).exists();
+    if !with_semantic_fs {
+        match sys::ensure_mount("tmpfs", plan::CONTEXT_MOUNT, "tmpfs", nsd, Some("mode=0755")) {
+            Ok(_) => fresh_mounts.push(plan::CONTEXT_MOUNT),
+            Err(e) => hub::info(&format!("no /context in this image ({e}); an app declaring /context cannot write it")),
+        }
     }
     if cfg.apps.len() > 1 {
         sys::ensure_mount("tmpfs", "/app", "tmpfs", nsd, Some("mode=0755,size=64k")).map_err(|e| format!("cannot mount /app: {e}"))?;
@@ -416,6 +427,16 @@ fn boot(sup: &'static Supervisor, cfg: &Config) -> Result<(), String> {
     }
     phase("cgroups", json!({}));
 
+    // --- semantic-fs, before the precreate pass and any app: /context has to
+    // be its mount by then. Whether an app needs it is known only once the
+    // policies are compiled, so a failure is decided there. ---
+    let semantic_fs = if with_semantic_fs {
+        start_semantic_fs(sup, cfg, state_disk)
+    } else {
+        hub::event("daemon_absent", json!({ "daemon": "semantic-fs", "path": SEMANTIC_FS_DAEMON }));
+        Err(format!("{SEMANTIC_FS_DAEMON} is not in this image"))
+    };
+
     // --- Policies, compiled in parallel (each is one node start). ---
     let policies = compile_policies(&cfg.apps);
     let mut compiled: Vec<(usize, Policy)> = Vec::new();
@@ -451,6 +472,12 @@ fn boot(sup: &'static Supervisor, cfg: &Config) -> Result<(), String> {
         }
     }
     phase("policies", json!({ "apps": compiled.iter().map(|(_, p)| p.app_name.clone()).collect::<Vec<_>>() }));
+    if let Err(why) = &semantic_fs {
+        let needs: Vec<&str> = compiled.iter().filter(|(_, p)| plan::declares_context(p)).map(|(_, p)| p.app_name.as_str()).collect();
+        if !needs.is_empty() && with_semantic_fs {
+            return Err(format!("{} declare{} /context, but semantic-fs is not serving it: {why}", needs.join(", "), if needs.len() == 1 { "s" } else { "" }));
+        }
+    }
 
     // --- Egress: which app's patterns the broker enforces, if any. ---
     let egress_app = match plan::egress_plan(&compiled.iter().map(|(_, p)| p).collect::<Vec<_>>()) {
@@ -654,7 +681,7 @@ fn install_identities(apps: &[(String, u32, Vec<u32>)], with_bus: bool, with_egr
 
 /// The environment of one app's agent-init and runtime. Explicit: nothing of
 /// PID 1's own environment (the kernel command line's) is passed on.
-fn app_env(cfg: &Config, a: &AppSpec, policy: &Policy, runtime: Runtime, egress_up: bool) -> Vec<(String, String)> {
+fn app_env(cfg: &Config, a: &AppSpec, policy: &Policy, runtime: Runtime, egress_up: bool, semantic_fs_up: bool) -> Vec<(String, String)> {
     let name = &policy.app_name;
     let tmp = format!("/tmp/{name}");
     let gids = plan::supplementary_gids(a.uid, policy).iter().map(u32::to_string).collect::<Vec<_>>().join(",");
@@ -676,9 +703,14 @@ fn app_env(cfg: &Config, a: &AppSpec, policy: &Policy, runtime: Runtime, egress_
         ("BERTH_WORKSPACE_ROOT".into(), "/workspace".into()),
         ("BERTH_CONTEXT_BUS_SOCKET".into(), cfg.context_bus_socket.clone()),
         ("BERTH_SHARED_GID".into(), plan::SHARED_GID.to_string()),
-        // No semantic-fs daemon in the VM yet; see the design note.
-        ("BERTH_NO_SEMANTIC_FS".into(), "1".into()),
     ];
+    // As entrypoint.sh: the socket when the daemon is up, the flag when it
+    // isn't (an image without the daemon), so the SDK knows which it is.
+    if semantic_fs_up {
+        e.push(("BERTH_SEMANTIC_FS_SOCKET".into(), plan::SEMANTIC_FS_SOCKET.into()));
+    } else {
+        e.push(("BERTH_NO_SEMANTIC_FS".into(), "1".into()));
+    }
     if cfg.rpc == RpcMode::Socket {
         e.push(("BERTH_RPC_SOCKET".into(), format!("/run/berth/{name}/rpc.sock")));
     }
@@ -803,6 +835,78 @@ fn start_context_bus(sup: &'static Supervisor, cfg: &Config) {
         }
         Err(e) => hub::info(&format!("WARNING: could not start context-bus-daemon: {e}")),
     }
+}
+
+/// semantic-fs-daemon, serving /context (docs/design/microvm-semantic-fs.md).
+/// It runs as root, outside agent-init, as in a container: it mounts FUSE
+/// (through fusermount3), which Landlock would refuse. Once mounted it narrows
+/// its own capabilities and prints one JSON line saying whether that worked;
+/// that line is also how berth-init knows the mount is up. Its backing files
+/// and index are in plan::context_store, root-only. Born in /berth/daemons
+/// like every daemon. The Err is why /context is not served.
+fn start_semantic_fs(sup: &'static Supervisor, cfg: &Config, state_disk: bool) -> Result<(), String> {
+    let store = plan::context_store(state_disk);
+    sys::install_dir(store, 0o700, 0, 0).map_err(|e| format!("cannot create {store}: {e}"))?;
+    let _ = std::fs::remove_file(plan::SEMANTIC_FS_SOCKET);
+    let mut envs: Vec<(&str, String)> = vec![
+        ("PATH", PATH.to_string()),
+        ("BERTH_BOOT_ID", hub::boot_id().to_string()),
+        ("BERTH_CONTEXT_MOUNT", plan::CONTEXT_MOUNT.to_string()),
+        ("BERTH_CONTEXT_DATA", format!("{store}/data")),
+        ("BERTH_CONTEXT_INDEX_DB", format!("{store}/index.db")),
+        ("BERTH_SEMANTIC_FS_SOCKET", plan::SEMANTIC_FS_SOCKET.to_string()),
+        ("BERTH_SHARED_GID", plan::SHARED_GID.to_string()),
+    ];
+    if !cfg.confine_daemons {
+        hub::info("WARNING: BERTH_DISABLE_DAEMON_CONFINEMENT=1 — semantic-fs-daemon keeps its full capability set after mounting");
+        envs.push(("BERTH_DISABLE_DAEMON_CONFINEMENT", "1".into()));
+    }
+    let mut cmd = Command::new(SEMANTIC_FS_DAEMON);
+    cmd.env_clear().envs(envs).current_dir("/").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    unsafe { cmd.pre_exec(child_setup(None)) };
+    let mut child = cmd.spawn().map_err(|e| format!("cannot start {SEMANTIC_FS_DAEMON}: {e}"))?;
+    let pid = child.id() as i32;
+    // (applied, detail) from the post_mount_caps_narrowed line.
+    let narrowed: Arc<Mutex<Option<(bool, String)>>> = Arc::new(Mutex::new(None));
+    if let Some(o) = child.stdout.take() {
+        relay::pipe_logs("semantic-fs".into(), "stdout", o, |_| {});
+    }
+    if let Some(e) = child.stderr.take() {
+        let n = narrowed.clone();
+        relay::pipe_logs("semantic-fs".into(), "stderr", e, move |line| {
+            if let Some(v) = plan::caps_narrowed_line(line) {
+                *n.lock().unwrap() = Some(v);
+            }
+        });
+    }
+    sup.daemons.lock().unwrap().push(("semantic-fs".into(), pid));
+    // Reaped by the supervisor loop, never waited on here.
+    std::mem::forget(child);
+    let t = Instant::now();
+    let alive = || std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|st| !plan::stat_is_zombie(&st));
+    while t.elapsed() < Duration::from_secs(10) && narrowed.lock().unwrap().is_none() && alive() {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let wait_ms = t.elapsed().as_millis() as u64;
+    let mounted = plan::is_fuse_mount(&std::fs::read_to_string("/proc/self/mounts").unwrap_or_default(), plan::CONTEXT_MOUNT);
+    let listening = Path::new(plan::SEMANTIC_FS_SOCKET).exists();
+    let (caps_narrowed, detail) = narrowed.lock().unwrap().clone().unwrap_or((false, String::new()));
+    hub::event(
+        "daemon_started",
+        json!({ "daemon": "semantic-fs", "pid": pid, "mount": plan::CONTEXT_MOUNT, "mounted": mounted, "socket": plan::SEMANTIC_FS_SOCKET,
+                "listening": listening, "store": store, "persistent": state_disk, "capsNarrowed": caps_narrowed, "detail": detail, "waitMs": wait_ms }),
+    );
+    if !mounted || !listening {
+        let why = if !alive() { "the daemon exited (its last lines are on the log port)" } else if !mounted { "no FUSE mount at /context after 10 s" } else { "no control socket" };
+        hub::info(&format!("WARNING: semantic-fs is not serving /context: {why}"));
+        return Err(why.into());
+    }
+    if cfg.confine_daemons && !caps_narrowed {
+        hub::info(&format!("WARNING: semantic-fs-daemon could not narrow its capabilities after mounting ({detail}); it keeps the boot-time set"));
+    }
+    hub::info(&format!("semantic-fs serves /context ({}), backed by {store}", if state_disk { "kept on the state disk" } else { "tmpfs, gone at power off" }));
+    sup.semantic_fs_up.store(true, Ordering::SeqCst);
+    Ok(())
 }
 
 /// The egress broker for app `a`'s declared patterns: confined under
@@ -967,7 +1071,7 @@ fn start_app(sup: &'static Supervisor, cfg: &Config, a: &AppSpec, policy: &Polic
     cmd.args(&argv)
         .current_dir(&a.dir)
         .env_clear()
-        .envs(app_env(cfg, a, policy, runtime, sup.egress_up.load(Ordering::SeqCst)))
+        .envs(app_env(cfg, a, policy, runtime, sup.egress_up.load(Ordering::SeqCst), sup.semantic_fs_up.load(Ordering::SeqCst)))
         .stdin(if cfg.rpc == RpcMode::Stdio { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
