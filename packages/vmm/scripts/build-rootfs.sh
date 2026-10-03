@@ -10,12 +10,13 @@
 #   $ART/rootfs/LATEST                         file name of the last build
 #
 # Image contents: Alpine minirootfs + rootfs/packages.txt (node, e2fsprogs,
-# python3 and berth_sdk's dependencies), agent-init + probe (build-agent-init.sh), the
+# python3 and berth_sdk's dependencies, fuse3), agent-init + probe (build-agent-init.sh), the
 # sdk-node tools (bundle-sdk-node.mjs, from rootfs/manifest.toml's
 # policy_compiler_commit), berth-init at /sbin/berth-init and
 # context-bus-daemon (both from build-berth-init.sh), and the egress broker
 # (docker-orchestrator/docker/egress-broker.cjs from this tree, no npm
-# dependencies) at /usr/local/bin/berth-egress-broker.cjs, and berth_sdk
+# dependencies) at /usr/local/bin/berth-egress-broker.cjs, semantic-fs-daemon
+# (build-semantic-fs.sh) at /usr/local/bin/semantic-fs-daemon, and berth_sdk
 # (packages/sdk-python/berth_sdk at HEAD, sources only) at /opt/berth/sdk-python.
 #
 # Every input binary is checked against its pin in rootfs/manifest.toml before
@@ -26,7 +27,8 @@
 # The guest init seam: BERTH_INIT=<file> places that file at /sbin/berth-init
 # (default: the Rust berth-init from build-berth-init.sh). The pinned kernel
 # command line starts it as PID 1. CONTEXT_BUS_DAEMON=<static binary> likewise
-# (default: build-berth-init.sh's). See docs/design/microvm-runtime.md.
+# (default: build-berth-init.sh's), and SEMANTIC_FS_DAEMON=<static binary>
+# (default: build-semantic-fs.sh's). See docs/design/microvm-runtime.md.
 #
 # NODE_MODULES_FROM: a checkout with installed node_modules (esbuild, yaml,
 # zod), read only. Default: this checkout if it has them, else ~/agentOS. The
@@ -42,6 +44,7 @@ AI="$ART/agent-init"
 BI="$ART/berth-init-build/out"
 INIT=${BERTH_INIT:-$BI/berth-init}
 BUS=${CONTEXT_BUS_DAEMON:-$BI/context-bus-daemon}
+SFS=${SEMANTIC_FS_DAEMON:-$ART/semantic-fs-build/out/semantic-fs-daemon}
 if [ -n "${NODE_MODULES_FROM:-}" ]; then NM=$NODE_MODULES_FROM
 elif [ -d "$REPO_DIR/node_modules" ]; then NM=$REPO_DIR
 else NM=$HOME/agentOS; fi
@@ -51,6 +54,7 @@ CHECK=${CHECK:-1}
 [ -f "$AI/agent-init" ] || { echo "run build-agent-init.sh first" >&2; exit 1; }
 [ -f "$INIT" ] || { echo "BERTH_INIT=$INIT does not exist (run build-berth-init.sh)" >&2; exit 1; }
 [ -f "$BUS" ] || { echo "CONTEXT_BUS_DAEMON=$BUS does not exist (run build-berth-init.sh)" >&2; exit 1; }
+[ -f "$SFS" ] || { echo "SEMANTIC_FS_DAEMON=$SFS does not exist (run build-semantic-fs.sh)" >&2; exit 1; }
 BROKER="$REPO_DIR/packages/docker-orchestrator/docker/egress-broker.cjs"
 
 # berth_sdk for runtime: python apps: the committed .py files only (no
@@ -67,7 +71,7 @@ SDKPY_LIST="$ART/sdk-python-src.sha256"
 if [ "$CHECK" = 1 ]; then
     bad=0
     for c in "agent_init_sha256 $AI/agent-init" "probe_sha256 $AI/probe" "berth_init_sha256 $INIT" \
-        "context_bus_daemon_sha256 $BUS" "egress_broker_sha256 $BROKER" "sdk_python_sha256 $SDKPY_LIST"; do
+        "context_bus_daemon_sha256 $BUS" "semantic_fs_daemon_sha256 $SFS" "egress_broker_sha256 $BROKER" "sdk_python_sha256 $SDKPY_LIST"; do
         key=${c%% *} file=${c#* }
         have=$(sha256_of "$file")
         if [ "$have" != "$(pin "$key")" ]; then
@@ -105,6 +109,8 @@ install -m 0755 "$VMM_DIR/guest/net-probe.sh" "$F/usr/local/bin/net-probe"
 install -m 0755 "$VMM_DIR/guest/leak-probe.sh" "$F/usr/local/bin/leak-probe"
 # berth-init starts it confined (uid 9001) before any app.
 install -m 0755 "$BUS" "$F/usr/local/bin/context-bus-daemon"
+# berth-init starts it as root, to mount /context (FUSE, through fusermount3).
+install -m 0755 "$SFS" "$F/usr/local/bin/semantic-fs-daemon"
 install -m 0644 "$B/bundle/generate-capability-policy.mjs" "$B/bundle/run-lifecycle.mjs" "$F/opt/berth/sdk-node/"
 # berth-init starts a runtime: python app as python3 -m berth_sdk.runtime with
 # PYTHONPATH=/opt/berth/sdk-python, as entrypoint.sh does in a container.
@@ -129,6 +135,7 @@ cat > "$F/etc/berth/build-inputs.json" <<EOF
   "probeSha256": "$(sha "$AI/probe")",
   "berthInit": {"path": "/sbin/berth-init", "source": "$(basename "$INIT")", "sha256": "$(sha "$INIT")"},
   "contextBusDaemon": {"path": "/usr/local/bin/context-bus-daemon", "sha256": "$(sha "$BUS")"},
+  "semanticFsDaemon": {"path": "/usr/local/bin/semantic-fs-daemon", "sha256": "$(sha "$SFS")"},
   "egressBroker": {"path": "/usr/local/bin/berth-egress-broker.cjs", "sha256": "$(sha "$BROKER")"},
   "sdkPython": {"path": "/opt/berth/sdk-python/berth_sdk", "treeSha256": "$(sha "$SDKPY_LIST")"},
   "sdkNode": {

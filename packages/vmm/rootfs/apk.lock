@@ -12,6 +12,9 @@ ca-certificates-20260909-r0
 ca-certificates-bundle-20260909-r0
 e2fsprogs-1.47.4-r0
 e2fsprogs-libs-1.47.4-r0
+fuse-common-3.18.3-r0
+fuse3-3.18.3-r0
+fuse3-libs-3.18.3-r0
 gdbm-1.26-r0
 icu-data-en-78.1-r0
 icu-libs-78.1-r0

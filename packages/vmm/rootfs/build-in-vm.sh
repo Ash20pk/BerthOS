@@ -53,6 +53,13 @@ echo "berth:x:9999:berth-context-bus" >> "$R/etc/group"
 echo "berth-context-bus:x:9001:" >> "$R/etc/group"
 echo "berth-context-bus:x:9001:9001:berth context-bus daemon:/nonexistent:/sbin/nologin" >> "$R/etc/passwd"
 echo "berth-context-bus:!::0:::::" >> "$R/etc/shadow"   # "!" = no password login
+# fusermount3 ships setuid root, for unprivileged FUSE mounts. Nothing in a
+# sandbox mounts FUSE but semantic-fs-daemon, which runs as root, so the bit
+# only adds a setuid binary to the image. Apps run with no_new_privs anyway.
+chmod 0755 "$R/usr/bin/fusermount3"
+# And none may come back with a package: the image holds no setuid or setgid file.
+suid=$(find "$R" -xdev -type f \( -perm -4000 -o -perm -2000 \))
+[ -z "$suid" ] || { echo "setuid/setgid files in the image:" >&2; echo "$suid" >&2; exit 1; }
 # Mount points the guest init uses; the image itself is never written.
 mkdir -p "$R/app" "$R/workspace" "$R/state" "$R/context"
 chmod 0755 "$R/app" "$R/workspace" "$R/state" "$R/context"
