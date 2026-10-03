@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tryAcquireFileLock } from "@berthos/audit";
+import { envNotApplied } from "../util/env-args.js";
 import type { BootEvidence, StdioRpcClient } from "@berthos/docker-orchestrator";
 import type { BerthManifest } from "@berthos/manifest-schema";
 import type { EnforcementStatus } from "../util/capability-errors.js";
@@ -61,6 +62,8 @@ export function vmSandboxSteps(options: {
   manifest: BerthManifest;
   readyTimeoutMs: number;
   attachRpc: boolean;
+  /** --env/--env-file: onto the secrets disk when this session boots the VM. */
+  env?: Record<string, string>;
   log: (message: string) => void;
 }): SandboxSteps<VmSandbox, ConnectedVm> {
   const { name, log } = options;
@@ -69,6 +72,7 @@ export function vmSandboxSteps(options: {
     find: async () => {
       const found = await VmSandbox.find(name, { onStale: (why) => log(`a stale "${name}" was left behind (${why}); cleaned it up`) });
       if (found) log(`attached to the running microVM sandbox "${name}" (berth-vmm pid ${found.pid})`);
+      if (found && Object.keys(options.env ?? {}).length > 0) log(envNotApplied(name));
       return found;
     },
     claimBoot: () => {
@@ -85,7 +89,7 @@ export function vmSandboxSteps(options: {
       await ensureArtifacts(log, vmm);
       const apps = [{ name: options.manifest.name, appDir: options.appDir, manifest: options.manifest }];
       assertSupported(apps, vmm);
-      const { sandbox, timings } = await bootVm({ name, apps, vmm, log, readyTimeoutMs: options.readyTimeoutMs, signal });
+      const { sandbox, timings } = await bootVm({ name, apps, vmm, log, readyTimeoutMs: options.readyTimeoutMs, signal, ...(options.env ? { env: options.env } : {}) });
       log(`"${options.manifest.name}" is ready in the VM (${timings.bundleMs + timings.readyMs} ms: bundle ${timings.bundleMs} ms, boot ${timings.readyMs} ms)`);
       return sandbox;
     },

@@ -152,3 +152,8 @@ export async function readEnvFlags(flags: { env?: string[]; "env-file"?: string 
   }
   return resolveEnvFlags(flags.env ?? [], fromFile, processEnv);
 }
+
+/** --env reaches a sandbox only when it boots; a running one keeps what it has. */
+export function envNotApplied(name: string): string {
+  return `--env/--env-file were not applied: "${name}" was already running, and keeps the variables it was started with. Stop it (berth vm stop, or docker rm -f) to boot it with these.`;
+}

@@ -26,6 +26,7 @@ import { startBackgroundSandbox, type SandboxSteps } from "../util/mcp-sandbox.j
 import { resolveSandbox } from "../vm/config.js";
 import { vmSandboxSteps } from "../vm/mcp.js";
 import { VmSandbox } from "../vm/sandbox.js";
+import { describeEnvNames, envFlags, envNotApplied, readEnvFlags, undeclaredEnvNames } from "../util/env-args.js";
 
 /** What a tool call needs from the session's sandbox, Docker or microVM. */
 interface ConnectedSandbox {
@@ -91,6 +92,9 @@ export default class Mcp extends Command {
       options: ["docker", "vm"],
     }),
     "app-dir": Flags.string({ description: "path to the app's directory (defaults to the current directory)", default: "." }),
+    // Applied when this command boots the sandbox; one it attaches to keeps
+    // the variables it was started with.
+    ...envFlags,
     only: Flags.string({
       description:
         "comma-separated export names to bridge — omit to bridge every export declared in berth.yml (today's default, unchanged). Scopes an MCP client to least privilege instead of blanket access to everything the app can do.",
@@ -147,6 +151,18 @@ export default class Mcp extends Command {
     if (manifest.name !== appName) {
       this.warn(`--app=${appName} doesn't match berth.yml's declared name "${manifest.name}" — proceeding with --app's value for the RPC target`);
     }
+    let env: Record<string, string> = {};
+    try {
+      env = await readEnvFlags(flags);
+    } catch (err) {
+      this.error(errorMessage(err));
+    }
+    const undeclared = undeclaredEnvNames(env, [{ manifest }]);
+    if (undeclared.length > 0) {
+      this.logStderr(
+        `"${manifest.name}" doesn't declare ${describeEnvNames(undeclared)} under secrets:, so every app in its sandbox can read ${undeclared.length === 1 ? "it" : "them"}. Declare it in berth.yml to deliver it to this app alone — see docs/secrets-reference.md.`,
+      );
+    }
 
     const declaredExportNames = manifest.exports.map((e) => e.name);
     const only = flags.only ? parseOnlyExports(flags.only, declaredExportNames) : undefined;
@@ -172,9 +188,10 @@ export default class Mcp extends Command {
             manifest,
             readyTimeoutMs: flags["boot-timeout"] * 1000,
             attachRpc,
+            env,
             log: (message) => this.logStderr(message),
           }) as SandboxSteps<unknown, ConnectedSandbox>)
-        : (this.sandboxSteps(docker, containerName, manifest, appDir, flags, { attachRpc }) as SandboxSteps<unknown, ConnectedSandbox>);
+        : (this.sandboxSteps(docker, containerName, manifest, appDir, flags, { attachRpc, env }) as SandboxSteps<unknown, ConnectedSandbox>);
 
     const noBootMessage =
       runtime === "vm"
@@ -328,7 +345,7 @@ export default class Mcp extends Command {
     manifest: Awaited<ReturnType<typeof loadManifest>>,
     appDir: string,
     flags: { "boot-timeout": number },
-    options: { attachRpc: boolean },
+    options: { attachRpc: boolean; env: Record<string, string> },
   ): SandboxSteps<Docker.Container, ConnectedSandbox & { container: Docker.Container }> {
     let toldWaiting = false;
     return {
@@ -336,6 +353,7 @@ export default class Mcp extends Command {
         const existing = docker.getContainer(containerName);
         if (!(await existing.inspect().then(() => true, () => false))) return undefined;
         this.logStderr(`attached to the running container "${containerName}"`);
+        if (Object.keys(options.env).length > 0) this.logStderr(envNotApplied(containerName));
         return existing;
       },
       // A file, not Docker: the sidecar is created before the container, so
@@ -352,7 +370,7 @@ export default class Mcp extends Command {
       boot: async (signal) => {
         this.logStderr(`no container named "${containerName}" — booting the sandbox for "${manifest.name}" (this builds an image on first run)`);
         const apps = await resolveApps(appDir, undefined, manifest);
-        const running = await bootDevContainer({ appDir, manifest, apps, docker, containerName, log: (message) => this.logStderr(message), signal });
+        const running = await bootDevContainer({ appDir, manifest, apps, docker, containerName, env: options.env, log: (message) => this.logStderr(message), signal });
         return running.container;
       },
       waitReady: (container, signal) => this.waitForRuntime(container, manifest.name, flags["boot-timeout"] * 1000, signal),
@@ -459,3 +477,4 @@ function errorMessage(err: unknown): string {
 function lastLines(logs: string, count = 15): string {
   return logs.split("\n").slice(-count).join("\n");
 }
+
