@@ -8,8 +8,9 @@ Everything a VM sandbox can run is in one rootfs image, and every user downloads
 
 | | uncompressed | in the rootfs (erofs, lz4hc) |
 |---|---|---|
-| Base rootfs today (node, python3, the daemons, tmux, ttyd) | 146 MB | 81 MB |
-| Embeddings kit (feat/vm-embeddings) | +31 MB (177 MB with it) | +26 MB (107.5 MB with it) |
+| Base rootfs on main (node, python3, the daemons) | 147 MB | 79.5 MB |
+| tmux and ttyd (feat/vm-terminal, feat/vm-ttyd) | +3 MB | +1.6 MB |
+| Embeddings kit (feat/vm-embeddings) | +34 MB | +28 MB |
 | Browser: Chromium, Xvfb, x11vnc, noVNC, dbus, fonts | +838 MB (measured in a builder: 73 MB to 910 MB; Chromium alone 288 MB) | an estimated +350 to 450 MB |
 
 Most sandboxes never start a browser. Putting it in the rootfs would make every user's first download several times bigger and would put a 400 MB image behind every rootfs pin bump.
@@ -64,18 +65,18 @@ The same mechanism fits anything large and optional. In order of size:
 
 ## Embeddings: what's built, and a proposal
 
-**What feat/vm-embeddings does.** The rootfs carries the kit: transformers bundled, onnxruntime's WASM and all-MiniLM-L6-v2, 26 MB compressed. One embeddings daemon per sandbox loads the model on the first query, so an app that never queries `/context` pays nothing. Loaded, it takes about 250 MB of RAM (measured: node at 38 MB, 245 MB with the model, 265 MB peak), so a single-app sandbox that declares `/context` gets 768 MiB instead of 512. It works (a query sharing no word with a tag finds the file by meaning), but 250 MB per sandbox is a lot for ranking a few hundred short tags.
+**What feat/vm-embeddings does.** The rootfs carries the kit: transformers bundled, onnxruntime's WASM and all-MiniLM-L6-v2, 28 MB compressed. One embeddings daemon per sandbox loads the model on the first query, so an app that never queries `/context` pays nothing. Loaded, it takes about 250 MB of RAM (measured: node at 38 MB, 245 MB with the model, 265 MB peak), so a single-app sandbox that declares `/context` gets 768 MiB instead of 512. It works (a query sharing no word with a tag finds the file by meaning), but 250 MB per sandbox is a lot for ranking a few hundred short tags.
 
 The options for where embeddings come from:
 
 | | Guest RAM | Download | Same vectors as Docker | Cost |
 |---|---|---|---|---|
-| A. Kit in the rootfs, one daemon per sandbox (built) | about 250 MB when used | +26 MB for everyone | yes | the RAM, and 768 MiB sandboxes |
-| B. A, with the kit as a layer | the same | +26 MB only for `/context` apps | yes | layer plumbing; saves little |
+| A. Kit in the rootfs, one daemon per sandbox (built) | about 250 MB when used | +28 MB for everyone | yes | the RAM, and 768 MiB sandboxes |
+| B. A, with the kit as a layer | the same | +28 MB only for `/context` apps | yes | layer plumbing; saves little |
 | C. Embeddings on the host: the CLI computes them, the guest asks over a vsock port | none | none | yes | a new guest-to-host channel carrying app text into a host Node process; needs the CLI process alive, which a detached VM can outlive |
 | D. A static embedding model (for example model2vec's potion-base-8M: a token-vector lookup and a mean, no transformer, no WASM) | about 10 to 30 MB, in-process | about 8 to 30 MB | no: a different model, so a different vector space | quality to measure; a one-time re-embed for Docker too |
 
-**Recommendation: D, for both runtimes, after a spike that proves the quality.** A static model makes the daemon unnecessary: each app embeds in-process at a few MB, loads in milliseconds rather than half a second, and needs no WASM, so the memory bump and the 26 MB kit go away. The index already stores the model name next to each vector (`files_vec.model`, and cosine is compared only within one model), so a switch is safe. Old vectors simply stop counting until they're re-tagged, and a one-shot re-embed in semantic-fs's control socket can be added for that. Changing both runtimes at once keeps a snapshot's vectors meaningful wherever it's restored.
+**Recommendation: D, for both runtimes, after a spike that proves the quality.** A static model makes the daemon unnecessary: each app embeds in-process at a few MB, loads in milliseconds rather than half a second, and needs no WASM, so the memory bump and the 28 MB kit go away. The index already stores the model name next to each vector (`files_vec.model`, and cosine is compared only within one model), so a switch is safe. Old vectors simply stop counting until they're re-tagged, and a one-shot re-embed in semantic-fs's control socket can be added for that. Changing both runtimes at once keeps a snapshot's vectors meaningful wherever it's restored.
 
 The spike, before anything changes:
 1. Run `semantic-fs-milestone.mjs`'s queries (and the e2e's "authentication credentials timing out" against "login token expiry bug" / "quarterly marketing plan") through all-MiniLM-L6-v2 and through two static models.
