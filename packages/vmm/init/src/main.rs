@@ -197,6 +197,16 @@ impl hub::Control for Supervisor {
     fn test_op(&self, op: &str, req: &Value) -> Option<Value> {
         match op {
             "egress_raw" if self.test_hooks => Some(egress::raw_probe(req)),
+            // SIGKILLs one daemon by name, as a crash would, so the e2e can
+            // see what apps get when it is gone. Only with BERTH_VM_TEST_HOOKS=1.
+            "kill_daemon" if self.test_hooks => {
+                let name = req.get("daemon").and_then(Value::as_str).unwrap_or("");
+                let pid = self.daemons.lock().unwrap().iter().find(|(n, _)| n == name).map(|(_, p)| *p);
+                if let Some(p) = pid {
+                    sys::kill(p, libc::SIGKILL);
+                }
+                Some(json!({ "daemon": name, "pid": pid, "killed": pid.is_some() }))
+            }
             _ => None,
         }
     }

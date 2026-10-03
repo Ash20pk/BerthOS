@@ -25,8 +25,10 @@
 //                          context file written, tagged and found by query
 //                          with its writer; probe, with no /context scope,
 //                          refused; file and tags kept across a reboot on the
-//                          state disk, and gone without one
-//                          (docs/design/microvm-semantic-fs.md)
+//                          state disk, and gone without one; then the daemon
+//                          killed (test hook): queries, tags and writes fail
+//                          with errors, the apps keep running, shutdown is
+//                          clean (docs/design/microvm-semantic-fs.md)
 //   node e2e.mjs all       single, multi, enforce, stdio, exits, context
 //   node e2e.mjs egress    network:host: through the in-guest broker and the
 //                          host dialer on vsock 1026 (real network: fetches
@@ -645,17 +647,32 @@ async function context() {
   check(results, off2.exit.code === 0, `boot 2 clean shutdown (${off2.ms} ms)`);
   rmSync(img, { force: true });
 
-  // Boot 3: no state disk.
-  b = await run("context-nostate", apps);
+  // Boot 3: no state disk; then the daemon is killed, as a crash would.
+  b = await run("context-nostate", apps, { env: { BERTH_VM_TEST_HOOKS: "1" } });
   s = await attach(b);
   const { r: fs3, result: q3 } = await rpcConnect(rpcPath(b, 0), (r) => r.call("query_context", { text: "retention analysis" }));
   const read3 = await fs3.call("read_context_file", { path: "findings/churn.txt" }).then(() => "found", (e) => e.message);
+  // Every app ready first, so "still ready afterwards" means something.
+  for (const a of apps) await s.waitEvent((v) => v.event === "app_ready" && v.app === a, 30000);
+  s.ctl.write(JSON.stringify({ op: "kill_daemon", daemon: "semantic-fs" }) + "\n");
+  const killed = await s.waitEvent((v) => v.event === "kill_daemon");
+  const exited = await s.waitEvent((v) => v.event === "daemon_exited" && v.daemon === "semantic-fs");
+  const after = (c, input) => fs3.call(c, input).then((x) => `answered ${JSON.stringify(x).slice(0, 80)}`, (e) => e.message);
+  const qGone = await after("query_context", { text: "retention analysis" });
+  const tagGone = await after("tag_context_file", { path: "x.txt", task: "t", relatedApps: [] });
+  const writeGone = await after("write_context_file", { path: "x.txt", content: "x" });
+  const stGone = await s.status();
   const off3 = await shutdown(b, s);
   const ev3 = sfsStarted(s);
   check(results, ev3?.mounted && ev3.persistent === false && ev3.store === "/run/berth/context", `no state disk: /context on tmpfs (${ev3?.store})`);
   check(results, (q3.results ?? []).length === 0 && /ENOENT/.test(read3), `and nothing from the other disk: ${(q3.results ?? []).length} results, read ${read3.slice(0, 60)}`);
-  check(results, off3.exit.code === 0, `clean shutdown (${off3.ms} ms)`);
-  return { results, started: [ev1, ev3], query: q1, embeddings };
+  check(results, killed.killed && exited.pid === killed.pid, `daemon killed (pid ${killed.pid}), berth-init records daemon_exited (${JSON.stringify(exited.exit)})`);
+  check(results, /semantic-fs|berth-semantic-fs\.sock/.test(qGone) && !qGone.startsWith("answered"), `then query_context fails, naming the daemon or its socket: ${qGone.slice(0, 160)}`);
+  check(results, !tagGone.startsWith("answered"), `and tag_context_file fails: ${tagGone.slice(0, 120)}`);
+  check(results, !writeGone.startsWith("answered") && /ENOTCONN|EIO|not connected/i.test(writeGone), `and a write to /context fails with the mount's error: ${writeGone.slice(0, 120)}`);
+  check(results, stGone.apps.every((a) => a.state === "ready") && !stGone.daemons.some((d) => d.name === "semantic-fs"), `the apps keep running (${stGone.apps.map((a) => `${a.name} ${a.state}`).join(", ")}); daemons: ${stGone.daemons.map((d) => d.name).join(", ")}`);
+  check(results, off3.exit.code === 0 && off3.powerOff?.unmountFailed?.length === 0, `clean shutdown with the dead mount (${off3.ms} ms, unmountFailed ${JSON.stringify(off3.powerOff?.unmountFailed)})`);
+  return { results, started: [ev1, ev3], query: q1, embeddings, afterKill: { qGone, tagGone, writeGone } };
 }
 
 const mode = process.argv[2] ?? "all";
