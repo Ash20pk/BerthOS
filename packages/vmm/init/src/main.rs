@@ -56,6 +56,7 @@ const AGENT_INIT: &str = "/usr/local/bin/agent-init";
 const POLICY_COMPILER: &str = "/opt/berth/sdk-node/generate-capability-policy.mjs";
 const CONTEXT_BUS_DAEMON: &str = "/usr/local/bin/context-bus-daemon";
 const SEMANTIC_FS_DAEMON: &str = "/usr/local/bin/semantic-fs-daemon";
+const EMBEDDINGS_DIR: &str = "/usr/share/berth/embeddings";
 const EGRESS_BROKER: &str = "/usr/local/bin/berth-egress-broker.cjs";
 const GITHUB_BROKER: &str = "/usr/local/bin/berth-github-api-broker.cjs";
 const NODE: &str = "/usr/bin/node";
@@ -152,6 +153,8 @@ struct Supervisor {
     /// The app the GitHub API broker serves, once it listens: that app gets
     /// BERTH_GITHUB_API_PROXY and NODE_EXTRA_CA_CERTS.
     github_for: Mutex<Option<String>>,
+    /// The embeddings daemon listens: apps get BERTH_EMBEDDINGS_SOCKET.
+    embeddings_up: AtomicBool,
     test_hooks: bool,
 }
 
@@ -273,6 +276,7 @@ fn main() {
         egress_up: AtomicBool::new(false),
         semantic_fs_up: AtomicBool::new(false),
         github_for: Mutex::new(None),
+        embeddings_up: AtomicBool::new(false),
         test_hooks: cfg.as_ref().is_ok_and(|c| c.test_hooks),
     }));
 
@@ -526,12 +530,16 @@ fn boot(sup: &'static Supervisor, cfg: &Config) -> Result<(), String> {
             None
         }
     };
+    // --- The embeddings daemon: for /context apps, when the image has the kit. ---
+    let with_embeddings = semantic_fs.is_ok()
+        && Path::new(EMBEDDINGS_DIR).join("daemon.mjs").exists()
+        && compiled.iter().any(|(_, p)| plan::declares_context(p));
 
     // --- Identities and per-app directories (provision_app_identity). ---
     let with_bus = Path::new(CONTEXT_BUS_DAEMON).exists();
     let ident: Vec<(String, u32, Vec<u32>)> =
         compiled.iter().map(|(i, p)| (p.app_name.clone(), cfg.apps[*i].uid, plan::supplementary_gids(cfg.apps[*i].uid, p))).collect();
-    install_identities(&ident, with_bus, egress_app.is_some(), github_app.is_some());
+    install_identities(&ident, with_bus, egress_app.is_some(), github_app.is_some(), with_embeddings);
     for (name, uid, _) in &ident {
         for (dir, mode) in [(format!("/run/berth/{name}"), 0o711), (format!("/run/berth/{name}/peers"), 0o711), (format!("/tmp/{name}"), 0o700)] {
             if let Err(e) = sys::install_dir(&dir, mode, *uid, *uid) {
@@ -598,6 +606,9 @@ fn boot(sup: &'static Supervisor, cfg: &Config) -> Result<(), String> {
     }
     if let Some(k) = github_app {
         start_github(sup, cfg, &cfg.apps[compiled[k].0], &compiled[k].1.app_name);
+    }
+    if with_embeddings {
+        start_embeddings(sup, cfg);
     }
     phase("daemons", json!({}));
 
@@ -706,10 +717,10 @@ fn compile_policies(apps: &[AppSpec]) -> Vec<Result<Policy, String>> {
         .collect()
 }
 
-fn install_identities(apps: &[(String, u32, Vec<u32>)], with_bus: bool, with_egress: bool, with_github: bool) {
+fn install_identities(apps: &[(String, u32, Vec<u32>)], with_bus: bool, with_egress: bool, with_github: bool, with_embeddings: bool) {
     let passwd = std::fs::read_to_string("/etc/passwd").unwrap_or_default();
     let group = std::fs::read_to_string("/etc/group").unwrap_or_default();
-    let (p, g) = plan::identity_files(&passwd, &group, apps, with_bus, with_egress, with_github);
+    let (p, g) = plan::identity_files(&passwd, &group, apps, with_bus, with_egress, with_github, with_embeddings);
     let _ = sys::install_dir("/run/berth/etc", 0o755, 0, 0);
     for (name, content) in [("passwd", p), ("group", g)] {
         let staged = format!("/run/berth/etc/{name}");
@@ -723,7 +734,7 @@ fn install_identities(apps: &[(String, u32, Vec<u32>)], with_bus: bool, with_egr
 
 /// The environment of one app's agent-init and runtime. Explicit: nothing of
 /// PID 1's own environment (the kernel command line's) is passed on.
-fn app_env(cfg: &Config, a: &AppSpec, policy: &Policy, runtime: Runtime, egress_up: bool, semantic_fs_up: bool, github_for: Option<String>) -> Vec<(String, String)> {
+fn app_env(cfg: &Config, a: &AppSpec, policy: &Policy, runtime: Runtime, egress_up: bool, semantic_fs_up: bool, github_for: Option<String>, embeddings_up: bool) -> Vec<(String, String)> {
     let name = &policy.app_name;
     let tmp = format!("/tmp/{name}");
     let gids = plan::supplementary_gids(a.uid, policy).iter().map(u32::to_string).collect::<Vec<_>>().join(",");
@@ -773,6 +784,12 @@ fn app_env(cfg: &Config, a: &AppSpec, policy: &Policy, runtime: Runtime, egress_
     }
     if let Some(v) = env("NODE_ENV") {
         e.push(("NODE_ENV".into(), v));
+    }
+    // The sandbox's embeddings daemon: the SDK ranks /context queries by
+    // meaning through it, and by keyword without it. Never the kit itself: an
+    // app loading the model in-process would need about 200 MB.
+    if embeddings_up {
+        e.push(("BERTH_EMBEDDINGS_SOCKET".into(), plan::EMBED_SOCKET.into()));
     }
     if runtime == Runtime::Python {
         // What entrypoint.sh exports for a Python app's own process. The
@@ -955,6 +972,90 @@ fn start_semantic_fs(sup: &'static Supervisor, cfg: &Config, state_disk: bool) -
     hub::info(&format!("semantic-fs serves /context ({}), backed by {store}", if state_disk { "kept on the state disk" } else { "tmpfs, gone at power off" }));
     sup.semantic_fs_up.store(true, Ordering::SeqCst);
     Ok(())
+}
+
+/// The embeddings daemon (EMBEDDINGS_DIR/daemon.mjs): one model for the
+/// sandbox's apps instead of one per app. Confined under agent-init as uid
+/// 9004 in /berth/daemons: it writes only its socket directory and its scratch
+/// directory, binds no port and makes no TCP connection. It loads the model on
+/// the first request, so a sandbox that never queries /context pays nothing.
+fn start_embeddings(sup: &'static Supervisor, cfg: &Config) {
+    let refuse = |why: String| {
+        hub::info(&format!("WARNING: no embeddings daemon: {why}; /context queries rank by keyword"));
+        hub::event("embeddings_refused", json!({ "reason": why }));
+    };
+    let home = "/tmp/berth-embeddings";
+    let daemon_policy = "/run/berth/daemon-policy.embeddings.json";
+    let body = json!({
+        "appName": "embeddings-daemon",
+        "declaredCapabilities": ["daemon:embeddings"],
+        "writePaths": [plan::EMBED_DIR, home],
+        "readPaths": [],
+        "networkPorts": [],
+        "networkUnrestricted": false,
+        "bindPorts": [],
+    });
+    let prepared = sys::install_dir(plan::EMBED_DIR, 0o750, plan::EMBED_UID, plan::SHARED_GID)
+        .and_then(|_| sys::install_dir(home, 0o700, plan::EMBED_UID, plan::EMBED_UID))
+        .and_then(|_| {
+            std::fs::write(daemon_policy, body.to_string())?;
+            sys::chmod(daemon_policy, 0o600)
+        });
+    if let Err(e) = prepared {
+        return refuse(e.to_string());
+    }
+    let u = plan::EMBED_UID.to_string();
+    let mut cmd = Command::new(AGENT_INIT);
+    cmd.arg(NODE)
+        .arg(format!("{EMBEDDINGS_DIR}/daemon.mjs"))
+        .env_clear()
+        .envs([
+            ("PATH", PATH.to_string()),
+            ("HOME", home.to_string()),
+            ("TMPDIR", home.to_string()),
+            ("BERTH_BOOT_ID", hub::boot_id().to_string()),
+            ("BERTH_CAPABILITY_POLICY", daemon_policy.to_string()),
+            ("BERTH_APP_UID", u.clone()),
+            ("BERTH_APP_GID", u.clone()),
+            ("BERTH_APP_SUPPLEMENTARY_GIDS", format!("{u},{}", plan::SHARED_GID)),
+            ("BERTH_REQUIRE_ENFORCEMENT", if cfg.require_enforcement { "1" } else { "0" }.to_string()),
+            ("BERTH_EMBEDDINGS_SOCKET", plan::EMBED_SOCKET.to_string()),
+            ("BERTH_SHARED_GID", plan::SHARED_GID.to_string()),
+        ])
+        .current_dir("/")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    unsafe { cmd.pre_exec(child_setup(None)) };
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => return refuse(format!("cannot start it: {e}")),
+    };
+    let pid = child.id() as i32;
+    let listening = Arc::new(AtomicBool::new(false));
+    if let Some(o) = child.stdout.take() {
+        relay::pipe_logs("embeddings".into(), "stdout", o, |_| {});
+    }
+    if let Some(e) = child.stderr.take() {
+        let l = listening.clone();
+        relay::pipe_logs("embeddings".into(), "stderr", e, move |line| {
+            if line.contains("[embeddings] listening on ") {
+                l.store(true, Ordering::SeqCst);
+            }
+        });
+    }
+    sup.daemons.lock().unwrap().push(("embeddings".into(), pid));
+    std::mem::forget(child);
+    let t = Instant::now();
+    while t.elapsed() < Duration::from_secs(10) && !listening.load(Ordering::SeqCst) {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let up = listening.load(Ordering::SeqCst);
+    sup.embeddings_up.store(up, Ordering::SeqCst);
+    hub::event(
+        "daemon_started",
+        json!({ "daemon": "embeddings", "pid": pid, "uid": plan::EMBED_UID, "socket": plan::EMBED_SOCKET, "listening": up, "waitMs": t.elapsed().as_millis() as u64 }),
+    );
 }
 
 /// The egress broker for app `a`'s declared patterns: confined under
@@ -1224,7 +1325,7 @@ fn start_app(sup: &'static Supervisor, cfg: &Config, a: &AppSpec, policy: &Polic
     cmd.args(&argv)
         .current_dir(&a.dir)
         .env_clear()
-        .envs(app_env(cfg, a, policy, runtime, sup.egress_up.load(Ordering::SeqCst), sup.semantic_fs_up.load(Ordering::SeqCst), sup.github_for.lock().unwrap().clone()))
+        .envs(app_env(cfg, a, policy, runtime, sup.egress_up.load(Ordering::SeqCst), sup.semantic_fs_up.load(Ordering::SeqCst), sup.github_for.lock().unwrap().clone(), sup.embeddings_up.load(Ordering::SeqCst)))
         .stdin(if cfg.rpc == RpcMode::Stdio { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

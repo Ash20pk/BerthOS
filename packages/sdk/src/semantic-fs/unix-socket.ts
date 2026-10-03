@@ -103,15 +103,15 @@ export async function createUnixSocketSemanticFs(socketPath: string): Promise<Se
     });
   }
 
-  // Kicks off the embedding model's WASM/weights load in the background as
-  // soon as this client exists, in parallel with the app's own onAgentReady
-  // setup — so it's likely already warm by the time real tag()/query() calls
-  // happen, rather than paying the full cold-start latency inline on the
-  // first one.
-  warmup();
-
   return {
     async register(info) {
+      // Kicks off the embedding model's WASM/weights load in the background,
+      // in parallel with the rest of the app's onAgentReady setup, so it's
+      // likely warm by the first real tag()/query(). On register, not when
+      // this client is made: every app gets a client, and the model costs
+      // about 100 MB of memory, which an app that never touches semantic-fs
+      // (and may have a memory_mb of its own) shouldn't pay.
+      warmup();
       const resp = await call("register", { pid: process.pid, app: info.app });
       if (!resp.ok) throw new Error(resp.error ?? "register failed");
     },

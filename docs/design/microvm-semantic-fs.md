@@ -86,9 +86,16 @@ Fetching modules from the Go proxy is a live dependency, like the apk and crates
 
 ### 7. Embeddings
 
-Out of scope for this change. The model files live in `packages/sdk/models` and are not part of a VM app's share (`berth.yml`, `runtime.mjs`, `dist/index.mjs`, the proto). So in the guest the SDK will most likely fall back to keyword-only ranking, as it does whenever the model can't load. Step 4 records what actually happens, and `local-vm.md` states it.
+Done since (feat/vm-embeddings), and not the way first assumed. Loading the model in each app, as a container does, failed twice over: `@xenova/transformers` needs `__filename` (undefined in an app's ES-module bundle) and the model isn't in an app's share; and once both were fixed, loading it takes about 200 MB per process (measured: 38 MB of node, 245 MB with the model, 265 MB peak), more than a default VM gives its apps together after berth-init's daemon reserve. `notes`, which never queries `/context`, was OOM-killed too, because the SDK warmed the model in every app.
 
-Shipping the quantized model in the rootfs (on the order of 25 MB) is the follow-up. The Docker path has its own open finding that the model fails to load in images built by `Computer.boot` and `berth os up`.
+So the sandbox has one model:
+
+- **The kit** is in the rootfs at `/usr/share/berth/embeddings` (`scripts/bundle-embeddings.mjs`, pinned as `embeddings_sha256`): transformers bundled into one ES module whose banner defines `require`, `__filename` and `__dirname`, onnxruntime's single-threaded SIMD WASM, the quantized model, and the daemon.
+- **The daemon** (`guest/embeddings-daemon.mjs`) runs as `berth-embeddings` (uid 9004) under agent-init when an app declares `/context`, serves `/run/berth/embeddings-daemon/embed.sock` to the berth group, and loads the model on its first request (463 ms in the guest).
+- **Apps** get `BERTH_EMBEDDINGS_SOCKET`, never the kit's path, so a failed daemon means keyword ranking rather than an in-app load. The SDK warms the model on `semanticFs.register()`, which only apps that use it call, instead of in every app.
+- **The CLI** no longer bundles transformers into a VM app (it is external, and its absence is caught), and gives a single-app sandbox that declares `/context` 768 MiB.
+
+`scripts/e2e.mjs context` checks a query that shares no word with a file's tag ("authentication credentials timing out" against "login token expiry bug") finds it, and does not return an unrelated file. The rootfs grows by 28 MB, to 107.5 MB.
 
 ## Release impact
 

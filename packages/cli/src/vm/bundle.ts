@@ -152,6 +152,9 @@ const builtin = (p: string) => p.startsWith("node:") || builtinModules.includes(
  * A bare import esbuild can't resolve from the importing file is retried from
  * the CLI's own directory, where @berthos/sdk and zod are dependencies.
  */
+/** Imports left out of a VM bundle on purpose: the SDK catches their failure to load. */
+const OPTIONAL_EXTERNALS = ["@xenova/transformers"];
+
 function cliFallback(): import("esbuild").Plugin {
   return {
     name: "berth-cli-fallback",
@@ -215,6 +218,10 @@ export async function bundleApp(appDir: string, name: string, options: BundleOpt
       // Bundled ESM still meets CommonJS packages that call require().
       banner: { js: 'import { createRequire as __berthCreateRequire } from "node:module"; const require = __berthCreateRequire(import.meta.url);' },
       plugins: [cliFallback()],
+      // The SDK imports it lazily for semantic-fs embeddings. In the guest it
+      // loads the rootfs's kit instead (BERTH_EMBEDDINGS_DIR), and inlined
+      // here it is megabytes of an app's share that never run.
+      external: OPTIONAL_EXTERNALS,
       metafile: true,
       logLevel: "silent",
     }).catch((err: { errors?: { text: string; location?: { file?: string; line?: number } | null }[] }) => {
@@ -228,7 +235,7 @@ export async function bundleApp(appDir: string, name: string, options: BundleOpt
       );
     });
     for (const [file, output] of Object.entries(result.metafile.outputs)) {
-      const bare = output.imports.filter((i) => i.external && !builtin(i.path));
+      const bare = output.imports.filter((i) => i.external && !builtin(i.path) && !OPTIONAL_EXTERNALS.includes(i.path));
       if (bare.length > 0) throw new Error(`can't bundle ${name} for the VM: ${file} still imports ${bare.map((i) => i.path).join(", ")}`);
     }
     await mkdir(join(work, "proto"), { recursive: true });

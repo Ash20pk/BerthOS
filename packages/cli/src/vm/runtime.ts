@@ -111,11 +111,23 @@ export async function bootVm(options: BootVmOptions): Promise<{ sandbox: VmSandb
     ...(options.state === false ? {} : { state: vmStateDisk(primary.name) }),
     ...(secrets ? { secrets } : {}),
     ...egressArgs(options.apps.map((a) => a.manifest), options.vmm),
+    ...(vmMemMiB(options.apps.map((a) => a.manifest)) ? { memMiB: vmMemMiB(options.apps.map((a) => a.manifest)) } : {}),
     ...(options.onLog ? { onLog: options.onLog } : {}),
     ...(options.readyTimeoutMs ? { readyTimeoutMs: options.readyTimeoutMs } : {}),
     ...(options.signal ? { signal: options.signal } : {}),
   });
   return { sandbox, ready, timings: { ...timings, bundleMs }, bundles };
+}
+
+/**
+ * Guest RAM, when berth-vmm's default (512 MiB for one app, 1024 for more)
+ * is too little: an app that declares /context gets the sandbox's embeddings
+ * daemon, whose model takes about 250 MiB once loaded, and 512 MiB less
+ * berth-init's daemon reserve leaves too little for it and the app together.
+ */
+export function vmMemMiB(manifests: BerthManifest[]): number | undefined {
+  const context = manifests.some((m) => m.capabilities.some((c) => /^filesystem:(read|write):\/context(\/|$)/.test(c)));
+  return context && manifests.length === 1 ? 768 : undefined;
 }
 
 /**

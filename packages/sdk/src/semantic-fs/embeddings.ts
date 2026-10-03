@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs";
+import { connect } from "node:net";
 import { dirname, join } from "node:path";
 import { register } from "node:module";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { SHARP_HOOK_URL } from "./sharp-hook.js";
 
 // Compute-on-tag, not compute-on-write: write_context_file (apps/filesystem)
@@ -51,9 +52,28 @@ export function registerSharpStub(): void {
   sharpStubRegistered = true;
 }
 
-async function loadPipeline(): Promise<Pipeline> {
+/**
+ * A prebuilt kit, when the sandbox has one: a microVM's rootfs carries
+ * @xenova/transformers bundled into one ES module, its WASM runtime and the
+ * model, at the directory berth-init names in BERTH_EMBEDDINGS_DIR
+ * (packages/vmm/scripts/bundle-embeddings.mjs). An app's own bundle can't
+ * run transformers: its CommonJS parts need __filename, and the model isn't
+ * in the app's share.
+ */
+type Transformers = typeof import("@xenova/transformers");
+async function loadTransformers(): Promise<{ transformers: Transformers; models: string; wasm?: string }> {
+  const kit = process.env.BERTH_EMBEDDINGS_DIR;
+  if (kit) {
+    const transformers = (await import(pathToFileURL(join(kit, "transformers.mjs")).href)) as Transformers;
+    return { transformers, models: join(kit, "models"), wasm: `${kit}/` };
+  }
   registerSharpStub();
-  const { pipeline, env } = await import("@xenova/transformers");
+  return { transformers: await import("@xenova/transformers"), models: MODEL_CACHE_DIR };
+}
+
+async function loadPipeline(): Promise<Pipeline> {
+  const { transformers, models, wasm } = await loadTransformers();
+  const { pipeline, env } = transformers;
   env.allowRemoteModels = false; // fail closed if the cache is missing, rather than reaching out to the Hub
   // Two separate config properties, confirmed the hard way: `cacheDir` only
   // governs where a *remote-fetched* file gets cached — with
@@ -61,8 +81,9 @@ async function loadPipeline(): Promise<Pipeline> {
   // @xenova/transformers/src/utils/hub.js's `localPath = pathJoin(env.localModelPath, requestURL)`,
   // checked before remote is ever considered). Both point at the same
   // directory here since the prefetch step and this runtime lookup need to agree.
-  env.cacheDir = MODEL_CACHE_DIR;
-  env.localModelPath = MODEL_CACHE_DIR;
+  env.cacheDir = models;
+  env.localModelPath = models;
+  if (wasm) env.backends.onnx.wasm.wasmPaths = wasm;
   // onnxruntime-web's multi-threaded WASM path spawns a Worker from a blob:
   // URL, which Node's worker_threads doesn't support (`ERR_WORKER_PATH`) —
   // confirmed by hand to hang indefinitely rather than error, under plain
@@ -79,9 +100,44 @@ function getPipeline(): Promise<Pipeline> {
   return pipelinePromise;
 }
 
+/**
+ * The sandbox's shared embedding daemon, when it has one: a microVM's
+ * berth-init runs one per sandbox (packages/vmm/guest/embeddings-daemon.mjs),
+ * because the model costs each process that loads it about 200 MB. One JSON
+ * line each way per request; a connection per call keeps it simple.
+ */
+function viaDaemon(socketPath: string, request: Record<string, unknown>, timeoutMs = 60_000): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    const sock = connect(socketPath);
+    let buf = "";
+    const timer = setTimeout(() => (sock.destroy(), reject(new Error(`no answer from the embedding daemon in ${timeoutMs} ms`))), timeoutMs);
+    sock.setEncoding("utf8");
+    sock.on("connect", () => sock.write(`${JSON.stringify({ id: "1", ...request })}\n`));
+    sock.on("data", (d) => {
+      buf += d;
+      const i = buf.indexOf("\n");
+      if (i < 0) return;
+      clearTimeout(timer);
+      sock.end();
+      try {
+        resolve(JSON.parse(buf.slice(0, i)) as Record<string, unknown>);
+      } catch {
+        reject(new Error("the embedding daemon's answer is not JSON"));
+      }
+    });
+    sock.on("error", (err) => (clearTimeout(timer), reject(err)));
+  });
+}
+
 /** Fire-and-forget: starts the WASM/model load in the background so it's likely warm before the app's first real tag()/query() call. */
 export function warmup(): void {
-  void getPipeline().catch((err) => {
+  const socketPath = process.env.BERTH_EMBEDDINGS_SOCKET;
+  const loading = socketPath
+    ? viaDaemon(socketPath, { op: "warmup" }).then((r) => {
+        if (r.ok !== true) throw new Error(String(r.error ?? "warmup refused"));
+      })
+    : getPipeline();
+  void loading.catch((err) => {
     console.error(`[semantic-fs:embeddings] warmup failed (will retry on next call): ${err}`);
   });
 }
@@ -89,6 +145,12 @@ export function warmup(): void {
 /** Best-effort: returns undefined (never throws) on any failure — callers fall back to keyword-only ranking. */
 export async function embedText(text: string): Promise<number[] | undefined> {
   try {
+    const socketPath = process.env.BERTH_EMBEDDINGS_SOCKET;
+    if (socketPath) {
+      const r = await viaDaemon(socketPath, { text });
+      if (!Array.isArray(r.embedding)) throw new Error(String(r.error ?? "no embedding in the answer"));
+      return r.embedding as number[];
+    }
     const extractor = await getPipeline();
     const output = await extractor(text, { pooling: "mean", normalize: true });
     return Array.from(output.data);
