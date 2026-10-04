@@ -39,34 +39,7 @@ More demos, each proving one boundary: a [fully compromised model](./examples/pr
 
 Who uses Berth, and what it touches.
 
-```mermaid
-flowchart TB
-  dev["<b>Developer</b><br/>[Person]<br/>Writes resident apps and their berth.yml, runs the berth CLI"]
-  agent["<b>AI agent</b><br/>[Software System]<br/>Claude Code, Cursor, any MCP client, or your own tool-calling loop"]
-  auditor["<b>Reviewer</b><br/>[Person]<br/>Checks what ran, and what was enforced"]
-
-  berth["<b>Berth</b><br/>[Software System]<br/>Runs an agent's tools in a sandbox, each confined to the capabilities its manifest declares"]
-
-  host["<b>Host kernel or hypervisor</b><br/>[External System]<br/>Linux 6.7+ (Landlock, seccomp, cgroups), or HVF / KVM for the microVM"]
-  net["<b>Internet hosts</b><br/>[External System]<br/>Only the hosts an app declares"]
-  gh["<b>GitHub API</b><br/>[External System]<br/>Only the verbs an app declares"]
-  cloud["<b>Remote sandboxes</b><br/>[External System]<br/>E2B, Daytona, Kubernetes"]
-
-  dev -- "builds and runs apps with<br/>[berth CLI]" --> berth
-  agent -- "calls tools on<br/>[MCP over stdio, or SDK adapters]" --> berth
-  auditor -- "verifies attestation records from" --> berth
-  berth -- "has policy enforced by" --> host
-  berth -- "reaches, through the egress broker" --> net
-  berth -- "reaches, through the API broker" --> gh
-  berth -- "deploys apps to" --> cloud
-
-  classDef person fill:#08427b,stroke:#073b6f,color:#fff
-  classDef system fill:#1168bd,stroke:#0b4884,color:#fff
-  classDef external fill:#999,stroke:#8a8a8a,color:#fff
-  class dev,auditor person
-  class agent,host,net,gh,cloud external
-  class berth system
-```
+<p align="center"><img src="./docs/images/c4/1-context.svg" alt="C4 system context: a developer, an AI agent and a reviewer use Berth; Berth has its policy enforced by the host kernel or hypervisor, reaches declared internet hosts through the egress broker and declared GitHub API verbs through the API broker, and deploys apps to E2B, Daytona or Kubernetes." width="100%"></p>
 
 Your agent is outside the system boundary on purpose: Berth doesn't run it, prompt it or wrap it. It sees ordinary tools.
 
@@ -123,42 +96,7 @@ Both adapters are optional peer dependencies. Full example: [`examples/agents/wi
 
 Zooming into Berth: the separately running pieces, and how they talk. "Container" here is C4's word for a runnable unit, not only a Docker container.
 
-```mermaid
-flowchart TB
-  agent["<b>AI agent</b><br/>[Software System]"]
-  dev["<b>Developer</b><br/>[Person]"]
-
-  subgraph berth["Berth [Software System]"]
-    cli["<b>berth CLI</b><br/>[Container: Node.js, @berthos/cli]<br/>init, dev, test, mcp, rpc, doctor, attest, deploy. The MCP server, and the host side of every sandbox"]
-
-    subgraph sandbox["Sandbox: one per dev session or MCP server"]
-      docker["<b>Container sandbox</b><br/>[Container: Docker / Colima, Alpine image]<br/>The default. entrypoint.sh starts the daemons and apps"]
-      vm["<b>microVM sandbox</b><br/>[Container: berth-vmm, Rust + libkrun]<br/>Pinned kernel, erofs rootfs, berth-init as PID 1. --runtime vm"]
-    end
-
-    audit[("<b>Audit trail</b><br/>[Data store: hash-chained JSONL]<br/>~/.berth/audit, one record per tool call and boot")]
-    registry["<b>Registry server</b><br/>[Container: Node.js]<br/>Publish, discover and install resident apps. Optional"]
-    mesh["<b>Mesh coordinator</b><br/>[Container: Node.js]<br/>Introduces sandboxes on a WireGuard mesh. Optional"]
-  end
-
-  cloud["<b>Remote sandboxes</b><br/>[External System]<br/>E2B, Daytona, Kubernetes"]
-
-  agent -- "tools/call<br/>[MCP, stdio]" --> cli
-  dev -- "runs" --> cli
-  cli -- "RPC to apps<br/>[stdio relay over docker exec]" --> docker
-  cli -- "RPC to apps<br/>[vsock]" --> vm
-  cli -- "appends to, attests from" --> audit
-  cli -- "publish / install<br/>[HTTP(S)]" --> registry
-  cli -- "deploys through adapters" --> cloud
-  docker -. "peers via" .-> mesh
-
-  classDef person fill:#08427b,stroke:#073b6f,color:#fff
-  classDef container fill:#438dd5,stroke:#3c7fc0,color:#fff
-  classDef external fill:#999,stroke:#8a8a8a,color:#fff
-  class dev person
-  class agent,cloud external
-  class cli,docker,vm,audit,registry,mesh container
-```
+<p align="center"><img src="./docs/images/c4/2-containers.svg" alt="C4 containers: the berth CLI takes MCP tool calls from the agent and commands from the developer; it writes the audit trail, talks to apps in a Docker container sandbox over a stdio relay or in a microVM sandbox over vsock, publishes to the registry server, and deploys through adapters to remote sandboxes. A mesh coordinator introduces sandboxes on a WireGuard mesh." width="100%"></p>
 
 | Container | Code | What it does |
 |---|---|---|
@@ -176,52 +114,7 @@ Both sandboxes run the same apps under the same policy. The microVM adds a secon
 
 Zooming into one sandbox. Every component runs as its own uid under its own Landlock and seccomp policy; only the init process runs as root, and only until the others are started.
 
-```mermaid
-flowchart TB
-  host["<b>berth CLI</b><br/>[Container, on the host]"]
-
-  subgraph sb["Sandbox [Container: Docker or microVM]"]
-    init["<b>Init</b><br/>[Component: entrypoint.sh, or berth-init in Rust]<br/>Mounts, secrets, per-app cgroups, starts everything below, relays RPC"]
-    ai["<b>agent-init</b><br/>[Component: Rust]<br/>Compiles a berth.yml into Landlock + seccomp, drops to the app's uid, then execs it"]
-
-    subgraph apps["Resident apps"]
-      app1["<b>App</b><br/>[Component: Node.js or Python SDK]<br/>e.g. filesystem"]
-      app2["<b>App</b><br/>[Component]<br/>e.g. browser-native"]
-    end
-
-    bus["<b>Context bus</b><br/>[Component: Rust]<br/>Pub/sub between apps, protobuf over a Unix socket"]
-    sfs["<b>Semantic FS</b><br/>[Component: Go, FUSE]<br/>/context: files tagged by task, queried by meaning"]
-    emb["<b>Embeddings daemon</b><br/>[Component: Node.js]<br/>One model per sandbox, for Semantic FS (microVM)"]
-    egress["<b>Egress broker</b><br/>[Component: Node.js]<br/>Allows only declared hosts (network:host, browser:navigate)"]
-    ghb["<b>GitHub API broker</b><br/>[Component: Node.js]<br/>Allows only declared API verbs (github:*)"]
-    disp["<b>Display stack</b><br/>[Component: Xvfb, x11vnc, noVNC]<br/>For browser apps"]
-  end
-
-  kernel{{"<b>Kernel</b><br/>Landlock, seccomp, cgroups"}}
-  net["<b>Internet hosts</b><br/>[External System]"]
-
-  host -- "RPC" --> init
-  init -- "starts each app through" --> ai
-  ai -- "applies policy, execs" --> app1
-  ai -- "applies policy, execs" --> app2
-  ai -. "confines" .-> bus & sfs & egress & ghb & disp
-  app1 <-->|"publish / subscribe"| bus
-  app2 <-->|"publish / subscribe"| bus
-  app1 -- "/context" --> sfs
-  sfs --> emb
-  app2 -- "HTTP(S) proxy" --> egress
-  app2 -- "draws into" --> disp
-  egress -- "dials out<br/>[host dialer, for the microVM]" --> net
-  ghb -- "api.github.com only" --> net
-  app1 & app2 -. "every syscall checked by" .-> kernel
-
-  classDef container fill:#438dd5,stroke:#3c7fc0,color:#fff
-  classDef component fill:#85bbf0,stroke:#5d82a8,color:#000
-  classDef external fill:#999,stroke:#8a8a8a,color:#fff
-  class host container
-  class init,ai,app1,app2,bus,sfs,emb,egress,ghb,disp component
-  class net,kernel external
-```
+<p align="center"><img src="./docs/images/c4/3-components.svg" alt="C4 components inside a sandbox: init starts every app and daemon through agent-init, which applies each one's Landlock and seccomp policy before exec. Apps publish and subscribe on the context bus, use /context through Semantic FS (backed by an embeddings daemon), reach the internet only through the egress broker and GitHub API broker, and draw into the display stack. The kernel checks every syscall." width="100%"></p>
 
 The daemons start only when an app declares the capability that needs them: no `/context`, no Semantic FS; no `browser:*`, no display stack.
 
@@ -314,7 +207,7 @@ The rest is in [Resident apps](./docs/resident-apps.md), the [SDK reference](./d
 | [Threat model](./docs/threat-model.md) | What holds, against whom, and what's out of scope |
 | [Roadmap](./ROADMAP.md) | What works today, what's next, and where to help |
 
-Every subsystem has a reference page in [`docs/`](./docs), and design write-ups live in [`docs/design/`](./docs/design).
+Every subsystem has a reference page in [`docs/`](./docs), and design write-ups live in [`docs/design/`](./docs/design). The diagrams above are generated by [`scripts/c4-diagrams.mjs`](./scripts/c4-diagrams.mjs); edit it and run it to change them.
 
 ## Status
 
