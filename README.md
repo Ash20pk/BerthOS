@@ -39,7 +39,7 @@ More demos, each proving one boundary: a [fully compromised model](./examples/pr
 
 Who uses Berth, and what it touches.
 
-<p align="center"><img src="./docs/images/c4/1-context.svg" alt="C4 system context: a developer, an AI agent and a reviewer use Berth; Berth has its policy enforced by the host kernel or hypervisor, reaches declared internet hosts through the egress broker and declared GitHub API verbs through the API broker, and deploys apps to E2B, Daytona or Kubernetes." width="100%"></p>
+<p align="center"><img src="./docs/images/c4/readme-1-context.svg" alt="C4 system context: a developer, an AI agent and a reviewer use Berth; Berth has its policy enforced by the host kernel or hypervisor, reaches declared internet hosts through the egress broker and declared GitHub API verbs through the API broker, and deploys apps to E2B, Daytona or Kubernetes." width="100%"></p>
 
 Your agent is outside the system boundary on purpose: Berth doesn't run it, prompt it or wrap it. It sees ordinary tools.
 
@@ -96,7 +96,7 @@ Both adapters are optional peer dependencies. Full example: [`examples/agents/wi
 
 Zooming into Berth: the separately running pieces, and how they talk. "Container" here is C4's word for a runnable unit, not only a Docker container.
 
-<p align="center"><img src="./docs/images/c4/2-containers.svg" alt="C4 containers: the berth CLI takes MCP tool calls from the agent and commands from the developer; it writes the audit trail, talks to apps in a Docker container sandbox over a stdio relay or in a microVM sandbox over vsock, publishes to the registry server, and deploys through adapters to remote sandboxes. A mesh coordinator introduces sandboxes on a WireGuard mesh." width="100%"></p>
+<p align="center"><img src="./docs/images/c4/readme-2-containers.svg" alt="C4 containers: the berth CLI takes MCP tool calls from the agent and commands from the developer; it writes the audit trail, talks to apps in a Docker container sandbox over a stdio relay or in a microVM sandbox over vsock, publishes to the registry server, and deploys through adapters to remote sandboxes. A mesh coordinator introduces sandboxes on a WireGuard mesh." width="100%"></p>
 
 | Container | Code | What it does |
 |---|---|---|
@@ -114,7 +114,7 @@ Both sandboxes run the same apps under the same policy. The microVM adds a secon
 
 Zooming into one sandbox. Every component runs as its own uid under its own Landlock and seccomp policy; only the init process runs as root, and only until the others are started.
 
-<p align="center"><img src="./docs/images/c4/3-components.svg" alt="C4 components inside a sandbox: init starts every app and daemon through agent-init, which applies each one's Landlock and seccomp policy before exec. Apps publish and subscribe on the context bus, use /context through Semantic FS (backed by an embeddings daemon), reach the internet only through the egress broker and GitHub API broker, and draw into the display stack. The kernel checks every syscall." width="100%"></p>
+<p align="center"><img src="./docs/images/c4/readme-3-components.svg" alt="C4 components inside a sandbox: init starts every app and daemon through agent-init, which applies each one's Landlock and seccomp policy before exec. Apps publish and subscribe on the context bus, use /context through Semantic FS (backed by an embeddings daemon), reach the internet only through the egress broker and GitHub API broker, and draw into the display stack. The kernel checks every syscall." width="100%"></p>
 
 The daemons start only when an app declares the capability that needs them: no `/context`, no Semantic FS; no `browser:*`, no display stack.
 
