@@ -24,9 +24,9 @@
     "lint": "turbo run lint"
   },
   "devDependencies": {
-    "turbo": "^2.11.3",
+    "turbo": "^2.11.6",
     "typescript": "^7.0.2",
-    "@types/node": "^26.6.2"
+    "@types/node": "^26.6.3"
   },
   "pnpm": {
     "overrides": {

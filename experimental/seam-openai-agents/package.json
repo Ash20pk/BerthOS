@@ -51,7 +51,7 @@
   "dependencies": {},
   "devDependencies": {
     "typescript": "^7.0.2",
-    "@types/node": "^26.6.2",
+    "@types/node": "^26.6.3",
     "@openai/agents": "^0.18.0"
   },
   "peerDependencies": {

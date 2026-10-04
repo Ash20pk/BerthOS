@@ -62,8 +62,8 @@
     "@berthos/sdk": "workspace:*",
     "@berthos/tls": "workspace:*",
     "@inquirer/prompts": "^8.7.2",
-    "@modelcontextprotocol/sdk": "^1.30.1",
-    "@oclif/core": "^5.0.1",
+    "@modelcontextprotocol/sdk": "^1.31.0",
+    "@oclif/core": "^5.1.2",
     "dockerode": "^5.0.1",
     "esbuild": "^0.28.2",
     "tar-fs": "^3.0.6",
@@ -79,9 +79,9 @@
     "@berthos/agents": "workspace:*",
     "@berthos/registry-server": "workspace:*",
     "@types/dockerode": "^4.0.1",
-    "@types/node": "^26.6.2",
+    "@types/node": "^26.6.3",
     "@types/tar-fs": "^2.0.4",
-    "oclif": "^6.0.1",
+    "oclif": "^6.0.2",
     "typescript": "^7.0.2"
   },
   "peerDependencies": {

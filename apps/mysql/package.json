@@ -11,11 +11,11 @@
   "dependencies": {
     "@berthos/manifest-schema": "workspace:*",
     "@berthos/sdk": "workspace:*",
-    "mysql2": "^3.24.4",
+    "mysql2": "^3.24.5",
     "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@types/node": "^26.6.2",
+    "@types/node": "^26.6.3",
     "typescript": "^7.0.2"
   }
 }
