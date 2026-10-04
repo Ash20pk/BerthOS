@@ -1,0 +1,114 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 600" width="1100" height="600" role="img" aria-label="Berth OS: containers (C4 level 2)">
+<title>Berth OS: containers (C4 level 2)</title>
+<style>
+  text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  .ln { stroke: #57606a; }
+  .bd { stroke: #8c959f; }
+  .bl { fill: #57606a; }
+  .ah { fill: #57606a; }
+  .pill { fill: #f6f8fa; stroke: #d0d7de; }
+  .pt { fill: #24292f; }
+  @media (prefers-color-scheme: dark) {
+    .ln { stroke: #8b949e; }
+    .bd { stroke: #6e7681; }
+    .bl { fill: #9198a1; }
+    .ah { fill: #8b949e; }
+    .pill { fill: #161b22; stroke: #30363d; }
+    .pt { fill: #e6edf3; }
+  }
+</style>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+  <marker id="arrow-start" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+</defs>
+<rect x="416" y="320" width="664" height="210" rx="14" fill="none" class="bd" stroke-width="1.5" stroke-dasharray="7 5"/>
+<text x="432" y="516" class="bl" font-size="13.5" font-weight="700">Docker</text>
+
+<path d="M260,122 L428,122" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="273.65" y="102" width="140.7" height="40" rx="6" class="pill"/>
+<text x="344" y="114" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="344" dy="0">writes</tspan>
+<tspan x="344" dy="16" font-style="italic">[JSON, mode 0600]</tspan>
+</text>
+<path d="M820,122 L652,122" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="704.7" y="102" width="62.599999999999994" height="40" rx="6" class="pill"/>
+<text x="736" y="114" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="736" dy="0">reads</tspan>
+<tspan x="736" dy="16" font-style="italic">[JSON]</tspan>
+</text>
+<path d="M240,185 L240,250 L500,250 L500,348" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="310.3" y="230" width="119.39999999999999" height="40" rx="6" class="pill"/>
+<text x="370" y="242" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="370" dy="0">builds, starts</tspan>
+<tspan x="370" dy="16" font-style="italic">[Docker API]</tspan>
+</text>
+<path d="M940,185 L940,250 L600,250 L600,348" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="713.85" y="230" width="112.3" height="40" rx="6" class="pill"/>
+<text x="770" y="242" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="770" dy="0">calls exports</tspan>
+<tspan x="770" dy="16" font-style="italic">[docker exec]</tspan>
+</text>
+<path d="M230,422 L428,422" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="237" y="402" width="162" height="40" rx="6" class="pill"/>
+<text x="318" y="414" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="318" dy="0">calls exports</tspan>
+<tspan x="318" dy="16" font-style="italic">[HTTP, bearer token]</tspan>
+</text>
+<path d="M838,422 L652,422" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="685.3" y="402" width="119.39999999999999" height="40" rx="6" class="pill"/>
+<text x="745" y="414" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="745" dy="0">/context mount</tspan>
+<tspan x="745" dy="16" font-style="italic">[FUSE, bind]</tspan>
+</text>
+<rect x="40" y="60" width="220" height="125" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="150" y="88.5" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="150" font-size="15.5" font-weight="700">berth os up</tspan>
+<tspan x="150" dy="17" font-size="11.5" opacity="0.85">[Container: berth CLI, Node.js]</tspan>
+<tspan x="150" dy="20" font-size="12.5">Builds a production image for</tspan>
+<tspan x="150" dy="17" font-size="12.5">the apps and starts the</tspan>
+<tspan x="150" dy="17" font-size="12.5">container</tspan>
+</text>
+<path d="M430,70 a110,10 0 0 0 220,0 v105 a110,10 0 0 1 -220,0 z" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<ellipse cx="540" cy="70" rx="110" ry="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="540" y="103" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="540" font-size="15.5" font-weight="700">State file</tspan>
+<tspan x="540" dy="17" font-size="11.5" opacity="0.85">[Container: ~/.berth/os/&lt;name&gt;.json]</tspan>
+<tspan x="540" dy="20" font-size="12.5">Container name, apps, HTTP</tspan>
+<tspan x="540" dy="17" font-size="12.5">bridge URL and token</tspan>
+</text>
+<rect x="820" y="60" width="240" height="125" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="940" y="97" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="940" font-size="15.5" font-weight="700">Agent code</tspan>
+<tspan x="940" dy="17" font-size="11.5" opacity="0.85">[Container: Node.js, @berthos/agents]</tspan>
+<tspan x="940" dy="20" font-size="12.5">Computer.connect(),</tspan>
+<tspan x="940" dy="17" font-size="12.5">createAgent(), runAgent()</tspan>
+</text>
+<rect x="20" y="360" width="210" height="125" rx="10" fill="#6b7280" stroke="#4b5563" stroke-width="1.5"/>
+<text x="125" y="397" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="125" font-size="15.5" font-weight="700">Client with no Docker</tspan>
+<tspan x="125" dy="17" font-size="11.5" opacity="0.85">[e.g. the Python client]</tspan>
+<tspan x="125" dy="20" font-size="12.5">Calls one app's exports</tspan>
+<tspan x="125" dy="17" font-size="12.5">over the HTTP bridge</tspan>
+</text>
+<rect x="430" y="350" width="220" height="145" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="540" y="380" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="540" font-size="15.5" font-weight="700">Berth OS</tspan>
+<tspan x="540" dy="17" font-size="11.5" opacity="0.85">[Container: berth-os-&lt;name&gt;]</tspan>
+<tspan x="540" dy="20" font-size="12.5">Resident apps, each its own</tspan>
+<tspan x="540" dy="17" font-size="12.5">uid and policy; the context</tspan>
+<tspan x="540" dy="17" font-size="12.5">bus; the HTTP bridge with</tspan>
+<tspan x="540" dy="17" font-size="12.5">--http-rpc</tspan>
+</text>
+<rect x="840" y="360" width="220" height="125" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="950" y="388.5" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="950" font-size="15.5" font-weight="700">Semantic FS sidecar</tspan>
+<tspan x="950" dy="17" font-size="11.5" opacity="0.85">[Container: berth-os-&lt;name&gt;-fs]</tspan>
+<tspan x="950" dy="20" font-size="12.5">By default, runs</tspan>
+<tspan x="950" dy="17" font-size="12.5">semantic-fs-daemon and mounts</tspan>
+<tspan x="950" dy="17" font-size="12.5">/context</tspan>
+</text>
+<rect x="24" y="566" width="16" height="16" rx="4" fill="#438dd5" stroke="#3c7fc0"/>
+<text x="46" y="578.5" font-size="12.5" class="bl">Container</text>
+<rect x="117" y="566" width="16" height="16" rx="4" fill="#6b7280" stroke="#4b5563"/>
+<text x="139" y="578.5" font-size="12.5" class="bl">External</text>
+</svg>

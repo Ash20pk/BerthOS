@@ -2,6 +2,15 @@
 
 On a Mac, Berth's apps run on the kernel of the Linux VM your Docker daemon lives in, not on macOS. Docker Desktop's VM has no Landlock, so nothing is enforced. Colima's default VM has it. This page sets up Colima so the kernel refuses an undeclared write.
 
+## Context
+
+You run the `berth` CLI on macOS, but your apps never run on the macOS kernel. They run on the Linux kernel of the VM that hosts your Docker daemon, so that VM decides whether `berth.yml` is enforced. `berth doctor` reports which kernel it is ([doctor reference](./doctor-reference.md#which-kernel-it-checks)). Docker Desktop's VM doesn't enforce; Colima, installed with Homebrew, runs one that does.
+
+## Containers
+
+- **On macOS:** the `berth` CLI and the `docker` CLI. They pick the daemon by `DOCKER_HOST`, then `DOCKER_CONTEXT`, then the current Docker context.
+- **In the Linux VM:** the Docker daemon and every sandbox container, on the VM's kernel. Started as in step 2, Colima runs this VM with Apple's Virtualization framework and shares your home directory into it over virtiofs.
+
 | Docker runtime | Kernel | `berth doctor` |
 |---|---|---|
 | Docker Desktop | `linuxkit`, no Landlock (`landlock_create_ruleset` returns `ENOSYS`) | `enforcement: NOT ACTIVE` |
@@ -9,7 +18,15 @@ On a Mac, Berth's apps run on the kernel of the Linux VM your Docker daemon live
 
 No custom kernel is needed.
 
-## Quick setup
+## Components
+
+What makes a VM's kernel usable is one property: `landlock` in its active LSM list, at Landlock ABI 4 (Linux 6.7+) for network rules ([doctor reference](./doctor-reference.md#how-the-landlock-check-works)). The rest of the setup is VM size, the hypervisor, the file share and which daemon Berth talks to, each covered in [Step by step](#step-by-step).
+
+## Code
+
+Follow the quick setup, or the same steps by hand in order.
+
+### Quick setup
 
 ```bash
 berth doctor --fix                    # install and start Colima, then re-check against it
@@ -27,9 +44,9 @@ Both read these env vars:
 | `BERTH_COLIMA_MEMORY` | `8` (GB) |
 | `BERTH_COLIMA_DISK` | `60` (GB) |
 
-## Step by step
+### Step by step
 
-### 1. Install Colima
+#### 1. Install Colima
 
 ```bash
 brew install colima docker
@@ -37,7 +54,7 @@ brew install colima docker
 
 `docker` here is just the CLI; Colima provides the daemon. You can keep Docker Desktop installed: Colima registers its own daemon and Docker context, and step 5 switches back.
 
-### 2. Start the VM
+#### 2. Start the VM
 
 ```bash
 colima start \
@@ -51,7 +68,7 @@ colima start \
 - **`--mount-type virtiofs`**: required by `vz`, and faster than sshfs for the bind mount `berth dev` uses.
 - **`--mount "$HOME:w"`**: Colima mounts your home directory read-only by default. Without `:w`, writes fail with `EROFS`, which is easy to mistake for an enforcement denial. Only your home directory is shared with the VM, so keep projects under it: `berth dev` and `berth mcp` bind-mount the project, and one elsewhere (in `/tmp`, say) shows up empty in the sandbox, failing with `no berth.yml found`. `berth test` copies files into the image instead, so it works from anywhere.
 
-### 3. Point Berth at Colima
+#### 3. Point Berth at Colima
 
 ```bash
 docker context use colima
@@ -63,7 +80,7 @@ docker context use colima
 export DOCKER_HOST="unix://$HOME/.colima/default/docker.sock"
 ```
 
-### 4. Check
+#### 4. Check
 
 ```bash
 berth doctor
@@ -100,7 +117,7 @@ node packages/docker-orchestrator/test/capability-enforcement.mjs
 
 It should exit 0, and the log should include `ruleset=FullyEnforced`. That line means every denial check ran for real.
 
-### 5. Going back to Docker Desktop
+#### 5. Going back to Docker Desktop
 
 ```bash
 unset DOCKER_HOST           # only if you exported it in step 3
