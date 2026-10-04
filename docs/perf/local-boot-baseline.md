@@ -6,7 +6,11 @@ To reproduce, run [`scripts/bench/local-boot.mjs`](../../scripts/bench/local-boo
 
 > **Status: preliminary.** The benchmark stopped partway through its first full pass. The Mac's data volume ran out of space during a cold build, and the Colima VM's disk then failed (see [What went wrong](#what-went-wrong-during-the-measurement)). The cold numbers come from 3 clean runs, the warm numbers from 1 to 3 runs, and the `edit` mode and the idle resource sample were never run. The method calls for at least 5 runs of each. Every table below gives its sample size. Rerun the full pass (last section) once the VM is healthy.
 
-## Headline
+## Context
+
+This measures one developer path: `berth dev` or `berth mcp` on a Mac, with the CLI driving Docker inside a Colima VM. Other containers shared that VM throughout (see [Machine](#machine)).
+
+### Headline
 
 | | `berth dev`, apps/notes | `berth dev --apps apps/filesystem` (2 apps) | `berth mcp --app notes`, first `tools/call` |
 |---|---|---|---|
@@ -23,7 +27,7 @@ Where the time goes:
 
 Kernel enforcement was active in every boot measured: agent-init reported `ruleset=FullyEnforced` for the app and for context-bus-daemon, and `berth doctor` reported Landlock ABI 4 enforcing on the Colima kernel.
 
-## Machine
+### Machine
 
 | | |
 |---|---|
@@ -37,7 +41,35 @@ Kernel enforcement was active in every boot measured: agent-init reported `rules
 
 **Other load on the same VM.** A long-lived `openbox-local` stack (Keycloak, Postgres, Redis, SeaweedFS, Mailpit) was running the whole time. It used about 935 MiB (Keycloak alone 668 MiB), which left about 700 MiB available. Another agent was also running Berth's milestone tests (`berth-resource-limits-milestone-*`, `berth-cgroup-single-*`, `berth-python-multi-app-milestone-*`) against the same daemon. The script waits before each run until the VM's 1-minute load average is below 1.0 and none of those short-lived containers are running, and it records any contention per run. None of the runs reported below overlapped a foreign container. The earliest ones predate that check, but the other agent's containers first appeared after them.
 
-## Method
+## Containers
+
+Every boot measured here runs the same pieces. The `berth` CLI is a Node process on the Mac. The Colima VM holds dockerd and containerd, and each sandbox is two containers, the sandbox and its semantic-fs sidecar (`<name>-fs`). In the sandbox, tini starts `entrypoint.sh`, which runs context-bus-daemon and the app under agent-init. The CLI reaches a single app over the container's stdio and each app of a multi-app sandbox through a `docker exec` relay per call, and `berth mcp` answers its client over MCP stdio.
+
+## Components
+
+A boot splits into phases on the host (CLI startup, staging the build context, `docker build`, cache bookkeeping, the enforcement probe, starting the sidecar and the container) and in the container (tini, lifecycle flags, context-bus-daemon and the policy compile, the SDK runtime). [Breakdown](#breakdown-median-ms) times each phase, and [The cold build, step by step](#the-cold-build-step-by-step-dev-notes-median-of-3) times the build's steps.
+
+### Where the time goes, and what a microVM path would remove
+
+**Cold (about 250 s).** Nearly all of it is compiling five daemons and installing a desktop-grade Alpine userland on the user's machine, inside a 2 vCPU VM, the first time and after every daemon or Dockerfile change. A Berth-owned microVM booting a prebuilt, versioned root filesystem turns this into a download. The same saving is available without a microVM by publishing the base image, so this part of the win is about shipping artifacts, not about the VM. What the microVM itself adds is that there is no general-purpose Docker daemon whose memory limit (2 GiB here, shared with whatever else runs there) decides whether the build finishes at all.
+
+**Warm (about 1.3 s).** Roughly:
+
+- **Would go away**, about 0.33 s: the per-boot `docker build` whose steps are all cache hits (0.24 s), staging a build context of daemon sources to get there (0.05 s), and the build-cache bookkeeping (0.04 s). With a fixed rootfs and the app mounted in, a boot has nothing to build. The enforcement probe (under 0.01 s cached) also becomes a property of the image.
+- **Would be replaced**, about 0.17 s: the sidecar container (0.10 s) that exists only so the sandbox needs no `CAP_SYS_ADMIN` for FUSE, plus container create and start (0.06 s). A microVM has its own boot cost, not measured here. A guest that owns its kernel can mount `/context` itself without handing the capability to the app.
+- **Would stay unless restructured**, about 0.8 s: CLI startup (0.24 s) and the in-guest boot (0.56 s). Inside the guest, two separate Node tool processes before agent-init (lifecycle flags and the policy compiler, about 65 ms each including Node startup) could be precomputed at build time. The SDK runtime's own start to "ready" (0.25 s) is Node plus the app.
+
+**Multi-app.** Reaching a companion costs a `docker exec` per call today. A microVM with a host-side control channel (vsock) removes that per-call process spawn.
+
+**Resources.** Today the local stack costs a standing 2 GiB, 2 vCPU VM (about 700 MB of it resident on the Mac even at idle), a dockerd plus containerd (about 120 to 150 MB), and a second container per sandbox. Build layers accumulate: about 3 GB per cold build, and the VM's disk image grows on the host without shrinking. A microVM sized per sandbox, with no daemon and no per-boot build layers, removes the daemon and the build cache, and ties memory to running sandboxes rather than to a VM that is always up.
+
+**Isolation of the measurement itself.** Because the daemon is shared, Berth's build cache is shared with every other build of the same Dockerfile on that daemon (other agents' tests made "cold" builds 25 to 75 s), and the VM's memory and disk are shared with unrelated containers. A Berth-owned VM gets its own budget.
+
+## Code
+
+The benchmark is [`scripts/bench/local-boot.mjs`](../../scripts/bench/local-boot.mjs). The commands for a full pass are under [Rerunning](#rerunning).
+
+### Method
 
 - **t=0** is the spawn of `node packages/cli/bin/berth.js <args>`, and the run ends at the first successful call into the app. For single-app `berth dev` that call is an RPC over the container's stdio (`createStdioRpcClient`, polled). For multi-app it goes over the per-app socket (`invokeAppExport`, which runs `docker exec` of a relay). For `berth mcp` it is a `tools/call` result without `isError`, sent over the MCP stdio transport immediately after `initialize`. The probe calls are `list_notes` and `list_files`.
 - **Phases on the host** come from `BERTH_TIMING=1`, a new opt-in flag. With it set, `buildImage()` and `startContainer()` print one `[berth:timing] phase=... ms=...` line per phase (`packages/docker-orchestrator/src/timing.ts`). Unset, nothing is printed and nothing changes.
@@ -133,22 +165,6 @@ A write to `apps/notes/src/index.ts` while `berth dev` runs: the container resta
 - Every recorded boot logged `[agent-init] landlock restrict_self() status: ruleset=FullyEnforced no_new_privs=true` for the app, and the same for `context-bus-daemon`, which runs under its own agent-init as uid 9001. No boot printed `NOT RESTRICTED`, and the CLI printed no unenforced banner.
 - `berth doctor` on this VM: Landlock enforcement ACTIVE (a ruleset granting nothing denied a write, ABI 4), default seccomp profile, runc, and `/dev/fuse` available.
 - For comparison, the enforcement docs say Docker Desktop's linuxkit kernel returns `ENOSYS` for `landlock_create_ruleset` (not enforced). That was not measured here.
-
-## Where the time goes, and what a microVM path would remove
-
-**Cold (about 250 s).** Nearly all of it is compiling five daemons and installing a desktop-grade Alpine userland on the user's machine, inside a 2 vCPU VM, the first time and after every daemon or Dockerfile change. A Berth-owned microVM booting a prebuilt, versioned root filesystem turns this into a download. The same saving is available without a microVM by publishing the base image, so this part of the win is about shipping artifacts, not about the VM. What the microVM itself adds is that there is no general-purpose Docker daemon whose memory limit (2 GiB here, shared with whatever else runs there) decides whether the build finishes at all.
-
-**Warm (about 1.3 s).** Roughly:
-
-- **Would go away**, about 0.33 s: the per-boot `docker build` whose steps are all cache hits (0.24 s), staging a build context of daemon sources to get there (0.05 s), and the build-cache bookkeeping (0.04 s). With a fixed rootfs and the app mounted in, a boot has nothing to build. The enforcement probe (under 0.01 s cached) also becomes a property of the image.
-- **Would be replaced**, about 0.17 s: the sidecar container (0.10 s) that exists only so the sandbox needs no `CAP_SYS_ADMIN` for FUSE, plus container create and start (0.06 s). A microVM has its own boot cost, not measured here. A guest that owns its kernel can mount `/context` itself without handing the capability to the app.
-- **Would stay unless restructured**, about 0.8 s: CLI startup (0.24 s) and the in-guest boot (0.56 s). Inside the guest, two separate Node tool processes before agent-init (lifecycle flags and the policy compiler, about 65 ms each including Node startup) could be precomputed at build time. The SDK runtime's own start to "ready" (0.25 s) is Node plus the app.
-
-**Multi-app.** Reaching a companion costs a `docker exec` per call today. A microVM with a host-side control channel (vsock) removes that per-call process spawn.
-
-**Resources.** Today the local stack costs a standing 2 GiB, 2 vCPU VM (about 700 MB of it resident on the Mac even at idle), a dockerd plus containerd (about 120 to 150 MB), and a second container per sandbox. Build layers accumulate: about 3 GB per cold build, and the VM's disk image grows on the host without shrinking. A microVM sized per sandbox, with no daemon and no per-boot build layers, removes the daemon and the build cache, and ties memory to running sandboxes rather than to a VM that is always up.
-
-**Isolation of the measurement itself.** Because the daemon is shared, Berth's build cache is shared with every other build of the same Dockerfile on that daemon (other agents' tests made "cold" builds 25 to 75 s), and the VM's memory and disk are shared with unrelated containers. A Berth-owned VM gets its own budget.
 
 ## What went wrong during the measurement
 

@@ -1,0 +1,104 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 600" width="1180" height="600" role="img" aria-label="semantic-fs in the microVM: containers (C4 level 2)">
+<title>semantic-fs in the microVM: containers (C4 level 2)</title>
+<style>
+  text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  .ln { stroke: #57606a; }
+  .bd { stroke: #8c959f; }
+  .bl { fill: #57606a; }
+  .ah { fill: #57606a; }
+  .pill { fill: #f6f8fa; stroke: #d0d7de; }
+  .pt { fill: #24292f; }
+  @media (prefers-color-scheme: dark) {
+    .ln { stroke: #8b949e; }
+    .bd { stroke: #6e7681; }
+    .bl { fill: #9198a1; }
+    .ah { fill: #8b949e; }
+    .pill { fill: #161b22; stroke: #30363d; }
+    .pt { fill: #e6edf3; }
+  }
+</style>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+  <marker id="arrow-start" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+</defs>
+<rect x="20" y="30" width="1140" height="520" rx="14" fill="none" class="bd" stroke-width="1.5" stroke-dasharray="7 5"/>
+<text x="36" y="536" class="bl" font-size="13.5" font-weight="700">Guest</text>
+<text x="36" y="536" dx="44" class="bl" font-size="12">microVM</text>
+<path d="M290,100 L468,100" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="315.75" y="80" width="126.5" height="40" rx="6" class="pill"/>
+<text x="379" y="92" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="379" dy="0">file calls</tspan>
+<tspan x="379" dy="16" font-style="italic">[FUSE /context]</tspan>
+</text>
+<path d="M290,165 L468,165" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="322.85" y="145" width="112.3" height="40" rx="6" class="pill"/>
+<text x="379" y="157" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="379" dy="0">tag, query</tspan>
+<tspan x="379" dy="16" font-style="italic">[Unix socket]</tspan>
+</text>
+<path d="M898,122 L732,122" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="741.1" y="102" width="147.8" height="40" rx="6" class="pill"/>
+<text x="815" y="114" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="815" dy="0">starts it as root,</tspan>
+<tspan x="815" dy="16">before any app</tspan>
+</text>
+<path d="M600,205 L600,328" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="526.1" y="247" width="147.8" height="40" rx="6" class="pill"/>
+<text x="600" y="259" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="600" dy="0">data/ and index.db</tspan>
+<tspan x="600" dy="16" font-style="italic">[files, SQLite]</tspan>
+</text>
+<path d="M165,195 L165,328" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="112.4" y="242" width="105.19999999999999" height="40" rx="6" class="pill"/>
+<text x="165" y="254" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="165" dy="0">embed text</tspan>
+<tspan x="165" dy="16" font-style="italic">[embed.sock]</tspan>
+</text>
+<path d="M1020,185 L1020,500 L165,500 L165,457" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="405.4" y="488" width="389.2" height="24" rx="6" class="pill"/>
+<text x="600" y="500" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="600" dy="0">starts it when an app declares /context [agent-init]</tspan>
+</text>
+<rect x="40" y="60" width="250" height="135" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="165" y="93.5" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="165" font-size="15.5" font-weight="700">App i</tspan>
+<tspan x="165" dy="17" font-size="11.5" opacity="0.85">[Container: Node.js, uid 10000+i]</tspan>
+<tspan x="165" dy="20" font-size="12.5">Declares filesystem:read or</tspan>
+<tspan x="165" dy="17" font-size="12.5">write:/context; the SDK embeds</tspan>
+<tspan x="165" dy="17" font-size="12.5">and tags</tspan>
+</text>
+<rect x="470" y="60" width="260" height="145" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="600" y="90" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="600" font-size="15.5" font-weight="700">semantic-fs daemon</tspan>
+<tspan x="600" dy="17" font-size="11.5" opacity="0.85">[Container: Go, root]</tspan>
+<tspan x="600" dy="20" font-size="12.5">FUSE passthrough at /context and</tspan>
+<tspan x="600" dy="17" font-size="12.5">the tag/query control socket;</tspan>
+<tspan x="600" dy="17" font-size="12.5">narrows its capabilities after</tspan>
+<tspan x="600" dy="17" font-size="12.5">mounting</tspan>
+</text>
+<rect x="900" y="60" width="240" height="125" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="1020" y="97" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="1020" font-size="15.5" font-weight="700">berth-init</tspan>
+<tspan x="1020" dy="17" font-size="11.5" opacity="0.85">[Container: Rust, PID 1]</tspan>
+<tspan x="1020" dy="20" font-size="12.5">Waits for the FUSE mount at</tspan>
+<tspan x="1020" dy="17" font-size="12.5">/context, then boots the apps</tspan>
+</text>
+<rect x="40" y="330" width="250" height="125" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="165" y="367" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="165" font-size="15.5" font-weight="700">embeddings daemon</tspan>
+<tspan x="165" dy="17" font-size="11.5" opacity="0.85">[Container: Node.js, uid 9004]</tspan>
+<tspan x="165" dy="20" font-size="12.5">One model per sandbox, loaded on</tspan>
+<tspan x="165" dy="17" font-size="12.5">the first request</tspan>
+</text>
+<path d="M470,340 a130,10 0 0 0 260,0 v105 a130,10 0 0 1 -260,0 z" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<ellipse cx="600" cy="340" rx="130" ry="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="600" y="364.5" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="600" font-size="15.5" font-weight="700">Context store</tspan>
+<tspan x="600" dy="17" font-size="11.5" opacity="0.85">[Data store: ext4 state disk or tmpfs]</tspan>
+<tspan x="600" dy="20" font-size="12.5">/state/context on the state disk,</tspan>
+<tspan x="600" dy="17" font-size="12.5">/run/berth/context on tmpfs</tspan>
+<tspan x="600" dy="17" font-size="12.5">without one</tspan>
+</text>
+<rect x="24" y="566" width="16" height="16" rx="4" fill="#438dd5" stroke="#3c7fc0"/>
+<text x="46" y="578.5" font-size="12.5" class="bl">Container</text>
+</svg>

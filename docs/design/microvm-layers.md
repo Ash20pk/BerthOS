@@ -2,7 +2,11 @@
 
 Status: layers and the browser layer built (feat/vm-layers); embeddings still a proposal. Covers the browser (the last capability the VM refused) and a proposal for embeddings.
 
-## The problem
+## Context
+
+A layer adds large, optional software, such as the browser, to a microVM sandbox without putting it in every user's rootfs download. It involves the CLI, which works out from the apps' manifests which layers a sandbox needs, the vm-artifacts release that carries them, and `berth-vmm` and `berth-init`, which attach and mount them.
+
+### The problem
 
 Everything a VM sandbox can run is in one rootfs image, and every user downloads all of it on `berth vm install`. That stopped being a good trade at the browser:
 
@@ -15,11 +19,17 @@ Everything a VM sandbox can run is in one rootfs image, and every user downloads
 
 Most sandboxes never start a browser. Putting it in the rootfs would make every user's first download several times bigger and would put a 400 MB image behind every rootfs pin bump.
 
-## Design: layers, downloaded when an app needs one
+## Containers
+
+<p align="center"><img src="../images/c4/design-microvm-layers.svg" alt="Layer containers: the berth CLI works out which layers the apps' manifests need, downloads a missing one once from the vm-artifacts release and checks it against its pin, then runs berth-vmm with --layer. berth-vmm checks the layer against its pin and base and attaches it to the guest as a read-only virtio-blk disk. In the guest, berth-init mounts it and lays its directories over the base with overlayfs, and starts the display stack (Xvfb, x11vnc, websockify) for a browser: app." width="100%"></p>
+
+Building, Shipping and Booting follow a layer from the build to a running sandbox: the release carries it, the CLI fetches it, and berth-vmm and berth-init attach and mount it.
+
+### Design: layers, downloaded when an app needs one
 
 A **layer** is a content-addressed, read-only erofs image of files to add to the base rootfs, built and pinned like the rootfs itself, and attached only to a sandbox whose apps need it.
 
-### Building
+#### Building
 
 - `scripts/build-layer.sh <name>` runs in the same pinned Alpine builder as `build-rootfs.sh`. It unpacks the base rootfs tree, installs the layer's packages (`rootfs/layers/<name>/packages.txt`, locked in `<name>.apk.lock`) with `apk --root`, and keeps only the files that are new or changed relative to the base. That delta becomes `layer-<name>-<sha256>.erofs`, using the same fixed timestamp and UUID as the rootfs.
 - A layer is built against one base rootfs, because its libraries link against the base's. The pins in `rootfs/manifest.toml` say so:
@@ -34,17 +44,21 @@ A **layer** is a content-addressed, read-only erofs image of files to add to the
   This means a rootfs bump rebuilds every layer. CI does it in the same `vm-artifacts` run, and checks each layer against its pin, as it does the rootfs.
 - `berth-vmm` compiles the manifest in, so it boots only a pinned layer built for the rootfs it's booting.
 
-### Shipping
+#### Shipping
 
 - The release carries the layers as extra assets: `layer-browser-<sha>.erofs`. `berth vm install` doesn't fetch them.
 - `berth dev`, `berth mcp`, `Computer.boot()` and the other boot paths work out what the sandbox needs from its apps' manifests. A `browser:` capability other than `navigate`, for example, needs the browser layer. A layer that isn't installed yet is downloaded then, from the same release, checked against its pin as it streams and before it's renamed into place (the `installArtifacts` path). It says so first, with the size: `the browser layer (412 MB) is needed by browser-native; downloading once...`.
 - `berth vm install --layer browser` fetches one ahead of time, for CI and for offline use.
 
-### Booting
+#### Booting
 
 - `berth-vmm run --layer <name>` attaches the image as another read-only virtio-blk disk, after rootfs, state and secrets. It hashes the image like the rootfs, and the measurement line gains `layers: [{ name, sha256, pinned }]`, which `berth attest` records under `boot.isolation`.
 - `berth-init` mounts each layer at `/layers/<name>`. For each top-level directory the layer has, such as `/usr` and `/etc/fonts`, it puts an overlay over the base: `lowerdir=/layers/<name>/usr:/usr`. This happens before it binds `/etc/passwd` and `/etc/group`. Nothing writable is involved: the overlay has two read-only lowers and no upper.
 - An app's Landlock baseline already covers `/usr` and `/etc`, so Chromium's files are readable without new policy.
+
+## Components
+
+What goes into the browser layer, what else layers could carry, and the options for embeddings.
 
 ### The browser layer
 
@@ -63,7 +77,7 @@ The same mechanism fits anything large and optional. In order of size:
 - Python packages beyond `berth_sdk`'s dependencies, if apps ever get a pip step;
 - the embeddings kit (below).
 
-## Embeddings: what's built, and a proposal
+### Embeddings: what's built, and a proposal
 
 **What feat/vm-embeddings does.** The rootfs carries the kit: transformers bundled, onnxruntime's WASM and all-MiniLM-L6-v2, 28 MB compressed. One embeddings daemon per sandbox loads the model on the first query, so an app that never queries `/context` pays nothing. Loaded, it takes about 250 MB of RAM (measured: node at 38 MB, 245 MB with the model, 265 MB peak), so a single-app sandbox that declares `/context` gets 768 MiB instead of 512. It works (a query sharing no word with a tag finds the file by meaning), but 250 MB per sandbox is a lot for ranking a few hundred short tags.
 
@@ -84,6 +98,13 @@ The spike, before anything changes:
 3. Measure RSS and load time in the guest.
 
 If a static model ranks those cases as well, switch. If not, keep A as built and do B once layers exist. C is the option I'd rule out: a host process doing work for the guest on app-supplied text is the kind of channel the VM is there to avoid.
+
+## Code
+
+- **Build:** [`packages/vmm/scripts/build-layer.sh`](../../packages/vmm/scripts/build-layer.sh) `<name>`. Each layer's package list, lock and staged files are in [`packages/vmm/rootfs/layers/<name>/`](../../packages/vmm/rootfs/layers) (`packages.txt`, `apk.lock`, `stage-files.sh` for the browser).
+- **Pins:** [`packages/vmm/rootfs/manifest.toml`](../../packages/vmm/rootfs/manifest.toml), as `layer_<name>_sha256`, `layer_<name>_size` and `layer_<name>_base`.
+- **Boot:** `berth-vmm run --layer <name>` (repeatable) attaches `<artifacts>/layers/layer-<name>-<sha>.erofs` read-only ([`packages/vmm/src/run.rs`](../../packages/vmm/src/run.rs)). berth-init mounts each layer under `/run/layers/<name>` and builds the overlays in `layer_overlays` ([`packages/vmm/init/src/plan.rs`](../../packages/vmm/init/src/plan.rs)).
+- **CLI:** `layersFor()` in [`packages/cli/src/vm/support.ts`](../../packages/cli/src/vm/support.ts) picks the layers, `ensureLayers()` in [`packages/cli/src/vm/runtime.ts`](../../packages/cli/src/vm/runtime.ts) downloads a missing one, and `berth vm install --layer browser` fetches one ahead of time.
 
 ## Steps
 
