@@ -2,7 +2,31 @@
 
 The context bus is pub/sub between the resident apps in one sandbox. One app publishes an event on a topic, and every other app subscribed to that topic receives it. Use it when apps should react to each other (a filesystem app writes a file, an editor app opens it) without calling each other directly.
 
-## Using it from a resident app
+## Context
+
+The bus lives inside one sandbox. Its users are the resident apps running there: they publish and subscribe, and none of them needs to know which other apps are listening. Nothing outside the sandbox connects to it directly; a host process goes through a tool an app exports, as below.
+
+### Publishing from the host
+
+A host process, such as an `Agent` from the experimental agent framework, can't reach the bus directly. `apps/filesystem` exports `publish_context_event({ topic, payload })` for this: call it like any other tool and it publishes inside the sandbox. The agent framework's step tracer uses it to publish `agent.step` events; see [tracing](./agents-reference.md#tracing-a-run-agentstep-events-not-a-langsmith-style-tracer).
+
+## Containers
+
+Two kinds of process are involved, both inside the sandbox: the `context-bus-daemon` and the resident apps that connect to it.
+
+### How it works
+
+One `context-bus-daemon` (Rust) runs per sandbox, started before any app. Apps connect to its Unix socket at `$BERTH_CONTEXT_BUS_SOCKET` (default `/tmp/berth-context-bus.sock`) and exchange length-prefixed protobuf frames. The schema is `packages/context-bus-daemon/proto/context_bus.proto`.
+
+## Components
+
+Inside the daemon: per-connection identity, the topic table of subscribers, and a bounded queue per subscriber (see [Limits](#limits) for the sizes).
+
+The daemon identifies each connection by the kernel's report of its uid, not by the name passed to `register()`. An app can't register, publish or be logged as another app.
+
+## Code
+
+### Using it from a resident app
 
 Register and subscribe in `onAgentReady`:
 
@@ -42,16 +66,6 @@ app.export({
 | `publish(topic, payload)` | Send a JSON-serialisable payload to every *other* subscriber of `topic`. The publisher doesn't receive its own event. |
 
 If the daemon isn't reachable (a bare `node dist/index.js`, a unit test), `ctx.contextBus` logs a warning and falls back to an in-process bus that never leaves the app, so app code runs without a daemon. The Python SDK has the same client; see [the Python context bus reference](./sdk-python-context-bus-reference.md).
-
-## Publishing from the host
-
-A host process, such as an `Agent` from the experimental agent framework, can't reach the bus directly. `apps/filesystem` exports `publish_context_event({ topic, payload })` for this: call it like any other tool and it publishes inside the sandbox. The agent framework's step tracer uses it to publish `agent.step` events; see [tracing](./agents-reference.md#tracing-a-run-agentstep-events-not-a-langsmith-style-tracer).
-
-## How it works
-
-One `context-bus-daemon` (Rust) runs per sandbox, started before any app. Apps connect to its Unix socket at `$BERTH_CONTEXT_BUS_SOCKET` (default `/tmp/berth-context-bus.sock`) and exchange length-prefixed protobuf frames. The schema is `packages/context-bus-daemon/proto/context_bus.proto`.
-
-The daemon identifies each connection by the kernel's report of its uid, not by the name passed to `register()`. An app can't register, publish or be logged as another app.
 
 ## Limits
 

@@ -12,14 +12,44 @@ Docker is still the default. The VM runtime runs Node and Python apps that use t
 | First `tools/call` after `berth mcp` starts | about 1.6 s with a warm image | about 0.7 s |
 | Reload after a code change | container restart | VM reboot, about 0.55 s |
 
-## Requirements
+## Context
+
+You run the `berth` CLI on your own machine, and it boots a VM where it would otherwise start a Docker container. The systems it touches are the host's hypervisor (Hypervisor.framework on macOS, KVM on Linux) through libkrun, the GitHub release that `berth vm install` downloads the pinned kernel, rootfs and berth-vmm from, and the hosts an app declares under `network:host:`. An MCP client reaches the app through `berth mcp --runtime vm`, as it does with Docker.
+
+### Requirements
 
 - **macOS on Apple silicon** (Hypervisor.framework), or **Linux with KVM** (`/dev/kvm` readable and writable).
 - **libkrun 1.19.6**. On macOS: `brew tap libkrun/krun && brew install libkrun`. Newer Homebrew asks you to trust a third-party tap's formulae first: `brew trust --formula libkrun/krun/libkrun libkrun/krun/libkrunfw libkrun/krun/virglrenderer-krun`.
 - **berth-vmm**, the small launcher that runs one VM per process. `berth vm install` downloads it on macOS arm64. On other platforms, build it from `packages/vmm` with `cargo build --release`. On macOS it has to be signed with the hypervisor entitlement. The published build is, and the build scripts sign a local one. `berth doctor` prints the `codesign` command if it isn't.
 - **The pinned kernel and rootfs**, about 100 MB, installed with `berth vm install`.
 
-## Install
+## Containers
+
+<p align="center"><img src="./images/c4/local-vm.svg" alt="Local microVM containers: on the host, the berth CLI downloads the pinned kernel, rootfs and berth-vmm from the vm-artifacts release, then spawns berth-vmm and talks to it over Unix sockets in the run directory. berth-vmm reaches berth-init, PID 1 in the guest, over vsock 1024, 1025 and 5000 and up. berth-init starts each resident app under agent-init and runs the guest daemons. The egress broker in the guest hands allowed connections over vsock 1026 to the dialer in berth-vmm, which checks them again and dials the internet host." width="100%"></p>
+
+`berth dev --runtime vm` ([Run an app](#run-an-app)) brings these pieces up.
+
+What happens:
+
+- **Bundling.** The guest has Node but no `node_modules`, so the app is bundled with esbuild: `dist/index.mjs` (your app with `@berthos/sdk`, zod and your other dependencies inlined), `runtime.mjs` (the SDK's runtime), `proto/context_bus.proto`, and your `berth.yml`. esbuild and the SDK come from your project if it has them installed, or from the CLI's own dependencies if it doesn't. A `berth init` project works before `npm install`. Bundles are cached by content under `~/.berth/vm/apps`.
+- **The VM.** One `berth-vmm` process with 2 vCPUs and 512 MiB, no network device, and TSI off. Its run directory, `~/.berth/run/vm/<name>/`, holds the sockets for the control, log and RPC ports, plus `berth-vmm.pid`, `vm.json`, `vmm.log` and `console.log`. berth-vmm runs detached, so `berth mcp`, `berth rpc` and `berth vm` commands find it again by its run directory. If its process is gone or no longer belongs to that run directory, the run directory is treated as stale and cleaned up.
+- **Inside.** `berth-init` is PID 1. It compiles your capability policy, runs your app as its own uid in its own cgroup under agent-init (Landlock, seccomp), and starts the context bus. See [the design notes](design/microvm-runtime.md).
+- **`/workspace`** is on a per-app state disk, `~/.berth/vm/state/<app>.img`. It is created sparse at 1 GiB and kept across reloads and sessions, like the Docker path's named volume.
+
+## Components
+
+Inside the guest, `berth-init` does the work a container's entrypoint does. As described in the sections below, it:
+
+- reads the secrets disk as root before anything starts, and gives each app only its own values ([Secrets and other variables](#secrets-and-other-variables));
+- compiles each app's capability policy, hashes it for `berth attest`, and runs the app as its own uid in its own cgroup under agent-init (Landlock, seccomp);
+- starts the context bus and, as the apps' capabilities call for them, semantic-fs-daemon, the egress broker, the GitHub API broker, and the browser layer's Xvfb, x11vnc and noVNC ([Limits](#limits));
+- relays a published guest port, such as the terminal's 7681, to the host over vsock.
+
+On the host, berth-vmm carries the kernel and rootfs pins it was built with and refuses to boot anything else ([Install](#install)). It hashes each app share before the VM starts, confines itself under a Seatbelt profile on macOS, and runs the egress dialer that checks every connection against `--egress-allow`. See [the design notes](design/microvm-runtime.md) and [the guest init design](design/microvm-guest-init.md).
+
+## Code
+
+### Install
 
 ```bash
 berth vm install
@@ -28,7 +58,7 @@ berth doctor --sandbox vm
 
 `berth vm install` puts the kernel and rootfs in `~/.berth/vm`, where berth-vmm looks for them. If no berth-vmm is found, it also puts berth-vmm in `~/.berth/vm/bin`. Each file is checked against its sha256 pin before it is put in place, and a file that doesn't match is refused. The kernel and rootfs pins are the ones berth-vmm was built with. The CLI reads them out of the binary, because berth-vmm refuses to boot anything else. If there is no berth-vmm yet, it uses its own copy of the same pins.
 
-### What is downloaded, and from where
+#### What is downloaded, and from where
 
 By default, from the GitHub release that [`.github/workflows/vm-artifacts.yml`](../.github/workflows/vm-artifacts.yml) publishes for the kernel and rootfs pair, `vm-artifacts-<first 8 hex of the kernel pin>-<first 8 of the rootfs pin>`:
 
@@ -44,7 +74,7 @@ berth-vmm is downloaded only when the CLI pins its sha256 for your platform (mac
 
 A download is checked against the pinned size as it streams, and against the sha256 before it's renamed into place, so nothing unverified is ever at the final path. A download that receives nothing for 30 seconds is aborted and retried, up to four attempts, resuming with an HTTP range request where the server supports one (GitHub's CDN does) and starting over where it doesn't. `BERTH_VM_DOWNLOAD_STALL_MS` changes the 30 seconds.
 
-### Sources, in order
+#### Sources, in order
 
 1. **A local directory**: `--from <dir>`, or `BERTH_VMM_ARTIFACTS`. It can be the `$BERTH_VMM_ARTIFACTS` directory that `packages/vmm`'s build scripts write (`kernel/sha256/<sha>/Image`, `rootfs/rootfs-<sha>.erofs`), a flat directory, one subdirectory per sha256, or a directory of downloaded release assets. On APFS the copy is a clone, so it takes no extra space.
 2. **A download**, for anything the directory doesn't have. The URL is a template:
@@ -61,7 +91,7 @@ A download is checked against the pinned size as it streams, and against the sha
 
 If the kernel and rootfs aren't installed, `berth dev --runtime vm` installs them the first time it runs, from the same sources.
 
-### Verifying by hand
+#### Verifying by hand
 
 ```bash
 tag=vm-artifacts-8f79e8da-15a8892b
@@ -83,7 +113,7 @@ xattr -d com.apple.quarantine berth-vmm-darwin-arm64-*
 
 `berth vm install` doesn't need this. A file it downloads isn't quarantined, and it clears the attribute only on a file whose sha256 matched the pin.
 
-### Building from source
+#### Building from source
 
 The same scripts CI runs, from `packages/vmm` (a libkrun builder VM on macOS, a container on Linux):
 
@@ -99,7 +129,7 @@ berth vm install --from "$BERTH_VMM_ARTIFACTS" --vmm target/release/berth-vmm
 
 Each script fails on a hash that isn't its pin and prints both. The builds are reproducible while Alpine 3.24 still serves the package versions in `kernel/apk.lock`, `guest/*.apk.lock` and `rootfs/apk.lock`, which is how long the pins can be rebuilt bit for bit. See [Distribution](design/microvm-image.md#distribution).
 
-## Run an app
+### Run an app
 
 ```bash
 cd apps/notes
@@ -121,20 +151,13 @@ berth vm logs berth-dev-notes   # the guest's log: apps, berth-init, context-bus
 berth vm stop berth-dev-notes
 ```
 
-What happens:
-
-- **Bundling.** The guest has Node but no `node_modules`, so the app is bundled with esbuild: `dist/index.mjs` (your app with `@berthos/sdk`, zod and your other dependencies inlined), `runtime.mjs` (the SDK's runtime), `proto/context_bus.proto`, and your `berth.yml`. esbuild and the SDK come from your project if it has them installed, or from the CLI's own dependencies if it doesn't. A `berth init` project works before `npm install`. Bundles are cached by content under `~/.berth/vm/apps`.
-- **The VM.** One `berth-vmm` process with 2 vCPUs and 512 MiB, no network device, and TSI off. Its run directory, `~/.berth/run/vm/<name>/`, holds the sockets for the control, log and RPC ports, plus `berth-vmm.pid`, `vm.json`, `vmm.log` and `console.log`. berth-vmm runs detached, so `berth mcp`, `berth rpc` and `berth vm` commands find it again by its run directory. If its process is gone or no longer belongs to that run directory, the run directory is treated as stale and cleaned up.
-- **Inside.** `berth-init` is PID 1. It compiles your capability policy, runs your app as its own uid in its own cgroup under agent-init (Landlock, seccomp), and starts the context bus. See [the design notes](design/microvm-runtime.md).
-- **`/workspace`** is on a per-app state disk, `~/.berth/vm/state/<app>.img`. It is created sparse at 1 GiB and kept across reloads and sessions, like the Docker path's named volume.
-
-### Python apps
+#### Python apps
 
 A `runtime: python` app runs the same way. Nothing is bundled: the CLI copies the app's own files (not `__pycache__`, `venv`, `node_modules` or dot directories) into its share, and the guest starts it with the image's python3 and berth_sdk, loading `src/app.py`, as a container does.
 
 Only the standard library and berth_sdk's own dependencies (pyyaml, pydantic, protobuf, from Alpine) are in the image. Nothing is pip-installed, so a package your app imports beyond those fails at boot with Python's `ModuleNotFoundError` in `berth vm logs`. Use `--runtime docker` for such an app. A share holds at most 2,000 files and 32 MiB.
 
-### Secrets and other variables
+#### Secrets and other variables
 
 ```bash
 export GITHUB_TOKEN=...            # or keep it in a .env file
@@ -146,7 +169,7 @@ berth dev --runtime vm --env-file .env
 
 None of it goes on the guest's kernel command line, which every process in the guest can read in `/proc/cmdline`. The CLI writes the values to `secrets.img` in the run directory (0600), berth-vmm attaches it as a read-only disk, and berth-init reads it as root before anything starts, removes the device node, and puts each app's values into that app's environment only. The apps run as different uids, so one can't read another's `/proc/<pid>/environ`. The CLI deletes `secrets.img` as soon as the sandbox is ready. Values are never logged; berth-init reports the names it delivered. See the [secrets reference](secrets-reference.md#in-a-microvm).
 
-### Reloading
+#### Reloading
 
 Saving a file in `src/` or `berth.yml` rebundles. If the bundle comes out the same (you changed only a comment, say), the VM keeps running. Otherwise the VM is stopped and a fresh one boots on the new bundle:
 
@@ -157,7 +180,7 @@ Reloaded in 537 ms (bundle 127 ms, stop 36 ms, boot 374 ms). boot 0820e707-…
 
 The CLI reboots the whole VM rather than restarting only the app. The app share is read-only, and berth-init has no way to restart a single app yet. A boot also recompiles the capability policy, so a `berth.yml` change takes effect, which an app restart wouldn't do. Your notes stay on the state disk.
 
-### MCP
+#### MCP
 
 ```bash
 berth mcp --runtime vm --app notes --app-dir apps/notes
@@ -167,7 +190,7 @@ The bridge works as it does with Docker (see the [MCP bridge reference](mcp-brid
 
 Time from spawning `berth mcp` to the first answered `tools/call`, measured by `packages/cli/test/vm-e2e.mjs` on an Apple M4 under load: 625 to 851 ms when the bridge boots its own VM (about 300 ms of that is the CLI starting), and about 260 ms when it attaches to a running one. The Docker path takes about 1.6 s with a warm image.
 
-## Choosing the runtime
+### Choosing the runtime
 
 | | |
 |---|---|
