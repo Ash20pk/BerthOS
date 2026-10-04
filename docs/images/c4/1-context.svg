@@ -1,0 +1,130 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 760" width="1100" height="760" role="img" aria-label="Berth: system context (C4 level 1)">
+<title>Berth: system context (C4 level 1)</title>
+<style>
+  text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  .ln { stroke: #57606a; }
+  .bd { stroke: #8c959f; }
+  .bl { fill: #57606a; }
+  .ah { fill: #57606a; }
+  .pill { fill: #f6f8fa; stroke: #d0d7de; }
+  .pt { fill: #24292f; }
+  @media (prefers-color-scheme: dark) {
+    .ln { stroke: #8b949e; }
+    .bd { stroke: #6e7681; }
+    .bl { fill: #9198a1; }
+    .ah { fill: #8b949e; }
+    .pill { fill: #161b22; stroke: #30363d; }
+    .pt { fill: #e6edf3; }
+  }
+</style>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+  <marker id="arrow-start" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+</defs>
+
+<path d="M180,180 L180,255 L470,255 L470,328" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="219" y="235" width="162" height="40" rx="6" class="pill"/>
+<text x="300" y="247" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="300" dy="0">builds and runs apps</tspan>
+<tspan x="300" dy="16" font-style="italic">[berth CLI]</tspan>
+</text>
+<path d="M550,180 L550,328" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="422.85" y="194" width="254.29999999999998" height="40" rx="6" class="pill"/>
+<text x="550" y="206" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="550" dy="0">calls tools</tspan>
+<tspan x="550" dy="16" font-style="italic">[MCP over stdio, or SDK adapters]</tspan>
+</text>
+<path d="M920,180 L920,255 L630,255 L630,328" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="680.6" y="243" width="218.79999999999998" height="24" rx="6" class="pill"/>
+<text x="790" y="255" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="790" dy="0">verifies attestation records</tspan>
+</text>
+<path d="M368,420 L142,420 L142,558" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="82.30000000000001" y="480" width="119.39999999999999" height="40" rx="6" class="pill"/>
+<text x="142" y="492" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="142" dy="0">has its policy</tspan>
+<tspan x="142" dy="16">enforced by</tspan>
+</text>
+<path d="M417,460 L417,558" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="353.75" y="490" width="126.5" height="40" rx="6" class="pill"/>
+<text x="417" y="502" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="417" dy="0">declared hosts</tspan>
+<tspan x="417" dy="16" font-style="italic">[egress broker]</tspan>
+</text>
+<path d="M692,460 L692,558" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="632.3" y="490" width="119.39999999999999" height="40" rx="6" class="pill"/>
+<text x="692" y="502" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="692" dy="0">declared verbs</tspan>
+<tspan x="692" dy="16" font-style="italic">[API broker]</tspan>
+</text>
+<path d="M732,420 L962,420 L962,558" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="891.65" y="480" width="140.7" height="40" rx="6" class="pill"/>
+<text x="962" y="492" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="962" dy="0">deploys apps to</tspan>
+<tspan x="962" dy="16" font-style="italic">[deploy adapters]</tspan>
+</text>
+<rect x="50" y="60" width="260" height="120" rx="10" fill="#08427b" stroke="#073b6f" stroke-width="1.5"/>
+<circle cx="180" cy="38" r="20" fill="#08427b" stroke="#073b6f" stroke-width="1.5"/>
+<text x="180" y="94.5" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="180" font-size="15.5" font-weight="700">Developer</tspan>
+<tspan x="180" dy="17" font-size="11.5" opacity="0.85">[Person]</tspan>
+<tspan x="180" dy="20" font-size="12.5">Writes resident apps and their</tspan>
+<tspan x="180" dy="17" font-size="12.5">berth.yml, runs the berth CLI</tspan>
+</text>
+<rect x="420" y="60" width="260" height="120" rx="10" fill="#6b7280" stroke="#4b5563" stroke-width="1.5"/>
+<text x="550" y="86" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="550" font-size="15.5" font-weight="700">AI agent</tspan>
+<tspan x="550" dy="17" font-size="11.5" opacity="0.85">[Software System]</tspan>
+<tspan x="550" dy="20" font-size="12.5">Claude Code, Cursor, any MCP</tspan>
+<tspan x="550" dy="17" font-size="12.5">client, or your own tool-calling</tspan>
+<tspan x="550" dy="17" font-size="12.5">loop</tspan>
+</text>
+<rect x="790" y="60" width="260" height="120" rx="10" fill="#08427b" stroke="#073b6f" stroke-width="1.5"/>
+<circle cx="920" cy="38" r="20" fill="#08427b" stroke="#073b6f" stroke-width="1.5"/>
+<text x="920" y="94.5" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="920" font-size="15.5" font-weight="700">Reviewer</tspan>
+<tspan x="920" dy="17" font-size="11.5" opacity="0.85">[Person]</tspan>
+<tspan x="920" dy="20" font-size="12.5">Checks what ran in a session, and</tspan>
+<tspan x="920" dy="17" font-size="12.5">what was enforced</tspan>
+</text>
+<rect x="370" y="330" width="360" height="130" rx="10" fill="#1168bd" stroke="#0b4884" stroke-width="1.5"/>
+<text x="550" y="369.5" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="550" font-size="15.5" font-weight="700">Berth</tspan>
+<tspan x="550" dy="17" font-size="11.5" opacity="0.85">[Software System]</tspan>
+<tspan x="550" dy="20" font-size="12.5">Runs an agent's tools in a sandbox, each confined</tspan>
+<tspan x="550" dy="17" font-size="12.5">to the capabilities its manifest declares</tspan>
+</text>
+<rect x="20" y="560" width="245" height="125" rx="10" fill="#6b7280" stroke="#4b5563" stroke-width="1.5"/>
+<text x="142.5" y="588.5" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="142.5" font-size="15.5" font-weight="700">Host kernel or hypervisor</tspan>
+<tspan x="142.5" dy="17" font-size="11.5" opacity="0.85">[External System]</tspan>
+<tspan x="142.5" dy="20" font-size="12.5">Linux 6.7+ (Landlock, seccomp,</tspan>
+<tspan x="142.5" dy="17" font-size="12.5">cgroups), or HVF / KVM for the</tspan>
+<tspan x="142.5" dy="17" font-size="12.5">microVM</tspan>
+</text>
+<rect x="295" y="560" width="245" height="125" rx="10" fill="#6b7280" stroke="#4b5563" stroke-width="1.5"/>
+<text x="417.5" y="605.5" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="417.5" font-size="15.5" font-weight="700">Internet hosts</tspan>
+<tspan x="417.5" dy="17" font-size="11.5" opacity="0.85">[External System]</tspan>
+<tspan x="417.5" dy="20" font-size="12.5">Only the hosts an app declares</tspan>
+</text>
+<rect x="570" y="560" width="245" height="125" rx="10" fill="#6b7280" stroke="#4b5563" stroke-width="1.5"/>
+<text x="692.5" y="597" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="692.5" font-size="15.5" font-weight="700">GitHub API</tspan>
+<tspan x="692.5" dy="17" font-size="11.5" opacity="0.85">[External System]</tspan>
+<tspan x="692.5" dy="20" font-size="12.5">Only the API verbs an app</tspan>
+<tspan x="692.5" dy="17" font-size="12.5">declares</tspan>
+</text>
+<rect x="845" y="560" width="235" height="125" rx="10" fill="#6b7280" stroke="#4b5563" stroke-width="1.5"/>
+<text x="962.5" y="605.5" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="962.5" font-size="15.5" font-weight="700">Remote sandboxes</tspan>
+<tspan x="962.5" dy="17" font-size="11.5" opacity="0.85">[External System]</tspan>
+<tspan x="962.5" dy="20" font-size="12.5">E2B, Daytona, Kubernetes</tspan>
+</text>
+<rect x="24" y="726" width="16" height="16" rx="4" fill="#08427b" stroke="#073b6f"/>
+<text x="46" y="738.5" font-size="12.5" class="bl">Person</text>
+<rect x="96" y="726" width="16" height="16" rx="4" fill="#1168bd" stroke="#0b4884"/>
+<text x="118" y="738.5" font-size="12.5" class="bl">The system</text>
+<rect x="196" y="726" width="16" height="16" rx="4" fill="#6b7280" stroke="#4b5563"/>
+<text x="218" y="738.5" font-size="12.5" class="bl">External system</text>
+</svg>
