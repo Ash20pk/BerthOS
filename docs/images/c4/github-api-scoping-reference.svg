@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 790" width="800" height="790" role="img" aria-label="GitHub API proxy: containers (C4 level 2)">
+<title>GitHub API proxy: containers (C4 level 2)</title>
+<style>
+  text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  .ln { stroke: #57606a; }
+  .bd { stroke: #8c959f; }
+  .bl { fill: #57606a; }
+  .ah { fill: #57606a; }
+  .pill { fill: #f6f8fa; stroke: #d0d7de; }
+  .pt { fill: #24292f; }
+  @media (prefers-color-scheme: dark) {
+    .ln { stroke: #8b949e; }
+    .bd { stroke: #6e7681; }
+    .bl { fill: #9198a1; }
+    .ah { fill: #8b949e; }
+    .pill { fill: #161b22; stroke: #30363d; }
+    .pt { fill: #e6edf3; }
+  }
+</style>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+  <marker id="arrow-start" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+</defs>
+<rect x="20" y="30" width="580" height="440" rx="14" fill="none" class="bd" stroke-width="1.5" stroke-dasharray="7 5"/>
+<text x="36" y="456" class="bl" font-size="13.5" font-weight="700">Sandbox</text>
+
+<rect x="20" y="540" width="300" height="180" rx="14" fill="none" class="bd" stroke-width="1.5" stroke-dasharray="7 5"/>
+<text x="36" y="706" class="bl" font-size="13.5" font-weight="700">Host</text>
+<text x="36" y="706" dx="36.4" class="bl" font-size="12">microVM only</text>
+<path d="M160,185 L160,298" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="71.9" y="222" width="176.2" height="40" rx="6" class="pill"/>
+<text x="160" y="234" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="160" dy="0">CONNECT api.github.com</tspan>
+<tspan x="160" dy="16" font-style="italic">[HTTP proxy]</tspan>
+</text>
+<path d="M460,185 L460,298" fill="none" class="ln" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrow)"/>
+<rect x="400.3" y="222" width="119.39999999999999" height="40" rx="6" class="pill"/>
+<text x="460" y="234" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="460" dy="0">api.github.com</tspan>
+<tspan x="460" dy="16">refused</tspan>
+</text>
+<path d="M160,425 L160,558" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="107.4" y="485" width="105.19999999999999" height="40" rx="6" class="pill"/>
+<text x="160" y="497" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="160" dy="0">relay, then</tspan>
+<tspan x="160" dy="16" font-style="italic">[vsock 1026]</tspan>
+</text>
+<path d="M300,617 L518,617" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="352.85" y="597" width="112.3" height="40" rx="6" class="pill"/>
+<text x="409" y="609" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="409" dy="0">checks, dials</tspan>
+<tspan x="409" dy="16" font-style="italic">[TCP]</tspan>
+</text>
+<path d="M260,425 L260,500 L640,500 L640,558" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="312.2" y="488" width="275.6" height="24" rx="6" class="pill"/>
+<text x="450" y="500" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="450" dy="0">in a container: dials directly [TLS]</tspan>
+</text>
+<rect x="40" y="60" width="540" height="125" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="310" y="97" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="310" font-size="15.5" font-weight="700">Resident app</tspan>
+<tspan x="310" dy="17" font-size="11.5" opacity="0.85">[Container: Node.js]</tspan>
+<tspan x="310" dy="20" font-size="12.5">Declares github:read / github:write scopes and network:connect:8092; trusts</tspan>
+<tspan x="310" dy="17" font-size="12.5">the proxy's CA</tspan>
+</text>
+<rect x="40" y="300" width="240" height="125" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="160" y="337" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="160" font-size="15.5" font-weight="700">GitHub API proxy</tspan>
+<tspan x="160" dy="17" font-size="11.5" opacity="0.85">[Container: Node.js, 127.0.0.1:8092]</tspan>
+<tspan x="160" dy="20" font-size="12.5">Ends TLS, maps method and path</tspan>
+<tspan x="160" dy="17" font-size="12.5">to a scope</tspan>
+</text>
+<rect x="340" y="300" width="240" height="125" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="460" y="337" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="460" font-size="15.5" font-weight="700">Egress broker</tspan>
+<tspan x="460" dy="17" font-size="11.5" opacity="0.85">[Container: Node.js, 127.0.0.1:8090]</tspan>
+<tspan x="460" dy="20" font-size="12.5">Refuses api.github.com when a</tspan>
+<tspan x="460" dy="17" font-size="12.5">github:* scope is declared</tspan>
+</text>
+<rect x="40" y="560" width="260" height="115" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="170" y="592" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="170" font-size="15.5" font-weight="700">Host dialer</tspan>
+<tspan x="170" dy="17" font-size="11.5" opacity="0.85">[Container: in berth-vmm]</tspan>
+<tspan x="170" dy="20" font-size="12.5">Its own allowlist, with</tspan>
+<tspan x="170" dy="17" font-size="12.5">api.github.com:443 added</tspan>
+</text>
+<rect x="520" y="560" width="240" height="115" rx="10" fill="#6b7280" stroke="#4b5563" stroke-width="1.5"/>
+<text x="640" y="592" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="640" font-size="15.5" font-weight="700">api.github.com</tspan>
+<tspan x="640" dy="17" font-size="11.5" opacity="0.85">[External System]</tspan>
+<tspan x="640" dy="20" font-size="12.5">Only requests a declared scope</tspan>
+<tspan x="640" dy="17" font-size="12.5">covers</tspan>
+</text>
+<rect x="24" y="756" width="16" height="16" rx="4" fill="#438dd5" stroke="#3c7fc0"/>
+<text x="46" y="768.5" font-size="12.5" class="bl">Container</text>
+<rect x="117" y="756" width="16" height="16" rx="4" fill="#6b7280" stroke="#4b5563"/>
+<text x="139" y="768.5" font-size="12.5" class="bl">External</text>
+</svg>

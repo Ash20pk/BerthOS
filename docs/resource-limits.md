@@ -4,7 +4,35 @@ Every app in a sandbox runs in a cgroup of its own, with the limits its `berth.y
 
 This page covers the local Docker sandbox (`berth dev`, `berth test`, `berth os up`, Computers). Other targets are in the [manifest reference](./manifest-reference.md#resources-default-).
 
-## What each key becomes
+## Context
+
+The limits come from each app's `berth.yml` and are held by the Linux kernel's cgroup v2 controllers. Two kinds of process share a sandbox: the apps, and Berth's own daemons and brokers. One app can't starve its neighbours or the daemons.
+
+## Containers
+
+On the host, `startContainer()` asks the Docker daemon for a container whose own cgroup subtree is writable, where the host makes that safe. Inside it, `entrypoint.sh` builds the cgroup tree as root before any daemon or app starts, and the kernel holds the limits from then on.
+
+### How the sandbox gets a writable cgroup
+
+Docker mounts `/sys/fs/cgroup` read-only in an unprivileged container. The usual ways around that are `--privileged` or `CAP_SYS_ADMIN` to remount it, and the sandbox is designed to have neither. Berth instead passes Docker's `--security-opt writable-cgroups=true` (Docker 28 and later). With the default private cgroup namespace, that option makes the container's own cgroup subtree writable by root in the container, and nothing else. The container can't see any cgroup above its own, and its capability set is unchanged.
+
+That's only safe with one host setting: the cgroup2 hierarchy has to be mounted with `nsdelegate`. With it, the kernel refuses (`EPERM`) any write from inside a cgroup namespace to the namespace root's own limit files, which are the files Docker's `--memory` and `--pids-limit` live in. Without it, root in the sandbox could raise the caps that bound the sandbox. So Berth requests the option only when the kernel probe (the one behind `berth doctor`) saw cgroup v2 with `nsdelegate`. systemd hosts, Colima and Lima all mount it that way. Anywhere else, a dev sandbox boots with the container-level caps alone and warns; a production one refuses to boot (see [Requiring them](#requiring-them)).
+
+Inside the sandbox, `entrypoint.sh` sets everything up as root, before any daemon starts:
+
+1. It moves tini (PID 1) and itself into `berth/daemons`. The kernel's "no internal processes" rule means a cgroup that has processes can't turn on controllers for its children.
+2. It enables `cpu`, `memory` and `pids` down to `berth/apps`, and writes the daemon reserve.
+3. For each app, just before that app's shell execs `agent-init`, it creates `berth/apps/<app>`, writes the limits and moves the shell in. Everything the app starts inherits the cgroup.
+
+Nothing in these steps goes through Docker's API. The same files exist in a microVM guest kernel, so the in-sandbox half carries over unchanged.
+
+An app can't move itself out of its cgroup or loosen its limits. The cgroup files belong to root, mode 0644, in root's 0755 directories. The app runs as its own uid with no capabilities. `agent-init` never grants a Landlock write under `/sys`, whatever the policy says. Each of these is tested: a unit test on `agent-init`'s allowlist, one on the policy compiler, and the milestone below, which tries every cgroup file from inside the app and from its bare uid.
+
+## Components
+
+Inside the sandbox: one cgroup per app with the limits its manifest declares, a cgroup holding all the apps, and a sibling one for the daemons.
+
+### What each key becomes
 
 For one app:
 
@@ -26,11 +54,11 @@ There is no `memory.high`, deliberately. Past `memory.high` the kernel throttles
 
 The files come from each app's capability policy (`cgroupLimits` in `.berth/capability-policy.json`), which the policy compiler writes from `berth.yml`. The TypeScript and Python compilers produce identical output, and a parity test checks that.
 
-### Why the default task limit is 1024
+#### Why the default task limit is 1024
 
 `pids.max` counts tasks, and a thread is a task. So the number that matters is threads, not processes. A Node runtime is about a dozen tasks before the app does anything. Chromium under Playwright is several hundred across its browser, GPU, network and renderer processes, and grows with each page. A default in the tens or low hundreds would make a browser app fail with `EAGAIN` in ordinary use, which looks like a crash with no obvious cause. 1024 leaves room for that, and it still stops a fork bomb well short of the sandbox's own limit (the apps' sum plus the daemons' 1024), so the daemons and the other apps keep running. An app that needs less, or more, declares `pids`.
 
-## The sandbox around them
+### The sandbox around them
 
 ```
 /sys/fs/cgroup                the sandbox (Docker's container cgroup)
@@ -46,23 +74,9 @@ The files come from each app's capability policy (`cgroupLimits` in `.berth/capa
 - **Daemon reserve.** `daemons/` has 10 times the CPU weight of `apps/`. When both want the CPU, a spinning app gets about 10% of what the daemons ask for. Memory is reserved by subtraction: `apps/` gets `memory.max` equal to the sandbox's memory minus 256 MiB. Every app together can exhaust its budget and the daemons still have theirs.
 - **Container caps.** Docker's limits on the container are the sum of the apps' limits plus the reserve (0.5 CPU, 256 MiB, 1024 tasks). They used to be the largest value across the apps. `PidsLimit` is always set, because every app has a task limit. CPU and memory are capped at the container only when every app declares them. If one app declares nothing, there is no number to add. The container is then bounded by the host for that resource, and inside it `apps/` still leaves the daemons their reserve (worked out from the host's total memory). The CPU sum is clamped to the host's CPU count, because Docker refuses a larger value.
 
-## How the sandbox gets a writable cgroup
+## Code
 
-Docker mounts `/sys/fs/cgroup` read-only in an unprivileged container. The usual ways around that are `--privileged` or `CAP_SYS_ADMIN` to remount it, and the sandbox is designed to have neither. Berth instead passes Docker's `--security-opt writable-cgroups=true` (Docker 28 and later). With the default private cgroup namespace, that option makes the container's own cgroup subtree writable by root in the container, and nothing else. The container can't see any cgroup above its own, and its capability set is unchanged.
-
-That's only safe with one host setting: the cgroup2 hierarchy has to be mounted with `nsdelegate`. With it, the kernel refuses (`EPERM`) any write from inside a cgroup namespace to the namespace root's own limit files, which are the files Docker's `--memory` and `--pids-limit` live in. Without it, root in the sandbox could raise the caps that bound the sandbox. So Berth requests the option only when the kernel probe (the one behind `berth doctor`) saw cgroup v2 with `nsdelegate`. systemd hosts, Colima and Lima all mount it that way. Anywhere else, a dev sandbox boots with the container-level caps alone and warns; a production one refuses to boot (see [Requiring them](#requiring-them)).
-
-Inside the sandbox, `entrypoint.sh` sets everything up as root, before any daemon starts:
-
-1. It moves tini (PID 1) and itself into `berth/daemons`. The kernel's "no internal processes" rule means a cgroup that has processes can't turn on controllers for its children.
-2. It enables `cpu`, `memory` and `pids` down to `berth/apps`, and writes the daemon reserve.
-3. For each app, just before that app's shell execs `agent-init`, it creates `berth/apps/<app>`, writes the limits and moves the shell in. Everything the app starts inherits the cgroup.
-
-Nothing in these steps goes through Docker's API. The same files exist in a microVM guest kernel, so the in-sandbox half carries over unchanged.
-
-An app can't move itself out of its cgroup or loosen its limits. The cgroup files belong to root, mode 0644, in root's 0755 directories. The app runs as its own uid with no capabilities. `agent-init` never grants a Landlock write under `/sys`, whatever the policy says. Each of these is tested: a unit test on `agent-init`'s allowlist, one on the policy compiler, and the milestone below, which tries every cgroup file from inside the app and from its bare uid.
-
-## Checking it
+### Checking it
 
 `berth doctor` has a `cgroups` check. `ok` means sandboxes on this host get per-app cgroups. `warn` names what's missing. It doesn't affect the enforcement verdict, which is about Landlock.
 
@@ -78,7 +92,7 @@ or `WARNING: per-app cgroups inactive: <reason>`, or, in strict mode, a `FATAL` 
 
 `packages/docker-orchestrator/test/resource-limits-milestone.mjs` checks all of this end to end. A two-app sandbox runs one app that fork-bombs, allocates past its memory limit (and has to be OOM-killed for it, not stalled) and spins eight busy loops, while a neighbour app that declares nothing, and a context-bus round trip, keep answering. It also checks strict mode: with delegation turned off on the host the boot is refused before anything is created, and with it turned off inside the sandbox `entrypoint.sh` refuses before any app starts. A permissive control boot with per-app cgroups turned off warns, runs, and shows the same fork bomb isn't stopped at the app's limit.
 
-## Requiring them
+### Requiring them
 
 `BERTH_REQUIRE_APP_CGROUPS=1` (or `true`) refuses to boot a sandbox whose apps wouldn't each get their own cgroup, rather than running them bounded only by the container's caps. It's the resource-limit counterpart of [`BERTH_REQUIRE_ENFORCEMENT`](./capability-tokens-reference.md#environment-variables).
 
@@ -101,7 +115,7 @@ The boot is refused when:
 
 `Computer.boot({ enforcement: "warn" })` and `BERTH_ALLOW_UNENFORCED=1` turn it off along with `BERTH_REQUIRE_ENFORCEMENT`. To relax only this, pass `env: { BERTH_REQUIRE_APP_CGROUPS: "0" }` to `Computer.boot()` or `startContainer()`; the caller's env wins over the image's.
 
-## Turning it off
+### Turning it off
 
 `BERTH_DISABLE_APP_CGROUPS=1` on the host (or in the sandbox's environment) skips per-app cgroups. The container-level caps still apply. Under `BERTH_REQUIRE_APP_CGROUPS` that's a refused boot, so set `BERTH_REQUIRE_APP_CGROUPS=0` as well.
 

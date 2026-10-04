@@ -1,0 +1,26 @@
+export default {
+  name: "attestation-reference",
+  w: 1110,
+  h: 800,
+  title: "Attestation: containers (C4 level 2)",
+  boundaries: [],
+  boxes: [
+    { kind: "container", name: "berth mcp", type: "Container: Node.js, berth CLI", desc: "Records every tool call under a run id, and the boot evidence once per session", x: 40, y: 60, w: 260, h: 125 },
+    { kind: "container", name: "Audit file", type: "Data store: hash-chained JSONL", desc: "~/.berth/audit/audit.jsonl", x: 440, y: 60, w: 260, h: 125, shape: "db" },
+    { kind: "container", name: "Sandbox", type: "Container: Docker or microVM", desc: "Boot ID, ruleset reports, policy hashes computed inside", x: 40, y: 330, w: 260, h: 125 },
+    { kind: "container", name: "berth attest", type: "Container: Node.js, berth CLI", desc: "Builds the record and refuses to emit one that fails its own verifier", x: 440, y: 330, w: 260, h: 125 },
+    { kind: "container", name: "Enforcement probe", type: "Container: berth doctor probe", desc: "For the image and runtime. A microVM's is derived from its kernel", x: 840, y: 330, w: 240, h: 125 },
+    { kind: "container", name: "Attestation record", type: "Data store: JSON", desc: "recordSha256 over every other field", x: 440, y: 600, w: 260, h: 115, shape: "db" },
+    { kind: "container", name: "Verifier", type: "Container: Node.js, standalone", desc: "verify-attestation.mjs, or verifyAttestation()", x: 840, y: 600, w: 240, h: 115 },
+  ],
+  edges: [
+    { pts: [[300, 122], [438, 122]], label: "appends", at: [369, 122] },
+    { pts: [[170, 185], [170, 328]], label: "tool calls;\nreads boot evidence", at: [170, 256] },
+    { pts: [[570, 330], [570, 187]], label: "reads, verifies\nthe chain", at: [570, 256] },
+    { pts: [[440, 392], [302, 392]], label: "reads live\nboot evidence", at: [371, 392] },
+    { pts: [[700, 392], [838, 392]], label: "runs, or reads\nits result", at: [769, 392] },
+    { pts: [[570, 455], [570, 598]], label: "writes\n[--out, mode 0600]", at: [570, 526] },
+    { pts: [[840, 657], [702, 657]], label: "checks shape,\nhash, status", at: [771, 657] },
+  ],
+  legendKinds: [["container", "Container"]],
+};

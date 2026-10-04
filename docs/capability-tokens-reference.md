@@ -2,7 +2,48 @@
 
 When a sandbox boots, Berth turns each app's `berth.yml` capabilities into kernel rules and applies them before the app's own code runs. This page explains that step, so you can read the boot log and reason about what an app can and can't do. Which capability is enforced at which level is on [Enforcement](./kernel-enforcement.md#available-capabilities).
 
-## See it on your machine
+## Context
+
+You declare capabilities in an app's `berth.yml`. At boot, the sandbox turns them into rules the Linux kernel holds, before the app's code runs. You see the result in the app's boot log, and [`berth doctor`](./doctor-reference.md) tells you whether your kernel can hold them at all.
+
+## Containers
+
+<p align="center"><img src="./images/c4/capability-tokens-reference.svg" alt="How enforcement works, containers: entrypoint.sh, running as root (berth-init in a microVM), runs the policy compiler, which reads berth.yml and writes each app's policy file. It then execs agent-init once per app; agent-init reads the policy, applies Landlock and seccomp and drops capabilities, then execs the app as the app's own uid. The kernel keeps the rules on the app and everything it starts." width="100%"></p>
+
+In a container, `entrypoint.sh` runs as root before each app starts: it runs the policy compiler, then execs `agent-init`, which applies the rules and execs the app. In a [microVM](./local-vm.md), berth-init does the same, with the same compiler and `agent-init` ([`packages/vmm/init/src/main.rs`](../packages/vmm/init/src/main.rs)).
+
+## Components
+
+Inside that boot step: the policy compilation, each rule `agent-init` applies, and what it does when the kernel can't apply them.
+
+### What happens at boot
+
+For each app, before its code starts:
+
+1. **Compile the policy.** `generate-capability-policy.js` (in `@berthos/sdk`) reads `berth.yml` and writes a JSON policy. It uses `@berthos/manifest-schema` to parse capabilities, so there's one grammar. The app can read its policy file but not change it.
+2. **Apply Landlock.** `agent-init`, a small Rust binary, builds a Landlock ruleset from the policy and applies it to itself:
+   - writes (write, create, delete, rename, truncate) only under the declared write paths and the app's baseline;
+   - reads only under the declared read paths plus a baseline, if the app declared any;
+   - outbound TCP only to declared ports, unless the app declared `network:connect:*`;
+   - listening only on declared bind ports.
+3. **Drop Linux capabilities.** `CAP_SYS_ADMIN`, `CAP_NET_ADMIN` and `CAP_NET_RAW` are removed from the bounding, inheritable and ambient sets. The container holds the first two for Berth's own daemons; `CAP_NET_RAW` would let an app build TCP from raw packets and skip the port rules. `ping` doesn't work inside a sandbox as a result.
+4. **Block namespace creation (seccomp), for every app.** `unshare(2)` and `clone(2)` with any `CLONE_NEW*` flag fail with `EPERM`, `setns(2)` fails with `EPERM`, and `clone3(2)` returns `ENOSYS` so libc falls back to `clone(2)`. Without this, creating a user namespace would hand the app back the capabilities step 3 removed.
+5. **Block io_uring and vsock (seccomp), for every app.** `io_uring_setup(2)`, `io_uring_enter(2)` and `io_uring_register(2)` return `ENOSYS`, so runtimes that try io_uring (Node's libuv) fall back to ordinary syscalls. io_uring can create sockets without calling `socket(2)`, which would get around step 6. `socket(2)` for `AF_VSOCK` fails with `EPERM`: Landlock's rules are for TCP only, and in a microVM vsock reaches the host.
+6. **Block every socket but TCP (seccomp), for apps that declared no network capability.** `socket(2)` succeeds only for `AF_INET`/`AF_INET6` TCP, `AF_UNIX` and `AF_NETLINK`. Anything else fails with `EPERM`: UDP, ICMP, raw sockets, SCTP, MPTCP, and any other address family, including `AF_PACKET`. Landlock's network rules cover TCP only, so this is what makes "no network" mean no network.
+7. **Switch to the app's own uid.** Each app runs as uid and gid `10000 + its index` in the sandbox (10000 for a single app), irreversibly. This is what keeps apps sharing a sandbox out of each other's files, sockets and processes.
+8. **Start the app.** `agent-init` `exec()`s the app. Landlock rules and seccomp filters are inherited by every process the app starts and can't be removed.
+
+`requestCapability(appName, capability)` in `@berthos/sdk` returns `{ granted: boolean }`: whether the capability matches one the app declared. It doesn't grant anything; the kernel already decided at boot.
+
+### When the kernel can't enforce
+
+By default `agent-init` fails open: if Landlock isn't applied (or the policy can't be read), it prints a warning and starts the app unrestricted. That keeps `berth dev` working on Docker Desktop.
+
+With `BERTH_REQUIRE_ENFORCEMENT=1` (or `true`) it fails closed instead. It refuses to start the app unless the ruleset status is exactly `FullyEnforced`, and also refuses if any seccomp filter or the uid switch fails. It logs a `capability_enforcement_refused` event and exits non-zero. Production images, which `Computer.boot()` uses, set this. See [Enforcement, by platform](./kernel-enforcement.md#kernel-enforcement-by-platform) for turning it off locally.
+
+## Code
+
+### See it on your machine
 
 Boot any app and read its log. On a kernel that enforces, you'll see lines like:
 
@@ -23,34 +64,9 @@ node test/capability-enforcement.mjs
 
 It talks to the daemon at `DOCKER_HOST` (or `/var/run/docker.sock`), not your current Docker context. On a kernel without Landlock it reports its denial checks as not verified rather than passing them.
 
-## What happens at boot
+### Reference
 
-For each app, before its code starts:
-
-1. **Compile the policy.** `generate-capability-policy.js` (in `@berthos/sdk`) reads `berth.yml` and writes a JSON policy. It uses `@berthos/manifest-schema` to parse capabilities, so there's one grammar. The app can read its policy file but not change it.
-2. **Apply Landlock.** `agent-init`, a small Rust binary, builds a Landlock ruleset from the policy and applies it to itself:
-   - writes (write, create, delete, rename, truncate) only under the declared write paths and the app's baseline;
-   - reads only under the declared read paths plus a baseline, if the app declared any;
-   - outbound TCP only to declared ports, unless the app declared `network:connect:*`;
-   - listening only on declared bind ports.
-3. **Drop Linux capabilities.** `CAP_SYS_ADMIN`, `CAP_NET_ADMIN` and `CAP_NET_RAW` are removed from the bounding, inheritable and ambient sets. The container holds the first two for Berth's own daemons; `CAP_NET_RAW` would let an app build TCP from raw packets and skip the port rules. `ping` doesn't work inside a sandbox as a result.
-4. **Block namespace creation (seccomp), for every app.** `unshare(2)` and `clone(2)` with any `CLONE_NEW*` flag fail with `EPERM`, `setns(2)` fails with `EPERM`, and `clone3(2)` returns `ENOSYS` so libc falls back to `clone(2)`. Without this, creating a user namespace would hand the app back the capabilities step 3 removed.
-5. **Block io_uring and vsock (seccomp), for every app.** `io_uring_setup(2)`, `io_uring_enter(2)` and `io_uring_register(2)` return `ENOSYS`, so runtimes that try io_uring (Node's libuv) fall back to ordinary syscalls. io_uring can create sockets without calling `socket(2)`, which would get around step 6. `socket(2)` for `AF_VSOCK` fails with `EPERM`: Landlock's rules are for TCP only, and in a microVM vsock reaches the host.
-6. **Block every socket but TCP (seccomp), for apps that declared no network capability.** `socket(2)` succeeds only for `AF_INET`/`AF_INET6` TCP, `AF_UNIX` and `AF_NETLINK`. Anything else fails with `EPERM`: UDP, ICMP, raw sockets, SCTP, MPTCP, and any other address family, including `AF_PACKET`. Landlock's network rules cover TCP only, so this is what makes "no network" mean no network.
-7. **Switch to the app's own uid.** Each app runs as uid and gid `10000 + its index` in the sandbox (10000 for a single app), irreversibly. This is what keeps apps sharing a sandbox out of each other's files, sockets and processes.
-8. **Start the app.** `agent-init` `exec()`s the app. Landlock rules and seccomp filters are inherited by every process the app starts and can't be removed.
-
-`requestCapability(appName, capability)` in `@berthos/sdk` returns `{ granted: boolean }`: whether the capability matches one the app declared. It doesn't grant anything; the kernel already decided at boot.
-
-## When the kernel can't enforce
-
-By default `agent-init` fails open: if Landlock isn't applied (or the policy can't be read), it prints a warning and starts the app unrestricted. That keeps `berth dev` working on Docker Desktop.
-
-With `BERTH_REQUIRE_ENFORCEMENT=1` (or `true`) it fails closed instead. It refuses to start the app unless the ruleset status is exactly `FullyEnforced`, and also refuses if any seccomp filter or the uid switch fails. It logs a `capability_enforcement_refused` event and exits non-zero. Production images, which `Computer.boot()` uses, set this. See [Enforcement, by platform](./kernel-enforcement.md#kernel-enforcement-by-platform) for turning it off locally.
-
-## Reference
-
-### Policy file
+#### Policy file
 
 Written to `.berth/capability-policy.json` in the app's directory (override with `BERTH_CAPABILITY_POLICY`).
 
@@ -67,7 +83,7 @@ Written to `.berth/capability-policy.json` in the app's directory (override with
 
 Declared filesystem paths must be `/workspace`, `/context`, `/tmp`, `/app` or beneath one, canonical, with `*` only as a trailing `/*`. The manifest schema rejects anything else, and `agent-init` checks write paths again before creating them.
 
-### Environment variables
+#### Environment variables
 
 | Variable | Effect |
 |---|---|
@@ -77,7 +93,7 @@ Declared filesystem paths must be `/workspace`, `/context`, `/tmp`, `/app` or be
 | `BERTH_MANIFEST_PATH` | Manifest the policy is compiled from. Default `./berth.yml`. |
 | `BERTH_APP_UID`, `BERTH_APP_GID`, `BERTH_APP_SUPPLEMENTARY_GIDS` | The identity `agent-init` switches to. Set by the container's entrypoint; without them the app stays root. |
 
-### Audit events
+#### Audit events
 
 `agent-init` writes one JSON line per event to the container log, with `"source":"agent-init"` and no text prefix, so you can parse them directly.
 

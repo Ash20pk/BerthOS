@@ -1,0 +1,25 @@
+export default {
+  name: "capability-tokens-reference",
+  w: 1070,
+  h: 800,
+  title: "How enforcement works: containers (C4 level 2)",
+  boundaries: [],
+  boxes: [
+    { kind: "container", name: "entrypoint.sh", type: "Container: shell, as root", desc: "Or berth-init in a microVM. Prepares each app before it starts", x: 40, y: 60, w: 260, h: 125 },
+    { kind: "container", name: "Policy compiler", type: "Container: Node.js, @berthos/sdk", desc: "generate-capability-policy: reads berth.yml", x: 420, y: 60, w: 260, h: 125 },
+    { kind: "container", name: "Policy file", type: "Data store: JSON", desc: "One per app. The app can read it, not change it", x: 800, y: 60, w: 240, h: 125, shape: "db" },
+    { kind: "container", name: "agent-init", type: "Container: Rust binary", desc: "Applies the rules to itself, then switches to the app's uid", x: 40, y: 330, w: 260, h: 125 },
+    { kind: "external", name: "Kernel", type: "Landlock + seccomp", desc: "Holds the ruleset and filters for the life of the process tree", x: 460, y: 330, w: 260, h: 125 },
+    { kind: "container", name: "Resident app", type: "Container: uid 10000 + index", desc: "Its code starts only after all of the above", x: 40, y: 590, w: 260, h: 125 },
+  ],
+  edges: [
+    { pts: [[300, 122], [418, 122]], label: "runs, as root", at: [359, 122] },
+    { pts: [[680, 122], [798, 122]], label: "writes", at: [739, 122] },
+    { pts: [[170, 185], [170, 328]], label: "execs,\nonce per app", at: [170, 256] },
+    { pts: [[270, 330], [270, 268], [920, 268], [920, 187]], label: "reads the policy", at: [600, 268] },
+    { pts: [[300, 392], [458, 392]], label: "Landlock, seccomp,\ndrops capabilities", at: [379, 392] },
+    { pts: [[170, 455], [170, 588]], label: "exec()\n[as the app's uid]", at: [170, 522] },
+    { pts: [[590, 455], [590, 652], [302, 652]], dashed: true, label: "inherited,\ncan't be removed", at: [446, 652] },
+  ],
+  legendKinds: [["container", "Container"], ["external", "External"]],
+};
