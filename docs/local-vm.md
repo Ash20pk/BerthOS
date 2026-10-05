@@ -26,7 +26,7 @@ berth vm install
 berth doctor --sandbox vm
 ```
 
-`berth vm install` puts the kernel and rootfs in `~/.berth/vm`, where berth-vmm looks for them. If no berth-vmm is found, it also puts berth-vmm in `~/.berth/vm/bin`. Each file is checked against its sha256 pin before it is put in place, and a file that doesn't match is refused. The kernel and rootfs pins are the ones berth-vmm was built with. The CLI reads them out of the binary, because berth-vmm refuses to boot anything else. If there is no berth-vmm yet, it uses its own copy of the same pins.
+`berth vm install` puts the kernel and rootfs in `~/.berth/vm`, where berth-vmm looks for them. It also puts the published berth-vmm in `~/.berth/vm/bin` when none is found, and replaces the one there when it is an older release's (built for a different rootfs). A local build that boots this CLI's kernel and rootfs is kept; `--force` replaces it. Each file is checked against its sha256 pin before it is put in place, and a file that doesn't match is refused. The kernel and rootfs pins are the ones berth-vmm was built with. The CLI reads them out of the binary, because berth-vmm refuses to boot anything else. If there is no berth-vmm yet, it uses its own copy of the same pins.
 
 ### What is downloaded, and from where
 

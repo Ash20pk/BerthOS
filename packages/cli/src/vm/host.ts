@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { accessSync, constants, existsSync, readlinkSync, readdirSync, realpathSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -107,6 +108,25 @@ export function codesignRemedy(vmm: string): string {
 export function vmmPins(path: string): { pins?: { kernel: ArtifactPin; rootfs: ArtifactPin }; sameAsCli: boolean } {
   const pins = pinsFromManifests(manifestsInBinary(readBytes(path)));
   return { ...(pins ? { pins } : {}), sameAsCli: pins?.kernel.sha256 === KERNEL_PIN.sha256 && pins.rootfs.sha256 === ROOTFS_PIN.sha256 };
+}
+
+/**
+ * Whether `berth vm install` replaces the berth-vmm under ~/.berth/vm/bin
+ * with the published one this CLI pins. A copy that is the published build is
+ * kept, and so is a local build (`--vmm`) that boots this CLI's kernel and
+ * rootfs, unless --force. One built for other pins is an older release left by
+ * an earlier CLI: it would boot the wrong rootfs, so it is replaced.
+ */
+export function staleInstalledVmm(path: string, published: ArtifactPin | undefined, force = false): { replace: boolean; reason: string } {
+  if (!published) return { replace: false, reason: "none is published for this platform in this CLI version" };
+  if (!existsSync(path)) return { replace: true, reason: "not installed" };
+  const sha = createHash("sha256").update(readBytes(path)).digest("hex");
+  if (sha === published.sha256) return { replace: false, reason: "the published build this CLI pins" };
+  if (force) return { replace: true, reason: `sha256 ${sha.slice(0, 16)}…, not the pinned ${published.sha256.slice(0, 16)}…, and --force` };
+  const { pins, sameAsCli } = vmmPins(path);
+  if (sameAsCli) return { replace: false, reason: "a local build for this CLI's kernel and rootfs (--force replaces it with the published one)" };
+  const built = pins ? `built for rootfs ${pins.rootfs.sha256.slice(0, 8)}` : "no readable pins";
+  return { replace: true, reason: `${built}, but this CLI pins rootfs ${ROOTFS_PIN.sha256.slice(0, 8)}` };
 }
 
 /** The optional layers this berth-vmm will attach, from its compiled-in rootfs manifest. */
