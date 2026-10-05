@@ -913,6 +913,12 @@ async function browser() {
   const page = await call(r, "get_page_text", {});
   const meta = await call(r, "navigate", { url: "http://169.254.169.254/latest/meta-data/" });
   const metaPage = await call(r, "get_page_text", {});
+  // A form, filled and submitted with Enter: the page writes what arrived.
+  const form = `<form onsubmit="event.preventDefault();document.getElementById('out').textContent='sent:'+this.q.value"><input name="q" id="q"></form><p id="out"></p>`;
+  await call(r, "navigate", { url: `data:text/html,${encodeURIComponent(form)}` });
+  const filled = await call(r, "fill", { selector: "#q", value: "berth fills forms" });
+  const pressed = await call(r, "press", { selector: "#q", key: "Enter" });
+  const formPage = await call(r, "get_page_text", {});
   const published = b.ep.published?.find((p) => p.port === 6080)?.socket;
   const novnc = await new Promise((resolve) => {
     const req = http.request({ socketPath: published, agent: false, path: "/vnc.html", headers: { host: "127.0.0.1" } }, (res) => {
@@ -931,6 +937,7 @@ async function browser() {
   check(results, display?.xUp && display.vnc && display.uid === 9005, `the display stack as berth-display: Xvfb up ${display?.xUp}, VNC ${display?.vnc}`);
   check(results, ["xvfb", "x11vnc", "websockify"].every((d) => s.logs.some((l) => l.src === d && l.line.includes("ruleset=FullyEnforced"))), "Xvfb, x11vnc and websockify each FullyEnforced");
   check(results, !nav?.error && /Example Domain|documentation examples/.test(text), `Chromium from the layer loads https://example.com through the egress broker: ${text.slice(0, 70)}`);
+  check(results, !filled?.error && !pressed?.error && String(formPage?.text).includes("sent:berth fills forms"), `fill + press Enter submit a form: ${String(JSON.stringify(formPage ?? null)).slice(0, 80)}`);
   check(results, !/ami-id|instance-id/.test(JSON.stringify(metaPage)), `the metadata address gives nothing: ${String(JSON.stringify(meta ?? null)).slice(0, 60)}, page ${String(JSON.stringify(metaPage ?? null)).slice(0, 80)}`);
   check(results, s.logs.some((l) => l.src === "browser-native" && l.line.includes("ruleset=FullyEnforced")), "browser-native: FullyEnforced");
   check(results, novnc.status === 200 && /noVNC/i.test(novnc.text), `noVNC's page through the published port (${novnc.status})`);
