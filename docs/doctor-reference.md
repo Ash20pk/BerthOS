@@ -57,6 +57,7 @@ Each check prints `✔` ok, `!` warn, `✘` fail or `?` unknown, with what was o
 | Check | `id` | What it means |
 |---|---|---|
 | Docker daemon reachable | `docker` | The daemon answers, with its version, kernel and architecture. Every check below runs in a container, so they depend on this one |
+| Memory for image builds | `memory` | The Docker VM's memory. A `warn` below 4 GB: the first image build compiles Berth's helpers and installs Chromium, and runs out of memory with Colima's default 2 GB. Never affects the verdict |
 | Landlock enforcement | `landlock` | The check that decides the verdict. See below |
 | Docker's default seccomp profile | `seccomp` | A `warn` isn't fatal: `agent-init` installs its own seccomp filters regardless. You lose Docker's extra layer |
 | Container runtime for sandboxes | `runtime` | Which runtime sandboxes boot with (`--runtime` or `BERTH_RUNTIME`, else the daemon default) and whether the daemon has it. A requested runtime the daemon lacks is a `fail`, and the kernel probe is skipped |
@@ -111,7 +112,7 @@ Schema version `1`. New checks and new optional fields keep version `1`; anythin
   "reasons": ["the Landlock syscalls are not available in this kernel (Function not implemented)"],
   "checks": [
     {
-      "id": "landlock",                   // "docker" | "landlock" | "seccomp" | "fuse" | "runtime" | "cgroups" — stable; readers must tolerate new ids
+      "id": "landlock",                   // "docker" | "memory" | "landlock" | "seccomp" | "fuse" | "runtime" | "cgroups" — stable; readers must tolerate new ids
       "title": "Landlock enforcement in the container kernel",
       "status": "fail",                   // "ok" | "warn" | "fail" | "unknown"
       "detail": "…what was observed…",
