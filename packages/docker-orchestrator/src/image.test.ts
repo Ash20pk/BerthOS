@@ -29,6 +29,7 @@ import {
   makeDeployReproducible,
   retainLatestBuild,
   stageProductionSource,
+  pinWorkspaceSpecs,
   withLockfileRestored,
 } from "./image.js";
 
@@ -540,4 +541,12 @@ test("a build whose signal has already aborted doesn't start", async () => {
     { name: "AbortError" },
   );
   assert.equal(fake.builds.length, 0);
+});
+
+test("workspace: specifiers in a copied-out app are pinned as pnpm publish would", () => {
+  const pkg = { dependencies: { "@berthos/sdk": "workspace:*", "@berthos/audit": "workspace:^", zod: "^4.0.0" }, peerDependencies: { "@berthos/x": "workspace:>=0.2.0" } };
+  assert.equal(pinWorkspaceSpecs(pkg, (n) => (n.startsWith("@berthos/") ? "0.2.4" : undefined)), true);
+  assert.deepEqual(pkg, { dependencies: { "@berthos/sdk": "0.2.4", "@berthos/audit": "^0.2.4", zod: "^4.0.0" }, peerDependencies: { "@berthos/x": ">=0.2.0" } });
+  assert.equal(pinWorkspaceSpecs({ dependencies: { zod: "^4.0.0" } }, () => "0.2.4"), false);
+  assert.throws(() => pinWorkspaceSpecs({ dependencies: { "left-pad": "workspace:*" } }, () => undefined), /left-pad is "workspace:\*"/);
 });
