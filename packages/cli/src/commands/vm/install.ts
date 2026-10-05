@@ -3,14 +3,14 @@ import { chmodSync, constants, copyFileSync, existsSync, mkdirSync, renameSync }
 import { join, resolve } from "node:path";
 import { clearQuarantine, installArtifacts, releasePair, sha256File } from "../../vm/artifacts.js";
 import { readConfigFile, resolveArtifactsDir, resolveArtifactsUrl } from "../../vm/config.js";
-import { activePins, checkHost, locateVmm, writeEntitlementsFile } from "../../vm/host.js";
+import { activePins, checkHost, locateVmm, staleInstalledVmm, writeEntitlementsFile } from "../../vm/host.js";
 import { vmHome } from "../../vm/paths.js";
 import { PINS, vmmPin } from "../../vm/pins.js";
 import { ensureLayers } from "../../vm/runtime.js";
 
 export default class VmInstall extends Command {
   static override description =
-    "Install the pinned microVM kernel and rootfs (and, when it isn't there, berth-vmm) into ~/.berth/vm, verified against their sha256 pins, and check that berth-vmm and libkrun can boot them";
+    "Install the pinned microVM kernel and rootfs (and berth-vmm, when it isn't there or is an older release's) into ~/.berth/vm, verified against their sha256 pins, and check that berth-vmm and libkrun can boot them";
   static override examples = [
     "<%= config.bin %> vm install",
     "<%= config.bin %> vm install --from ../vm-runtime-artifacts --vmm packages/vmm/target/release/berth-vmm",
@@ -60,13 +60,22 @@ export default class VmInstall extends Command {
       }
       renameSync(`${dest}.tmp`, dest);
       this.log(`✔ berth-vmm copied to ${dest}`);
-    } else if (!process.env.BERTH_VMM && !locateVmm(process.env, config.vm?.vmm)) {
-      // No berth-vmm anywhere: fetch the published one, pinned in this CLI.
-      if (!published) {
-        this.log(`! no berth-vmm found, and none is published for ${process.platform}-${process.arch} in this CLI version; build it (packages/vmm: cargo build --release) and pass --vmm`);
-      } else {
+    } else if (!process.env.BERTH_VMM && !config.vm?.vmm) {
+      // The published berth-vmm, pinned in this CLI, into ~/.berth/vm/bin:
+      // when none is there, or the one there is an older release's.
+      const home = join(vmHome(), "bin", "berth-vmm");
+      const found = locateVmm(process.env);
+      const decision = found && found !== home ? { replace: false, reason: `using ${found}` } : staleInstalledVmm(home, published, flags.force);
+      if (!decision.replace) {
+        if (!found && !published) {
+          this.log(`! no berth-vmm found, and none is published for ${process.platform}-${process.arch} in this CLI version; build it (packages/vmm: cargo build --release) and pass --vmm`);
+        } else if (found === home) {
+          this.log(`  berth-vmm in ${home}: ${decision.reason}`);
+        }
+      } else if (published) {
+        if (found) this.log(`  berth-vmm in ${home}: ${decision.reason}; replacing it`);
         try {
-          const [r] = await installArtifacts({ ...(from ? { from: resolve(from) } : {}), ...(urlTemplate ? { urlTemplate } : {}), pins: [published], release: releasePair(PINS), log: (m) => this.log(m) });
+          const [r] = await installArtifacts({ ...(from ? { from: resolve(from) } : {}), ...(urlTemplate ? { urlTemplate } : {}), force: true, pins: [published], release: releasePair(PINS), log: (m) => this.log(m) });
           this.log(`✔ berth-vmm ${r!.sha256.slice(0, 16)}… verified (${r!.source === "copied" ? `copied from ${r!.from}` : `downloaded from ${r!.from}`}, ${r!.ms} ms)`);
           this.log(`    ${r!.path}`);
         } catch (err) {

@@ -1,10 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { checkHost, vmmFeatures } from "./host.js";
+import { checkHost, staleInstalledVmm, vmmFeatures } from "./host.js";
 import { KERNEL_PIN, ROOTFS_PIN } from "./pins.js";
 
 const dir = mkdtempSync(join(tmpdir(), "berth-host-"));
@@ -109,4 +110,22 @@ test("layers are read from the rootfs manifest compiled into berth-vmm, and only
   const without = ((_: string) => ({ status: 0, stdout: "", stderr: "" })) as unknown as typeof spawnSync;
   assert.deepEqual(vmmFeatures("/l/berth-vmm", withLayer, bin).layers, ["browser"]);
   assert.deepEqual(vmmFeatures("/m/berth-vmm", without, bin).layers, []);
+});
+
+test("vm install replaces an older release's berth-vmm, keeps the published one and a local build for this CLI's pins", () => {
+  const published = (path: string) => ({ kind: "vmm" as const, sha256: createHash("sha256").update(readFileSync(path)).digest("hex"), size: 1, file: "berth-vmm", relPath: "bin/berth-vmm", asset: "x" });
+  const current = fakeVmm();
+  const older = fakeVmm(KERNEL_PIN.sha256, "1".repeat(64));
+  const other = { ...published(current), sha256: "2".repeat(64) };
+
+  assert.equal(staleInstalledVmm(join(dir, "missing"), other).replace, true);
+  assert.equal(staleInstalledVmm(join(dir, "missing"), undefined).replace, false);
+  assert.equal(staleInstalledVmm(current, published(current)).replace, false);
+  // A local build that boots this CLI's kernel and rootfs is the user's own: kept unless --force.
+  assert.equal(staleInstalledVmm(current, other).replace, false);
+  assert.equal(staleInstalledVmm(current, other, true).replace, true);
+  // Built for another rootfs: what an earlier CLI's `vm install` left behind.
+  const r = staleInstalledVmm(older, other);
+  assert.equal(r.replace, true);
+  assert.match(r.reason, /built for rootfs 11111111/);
 });
