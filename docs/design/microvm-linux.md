@@ -98,8 +98,12 @@ Each is its own branch, tested before the next.
 
 ## Risks to check first
 
-- **Nested KVM on GitHub's runners.** The x86_64 runners expose `/dev/kvm`; whether the arm64 ones do decides
-  if step 1 runs in CI or only in Lima. A one-job probe answers it.
+- **Nested KVM on GitHub's runners.** Probed (`.github/workflows/vm-linux-probe.yml`, 2026-10-06): the
+  x86_64 runners (`ubuntu-24.04`, AMD, Linux 6.17, Landlock in the LSM list) have `/dev/kvm`, usable by the
+  runner user once a udev rule opens it (`udevadm settle`, or a `chmod` fallback). The arm64 runners
+  (`ubuntu-24.04-arm`) have no `/dev/kvm` at all. So CI can boot x86_64 guests only: Linux arm64 is tested
+  on a local Lima VM with nested virtualization, or another arm64 host with KVM, and step 1's CI half moves
+  to x86_64, after step 3.
 - **libkrun on x86_64 with our own kernel and no libkrunfw** is a less trodden path than on macOS; the
   virtio-fs and vsock devices are the same code, the boot path isn't.
 - **Disk.** The x86_64 builds add a second set of every artifact (about 600 MB with the browser layer) to
