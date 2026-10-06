@@ -1,0 +1,168 @@
+# Step 1 of docs/design/microvm-linux.md: can a GitHub Linux runner run the
+# microVM runtime under KVM, with today's (aarch64) kernel and rootfs?
+#
+#   kvm   both Linux runners: is /dev/kvm there, and usable once the udev rule
+#         opens it to the runner user? Also the host kernel and its LSMs, which
+#         the Linux host sandbox (step 5) will need.
+#   boot  the arm64 runner, when it has KVM: libkrun 1.19.6 built from source
+#         (BLK and NET, as the Homebrew formula; no GPU), berth-vmm linked to
+#         it, the published kernel and rootfs, and scripts/e2e.mjs.
+#
+# A probe, not a gate: it runs on pushes to its own branch and by hand.
+name: vm-linux-probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["ci/vm-linux-probe"]
+
+permissions:
+  contents: read
+
+jobs:
+  kvm:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    outputs:
+      # Only the arm64 leg's value is used: the boot job needs an aarch64 host.
+      arm64: ${{ steps.kvm.outputs.arm64 }}
+    steps:
+      - name: Host
+        run: |
+          uname -a
+          nproc; free -m
+          cat /sys/kernel/security/lsm 2>/dev/null; echo
+          grep -E 'vmx|svm' -c /proc/cpuinfo || true
+          lsmod | grep -E '^kvm' || true
+          ls -l /dev/kvm || true
+
+      - name: Open /dev/kvm to the runner user
+        id: kvm
+        run: |
+          if [ -e /dev/kvm ]; then
+            echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+            sudo udevadm control --reload-rules
+            sudo udevadm trigger --name-match=kvm
+          fi
+          ok=no
+          if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then ok=yes; fi
+          echo "::notice title=KVM on ${{ matrix.runner }}::/dev/kvm usable: $ok"
+          if [ "$(uname -m)" = aarch64 ]; then echo "arm64=$ok" >> "$GITHUB_OUTPUT"; fi
+
+  boot:
+    needs: kvm
+    if: needs.kvm.outputs.arm64 == 'yes'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    env:
+      LIBKRUN_VERSION: "1.19.6"
+      LIBKRUN_TARBALL_SHA256: 7025d72208172dc06f791ad5af7ccaafeabdac9869f74ccb45fb6d4f6e5991cd
+      RUST_TOOLCHAIN: "1.89.0"
+      RELEASE: vm-artifacts-8f79e8da-c2dd5975
+      ART: ${{ github.workspace }}/../art
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Open /dev/kvm to the runner user
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          test -r /dev/kvm && test -w /dev/kvm
+
+      - name: Install Rust ${{ env.RUST_TOOLCHAIN }}
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+          rustc --version
+
+      - name: Build libkrun ${{ env.LIBKRUN_VERSION }} from source, pinned
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q build-essential clang libclang-dev pkg-config patchelf
+          cd "$RUNNER_TEMP"
+          curl -fsSL -o libkrun.tar.gz "https://github.com/containers/libkrun/archive/refs/tags/v$LIBKRUN_VERSION.tar.gz"
+          echo "$LIBKRUN_TARBALL_SHA256  libkrun.tar.gz" | sha256sum -c -
+          tar -xzf libkrun.tar.gz
+          cd "libkrun-$LIBKRUN_VERSION"
+          make BLK=1 NET=1
+          sudo make PREFIX=/usr/local install
+          # e2e.mjs starts berth-vmm with a bare environment (no LD_LIBRARY_PATH),
+          # so the loader has to find libkrun on its own.
+          echo /usr/local/lib64 | sudo tee /etc/ld.so.conf.d/libkrun.conf
+          sudo ldconfig
+          ls -l /usr/local/lib*/libkrun* || true
+
+      - name: Test and build berth-vmm
+        working-directory: packages/vmm
+        run: |
+          export LIBKRUN_LIB_DIR=$(dirname "$(ls /usr/local/lib*/libkrun.so | head -1)")
+          cargo test --release --locked
+          cargo build --release --locked
+          ldd target/release/berth-vmm
+          target/release/berth-vmm run --help >/dev/null
+
+      - name: The published kernel and rootfs, in berth-vmm's artifacts layout
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          get() { grep -m1 "^$2 = " "packages/vmm/$1" | sed -E 's/.*"([^"]+)".*/\1/'; }
+          kernel=$(get kernel/manifest.toml image_sha256)
+          rootfs=$(get rootfs/manifest.toml image_sha256)
+          mkdir -p "$ART/kernel/sha256/$kernel" "$ART/rootfs"
+          gh release download "$RELEASE" -R "$GITHUB_REPOSITORY" -p "Image-$kernel" -p "rootfs-$rootfs.erofs" -D "$RUNNER_TEMP/dl"
+          mv "$RUNNER_TEMP/dl/Image-$kernel" "$ART/kernel/sha256/$kernel/Image"
+          mv "$RUNNER_TEMP/dl/rootfs-$rootfs.erofs" "$ART/rootfs/"
+          echo "$kernel  $ART/kernel/sha256/$kernel/Image" | sha256sum -c -
+          echo "$rootfs  $ART/rootfs/rootfs-$rootfs.erofs" | sha256sum -c -
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 10.21.0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Bundle the e2e apps
+        run: |
+          pnpm install --frozen-lockfile
+          NODE_MODULES_FROM="$GITHUB_WORKSPACE" POLICY_REF=HEAD BERTH_VMM_ARTIFACTS="$ART" sh packages/vmm/scripts/build-apps.sh
+
+      # One step per mode, so a failure in one doesn't hide the others.
+      # `host` is left out: it tests the macOS Seatbelt profile (step 5 is Linux's).
+      - name: e2e single
+        id: single
+        continue-on-error: true
+        run: BERTH_VMM_ARTIFACTS="$ART" VERBOSE=1 node packages/vmm/scripts/e2e.mjs single
+      - name: e2e multi
+        continue-on-error: true
+        run: BERTH_VMM_ARTIFACTS="$ART" node packages/vmm/scripts/e2e.mjs multi
+      - name: e2e enforce
+        continue-on-error: true
+        run: BERTH_VMM_ARTIFACTS="$ART" node packages/vmm/scripts/e2e.mjs enforce
+      - name: e2e stdio
+        continue-on-error: true
+        run: BERTH_VMM_ARTIFACTS="$ART" node packages/vmm/scripts/e2e.mjs stdio
+      - name: e2e exits
+        continue-on-error: true
+        run: BERTH_VMM_ARTIFACTS="$ART" node packages/vmm/scripts/e2e.mjs exits
+      - name: e2e context
+        continue-on-error: true
+        run: BERTH_VMM_ARTIFACTS="$ART" node packages/vmm/scripts/e2e.mjs context
+      - name: e2e egress
+        continue-on-error: true
+        run: BERTH_VMM_ARTIFACTS="$ART" node packages/vmm/scripts/e2e.mjs egress
+
+      - name: Guest consoles and results
+        if: always()
+        run: |
+          for f in "$ART"/run/*/console.log; do echo "== $f"; tail -40 "$f"; done
+          ls "$ART"/run/e2e-*.json 2>/dev/null && cat "$ART"/run/e2e-*.json | head -400 || true
