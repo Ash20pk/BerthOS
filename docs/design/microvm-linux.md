@@ -47,7 +47,11 @@ The target is four host platforms, each booting a guest of its own architecture:
 
 1. **Pins per architecture, side by side.** `kernel/manifest-<arch>.toml` and `rootfs/manifest-<arch>.toml`
    (`aarch64`, `x86_64`); `build.rs` picks the target's pair for `include_str!`. Layers stay per rootfs,
-   so they follow. The aarch64 files are today's, renamed, so the existing pins don't move.
+   so they follow. The aarch64 files are today's, renamed, so the existing pins don't move. The Alpine
+   package records follow the same rule (`kernel/<arch>.apk.lock`, `guest/<name>.<arch>.apk.lock`,
+   `rootfs/<arch>.apk.lock`, `rootfs/builder.<arch>.apk.lock`, `rootfs/layers/<name>/<arch>.apk.lock`),
+   and the scripts take the host's architecture and refuse any other (`BERTH_GUEST_ARCH` may only
+   name the host's).
 2. **x86_64 kernel as an ELF `vmlinux`.** libkrun's x86_64 loader takes ELF (`image_format = "elf"`, which
    `pins.rs` already knows); step 3 confirms it before anything is pinned. Same Linux 6.12.109, libkrunfw's `config-libkrunfw_x86_64` plus the same
    `berth-kernel.config` delta (Landlock, yama, WireGuard; io_uring off), so the kernel is the same kernel.
@@ -65,10 +69,13 @@ The target is four host platforms, each booting a guest of its own architecture:
    (5.13+; ABI 4, Linux 6.7, for the TCP rule); with less it says so, as `--no-host-sandbox` does.
 6. **No KVM means no VM, said plainly.** The CLI keeps refusing with the `/dev/kvm` reason and pointing at
    `--runtime docker`; there's no namespaces-only VM mode. Attestation already records which one ran.
-7. **One release, all platforms.** `vm-artifacts-<kernel8>-<rootfs8>` keeps naming the aarch64 pair (the
-   one every existing install has); the x86_64 kernel, rootfs and layers are content-addressed assets in
-   the same release, and each berth-vmm asset is `berth-vmm-<os>-<arch>-<sha>`. `VMM_PINS` gains
-   `linux-arm64` and `linux-x64`.
+7. **One release per architecture.** `vm-artifacts-<kernel8>-<rootfs8>` names each architecture's
+   own pair: the aarch64 release holds the aarch64 kernel, rootfs and layers and the `darwin-arm64` and
+   `linux-arm64` berth-vmm builds; the x86_64 release holds x86_64's and `linux-x64`. The CLI already
+   derives the tag from the pins it boots, so a host finds its own release with no special case, and
+   every existing install keeps its URL. (The plan first had one release with the x86_64 files as extra
+   assets; that needs the CLI to know the other architecture's pins to find the tag, for no gain.) Each
+   berth-vmm asset is `berth-vmm-<os>-<arch>-<sha>`; `VMM_PINS` gains `linux-arm64` and `linux-x64`.
 
 ## Steps
 
@@ -80,7 +87,8 @@ Each is its own branch, tested before the next.
    Tested locally in a Lima VM with nested virtualization (M3 or later, macOS 15+), and in CI if
    GitHub's arm64 runners expose `/dev/kvm`.
 2. **Per-architecture pins.** The manifest split and `build.rs` selection (decision 1), with no change to
-   any aarch64 pin. The CLI's fallback pins become per-arch too.
+   any aarch64 pin. The CLI's fallback pins become per-arch too. *Done* (`feat/vm-pins-per-arch`):
+   `GUEST_PINS` in `packages/cli/src/vm/pins.ts`, checked against each `manifest-<arch>.toml` present.
 3. **x86_64 guest.** The build scripts take `ARCH` (minirootfs, toolchain checks, kernel config and output);
    kernel, berth-init, agent-init, context-bus-daemon, semantic-fs, rootfs, embeddings kit and browser layer
    built and pinned for x86_64, each reproduced twice. `e2e.mjs all` on an x86_64 Linux host with KVM

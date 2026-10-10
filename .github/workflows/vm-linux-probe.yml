@@ -116,8 +116,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           get() { grep -m1 "^$2 = " "packages/vmm/$1" | sed -E 's/.*"([^"]+)".*/\1/'; }
-          kernel=$(get kernel/manifest.toml image_sha256)
-          rootfs=$(get rootfs/manifest.toml image_sha256)
+          kernel=$(get kernel/manifest-aarch64.toml image_sha256)
+          rootfs=$(get rootfs/manifest-aarch64.toml image_sha256)
           mkdir -p "$ART/kernel/sha256/$kernel" "$ART/rootfs"
           gh release download "$RELEASE" -R "$GITHUB_REPOSITORY" -p "Image-$kernel" -p "rootfs-$rootfs.erofs" -D "$RUNNER_TEMP/dl"
           mv "$RUNNER_TEMP/dl/Image-$kernel" "$ART/kernel/sha256/$kernel/Image"

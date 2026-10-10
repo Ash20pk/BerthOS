@@ -2,7 +2,7 @@ name: VM artifacts
 
 # Builds the microVM runtime's artifacts from source on GitHub-hosted runners,
 # proves the guest kernel and base rootfs come out bit for bit equal to the
-# pins in packages/vmm/kernel/manifest.toml and rootfs/manifest.toml, and
+# pins in packages/vmm/kernel/manifest-aarch64.toml and rootfs/manifest-aarch64.toml, and
 # publishes them as a GitHub release `berth vm install` downloads from.
 #
 #   kernel   ubuntu-24.04-arm   scripts/build-kernel.sh: the guest kernel Image
@@ -81,8 +81,8 @@ jobs:
         id: pins
         run: |
           get() { awk -v k="$2" -F' *= *' '$1 == k { v = $2; gsub(/^"|"$/, "", v); print v; exit }' "$1"; }
-          kernel=$(get packages/vmm/kernel/manifest.toml image_sha256)
-          rootfs=$(get packages/vmm/rootfs/manifest.toml image_sha256)
+          kernel=$(get packages/vmm/kernel/manifest-aarch64.toml image_sha256)
+          rootfs=$(get packages/vmm/rootfs/manifest-aarch64.toml image_sha256)
           tag="vm-artifacts-$(echo "$kernel" | cut -c1-8)-$(echo "$rootfs" | cut -c1-8)"
           # The CLI derives the same tag from the same pins; they must agree.
           for v in "$kernel" "$rootfs"; do
@@ -115,7 +115,7 @@ jobs:
       - name: Artifacts directory
         run: echo "BERTH_VMM_ARTIFACTS=$RUNNER_TEMP/vm-artifacts" >> "$GITHUB_ENV"
 
-      - name: Build the kernel and check it against kernel/manifest.toml
+      - name: Build the kernel and check it against kernel/manifest-aarch64.toml
         run: CPUS=$(nproc) packages/vmm/scripts/build-kernel.sh
 
       - name: Collect
@@ -129,7 +129,7 @@ jobs:
           cp "$d/toolchain.txt" "dist/kernel-toolchain-$KERNEL.txt"
           cp "$d/check.txt" "dist/kernel-config-check-$KERNEL.txt"
           cp packages/vmm/kernel/berth-kernel.config dist/berth-kernel.config
-          cp packages/vmm/kernel/manifest.toml dist/kernel-manifest.toml
+          cp packages/vmm/kernel/manifest-aarch64.toml dist/kernel-manifest.toml
           cp packages/vmm/kernel/build-in-vm.sh dist/kernel-build-in-vm.sh
           # GPL: the exact sources the Image was built from, already
           # sha256-checked against the manifest by build-kernel.sh.
@@ -163,13 +163,13 @@ jobs:
       - name: Artifacts directory
         run: echo "BERTH_VMM_ARTIFACTS=$RUNNER_TEMP/vm-artifacts" >> "$GITHUB_ENV"
 
-      - name: Build agent-init and the probe, and check them against rootfs/manifest.toml
+      - name: Build agent-init and the probe, and check them against rootfs/manifest-aarch64.toml
         run: CPUS=$(nproc) packages/vmm/scripts/build-agent-init.sh
 
-      - name: Build berth-init and context-bus-daemon, and check them against rootfs/manifest.toml
+      - name: Build berth-init and context-bus-daemon, and check them against rootfs/manifest-aarch64.toml
         run: CPUS=$(nproc) packages/vmm/scripts/build-berth-init.sh
 
-      - name: Build semantic-fs-daemon, and check it against rootfs/manifest.toml
+      - name: Build semantic-fs-daemon, and check it against rootfs/manifest-aarch64.toml
         run: CPUS=$(nproc) packages/vmm/scripts/build-semantic-fs.sh
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -211,7 +211,7 @@ jobs:
           name: guest
           path: ${{ env.BERTH_VMM_ARTIFACTS }}
 
-      - name: Build the rootfs and check it against rootfs/manifest.toml
+      - name: Build the rootfs and check it against rootfs/manifest-aarch64.toml
         # Artifacts lose their file modes in transit; build-rootfs.sh installs
         # every binary with an explicit mode anyway.
         run: packages/vmm/scripts/build-rootfs.sh
@@ -233,7 +233,7 @@ jobs:
           d="$BERTH_VMM_ARTIFACTS/rootfs"
           mkdir -p dist
           cp "$d/rootfs-$ROOTFS.erofs" "$d/rootfs-$ROOTFS.inputs.json" "$d/rootfs-$ROOTFS.tree.txt" dist/
-          cp packages/vmm/rootfs/manifest.toml dist/rootfs-manifest.toml
+          cp packages/vmm/rootfs/manifest-aarch64.toml dist/rootfs-manifest.toml
           ls -l dist
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -272,7 +272,7 @@ jobs:
           name: rootfs
           path: ${{ env.BERTH_VMM_ARTIFACTS }}/rootfs
 
-      - name: Build every layer and check it against rootfs/manifest.toml
+      - name: Build every layer and check it against rootfs/manifest-aarch64.toml
         run: |
           for d in packages/vmm/rootfs/layers/*/; do
             CPUS=$(nproc) packages/vmm/scripts/build-layer.sh "$(basename "$d")"
@@ -469,7 +469,7 @@ jobs:
           Artifacts for Berth's local microVM runtime (\`berth vm install\`), built from source by
           .github/workflows/vm-artifacts.yml at $GITHUB_SHA, run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID.
           The kernel and rootfs were rebuilt on GitHub's arm64 Linux runners and matched the pins in
-          packages/vmm/kernel/manifest.toml and rootfs/manifest.toml bit for bit.
+          packages/vmm/kernel/manifest-aarch64.toml and rootfs/manifest-aarch64.toml bit for bit.
 
           | Asset | sha256 |
           |---|---|

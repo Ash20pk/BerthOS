@@ -68,7 +68,7 @@ tag=vm-artifacts-8f79e8da-15a8892b
 gh release download "$tag" -R Ash20pk/BerthOS -p 'Image-*' -p 'rootfs-*.erofs' -p 'berth-vmm-darwin-arm64-*' -p SHA256SUMS
 shasum -a 256 -c --ignore-missing SHA256SUMS     # each asset against the list
 shasum -a 256 Image-* rootfs-*.erofs              # and against the pins above, which are also in
-                                                  # packages/vmm/{kernel,rootfs}/manifest.toml
+                                                  # packages/vmm/{kernel,rootfs}/manifest-<arch>.toml
 berth vm install --from .                         # installs from this directory, checked again
 ```
 
@@ -89,15 +89,15 @@ The same scripts CI runs, from `packages/vmm` (a libkrun builder VM on macOS, a 
 
 ```bash
 cd packages/vmm
-./scripts/build-kernel.sh       # checks the Image against kernel/manifest.toml
-./scripts/build-agent-init.sh   # agent-init + probe, checked against rootfs/manifest.toml
+./scripts/build-kernel.sh       # checks the Image against kernel/manifest-<arch>.toml
+./scripts/build-agent-init.sh   # agent-init + probe, checked against rootfs/manifest-<arch>.toml
 ./scripts/build-berth-init.sh   # berth-init + context-bus-daemon, checked likewise
 ./scripts/build-rootfs.sh       # the erofs image, checked likewise
 cargo build --release           # berth-vmm (the scripts also sign it)
 berth vm install --from "$BERTH_VMM_ARTIFACTS" --vmm target/release/berth-vmm
 ```
 
-Each script fails on a hash that isn't its pin and prints both. The builds are reproducible while Alpine 3.24 still serves the package versions in `kernel/apk.lock`, `guest/*.apk.lock` and `rootfs/apk.lock`, which is how long the pins can be rebuilt bit for bit. See [Distribution](design/microvm-image.md#distribution).
+Each script fails on a hash that isn't its pin and prints both. The builds are reproducible while Alpine 3.24 still serves the package versions in `kernel/<arch>.apk.lock`, `guest/*.<arch>.apk.lock` and `rootfs/<arch>.apk.lock` (`<arch>` is the host's: `aarch64` or `x86_64`), which is how long the pins can be rebuilt bit for bit. See [Distribution](design/microvm-image.md#distribution).
 
 ## Run an app
 
