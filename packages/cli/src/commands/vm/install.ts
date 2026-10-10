@@ -1,11 +1,11 @@
 import { Command, Flags } from "@oclif/core";
-import { chmodSync, constants, copyFileSync, existsSync, mkdirSync, readlinkSync, renameSync, rmSync, symlinkSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { chmodSync, constants, copyFileSync, existsSync, mkdirSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { clearQuarantine, installArtifacts, releasePair, sha256File } from "../../vm/artifacts.js";
 import { readConfigFile, resolveArtifactsDir, resolveArtifactsUrl } from "../../vm/config.js";
 import { activePins, checkHost, locateVmm, staleInstalledVmm, writeEntitlementsFile } from "../../vm/host.js";
 import { vmHome } from "../../vm/paths.js";
-import { PINS, libkrunPin, vmmPin } from "../../vm/pins.js";
+import { LIBKRUN_VERSION, PINS, libkrunPin, vmmPin } from "../../vm/pins.js";
 import { ensureLayers } from "../../vm/runtime.js";
 
 export default class VmInstall extends Command {
@@ -60,6 +60,17 @@ export default class VmInstall extends Command {
       }
       renameSync(`${dest}.tmp`, dest);
       this.log(`✔ berth-vmm copied to ${dest}`);
+      // Linux: a libkrun beside the build (as CI and a release lay them out)
+      // goes with it, since berth-vmm loads the one beside itself first.
+      const lib = join(dirname(src), "libkrun.so.1");
+      if (process.platform === "linux" && existsSync(lib)) {
+        const real = realpathSync(lib);
+        const name = basename(real) === "libkrun.so.1" ? `libkrun.so.${LIBKRUN_VERSION}` : basename(real);
+        copyFileSync(real, join(vmHome(), "bin", name));
+        rmSync(join(vmHome(), "bin", "libkrun.so.1"), { force: true });
+        symlinkSync(name, join(vmHome(), "bin", "libkrun.so.1"));
+        this.log(`✔ ${name} copied beside it, from ${real}`);
+      }
     } else if (!process.env.BERTH_VMM && !config.vm?.vmm) {
       // The published berth-vmm, pinned in this CLI, into ~/.berth/vm/bin:
       // when none is there, or the one there is an older release's.

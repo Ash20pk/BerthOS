@@ -757,6 +757,16 @@ jobs:
         continue-on-error: true
         run: BERTH_VMM_ARTIFACTS="$ART" node packages/vmm/scripts/e2e.mjs browser
 
+      # The CLI on the same artifacts: berth vm install --from, doctor, dev,
+      # mcp, attest (packages/cli/test/vm-e2e.mjs), in a HOME of its own.
+      - name: CLI vm-e2e
+        id: cli
+        continue-on-error: true
+        run: |
+          pnpm --filter '@berthos/cli...' build
+          export HOME="$RUNNER_TEMP/h" && mkdir -p "$HOME"
+          node packages/cli/test/vm-e2e.mjs --from "$ART" --vmm packages/vmm/target/release/berth-vmm
+
       - name: Guest consoles
         if: always()
         run: |
