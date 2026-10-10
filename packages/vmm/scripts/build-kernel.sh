@@ -1,5 +1,5 @@
 #!/bin/sh
-# Builds the pinned Berth guest kernel Image (kernel/manifest.toml) in a pinned
+# Builds the pinned Berth guest kernel Image (kernel/manifest-<arch>.toml) in a pinned
 # Alpine builder (scripts/common.sh: a libkrun builder VM on macOS, a container
 # on a Linux runner; CI uses this script as is). Nothing is installed on the
 # host: sources are downloaded into $ART/cache and sha256-checked here, the
@@ -8,7 +8,7 @@
 # Output: $ART/kernel/sha256/<image sha256>/{Image,config,check.txt,toolchain.txt,apk.lock}
 # (the same layout a download cache would use). Fails if the Image's sha256 is
 # not the manifest's image_sha256. UPDATE_MANIFEST=1 rewrites the output pins
-# instead, for a deliberate config change. kernel/apk.lock is the builder's
+# instead, for a deliberate config change. kernel/<arch>.apk.lock is the builder's
 # package set from the last pinned build; a difference is reported, not fatal.
 set -eu
 . "$(dirname "$0")/common.sh"
@@ -37,7 +37,7 @@ cp "$delta" "$B/in/berth-kernel.config"
 run_builder kernel "${CPUS:-8}" "${MEM:-4096}" 8 "$VMM_DIR/kernel/build-in-vm.sh" \
     in:"$B/in":ro out:"$B/out"
 rm -rf "$B/in"
-compare_lock "$VMM_DIR/kernel/apk.lock" "$B/out/apk.lock"
+compare_lock "$(arch_lock "$VMM_DIR/kernel")" "$B/out/apk.lock"
 
 img_sha=$(sha256_of "$B/out/Image")
 cfg_sha=$(sha256_of "$B/out/config")
@@ -55,12 +55,12 @@ if [ "${UPDATE_MANIFEST:-0}" = 1 ]; then
         -e "s/^config_sha256 = .*/config_sha256 = \"$cfg_sha\"/" \
         -e "s/^image_size = .*/image_size = $size/" \
         -e "s/^image_sha256 = .*/image_sha256 = \"$img_sha\"/"
-    cp "$D/apk.lock" "$VMM_DIR/kernel/apk.lock"
+    cp "$D/apk.lock" "$(arch_lock "$VMM_DIR/kernel")"
     echo "manifest updated; rebuild berth-vmm so it embeds the new pin"
 elif [ "$img_sha" != "$(get image_sha256)" ] || [ "$cfg_sha" != "$(get config_sha256)" ]; then
     echo "MISMATCH: built   Image $img_sha, config $cfg_sha" >&2
-    echo "          pinned  Image $(get image_sha256), config $(get config_sha256) (kernel/manifest.toml)" >&2
+    echo "          pinned  Image $(get image_sha256), config $(get config_sha256) (kernel/manifest-$ARCH.toml)" >&2
     exit 1
 else
-    echo "matches kernel/manifest.toml"
+    echo "matches kernel/manifest-$ARCH.toml"
 fi

@@ -7,7 +7,7 @@
 # Sources: packages/vmm/init from the working tree (this is the edit-build-test
 # loop) and packages/context-bus-daemon at HEAD. Output: $ART/berth-init-build/out,
 # which build-rootfs.sh installs into the image (BERTH_INIT, CONTEXT_BUS_DAEMON).
-# Both binaries are checked against rootfs/manifest.toml's berth_init_sha256 and
+# Both binaries are checked against rootfs/manifest-<arch>.toml's berth_init_sha256 and
 # context_bus_daemon_sha256; UPDATE_MANIFEST=1 rewrites those pins instead (a
 # deliberate change), CHECK=0 skips the check.
 set -eu
@@ -25,7 +25,7 @@ run_builder berth-init "${CPUS:-8}" "${MEM:-4096}" 4 "$VMM_DIR/guest/build-berth
     src:"$B/src":ro out:"$B/out"
 # The first build resolves the lock file; keep it with the sources.
 [ -f "$VMM_DIR/init/Cargo.lock" ] || cp "$B/out/berth-init.Cargo.lock" "$VMM_DIR/init/Cargo.lock"
-compare_lock "$VMM_DIR/guest/berth-init.apk.lock" "$B/out/apk.lock"
+compare_lock "$(arch_lock "$VMM_DIR/guest" berth-init)" "$B/out/apk.lock"
 ls -l "$B/out"
 bi=$(sha256_of "$B/out/berth-init")
 echo "berth-init         $bi"
@@ -35,14 +35,14 @@ echo "context-bus-daemon $cb"
 if [ "${UPDATE_MANIFEST:-0}" = 1 ]; then
     sed_inplace "$M" -e "s/^berth_init_sha256 = .*/berth_init_sha256 = \"$bi\"/" \
         -e "s/^context_bus_daemon_sha256 = .*/context_bus_daemon_sha256 = \"$cb\"/"
-    cp "$B/out/apk.lock" "$VMM_DIR/guest/berth-init.apk.lock"
-    echo "rootfs/manifest.toml updated"
+    cp "$B/out/apk.lock" "$(arch_lock "$VMM_DIR/guest" berth-init)"
+    echo "rootfs/manifest-$ARCH.toml updated"
 elif [ "${CHECK:-1}" = 1 ]; then
     if [ "$bi" != "$(manifest_get "$M" berth_init_sha256)" ] || [ "$cb" != "$(manifest_get "$M" context_bus_daemon_sha256)" ]; then
         echo "MISMATCH: built   berth-init $bi, context-bus-daemon $cb" >&2
-        echo "          pinned  berth-init $(manifest_get "$M" berth_init_sha256), context-bus-daemon $(manifest_get "$M" context_bus_daemon_sha256) (rootfs/manifest.toml)" >&2
+        echo "          pinned  berth-init $(manifest_get "$M" berth_init_sha256), context-bus-daemon $(manifest_get "$M" context_bus_daemon_sha256) (rootfs/manifest-$ARCH.toml)" >&2
         echo "(a deliberate change: UPDATE_MANIFEST=1; a scratch build: CHECK=0)" >&2
         exit 1
     fi
-    echo "matches rootfs/manifest.toml"
+    echo "matches rootfs/manifest-$ARCH.toml"
 fi

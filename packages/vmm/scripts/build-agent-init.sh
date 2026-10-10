@@ -3,7 +3,7 @@
 # Alpine builder (scripts/common.sh: a libkrun builder VM on macOS, a container
 # on a Linux runner) using Alpine's own rust/gcc. No host rustup target.
 #
-# The source is packages/agent-init at rootfs/manifest.toml's agent_init_commit
+# The source is packages/agent-init at rootfs/manifest-<arch>.toml's agent_init_commit
 # (fix/seccomp-io-uring-vsock, which main's history contains), not the working
 # tree: the image pins that build. AGENT_INIT_REF overrides it for a deliberate
 # change. The output is checked against agent_init_sha256 / probe_sha256 when
@@ -28,7 +28,7 @@ run_builder agent-init "${CPUS:-8}" "${MEM:-4096}" 4 "$VMM_DIR/guest/build-agent
 echo "$commit" > "$O/agent-init.ref"
 rm -rf "$B"
 chmod 0755 "$O/agent-init" "$O/probe"
-compare_lock "$VMM_DIR/guest/agent-init.apk.lock" "$O/apk.lock"
+compare_lock "$(arch_lock "$VMM_DIR/guest" agent-init)" "$O/apk.lock"
 ai=$(sha256_of "$O/agent-init")
 pr=$(sha256_of "$O/probe")
 echo "agent-init $ai  (from $REF, $commit)"
@@ -36,8 +36,8 @@ echo "probe      $pr"
 if [ "$commit" = "$PINNED" ] && [ "${CHECK:-1}" = 1 ]; then
     if [ "$ai" != "$(manifest_get "$M" agent_init_sha256)" ] || [ "$pr" != "$(manifest_get "$M" probe_sha256)" ]; then
         echo "MISMATCH: built   agent-init $ai, probe $pr" >&2
-        echo "          pinned  agent-init $(manifest_get "$M" agent_init_sha256), probe $(manifest_get "$M" probe_sha256) (rootfs/manifest.toml)" >&2
+        echo "          pinned  agent-init $(manifest_get "$M" agent_init_sha256), probe $(manifest_get "$M" probe_sha256) (rootfs/manifest-$ARCH.toml)" >&2
         exit 1
     fi
-    echo "matches rootfs/manifest.toml"
+    echo "matches rootfs/manifest-$ARCH.toml"
 fi

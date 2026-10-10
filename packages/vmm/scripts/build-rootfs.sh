@@ -11,7 +11,7 @@
 #
 # Image contents: Alpine minirootfs + rootfs/packages.txt (node, e2fsprogs,
 # python3 and berth_sdk's dependencies, fuse3), agent-init + probe (build-agent-init.sh), the
-# sdk-node tools (bundle-sdk-node.mjs, from rootfs/manifest.toml's
+# sdk-node tools (bundle-sdk-node.mjs, from rootfs/manifest-<arch>.toml's
 # policy_compiler_commit), berth-init at /sbin/berth-init and
 # context-bus-daemon (both from build-berth-init.sh), and the egress broker
 # (docker-orchestrator/docker/egress-broker.cjs from this tree, no npm
@@ -19,9 +19,9 @@
 # (build-semantic-fs.sh) at /usr/local/bin/semantic-fs-daemon, and berth_sdk
 # (packages/sdk-python/berth_sdk at HEAD, sources only) at /opt/berth/sdk-python.
 #
-# Every input binary is checked against its pin in rootfs/manifest.toml before
+# Every input binary is checked against its pin in rootfs/manifest-<arch>.toml before
 # the build, and the image against image_sha256 after it. UPDATE_MANIFEST=1
-# rewrites the image pins (and rootfs/apk.lock) for a deliberate change;
+# rewrites the image pins (and rootfs/<arch>.apk.lock) for a deliberate change;
 # CHECK=0 skips the checks (a scratch build, e.g. with BERTH_INIT=<file>).
 #
 # The guest init seam: BERTH_INIT=<file> places that file at /sbin/berth-init
@@ -83,7 +83,7 @@ if [ "$CHECK" = 1 ]; then
         key=${c%% *} file=${c#* }
         have=$(sha256_of "$file")
         if [ "$have" != "$(pin "$key")" ]; then
-            echo "MISMATCH: $file has sha256 $have, rootfs/manifest.toml $key is $(pin "$key")" >&2
+            echo "MISMATCH: $file has sha256 $have, rootfs/manifest-$ARCH.toml $key is $(pin "$key")" >&2
             bad=1
         fi
     done
@@ -167,8 +167,8 @@ EOF
 
 run_builder image "${CPUS:-4}" "${MEM:-2048}" 4 "$VMM_DIR/rootfs/build-in-vm.sh" \
     in:"$B/in":ro out:"$B/out"
-compare_lock "$VMM_DIR/rootfs/apk.lock" "$B/out/packages.lock"
-compare_lock "$VMM_DIR/rootfs/builder.apk.lock" "$B/out/apk.lock"
+compare_lock "$(arch_lock "$VMM_DIR/rootfs")" "$B/out/packages.lock"
+compare_lock "$(arch_lock "$VMM_DIR/rootfs" builder)" "$B/out/apk.lock"
 
 h=$(sha "$B/out/rootfs.erofs")
 size=$(file_size "$B/out/rootfs.erofs")
@@ -203,13 +203,13 @@ if [ "${UPDATE_MANIFEST:-0}" = 1 ]; then
     sed_inplace "$M" -e "s/^image_sha256 = .*/image_sha256 = \"$h\"/" -e "s/^image_size = .*/image_size = $size/" \
         -e "s/^sdk_python_sha256 = .*/sdk_python_sha256 = \"$(sha "$SDKPY_LIST")\"/" \
         -e "s/^embeddings_sha256 = .*/embeddings_sha256 = \"$(sha "$EMB_LIST")\"/"
-    cp "$D/rootfs-$h.packages.lock" "$VMM_DIR/rootfs/apk.lock"
-    cp "$D/rootfs-$h.builder.apk.lock" "$VMM_DIR/rootfs/builder.apk.lock"
-    echo "rootfs/manifest.toml updated; rebuild berth-vmm so it embeds the new pin"
+    cp "$D/rootfs-$h.packages.lock" "$(arch_lock "$VMM_DIR/rootfs")"
+    cp "$D/rootfs-$h.builder.apk.lock" "$(arch_lock "$VMM_DIR/rootfs" builder)"
+    echo "rootfs/manifest-$ARCH.toml updated; rebuild berth-vmm so it embeds the new pin"
 elif [ "$CHECK" = 1 ] && [ "$h" != "$(pin image_sha256)" ]; then
     echo "MISMATCH: built   rootfs $h ($size bytes)" >&2
-    echo "          pinned  rootfs $(pin image_sha256) ($(pin image_size) bytes, rootfs/manifest.toml)" >&2
+    echo "          pinned  rootfs $(pin image_sha256) ($(pin image_size) bytes, rootfs/manifest-$ARCH.toml)" >&2
     exit 1
 elif [ "$CHECK" = 1 ]; then
-    echo "matches rootfs/manifest.toml"
+    echo "matches rootfs/manifest-$ARCH.toml"
 fi

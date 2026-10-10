@@ -80,7 +80,7 @@ until the guest powers off ({\"op\":\"shutdown\"} on control.sock, or every app 
                         after confining itself, try to read and write PATH and
                         report the result in the host_sandbox line (repeatable;
                         a diagnostic, used by scripts/e2e.mjs)
-  --layer NAME          attach the optional layer NAME (pinned in rootfs/manifest.toml
+  --layer NAME          attach the optional layer NAME (pinned in rootfs/manifest-<arch>.toml
                         as layer_<NAME>_*), from <artifacts>/layers/layer-<NAME>-<sha>.erofs,
                         read-only; berth-init lays it over the base (repeatable).
                         See docs/design/microvm-layers.md
@@ -194,12 +194,12 @@ pub fn opts(argv: &[String]) -> Opts {
     // The pinned artifacts.
     let art = PathBuf::from(artifacts.unwrap_or_else(|| format!("{}/.berth/vm", home())));
     let kernel = art.join("kernel/sha256").join(pins::kernel_pin()).join("Image");
-    need_file(&kernel, "the pinned kernel (kernel/manifest.toml image_sha256)");
+    need_file(&kernel, "the pinned kernel (kernel/manifest-<arch>.toml image_sha256)");
     let rootfs = match rootfs {
         Some(r) => r,
         None => {
             let p = art.join("rootfs").join(format!("rootfs-{}.erofs", pins::rootfs_pin()));
-            need_file(&p, "the pinned rootfs (rootfs/manifest.toml image_sha256)");
+            need_file(&p, "the pinned rootfs (rootfs/manifest-<arch>.toml image_sha256)");
             p.display().to_string()
         }
     };

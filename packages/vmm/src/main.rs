@@ -2,7 +2,7 @@
 //
 // One process per VM (HVF allows one VM per process). The VM gets:
 //   - a fixed vCPU count and RAM size,
-//   - the pinned Berth kernel (--kernel, checked against kernel/manifest.toml),
+//   - the pinned Berth kernel (--kernel, checked against kernel/manifest-<arch>.toml),
 //   - a root filesystem: a content-addressed read-only image (--rootfs), or a
 //     host directory over virtio-fs (--root, builder VMs),
 //   - optionally a per-sandbox writable state disk (--state),
@@ -118,7 +118,7 @@ The low-level form below is what it expands to (and what builder VMs use).
   --cpus N                  vCPUs (default 1)
   --mem MIB                 guest RAM in MiB (default 512)
   --kernel IMG              boot this raw kernel Image. Its sha256 must equal the
-                            image_sha256 pinned in kernel/manifest.toml (compiled
+                            image_sha256 pinned in kernel/manifest-<arch>.toml (compiled
                             in), and the kernel command line comes from there too
   --libkrunfw-kernel        boot libkrunfw's bundled kernel instead (found via
                             DYLD_LIBRARY_PATH; unpinned, no Landlock). Builder VMs only

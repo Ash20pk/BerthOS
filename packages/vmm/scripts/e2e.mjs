@@ -91,9 +91,13 @@ const VERBOSE = process.env.VERBOSE === "1";
 mkdirSync(RUN, { recursive: true });
 const MAX_LINE = 1 << 20;
 const pinned = (file, key) => new RegExp(`^${key} = "([0-9a-f]{64})"`, "m").exec(readFileSync(join(vmmDir, file), "utf8"))[1];
-const KERNEL_PIN = pinned("kernel/manifest.toml", "image_sha256");
-// Default: the rootfs pinned in rootfs/manifest.toml, as berth-vmm run picks it.
-const ROOTFS_PIN = pinned("rootfs/manifest.toml", "image_sha256");
+// The guest is the host's architecture, as berth-vmm's compiled-in pins are.
+const ARCH = { arm64: "aarch64", x64: "x86_64" }[process.arch] ?? process.arch;
+const KERNEL_MANIFEST = `kernel/manifest-${ARCH}.toml`;
+const ROOTFS_MANIFEST = `rootfs/manifest-${ARCH}.toml`;
+const KERNEL_PIN = pinned(KERNEL_MANIFEST, "image_sha256");
+// Default: the rootfs pinned in rootfs/manifest-<arch>.toml, as berth-vmm run picks it.
+const ROOTFS_PIN = pinned(ROOTFS_MANIFEST, "image_sha256");
 const ROOTFS = process.env.ROOTFS;
 
 const fail = (m) => {
@@ -872,7 +876,7 @@ async function terminal() {
 
 async function layer() {
   const results = [];
-  const pinnedLayer = (name) => pinned("rootfs/manifest.toml", `layer_${name}_sha256`);
+  const pinnedLayer = (name) => pinned(ROOTFS_MANIFEST, `layer_${name}_sha256`);
   const b = await run("layer", ["terminal"], { extra: ["--layer", "example"] });
   const s = await attach(b);
   const { r, result: fig } = await rpcConnect(rpcPath(b, 0), (x) => x.call("run_command", { command: "figlet -f small hi; echo rc=$?" }, 30000));

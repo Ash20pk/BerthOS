@@ -32,8 +32,32 @@ vm | docker) ;;
 *) echo "BERTH_BUILDER=$BUILDER: expected vm or docker" >&2; exit 1 ;;
 esac
 
-KERNEL_MANIFEST="$VMM_DIR/kernel/manifest.toml"
-ROOTFS_MANIFEST="$VMM_DIR/rootfs/manifest.toml"
+# The guest architecture: the host's own. Guests are built natively (an
+# aarch64 builder on an arm64 host, x86_64 on x86_64), never emulated, and each
+# architecture has its own pins: kernel/manifest-<arch>.toml,
+# rootfs/manifest-<arch>.toml and the <name>.<arch>.apk.lock package records.
+# BERTH_GUEST_ARCH may name the host's architecture explicitly, nothing else.
+case "$(uname -m)" in
+arm64 | aarch64) HOST_ARCH=aarch64 ;;
+x86_64 | amd64) HOST_ARCH=x86_64 ;;
+*) HOST_ARCH=$(uname -m) ;;
+esac
+ARCH=${BERTH_GUEST_ARCH:-$HOST_ARCH}
+if [ "$ARCH" != "$HOST_ARCH" ]; then
+    echo "BERTH_GUEST_ARCH=$ARCH on a $HOST_ARCH host: guests are built natively, not emulated" >&2
+    exit 1
+fi
+KERNEL_MANIFEST="$VMM_DIR/kernel/manifest-$ARCH.toml"
+ROOTFS_MANIFEST="$VMM_DIR/rootfs/manifest-$ARCH.toml"
+for m in "$KERNEL_MANIFEST" "$ROOTFS_MANIFEST"; do
+    [ -f "$m" ] || { echo "no $ARCH pins: $m is missing" >&2; exit 1; }
+done
+
+# arch_lock <dir> [name]: the package record for this architecture,
+# <dir>/<name>.<arch>.apk.lock, or <dir>/<arch>.apk.lock without a name.
+arch_lock() {
+    if [ -n "${2:-}" ]; then echo "$1/$2.$ARCH.apk.lock"; else echo "$1/$ARCH.apk.lock"; fi
+}
 
 # manifest_get <file> <key>: value of a flat `key = "value"` or `key = 123` line.
 manifest_get() {
@@ -42,7 +66,7 @@ manifest_get() {
 
 # Pinned inputs. Every download is checked against its sha256 before use.
 ALPINE_VER=$(manifest_get "$ROOTFS_MANIFEST" alpine)
-ALPINE_TGZ="$CACHE/alpine-minirootfs-$ALPINE_VER-aarch64.tar.gz"
+ALPINE_TGZ="$CACHE/alpine-minirootfs-$ALPINE_VER-$ARCH.tar.gz"
 ALPINE_SHA256=$(manifest_get "$ROOTFS_MANIFEST" alpine_minirootfs_sha256)
 LIBKRUNFW_VER=$(manifest_get "$KERNEL_MANIFEST" libkrunfw_version)
 LIBKRUNFW_TGZ="$CACHE/libkrunfw-$LIBKRUNFW_VER.tar.gz"
@@ -91,7 +115,7 @@ fetch() {
 }
 
 fetch_alpine() {
-    fetch "https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VER%.*}/releases/aarch64/$(basename "$ALPINE_TGZ")" \
+    fetch "https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VER%.*}/releases/$ARCH/$(basename "$ALPINE_TGZ")" \
         "$ALPINE_TGZ" "$ALPINE_SHA256"
 }
 
