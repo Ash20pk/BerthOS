@@ -1,0 +1,60 @@
+# Berth guest kernel pin. berth-vmm embeds this file at compile time and boots
+# a --kernel only if its sha256 equals image_sha256 below; the command line is
+# taken from here too, never from the caller (lsm= or init= on a caller's
+# command line could switch Landlock off). scripts/build-kernel.sh checks every
+# source input against the *_sha256 pins and the output against image_sha256.
+# See docs/design/microvm-image.md.
+schema = 1
+name = "berth-kernel"
+arch = "x86_64"
+
+# Sources.
+linux_version = "6.12.109"
+linux_tarball = "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.109.tar.xz"
+linux_tarball_sha256 = "5484e552a334e15019f4aeba89e5b58f04651cf2f4e24e04de9f152f1c38e3fa"
+libkrunfw_version = "5.6.2"
+libkrunfw_tarball = "https://codeload.github.com/containers/libkrunfw/tar.gz/refs/tags/v5.6.2"
+libkrunfw_tarball_sha256 = "df45d649fcbd07a4d0ca03fa836b2f640fdcf9b40187f3eb7023259c6e83d582"
+base_config = "config-libkrunfw_x86_64"
+config_delta = "berth-kernel.config"
+config_delta_sha256 = "ac5c0c4e0d5740a222f0ef118aaf27fb21c8cafa7c9afcdfce6a023c98d439b8"
+
+# Builder: a fresh Alpine root (minirootfs below + apk build-base etc.), used
+# for nothing but this build: a libkrun builder VM on macOS, a container on
+# the Linux runner .github/workflows/vm-artifacts.yml uses; both give this
+# Image. The exact toolchain is recorded in toolchain.txt next to the output,
+# and its Alpine package set in kernel/apk.lock; the compiler string is also
+# inside the Image.
+builder_alpine = "3.24.2"
+builder_minirootfs_sha256 = "c5ca053cfe1d85c5b96dff8b9bc57045f7f184a30ffb6b65776409ca90388677"
+builder_cc = "gcc (Alpine 15.2.0) 15.2.0"
+build_timestamp = "Mon Sep 21 20:29:27 CEST 2026"
+
+# Output. x86_64: the ELF vmlinux, stripped of symbols (libkrun's x86_64
+# loader takes ELF), kept under the file name Image like aarch64's raw Image.
+config_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+image_format = "elf"
+image_size = 0
+image_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+# The command line for a sandbox: the read-only erofs rootfs is the kernel's
+# own root (/dev/vda, the first disk berth-vmm attaches) and berth-init is
+# PID 1, with no init.krun in between. So every instruction the guest runs
+# comes from the pinned kernel or the hashed rootfs; init.krun is code inside
+# the host's libkrun, unmeasured, and over a disk root it forks its payload
+# instead of exec'ing it (berth-init would not be PID 1). See
+# docs/design/microvm-runtime.md.
+# rcupdate.rcu_expedited=1 shortens RCU grace periods (cgroup migrations wait
+# on them); about 60 ms off a berth-init boot (feat/vm-guest-init).
+# libkrun appends berth-vmm's guest environment (--env, BERTH_STATE_DEV) after
+# this; the kernel hands every unknown K=V to PID 1 as its environment.
+cmdline = "reboot=k panic=-1 panic_print=0 nomodule console=hvc0 root=/dev/vda rootfstype=erofs ro rootwait quiet no-kvmapf rcupdate.rcu_expedited=1 init=/sbin/berth-init"
+# Only for a virtio-fs root directory (--root DIR) on the pinned kernel: the
+# spike's layout, kept as a benchmark control. libkrun's init.krun mounts
+# /proc, /sys, /dev and runs the guest command.
+cmdline_virtiofs_root = "reboot=k panic=-1 panic_print=0 nomodule console=hvc0 rootfstype=virtiofs rw quiet no-kvmapf rcupdate.rcu_expedited=1 init=/init.krun"
+
+# Distribution: .github/workflows/vm-artifacts.yml rebuilds the Image, checks
+# it against image_sha256, and publishes it with its config, its GPL sources
+# and this manifest as the GitHub release vm-artifacts-<kernel8>-<rootfs8>.
+# `berth vm install` downloads it from there and verifies it, never builds.
+dist_url = "https://github.com/Ash20pk/BerthOS/releases/download/vm-artifacts-{kernel8}-{rootfs8}/Image-{image_sha256}"

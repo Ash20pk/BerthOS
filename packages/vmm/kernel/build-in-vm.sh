@@ -9,7 +9,17 @@
 # survive a case-insensitive APFS root): in a VM, the first /dev/vdX, formatted
 # here; in a container, a volume already mounted.
 # Output on /out: Image, config, check.txt, toolchain.txt, apk.lock, build.log.
+#
+# The builder's own architecture is the guest's (never cross-built): aarch64
+# gives a raw arm64 Image, x86_64 an ELF vmlinux, stripped (libkrun's x86_64
+# loader takes ELF; image_format = "elf" in kernel/manifest-x86_64.toml). Both
+# are written as /out/Image, so the artifacts layout is the same for each.
 set -eu
+case "$(uname -m)" in
+aarch64) BASE_CONFIG=config-libkrunfw_aarch64 TARGET=Image OUTPUT=arch/arm64/boot/Image ;;
+x86_64) BASE_CONFIG=config-libkrunfw_x86_64 TARGET=vmlinux OUTPUT=vmlinux ;;
+*) echo "no kernel build for $(uname -m)" >&2; exit 1 ;;
+esac
 JOBS=${JOBS:-$(nproc)}
 apk add --no-cache build-base bc flex bison elfutils-dev openssl-dev perl python3 \
     linux-headers xz e2fsprogs patch findutils diffutils tar >/dev/null
@@ -31,7 +41,7 @@ tar xf /in/linux.tar.xz
 for p in $(find patches/ -name "0*.patch" | sort); do patch -s -p1 -d "$KV" < "$p"; done
 
 # Base config + our delta, then let kconfig resolve dependencies.
-cat config-libkrunfw_aarch64 /in/berth-kernel.config > "$KV/.config"
+cat "$BASE_CONFIG" /in/berth-kernel.config > "$KV/.config"
 cd "$KV"
 # Kconfig probes for rustc and records its version in .config. This builder has
 # no rustc, and RUSTC=/bin/false keeps it that way even if one appears: the
@@ -59,8 +69,13 @@ apk info -v 2>/dev/null | LC_ALL=C sort > /out/apk.lock
 rm -f .version
 time $KMAKE -j"$JOBS" KBUILD_BUILD_TIMESTAMP="Mon Sep 21 20:29:27 CEST 2026" \
     KBUILD_BUILD_USER=berth KBUILD_BUILD_HOST=berth-kernel \
-    Image >/out/build.log 2>&1 || { tail -40 /out/build.log; exit 1; }
-cp arch/arm64/boot/Image /out/Image
+    "$TARGET" >/out/build.log 2>&1 || { tail -40 /out/build.log; exit 1; }
+if [ "$TARGET" = vmlinux ]; then
+    # Symbols only; the loadable segments are what boots, and they are untouched.
+    strip --strip-all -o /out/Image "$OUTPUT"
+else
+    cp "$OUTPUT" /out/Image
+fi
 cp .config /out/config
 ls -l /out/Image
 echo "kernel build ok"

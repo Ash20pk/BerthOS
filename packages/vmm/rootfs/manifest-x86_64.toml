@@ -1,0 +1,68 @@
+# Berth base rootfs: how it is built and the image the last verified build
+# produced. The image is content-addressed (rootfs-<image_sha256>.erofs) and
+# berth-vmm refuses an image that doesn't hash to its name. The full input
+# record is rootfs-<sha256>.inputs.json next to the image (and, minus the
+# image's own hash, /etc/berth/build-inputs.json inside it).
+# See docs/design/microvm-image.md.
+schema = 1
+name = "berth-rootfs"
+arch = "x86_64"
+fstype = "erofs"
+compression = "lz4hc"
+alpine = "3.24.2"
+alpine_minirootfs_sha256 = "c5ca053cfe1d85c5b96dff8b9bc57045f7f184a30ffb6b65776409ca90388677"
+packages = "rootfs/packages.txt"
+# Every inode gets this mtime; with the fixed UUID in rootfs/build-in-vm.sh it
+# makes the image a function of its inputs.
+source_date_epoch = 1790812800
+# /usr/local/bin/agent-init and berth-probe: build-agent-init.sh, from
+# packages/agent-init at this commit (main contains it).
+agent_init_ref = "fix/seccomp-io-uring-vsock"
+agent_init_commit = "c558ef85a920eece0413f2c08345a67396342153"
+agent_init_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+probe_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+# /sbin/berth-init and /usr/local/bin/context-bus-daemon: build-berth-init.sh,
+# from this tree (packages/vmm/init, packages/context-bus-daemon).
+berth_init_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+context_bus_daemon_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+# /usr/local/bin/semantic-fs-daemon: build-semantic-fs.sh, from
+# packages/semantic-fs-daemon at HEAD: the daemon that serves /context
+# (docs/design/microvm-semantic-fs.md).
+semantic_fs_daemon_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+# /usr/local/bin/berth-github-api-broker.cjs: packages/docker-orchestrator/docker/github-api-broker.cjs.
+github_api_broker_sha256 = "0a809855c067d76b2074746b2390f6b204d1d80a7cafdc8cea4371efa624baaa"
+# /usr/local/bin/berth-egress-broker.cjs: packages/docker-orchestrator/docker/egress-broker.cjs.
+egress_broker_sha256 = "4ff162e8e2c86cc43a73caa02bd1a78e4fe620c2b18040334b79366402157d89"
+# /opt/berth/sdk-python/berth_sdk: packages/sdk-python/berth_sdk at HEAD, the
+# .py files only. The pin is the sha256 of "<sha256>  <path>" lines, sorted.
+# /usr/share/berth/embeddings: bundle-embeddings.mjs, from the lockfile's
+# @xenova/transformers and onnxruntime-web and packages/sdk/models. The pin is
+# the sha256 of its "<sha256>  <path>" lines, sorted, like sdk_python_sha256.
+embeddings_sha256 = "d31bbb0d518318f4aa8ec7aa4effcf9f66165b5120b47a4c8d91b8b194b0d5bb"
+sdk_python_sha256 = "378ff0d0b7820c5be5359435b975bcf43c74a3f3a4362a93540d40769f93105a"
+# /opt/berth/sdk-node: bundle-sdk-node.mjs, from packages/sdk and
+# packages/manifest-schema at this commit (main contains it), with the
+# lockfile's yaml and zod.
+policy_compiler_ref = "feat/per-app-cgroups"
+policy_compiler_commit = "28b09997790f9d0a57fffd0adaf47fe7e0a6b9b9"
+init_path = "/sbin/berth-init"
+# What a terminal:* app gets (packages.txt's tmux); the CLI reads it from
+# berth-vmm, as it reads sdk_python_sha256.
+terminal = "tmux"
+
+# Last verified build (UPDATE_MANIFEST=1 scripts/build-rootfs.sh, then a boot
+# check): rebuilt from fresh builder roots to the same hash, scripts/e2e.mjs
+# all passing. rootfs/apk.lock is the Alpine package set it resolved, and
+# builder.apk.lock the builder's (erofs-utils). .github/workflows/vm-artifacts.yml
+# rebuilds it on a Linux runner and fails on any other hash. berth-vmm
+# compiles this in; berth-vmm run boots it by default.
+image_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+image_size = 0
+# Optional layer example (rootfs/layers/example, build-layer.sh), built for the base above.
+layer_example_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+layer_example_size = 0
+layer_example_base = "0000000000000000000000000000000000000000000000000000000000000000"
+# Optional layer browser (rootfs/layers/browser, build-layer.sh), built for the base above.
+layer_browser_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+layer_browser_size = 0
+layer_browser_base = "0000000000000000000000000000000000000000000000000000000000000000"

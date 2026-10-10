@@ -1,5 +1,5 @@
 #!/bin/sh
-# Builds berth-init (static aarch64 musl), runs its unit tests, and builds
+# Builds berth-init (static musl, the host's architecture), runs its unit tests, and builds
 # context-bus-daemon, all in a pinned Alpine builder with Alpine's rust
 # (scripts/common.sh: a libkrun builder VM on macOS, a container on a Linux
 # runner). Nothing is installed on the host and no host rustup target is used.

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Builds agent-init (static aarch64 musl) and the enforcement probe in a pinned
+# Builds agent-init (static musl, the host's architecture) and the enforcement probe in a pinned
 # Alpine builder (scripts/common.sh: a libkrun builder VM on macOS, a container
 # on a Linux runner) using Alpine's own rust/gcc. No host rustup target.
 #
@@ -7,7 +7,9 @@
 # (fix/seccomp-io-uring-vsock, which main's history contains), not the working
 # tree: the image pins that build. AGENT_INIT_REF overrides it for a deliberate
 # change. The output is checked against agent_init_sha256 / probe_sha256 when
-# building the pinned commit (CHECK=0 skips that).
+# building the pinned commit (CHECK=0 skips that); UPDATE_MANIFEST=1 rewrites
+# those two pins (and guest/agent-init.<arch>.apk.lock) instead, as for a new
+# architecture.
 # Output: $ART/agent-init/{agent-init,probe,agent-init.ref,toolchain.txt,apk.lock}
 set -eu
 . "$(dirname "$0")/common.sh"
@@ -33,7 +35,12 @@ ai=$(sha256_of "$O/agent-init")
 pr=$(sha256_of "$O/probe")
 echo "agent-init $ai  (from $REF, $commit)"
 echo "probe      $pr"
-if [ "$commit" = "$PINNED" ] && [ "${CHECK:-1}" = 1 ]; then
+if [ "${UPDATE_MANIFEST:-0}" = 1 ]; then
+    [ "$commit" = "$PINNED" ] || { echo "UPDATE_MANIFEST=1 pins agent_init_commit's build; $REF is $commit" >&2; exit 1; }
+    sed_inplace "$M" -e "s/^agent_init_sha256 = .*/agent_init_sha256 = \"$ai\"/" -e "s/^probe_sha256 = .*/probe_sha256 = \"$pr\"/"
+    cp "$O/apk.lock" "$(arch_lock "$VMM_DIR/guest" agent-init)"
+    echo "rootfs/manifest-$ARCH.toml updated"
+elif [ "$commit" = "$PINNED" ] && [ "${CHECK:-1}" = 1 ]; then
     if [ "$ai" != "$(manifest_get "$M" agent_init_sha256)" ] || [ "$pr" != "$(manifest_get "$M" probe_sha256)" ]; then
         echo "MISMATCH: built   agent-init $ai, probe $pr" >&2
         echo "          pinned  agent-init $(manifest_get "$M" agent_init_sha256), probe $(manifest_get "$M" probe_sha256) (rootfs/manifest-$ARCH.toml)" >&2
