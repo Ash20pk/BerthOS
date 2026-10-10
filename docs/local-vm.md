@@ -15,8 +15,8 @@ Docker is still the default. The VM runtime runs Node and Python apps that use t
 ## Requirements
 
 - **macOS on Apple silicon** (Hypervisor.framework), or **Linux with KVM** (`/dev/kvm` readable and writable).
-- **libkrun 1.19.6**. On macOS: `brew tap libkrun/krun && brew install libkrun`. Newer Homebrew asks you to trust a third-party tap's formulae first: `brew trust --formula libkrun/krun/libkrun libkrun/krun/libkrunfw libkrun/krun/virglrenderer-krun`.
-- **berth-vmm**, the small launcher that runs one VM per process. `berth vm install` downloads it on macOS arm64. On other platforms, build it from `packages/vmm` with `cargo build --release`. On macOS it has to be signed with the hypervisor entitlement. The published build is, and the build scripts sign a local one. `berth doctor` prints the `codesign` command if it isn't.
+- **libkrun 1.19.6**. On macOS: `brew tap libkrun/krun && brew install libkrun`. Newer Homebrew asks you to trust a third-party tap's formulae first: `brew trust --formula libkrun/krun/libkrun libkrun/krun/libkrunfw libkrun/krun/virglrenderer-krun`. On Linux nothing: `berth vm install` puts the libkrun the published berth-vmm was built against beside it, and berth-vmm loads that copy first (`RUNPATH $ORIGIN`).
+- **berth-vmm**, the small launcher that runs one VM per process. `berth vm install` downloads it for macOS arm64, Linux arm64 and Linux x86_64, once the CLI pins that platform's build. Otherwise build it from `packages/vmm` with `cargo build --release`. On macOS it has to be signed with the hypervisor entitlement. The published build is, and the build scripts sign a local one. `berth doctor` prints the `codesign` command if it isn't. The Linux builds need glibc 2.39 or later (Ubuntu 24.04, Debian 13, Fedora 40).
 - **The pinned kernel and rootfs**, about 100 MB, installed with `berth vm install`.
 
 ## Install
@@ -30,7 +30,7 @@ berth doctor --sandbox vm
 
 ### What is downloaded, and from where
 
-By default, from the GitHub release that [`.github/workflows/vm-artifacts.yml`](../.github/workflows/vm-artifacts.yml) publishes for the kernel and rootfs pair, `vm-artifacts-<first 8 hex of the kernel pin>-<first 8 of the rootfs pin>`:
+By default, from the GitHub release that [`.github/workflows/vm-artifacts.yml`](../.github/workflows/vm-artifacts.yml) publishes for your architecture's kernel and rootfs pair, `vm-artifacts-<first 8 hex of the kernel pin>-<first 8 of the rootfs pin>`. Each guest architecture (aarch64 on Apple silicon and arm64 Linux, x86_64 on x86_64 Linux) has its own pins, in `packages/vmm/{kernel,rootfs}/manifest-<arch>.toml`, and so its own release. The aarch64 one:
 
 | File | Asset | sha256 (this CLI) | Size |
 |---|---|---|---|
@@ -192,8 +192,8 @@ An app whose `berth.yml` needs something the VM doesn't have yet is refused befo
 - **Other `<service>:*` capabilities** have no broker in the VM yet.
 - **Native addons** (`.node` files) can't run in the guest, because they were built for your host, not for Linux on arm64. Bundling stops with that error.
 - **Files your app reads from its own directory** at run time, beyond `berth.yml`, aren't in the share. Only the bundle is.
-- **Architecture.** The pinned kernel and rootfs are built for arm64, and berth-vmm is published for macOS arm64 only.
-- **berth-vmm is confined too.** libkrun runs the VMM and the guest as one security context, so `berth-vmm run` puts itself under a Seatbelt profile that allows only this sandbox's files (and the network only for the egress dialer). `berth attest` records it as `boot.isolation.hostSandbox`. macOS only; `--no-host-sandbox` turns it off for debugging.
+- **Architecture.** A guest is its host's architecture: aarch64 on Apple silicon and arm64 Linux, x86_64 on x86_64 Linux, each with its own pinned kernel and rootfs. Intel Macs aren't supported (libkrun has no backend there). CI boots the x86_64 guest under KVM on every artifacts build; GitHub's arm64 runners have no KVM, so Linux arm64 is built the same way but booted only on machines that have it.
+- **berth-vmm is confined too.** libkrun runs the VMM and the guest as one security context, so `berth-vmm run` confines itself to this sandbox's files (and the network only for the egress dialer): a Seatbelt profile on macOS; on Linux, Landlock (filesystem, TCP from Linux 6.7, abstract sockets and signals from 6.12) and a seccomp filter that refuses exec, ptrace, mounts, namespaces, module loading, bpf, keyrings and io_uring. A Linux kernel without Landlock can't run it confined, and berth-vmm stops rather than run unconfined. `berth attest` records it as `boot.isolation.hostSandbox`; `--no-host-sandbox` turns it off for debugging.
 - **`/app` is measured at boot, and it stays live.** berth-vmm hashes each app share before the VM starts and records it as `boot.isolation.apps` (the sha256 of its sorted file listing). The share is virtio-fs, so a change after boot isn't in that digest; `berth dev` reboots on a new bundle, which measures it again.
 - **Policy digests** are berth-init's: it hashes each app's compiled policy, the bytes agent-init reads, and `berth attest` records them under `policies`, as for a container.
 

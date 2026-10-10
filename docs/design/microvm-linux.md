@@ -1,6 +1,8 @@
 # The microVM runtime on Linux (KVM) and x86_64
 
-Status: plan. Today the VM runtime runs on Apple silicon Macs only: the kernel, rootfs and guest binaries
+Status: steps 2 to 6 built and tested in CI (2026-10-10, see [Progress](#progress)); step 1's local
+arm64 boot and the first release of both architectures remain. Before this, the VM runtime ran on Apple
+silicon Macs only: the kernel, rootfs and guest binaries
 are built for aarch64, and berth-vmm is published for darwin-arm64 alone ([`../local-vm.md`](../local-vm.md#limits),
 "Architecture"). This is the first item that has to close before the VM can be the default runtime
 ([`microvm-runtime.md`](microvm-runtime.md)).
@@ -98,6 +100,43 @@ Each is its own branch, tested before the next.
 6. **Release and CLI.** `vm-artifacts.yml` builds and publishes both architectures and three berth-vmm
    builds; `VMM_PINS` for Linux; `packages/cli/test/vm-e2e.mjs` on both Linux runners; a clean
    `berth vm install` from a fresh HOME on each. `docs/local-vm.md`'s Architecture limit goes.
+
+## Progress
+
+2026-10-10, branches stacked on `ci/vm-linux-probe`: `feat/vm-pins-per-arch` (step 2),
+`feat/vm-x86_64-guest` (3), `feat/vm-linux-host-sandbox` (5), `feat/vm-linux-release` (4, 6, and the pins).
+
+- **x86_64 guest, pinned.** `vm-artifacts` with `update_pins` (run 38027242417) built and pinned it on
+  `ubuntu-24.04`: kernel `10d4b54c…` (ELF vmlinux, 27.9 MB), rootfs `11696a0f…` (110.5 MB), both layers.
+  The same run booted it under KVM with the linux-x64 berth-vmm: `e2e.mjs` single 18/18, multi 17/17,
+  enforce 12/12, stdio 3/3, exits 3/3, context 23/23, github 10/10, terminal 12/12, browser 10/10, and
+  guest Landlock ABI 6 FullyEnforced. What it found:
+  - **Power-off doesn't end an x86_64 VM.** libkrunfw's x86_64 kernel has no ACPI, so
+    `reboot(RB_POWER_OFF)` halts and berth-vmm never exits. berth-init now resets on x86_64 (`reboot=k`
+    makes that the keyboard controller's reset, which libkrun turns into the VM's end); aarch64 keeps PSCI
+    power-off, and its berth-init binary is unchanged.
+  - **A refused egress request lost its ERR line.** The host dialer closed both ways right after writing
+    it, and libkrun on Linux drops undelivered bytes on a host-side close. It now half-closes and waits up to
+    5 s for the guest to hang up.
+- **Host sandbox on Linux** (step 5): on the runner (Linux 6.17), Landlock ABI 7 with TCP rules and
+  scoping, 39 syscalls refused by seccomp, `exec` answered EPERM, the user's files EACCES, and the VM working
+  under it. Landlock and seccomp bind the calling thread and its later threads only, so berth-vmm confines
+  itself while single-threaded (checked) and the egress dialer's threads start after.
+- **aarch64 re-pinned.** Alpine stopped serving tzdata 2026d, so rootfs `c2dd5975…` no longer rebuilds bit
+  for bit; it is now `62f96e1b…` (run 38027691295), with the layers over it. Kernel and guest binaries
+  reproduced unchanged. The published `darwin-arm64` berth-vmm (`VMM_PINS`) still carries `c2dd5975`, and
+  installs keep using that release until the next one is published and pinned.
+- **Both architectures from the committed pins** (run 38029430998, an ordinary build): kernel, guest
+  binaries, rootfs and layers bit for bit for aarch64 and x86_64 (x86_64's second build), the three berth-vmm
+  builds, and the x86_64 guest under KVM: every `e2e.mjs` mode, 151/151, host 8/8 and egress 28/28
+  included. Run 38029510496 adds `packages/cli/test/vm-e2e.mjs` on the same runner: 42/42 (`berth vm
+  install --from`, a local berth-vmm with its libkrun beside it, doctor, dev, mcp, secrets, python,
+  `/context`, the terminal, attest). The re-pinned aarch64 rootfs boots on macOS (single, multi, enforce,
+  stdio, exits, context, host, egress, terminal all passing).
+- **Not verified:** a Linux arm64 boot (no KVM on GitHub's arm64 runners, and no disk left on the
+  development Mac for a nested-KVM Lima VM; the linux-arm64 berth-vmm is built and loads its libkrun, no
+  more), and a clean `berth vm install` that downloads (needs both releases published and `VMM_PINS` /
+  `LIBKRUN_PINS` set from that run's notices).
 
 ## What it doesn't cover
 
