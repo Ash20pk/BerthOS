@@ -21,12 +21,12 @@
 // for what it has, and the host_sandbox line says what was left out.
 use super::Plan;
 use std::ffi::CString;
-use std::os::raw::{c_int, c_long, c_uint, c_ulong, c_void};
+use std::os::raw::{c_char, c_int, c_long, c_uint, c_ulong, c_void};
 
 extern "C" {
     fn syscall(n: c_long, ...) -> c_long;
     fn prctl(option: c_int, ...) -> c_int;
-    fn open(path: *const i8, flags: c_int, ...) -> c_int;
+    fn open(path: *const c_char, flags: c_int, ...) -> c_int;
     fn close(fd: c_int) -> c_int;
     fn __errno_location() -> *mut c_int;
 }
@@ -325,7 +325,7 @@ fn seccomp_deny() -> Result<(), String> {
 /// anything; the filter answers EPERM first.
 pub fn probe_exec() -> String {
     let path = CString::new("/nonexistent/berth-vmm-exec-probe").unwrap();
-    let argv: [*const i8; 1] = [std::ptr::null()];
+    let argv: [*const c_char; 1] = [std::ptr::null()];
     let nr = DENIED.iter().find(|(n, _)| *n == "execve").map(|(_, nr)| *nr as c_long).unwrap();
     let r = unsafe { syscall(nr, path.as_ptr(), argv.as_ptr(), argv.as_ptr()) };
     match (r, errno()) {
