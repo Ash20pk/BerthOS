@@ -56,13 +56,13 @@ terminal = "tmux"
 # builder.apk.lock the builder's (erofs-utils). .github/workflows/vm-artifacts.yml
 # rebuilds it on a Linux runner and fails on any other hash. berth-vmm
 # compiles this in; berth-vmm run boots it by default.
-image_sha256 = "c2dd5975de3c6c23a764d126a66cb0db6c69dc95d6c5cd05810a523683965e59"
+image_sha256 = "62f96e1b760a9a23e82817880be12ae04d458549c8e8ac4aba55ead2425927b3"
 image_size = 109670400
 # Optional layer example (rootfs/layers/example, build-layer.sh), built for the base above.
-layer_example_sha256 = "f5bf4335c4d7a249d59f1b5fac3a284ed3e922174e2c58132a57e680fc9ca115"
+layer_example_sha256 = "ea9416dcf9076953299f163647a9621a269f1449c0f88c72d7d83c98e242bd79"
 layer_example_size = 471040
-layer_example_base = "c2dd5975de3c6c23a764d126a66cb0db6c69dc95d6c5cd05810a523683965e59"
+layer_example_base = "62f96e1b760a9a23e82817880be12ae04d458549c8e8ac4aba55ead2425927b3"
 # Optional layer browser (rootfs/layers/browser, build-layer.sh), built for the base above.
-layer_browser_sha256 = "93410e4a7408d3042864f1eccc829693e510d5f4680ad653ab1526b980307051"
-layer_browser_size = 478523392
-layer_browser_base = "c2dd5975de3c6c23a764d126a66cb0db6c69dc95d6c5cd05810a523683965e59"
+layer_browser_sha256 = "be56baa99c102070ddfa5c49bf40b59f14a142adf23182df1854ee3a606e3fa1"
+layer_browser_size = 478527488
+layer_browser_base = "62f96e1b760a9a23e82817880be12ae04d458549c8e8ac4aba55ead2425927b3"
