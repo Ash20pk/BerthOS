@@ -162,6 +162,7 @@ jobs:
           esac
 
   kernel:
+    name: kernel (${{ matrix.arch }})
     needs: pins
     strategy:
       fail-fast: false
@@ -227,6 +228,7 @@ jobs:
           if-no-files-found: error
 
   guest:
+    name: guest (${{ matrix.arch }})
     needs: pins
     strategy:
       fail-fast: false
@@ -278,6 +280,7 @@ jobs:
           if-no-files-found: error
 
   rootfs:
+    name: rootfs (${{ matrix.arch }})
     needs: [pins, guest]
     strategy:
       fail-fast: false
@@ -367,6 +370,7 @@ jobs:
           if-no-files-found: error
 
   layers:
+    name: layers (${{ matrix.arch }})
     needs: [pins, rootfs]
     strategy:
       fail-fast: false
@@ -443,6 +447,7 @@ jobs:
           if-no-files-found: error
 
   vmm:
+    name: vmm (${{ matrix.platform }})
     # After the layers: when pinning, berth-vmm compiles in the manifests the
     # guest jobs just wrote.
     needs: [pins, kernel, layers]
@@ -809,6 +814,7 @@ jobs:
           if-no-files-found: error
 
   publish:
+    name: publish (${{ matrix.arch }})
     needs: [pins, kernel, rootfs, layers, vmm, e2e]
     if: always() && !inputs.update_pins && (github.event_name == 'push' || inputs.publish) && needs.kernel.result == 'success' && needs.layers.result == 'success' && needs.vmm.result == 'success' && (needs.e2e.result == 'success' || needs.e2e.result == 'skipped')
     strategy:
