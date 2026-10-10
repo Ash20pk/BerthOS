@@ -1,5 +1,8 @@
 // Links against the system libkrun (Homebrew on macOS: /opt/homebrew/opt/libkrun).
-// Override with LIBKRUN_LIB_DIR.
+// Override with LIBKRUN_LIB_DIR. On Linux the binary also looks next to itself
+// first (RUNPATH $ORIGIN): the published berth-vmm ships with its own
+// libkrun.so.1, installed beside it in ~/.berth/vm/bin, so no system package is
+// needed and the version doctor checks is the one it was tested with.
 //
 // Picks the pins for the target's guest architecture: a berth-vmm boots a
 // guest of its own architecture, so it compiles in kernel/manifest-<arch>.toml
@@ -9,6 +12,9 @@ fn main() {
     println!("cargo:rustc-link-search=native={dir}");
     println!("cargo:rustc-link-lib=dylib=krun");
     println!("cargo:rerun-if-env-changed=LIBKRUN_LIB_DIR");
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
+        println!("cargo:rustc-link-arg-bins=-Wl,-rpath,$ORIGIN");
+    }
 
     let arch = std::env::var("CARGO_CFG_TARGET_ARCH").expect("cargo sets CARGO_CFG_TARGET_ARCH");
     for m in [format!("kernel/manifest-{arch}.toml"), format!("rootfs/manifest-{arch}.toml")] {

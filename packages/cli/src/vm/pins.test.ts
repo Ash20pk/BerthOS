@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_ARTIFACTS_URL } from "./config.js";
-import { GUEST_PINS, guestArch, layerPinsFromManifest, VMM_PINS, manifestsInBinary, pinsFromManifests, type GuestArch } from "./pins.js";
+import { GUEST_PINS, LIBKRUN_VERSION, guestArch, layerPinsFromManifest, libkrunPin, VMM_PINS, manifestsInBinary, pinsFromManifests, type GuestArch } from "./pins.js";
 
 const vmm = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "vmm");
 const get = (manifest: string, key: string) => manifest.split("\n").map((l) => l.split("=")).find(([k]) => k!.trim() === key)?.[1]?.trim().replace(/^"|"$/g, "");
@@ -13,7 +13,10 @@ const ARCHES: GuestArch[] = ["aarch64", "x86_64"];
 
 for (const arch of ARCHES) {
   const kernelFile = join(vmm, "kernel", `manifest-${arch}.toml`);
-  test(`the CLI's ${arch} pins are the ones berth-vmm compiles in (packages/vmm manifests)`, { skip: !existsSync(kernelFile) && `no ${arch} manifests in this checkout` }, () => {
+  // A new architecture's manifests start with zeros for every output, until
+  // its first build fills them (UPDATE_MANIFEST=1).
+  const unpinned = existsSync(kernelFile) && get(readFileSync(kernelFile, "utf8"), "image_sha256") === "0".repeat(64);
+  test(`the CLI's ${arch} pins are the ones berth-vmm compiles in (packages/vmm manifests)`, { skip: (!existsSync(kernelFile) && `no ${arch} manifests in this checkout`) || (unpinned && `${arch} is not pinned yet`) }, () => {
     const kernel = readFileSync(kernelFile, "utf8");
     const rootfs = readFileSync(join(vmm, "rootfs", `manifest-${arch}.toml`), "utf8");
     const pins = GUEST_PINS[arch];
@@ -39,6 +42,15 @@ test("every pinned architecture has its manifests, and berth-vmm pins are well f
     if (existsSync(join(vmm, "kernel"))) assert.ok(existsSync(join(vmm, "kernel", `manifest-${arch}.toml`)), `pins.ts pins ${arch}, the checkout has no manifest`);
   }
   for (const p of Object.values(VMM_PINS)) assert.match(p!.sha256, /^[0-9a-f]{64}$/);
+});
+
+test("a Linux libkrun pin installs as libkrun.so.<version> under bin/", () => {
+  const sha = "d".repeat(64);
+  const p = libkrunPin("linux-x64", { "linux-x64": { sha256: sha, size: 5 } })!;
+  assert.equal(p.kind, "libkrun");
+  assert.equal(p.relPath, `bin/libkrun.so.${LIBKRUN_VERSION}`);
+  assert.equal(p.asset, `libkrun-linux-x64-${sha}.so`);
+  assert.equal(libkrunPin("darwin-arm64", { "linux-x64": { sha256: sha, size: 5 } }), undefined);
 });
 
 test("a Node arch names its guest architecture", () => {

@@ -8,7 +8,7 @@
  * that the berth-vmm binary it finds carries them.
  */
 export interface ArtifactPin {
-  kind: "kernel" | "rootfs" | "vmm" | "layer";
+  kind: "kernel" | "rootfs" | "vmm" | "layer" | "libkrun";
   sha256: string;
   size: number;
   /** The file name inside the artifacts directory. */
@@ -106,7 +106,7 @@ export function releaseTag(kernelSha256: string, rootfsSha256: string): string {
 }
 
 /** A platform berth-vmm is published for: `${process.platform}-${process.arch}`. */
-export type VmmPlatform = "darwin-arm64";
+export type VmmPlatform = "darwin-arm64" | "linux-arm64" | "linux-x64";
 
 /**
  * Published berth-vmm builds this CLI will download and run, by platform. Each
@@ -129,6 +129,22 @@ export function vmmPin(platform: string = `${process.platform}-${process.arch}`,
   const p = pins[platform];
   if (!p) return undefined;
   return { kind: "vmm", sha256: p.sha256, size: p.size, file: "berth-vmm", relPath: "bin/berth-vmm", asset: `berth-vmm-${platform}-${p.sha256}` };
+}
+
+/**
+ * The libkrun a published Linux berth-vmm is built against, by platform:
+ * built from the LIBKRUN_VERSION tag by the vm-artifacts workflow, published
+ * next to berth-vmm as libkrun-<platform>-<sha256>.so, and installed beside it
+ * as bin/libkrun.so.<version> with the soname link bin/libkrun.so.1, which
+ * berth-vmm finds first (RUNPATH $ORIGIN). macOS links Homebrew's instead.
+ */
+export const LIBKRUN_PINS: Partial<Record<VmmPlatform, { sha256: string; size: number }>> = {};
+
+export function libkrunPin(platform: string = `${process.platform}-${process.arch}`, pins: Partial<Record<string, { sha256: string; size: number }>> = LIBKRUN_PINS): ArtifactPin | undefined {
+  const p = pins[platform];
+  if (!p) return undefined;
+  const file = `libkrun.so.${LIBKRUN_VERSION}`;
+  return { kind: "libkrun", sha256: p.sha256, size: p.size, file, relPath: `bin/${file}`, asset: `libkrun-${platform}-${p.sha256}.so` };
 }
 
 /** `key = "value"` / `key = 123` lines of a flat manifest. */

@@ -4,7 +4,7 @@ import { accessSync, constants, existsSync, readlinkSync, readdirSync, realpathS
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readFileSync as readBytes } from "node:fs";
-import { KERNEL_PIN, LIBKRUN_VERSION, ROOTFS_PIN, manifestsInBinary, pinsFromManifests, vmmPin, type ArtifactPin, layerPinsFromManifest } from "./pins.js";
+import { KERNEL_PIN, LIBKRUN_VERSION, ROOTFS_PIN, libkrunPin, manifestsInBinary, pinsFromManifests, vmmPin, type ArtifactPin, layerPinsFromManifest } from "./pins.js";
 import { vmHome } from "./paths.js";
 import type { VmFeatures } from "./support.js";
 
@@ -157,7 +157,11 @@ export interface LibkrunInfo {
   found: boolean;
 }
 
-/** macOS: the libkrun berth-vmm links (otool -L), and its version from the Homebrew keg or the dylib's file name. */
+/**
+ * The libkrun berth-vmm loads, and its version: on macOS the one it links
+ * (otool -L), from the Homebrew keg or the dylib's name; on Linux the first
+ * libkrun.so.1 on its search path, from the name the link resolves to.
+ */
 export function libkrunInfo(vmm: string | undefined, platform = process.platform, run = spawnSync): LibkrunInfo {
   if (platform === "darwin") {
     let path = "/opt/homebrew/opt/libkrun/lib/libkrun.1.dylib";
@@ -169,7 +173,9 @@ export function libkrunInfo(vmm: string | undefined, platform = process.platform
     if (!existsSync(path)) return { path, found: false };
     return { path, found: true, version: versionFromLibPath(path) };
   }
-  for (const dir of ["/usr/local/lib64", "/usr/local/lib", "/usr/lib64", "/usr/lib", "/usr/lib/x86_64-linux-gnu", "/usr/lib/aarch64-linux-gnu"]) {
+  // berth-vmm's RUNPATH is $ORIGIN: a libkrun beside it (what `berth vm
+  // install` puts there) wins over the system's.
+  for (const dir of [...(vmm ? [dirname(vmm)] : []), "/usr/local/lib64", "/usr/local/lib", "/usr/lib64", "/usr/lib", "/usr/lib/x86_64-linux-gnu", "/usr/lib/aarch64-linux-gnu"]) {
     const path = join(dir, "libkrun.so.1");
     if (existsSync(path)) return { path, found: true, version: versionFromLibPath(path) };
   }
@@ -200,7 +206,9 @@ function versionFromLibPath(path: string): string | undefined {
 export function libkrunRemedy(platform = process.platform): string {
   return platform === "darwin"
     ? `brew tap libkrun/krun && brew install libkrun   (berth-vmm is built against libkrun ${LIBKRUN_VERSION})`
-    : `install libkrun ${LIBKRUN_VERSION} from your distribution or https://github.com/containers/libkrun`;
+    : libkrunPin(`${platform}-${process.arch}`)
+      ? "run `berth vm install`, which puts the libkrun berth-vmm was built with beside it"
+      : `install libkrun ${LIBKRUN_VERSION} (https://github.com/containers/libkrun, built with BLK=1 NET=1)`;
 }
 
 export interface HypervisorInfo {
