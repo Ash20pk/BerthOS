@@ -4,7 +4,17 @@ Every capability a resident app declares in `berth.yml` is enforced somewhere: b
 
 Run [`berth doctor`](./doctor-reference.md) to see what your machine supports. [`examples/kernel-says-no`](../examples/kernel-says-no) shows a denial in 30 seconds. How the kernel rules get applied is on [How enforcement works](./capability-tokens-reference.md).
 
-## Kernel enforcement, by platform
+## Context
+
+You declare capabilities in an app's `berth.yml`. The sandbox the app runs in enforces what it can, and how much that is depends on the host: the Linux kernel underneath the sandbox does the strongest part, and two proxies in the app's traffic path do the parts the kernel can't see. Root on the host sits outside all of it (see [Limits](#limits)).
+
+## Containers
+
+<p align="center"><img src="./images/c4/kernel-enforcement.svg" alt="Enforcement containers: a resident app in the sandbox is bounded by the kernel (Landlock and seccomp) for files, ports, socket types, io_uring and namespaces. Its traffic to hosts it declared goes through the egress proxy on port 8090, and its GitHub API calls through the GitHub API proxy on port 8092, which ends TLS itself; each passes on only what a declared capability covers." width="100%"></p>
+
+The pieces that enforce a capability are the kernel the sandbox runs on, the egress proxy and the GitHub API proxy inside the sandbox, and `mesh-coordinator` with its WireGuard mesh for `network:peer:`. Which host kernel you have decides whether the kernel level exists at all.
+
+### Kernel enforcement, by platform
 
 Kernel enforcement uses [Landlock](https://docs.kernel.org/userspace-api/landlock.html), a Linux kernel feature. On macOS and Windows your apps run on the kernel of the Linux VM your Docker daemon lives in, so that VM's kernel is what counts.
 
@@ -30,7 +40,33 @@ await Computer.boot({ apps: ["../../../apps/filesystem"], enforcement: "warn" })
 
 Either prints a warning on every boot, and the app runs with whatever the kernel applied, which on Docker Desktop is nothing. An explicit `enforcement` option wins over the env var. Don't use this where isolation matters.
 
-## Available capabilities
+### Optional hardened runtime (gVisor / `BERTH_RUNTIME`)
+
+Set `BERTH_RUNTIME=runsc` (or pass `runtime` to `startContainer()`) to run sandboxes under [gVisor](https://gvisor.dev), which puts its own userspace kernel between the sandbox and your host kernel. That protects against a container-escape exploit.
+
+gVisor doesn't implement Landlock, so under `runsc` you lose the kernel level entirely: agent-init reports `ruleset=NotEnforced` and a production image refuses to boot. Today you choose between escape protection and capability enforcement. `berth doctor --runtime runsc` checks the daemon has the runtime and runs the kernel probe under it, so run it again if you switch to a runtime whose kernel has Landlock (such as Kata).
+
+## Components
+
+Inside the sandbox, every capability lands at one of three enforcement levels, and every app also gets a cgroup of its own.
+
+### Enforcement levels
+
+| Level | Mechanism | What it means |
+|---|---|---|
+| **Kernel** | Landlock, seccomp, dropped Linux capabilities, a separate uid per app | Applied before the app's first line runs and inherited by every process it starts. Nothing inside the sandbox can loosen it. |
+| **Proxy** | The egress proxy and the GitHub API proxy | A process in the traffic path. It can only be bypassed by reaching the network some other way, which the kernel level blocks. Finer-grained than the kernel (hostnames, API paths). |
+| **Recorded** | `browser:screenshot:*` and any namespace nothing implements | Reported by `requestCapability()` and used for `expose:` decisions. Not a control. |
+
+Who each level protects against is in the [threat model](./threat-model.md).
+
+### Resource limits
+
+Each app runs in its own cgroup v2 with the `cpu`, `memory_mb` and `pids` its manifest declares, next to a reserved cgroup for the daemons and brokers. So one app that fork-bombs, leaks memory or spins can't starve its neighbours or the daemons. The app can't leave its cgroup or change its limits: the files are root's, the app has no capabilities, and `agent-init` never grants a Landlock write under `/sys`. This needs a host whose cgroup2 mount has `nsdelegate` (Docker 28+); `berth doctor`'s `cgroups` check says whether yours does. Production images set `BERTH_REQUIRE_APP_CGROUPS=1` and refuse to boot on a host that can't. Details are in [resource limits](./resource-limits.md).
+
+## Code
+
+### Available capabilities
 
 A capability is a `namespace:action:scope` string. You can declare any namespace, but only the ones below have something behind them. For anything else, `requestCapability()` reports `granted` if it matches your manifest and nothing enforces it.
 
@@ -50,26 +86,6 @@ To control which calls are allowed after a tool is reachable, see [Governance an
 | `browser:screenshot:*` | Recorded only | Nothing enforces it. Any `browser:*` capability makes `berth dev` publish the noVNC/VNC view on `127.0.0.1`, behind a VNC password. Chromium's debugging port is never published. Opt out with `expose: { browser: false }`. |
 
 Granting a capability and letting a human watch its session are separate choices; see `expose:` in the [manifest reference](./manifest-reference.md).
-
-## Enforcement levels
-
-| Level | Mechanism | What it means |
-|---|---|---|
-| **Kernel** | Landlock, seccomp, dropped Linux capabilities, a separate uid per app | Applied before the app's first line runs and inherited by every process it starts. Nothing inside the sandbox can loosen it. |
-| **Proxy** | The egress proxy and the GitHub API proxy | A process in the traffic path. It can only be bypassed by reaching the network some other way, which the kernel level blocks. Finer-grained than the kernel (hostnames, API paths). |
-| **Recorded** | `browser:screenshot:*` and any namespace nothing implements | Reported by `requestCapability()` and used for `expose:` decisions. Not a control. |
-
-Who each level protects against is in the [threat model](./threat-model.md).
-
-## Optional hardened runtime (gVisor / `BERTH_RUNTIME`)
-
-Set `BERTH_RUNTIME=runsc` (or pass `runtime` to `startContainer()`) to run sandboxes under [gVisor](https://gvisor.dev), which puts its own userspace kernel between the sandbox and your host kernel. That protects against a container-escape exploit.
-
-gVisor doesn't implement Landlock, so under `runsc` you lose the kernel level entirely: agent-init reports `ruleset=NotEnforced` and a production image refuses to boot. Today you choose between escape protection and capability enforcement. `berth doctor --runtime runsc` checks the daemon has the runtime and runs the kernel probe under it, so run it again if you switch to a runtime whose kernel has Landlock (such as Kata).
-
-## Resource limits
-
-Each app runs in its own cgroup v2 with the `cpu`, `memory_mb` and `pids` its manifest declares, next to a reserved cgroup for the daemons and brokers. So one app that fork-bombs, leaks memory or spins can't starve its neighbours or the daemons. The app can't leave its cgroup or change its limits: the files are root's, the app has no capabilities, and `agent-init` never grants a Landlock write under `/sys`. This needs a host whose cgroup2 mount has `nsdelegate` (Docker 28+); `berth doctor`'s `cgroups` check says whether yours does. Production images set `BERTH_REQUIRE_APP_CGROUPS=1` and refuse to boot on a host that can't. Details are in [resource limits](./resource-limits.md).
 
 ## Limits
 

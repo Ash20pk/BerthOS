@@ -69,6 +69,17 @@ Have a different idea, or not sure it fits the capability model? Open a [residen
 - For a new or changed app, `berth test` passes.
 - Code style: TypeScript in strict mode (`tsconfig.base.json`). No default exports, except where a package's public API is a single factory, such as a resident app's `export default defineApp(...)`.
 
+## Write a doc
+
+Every page in `docs/` and `docs/design/` follows the [C4 model](https://c4model.com), so a reader knows where to look on any page. After the title and a short opening paragraph come four sections, always in this order:
+
+1. `## Context`: where the subject sits in Berth, and who or what uses it.
+2. `## Containers`: the separately running pieces involved (the CLI, a daemon, the sandbox, berth-vmm, an external service) and how they talk.
+3. `## Components`: the parts inside the main piece, and how it works.
+4. `## Code`: what a developer types or reads: `berth.yml`, API calls, commands, environment variables, reference tables, links to the source.
+
+Limits, open problems, troubleshooting and the like come after Code. If a level has nothing to say for a page, keep the heading with one line saying so. Add a diagram only when a level has three or more moving parts: each one is a file in `scripts/c4/diagrams/`, and `node scripts/c4-diagrams.mjs` renders them all to `docs/images/c4/`. [`docs/egress-broker-reference.md`](./docs/egress-broker-reference.md) is a good page to copy.
+
 ## Report an issue
 
 Use the [issue templates](./.github/ISSUE_TEMPLATE):

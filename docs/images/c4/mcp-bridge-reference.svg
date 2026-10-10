@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1090 560" width="1090" height="560" role="img" aria-label="MCP bridge: containers (C4 level 2)">
+<title>MCP bridge: containers (C4 level 2)</title>
+<style>
+  text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  .ln { stroke: #57606a; }
+  .bd { stroke: #8c959f; }
+  .bl { fill: #57606a; }
+  .ah { fill: #57606a; }
+  .pill { fill: #f6f8fa; stroke: #d0d7de; }
+  .pt { fill: #24292f; }
+  @media (prefers-color-scheme: dark) {
+    .ln { stroke: #8b949e; }
+    .bd { stroke: #6e7681; }
+    .bl { fill: #9198a1; }
+    .ah { fill: #8b949e; }
+    .pill { fill: #161b22; stroke: #30363d; }
+    .pt { fill: #e6edf3; }
+  }
+</style>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+  <marker id="arrow-start" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+</defs>
+<rect x="20" y="300" width="260" height="200" rx="14" fill="none" class="bd" stroke-width="1.5" stroke-dasharray="7 5"/>
+<text x="36" y="486" class="bl" font-size="13.5" font-weight="700">microVM sandbox</text>
+<text x="36" y="486" dx="120" class="bl" font-size="12">--runtime vm</text>
+<rect x="400" y="300" width="280" height="200" rx="14" fill="none" class="bd" stroke-width="1.5" stroke-dasharray="7 5"/>
+<text x="416" y="486" class="bl" font-size="13.5" font-weight="700">Sandbox</text>
+<text x="416" y="486" dx="59.199999999999996" class="bl" font-size="12">berth-dev-&lt;app&gt;, Docker</text>
+<path d="M260,122 L418,122" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="272.2" y="102" width="133.6" height="40" rx="6" class="pill"/>
+<text x="339" y="114" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="339" dy="0">tools/call</tspan>
+<tspan x="339" dy="16" font-style="italic">[MCP over stdio]</tspan>
+</text>
+<path d="M660,122 L828,122" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="680.75" y="102" width="126.5" height="40" rx="6" class="pill"/>
+<text x="744" y="114" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="744" dy="0">appends records</tspan>
+<tspan x="744" dy="16" font-style="italic">[JSONL]</tspan>
+</text>
+<path d="M600,185 L600,328" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="529.65" y="236" width="140.7" height="40" rx="6" class="pill"/>
+<text x="600" y="248" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="600" dy="0">RPC per call</tspan>
+<tspan x="600" dy="16" font-style="italic">[container stdio]</tspan>
+</text>
+<path d="M460,185 L460,256 L150,256 L150,328" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="240.3" y="236" width="119.39999999999999" height="40" rx="6" class="pill"/>
+<text x="300" y="248" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="300" dy="0">RPC per call</tspan>
+<tspan x="300" dy="16" font-style="italic">[rpc-&lt;i&gt;.sock]</tspan>
+</text>
+<rect x="40" y="60" width="220" height="125" rx="10" fill="#6b7280" stroke="#4b5563" stroke-width="1.5"/>
+<text x="150" y="97" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="150" font-size="15.5" font-weight="700">MCP client</tspan>
+<tspan x="150" dy="17" font-size="11.5" opacity="0.85">[Claude Code, Cursor, ...]</tspan>
+<tspan x="150" dy="20" font-size="12.5">Spawns the bridge from its</tspan>
+<tspan x="150" dy="17" font-size="12.5">config and calls its tools</tspan>
+</text>
+<rect x="420" y="60" width="240" height="125" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="540" y="88.5" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="540" font-size="15.5" font-weight="700">berth mcp</tspan>
+<tspan x="540" dy="17" font-size="11.5" opacity="0.85">[Container: Node.js, on the host]</tspan>
+<tspan x="540" dy="20" font-size="12.5">One export, one tool. Boots or</tspan>
+<tspan x="540" dy="17" font-size="12.5">attaches to the sandbox,</tspan>
+<tspan x="540" dy="17" font-size="12.5">explains denials</tspan>
+</text>
+<path d="M830,70 a115,10 0 0 0 230,0 v105 a115,10 0 0 1 -230,0 z" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<ellipse cx="945" cy="70" rx="115" ry="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="945" y="103" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="945" font-size="15.5" font-weight="700">Audit trail</tspan>
+<tspan x="945" dy="17" font-size="11.5" opacity="0.85">[Container: ~/.berth/audit/audit.jsonl]</tspan>
+<tspan x="945" dy="20" font-size="12.5">Each call: allowed, denied or</tspan>
+<tspan x="945" dy="17" font-size="12.5">failed, tagged with the run id</tspan>
+</text>
+<rect x="420" y="330" width="240" height="125" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="540" y="367" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="540" font-size="15.5" font-weight="700">Resident app</tspan>
+<tspan x="540" dy="17" font-size="11.5" opacity="0.85">[Container: under agent-init]</tspan>
+<tspan x="540" dy="20" font-size="12.5">Landlock and seccomp policy from</tspan>
+<tspan x="540" dy="17" font-size="12.5">its berth.yml</tspan>
+</text>
+<rect x="40" y="330" width="220" height="125" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="150" y="367" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="150" font-size="15.5" font-weight="700">Resident app</tspan>
+<tspan x="150" dy="17" font-size="11.5" opacity="0.85">[Container: berth-vmm, agent-init]</tspan>
+<tspan x="150" dy="20" font-size="12.5">The same policy, on Berth's</tspan>
+<tspan x="150" dy="17" font-size="12.5">pinned kernel</tspan>
+</text>
+<rect x="24" y="526" width="16" height="16" rx="4" fill="#438dd5" stroke="#3c7fc0"/>
+<text x="46" y="538.5" font-size="12.5" class="bl">Container</text>
+<rect x="117" y="526" width="16" height="16" rx="4" fill="#6b7280" stroke="#4b5563"/>
+<text x="139" y="538.5" font-size="12.5" class="bl">External</text>
+</svg>

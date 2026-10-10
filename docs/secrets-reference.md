@@ -2,7 +2,57 @@
 
 How API keys and other credentials reach a sandbox, and who can read them. Berth keeps credentials out of the container's configuration, so they don't show up in `docker inspect` or in snapshots, and a secret an app declares reaches only that app.
 
-## Use it
+## Context
+
+You pass credentials from your shell, a dotenv file or your own code. The `berth` CLI or `startContainer()` hands them to a sandbox, a Docker container or a microVM, where the apps read them as ordinary environment variables. The places they're kept out of are Docker's container configuration and snapshots.
+
+## Containers
+
+In a container, the host side splits the environment before Docker creates the container, and the sandbox's entrypoint loads the files it writes. In a microVM, berth-vmm attaches one read-only disk and berth-init reads it.
+
+### How it works
+
+Docker's container environment (`Env`) is permanent: anyone who can inspect the container sees it, and it is copied into every `docker commit` and snapshot. So Berth splits the environment it's given before creating the container:
+
+| | Where it goes | In `docker inspect` | In a commit or snapshot |
+|---|---|---|---|
+| Ordinary variables (`BERTH_APPS`, `BERTH_WORKSPACE_ROOT`, ...) | Docker `Env` | yes | yes |
+| Credentials no app declared (`ANTHROPIC_API_KEY`, `BERTH_HTTP_RPC_TOKEN`, `BERTH_TERMINAL_CREDENTIAL`, `BERTH_VNC_PASSWORD`, ...) | a shared file, mounted read-only at `/run/berth/secrets.env` | no, only the mount path | no |
+| Names an app declared under `secrets:` | a file per app, delivered as `/run/berth/secrets.<app>.env`, mode 0600, owned by that app's uid | no | no |
+
+The sandbox's entrypoint loads the shared file before anything starts, so every process sees those values. It loads each per-app file only in that app's own process tree, so other apps can't read it from their environment, from `/proc/<pid>/environ`, or from the file.
+
+On the host, the files live in `~/.berth/run/<container name>/` (files 0600, directory 0700) and are deleted when the container stops. A container with no credentials gets no files and no mount.
+
+If a secrets file is set but can't be read at boot, the sandbox refuses to start rather than running the app without its credentials.
+
+### In a microVM
+
+`berth dev --runtime vm --env ...` (see [local-vm.md](local-vm.md#secrets-and-other-variables)) gives the same scoping without Docker's files. Every value, declared or not, travels on one small read-only disk:
+
+| | Where it goes |
+|---|---|
+| On the host | `~/.berth/run/vm/<sandbox>/secrets.img`, 0600 in a 0700 directory, deleted once the sandbox is ready (and on stop, if it never got there) |
+| Into the guest | a read-only virtio-blk disk (`berth-vmm run --secrets`). berth-init reads it as root before any daemon or app starts, then removes the device node |
+| Names an app declared under `secrets:` | that app's process environment only |
+| Any other name | every app's process environment (not berth's own daemons, unlike the container's shared file) |
+| The guest's kernel command line (`/proc/cmdline`) | nothing. It holds only berth-vmm's own settings |
+
+A name berth-init sets itself (`PATH`, `BERTH_CAPABILITY_POLICY` and the rest of each app's fixed environment) is not replaced by a value of the same name; berth-init warns, naming it. A disk that can't be read or parsed fails the boot. The format is in `packages/vmm/src/secrets.rs`.
+
+## Components
+
+What decides which variable goes where is the credential-name check.
+
+### Which names count as credentials
+
+A name you declare under `secrets:` is always treated as a credential. Any other name is treated as one if it contains (case-insensitive) `SECRET`, `TOKEN`, `PASSWORD`, `PASSWD`, `CREDENTIAL`, `API_KEY`, `APIKEY`, `ACCESS_KEY`, `PRIVATE_KEY`, `SESSION_KEY` or `AUTH`, or ends in `_KEY` or `_PAT`. So `AZURE_OPENAI_KEY` is a credential and `BERTH_MESH_KEY_PATH` is not. The rules are in `isSecretEnvName()` in `packages/docker-orchestrator/src/secrets.ts`.
+
+If a credential's name matches none of these, declare it under `secrets:` or rename it (anything ending in `_TOKEN` or `_KEY` works). Otherwise it goes into `Env` in plain text.
+
+## Code
+
+### Use it
 
 Declare the environment variables an app needs in its `berth.yml`. Names only, never values:
 
@@ -23,46 +73,10 @@ Inside the app, read it as usual: `process.env.GITHUB_TOKEN`.
 
 - A declared name reaches only the apps that declared it. Two apps may declare the same name, and each gets it.
 - A declared name with no value at boot prints a warning naming it (never the value), and the app boots without it.
-- A name you pass that no app declares isn't scoped to one app: it goes to the shared file if it looks like a credential (see below) and into `Env` otherwise, and every app can read it. `berth os up` passes it through, since ordinary configuration such as `GITHUB_REPO` travels this way, but warns naming it. To keep a secret to one app, declare it in that app's `berth.yml`.
+- A name you pass that no app declares isn't scoped to one app: it goes to the shared file if it looks like a credential (see [Which names count as credentials](#which-names-count-as-credentials)) and into `Env` otherwise, and every app can read it. `berth os up` passes it through, since ordinary configuration such as `GITHUB_REPO` travels this way, but warns naming it. To keep a secret to one app, declare it in that app's `berth.yml`.
 - A `secrets:` entry must be a valid environment variable name.
 
-## How it works
-
-Docker's container environment (`Env`) is permanent: anyone who can inspect the container sees it, and it is copied into every `docker commit` and snapshot. So Berth splits the environment it's given before creating the container:
-
-| | Where it goes | In `docker inspect` | In a commit or snapshot |
-|---|---|---|---|
-| Ordinary variables (`BERTH_APPS`, `BERTH_WORKSPACE_ROOT`, ...) | Docker `Env` | yes | yes |
-| Credentials no app declared (`ANTHROPIC_API_KEY`, `BERTH_HTTP_RPC_TOKEN`, `BERTH_TERMINAL_CREDENTIAL`, `BERTH_VNC_PASSWORD`, ...) | a shared file, mounted read-only at `/run/berth/secrets.env` | no, only the mount path | no |
-| Names an app declared under `secrets:` | a file per app, delivered as `/run/berth/secrets.<app>.env`, mode 0600, owned by that app's uid | no | no |
-
-The sandbox's entrypoint loads the shared file before anything starts, so every process sees those values. It loads each per-app file only in that app's own process tree, so other apps can't read it from their environment, from `/proc/<pid>/environ`, or from the file.
-
-On the host, the files live in `~/.berth/run/<container name>/` (files 0600, directory 0700) and are deleted when the container stops. A container with no credentials gets no files and no mount.
-
-If a secrets file is set but can't be read at boot, the sandbox refuses to start rather than running the app without its credentials.
-
-### Which names count as credentials
-
-A name you declare under `secrets:` is always treated as a credential. Any other name is treated as one if it contains (case-insensitive) `SECRET`, `TOKEN`, `PASSWORD`, `PASSWD`, `CREDENTIAL`, `API_KEY`, `APIKEY`, `ACCESS_KEY`, `PRIVATE_KEY`, `SESSION_KEY` or `AUTH`, or ends in `_KEY` or `_PAT`. So `AZURE_OPENAI_KEY` is a credential and `BERTH_MESH_KEY_PATH` is not. The rules are in `isSecretEnvName()` in `packages/docker-orchestrator/src/secrets.ts`.
-
-If a credential's name matches none of these, declare it under `secrets:` or rename it (anything ending in `_TOKEN` or `_KEY` works). Otherwise it goes into `Env` in plain text.
-
-## In a microVM
-
-`berth dev --runtime vm --env ...` (see [local-vm.md](local-vm.md#secrets-and-other-variables)) gives the same scoping without Docker's files. Every value, declared or not, travels on one small read-only disk:
-
-| | Where it goes |
-|---|---|
-| On the host | `~/.berth/run/vm/<sandbox>/secrets.img`, 0600 in a 0700 directory, deleted once the sandbox is ready (and on stop, if it never got there) |
-| Into the guest | a read-only virtio-blk disk (`berth-vmm run --secrets`). berth-init reads it as root before any daemon or app starts, then removes the device node |
-| Names an app declared under `secrets:` | that app's process environment only |
-| Any other name | every app's process environment (not berth's own daemons, unlike the container's shared file) |
-| The guest's kernel command line (`/proc/cmdline`) | nothing. It holds only berth-vmm's own settings |
-
-A name berth-init sets itself (`PATH`, `BERTH_CAPABILITY_POLICY` and the rest of each app's fixed environment) is not replaced by a value of the same name; berth-init warns, naming it. A disk that can't be read or parsed fails the boot. The format is in `packages/vmm/src/secrets.rs`.
-
-## Snapshots
+### Snapshots
 
 `berth snapshot create` saves the container's environment to `env.json`, minus any credential-named values, and records the names it left out. `berth snapshot restore` tells you which ones to supply again:
 
@@ -72,7 +86,7 @@ Warning: this snapshot deliberately did not capture 1 credential-valued environm
 
 Snapshots are stored in `~/.berth/snapshots/<app>/<id>/` (directory 0700, `env.json` 0600).
 
-## Files on the host
+### Files on the host
 
 | File | Holds | Mode |
 |---|---|---|

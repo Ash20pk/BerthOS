@@ -6,7 +6,57 @@
 pip install berthos-sdk        # imported as berth_sdk; Python 3.11+
 ```
 
-## Example
+## Context
+
+A Python resident app runs inside a Berth sandbox, like a TypeScript one. An agent calls its exports as tools, through the CLI (`berth dev`, `berth test`, `berth mcp`, `berth os up`) or `Computer.boot()`. Inside the sandbox it can exchange events with other apps over the context bus, call and be called by sibling apps with `app:invoke:`, and be gated by a governing app.
+
+## Containers
+
+Your app runs as its own Python process in the sandbox, started under `agent-init` as `python3 -m berth_sdk.runtime` instead of the Node runtime ([`entrypoint.sh`](../packages/docker-orchestrator/docker/entrypoint.sh)). It talks to the host over stdio, to sibling apps over Unix sockets, and to the context bus daemon over a Unix socket.
+
+### Running a Python app
+
+Declare the runtime in `berth.yml`:
+
+```yaml
+name: my-app
+version: 0.1.0
+runtime: python
+```
+
+Then run it like any other app: `berth dev`, `berth test`, `berth mcp`, `berth os up`, or `Computer.boot()`. A Python app can share a sandbox with TypeScript apps; each is started with its own runtime, and they talk over the same context bus. It can call and be called with `app:invoke:`, and is gated by a `governs: true` app in the same sandbox (or be that app), exactly as a TypeScript app is.
+
+Every sandbox image carries the SDK at `/opt/berth/sdk-python`, and already has `pydantic`, `pyyaml` and `protobuf`. When `berth dev` bind-mounts a clone of the repo, the app's process imports the repo's own `packages/sdk-python` instead, so SDK edits need no rebuild; the capability policy is always compiled by the image's copy. Your capabilities are compiled into the same kernel policy a TypeScript app gets. Put your own dependencies in `on_install` (`pip install -r requirements.txt`).
+
+`berth test` checks your exports against `berth.yml` and calls each one with a stub input built from its Pydantic model, as it does for a TypeScript app. If the app has a `tests/` directory it then runs `python3 -m pytest -q tests` in the image. pytest isn't in the base image, so install it through `on_install`.
+
+### Protocol
+
+Exports are served as line-delimited JSON on stdio, and also on a Unix socket when `BERTH_RPC_SOCKET` is set. Next to that socket, the runtime binds one socket per sibling allowed to call the app, at `peers/<caller>/rpc.sock`; which socket a call arrives on is how the app, and its governor, know who called:
+
+```json
+{"id": "1", "export": "greet", "input": {"name": "Ada"}}
+{"id": "1", "result": {"message": "Hello, Ada!"}}
+{"id": "2", "error": "no such export \"nope\""}
+```
+
+## Components
+
+Inside the process, the runtime ([`berth_sdk/runtime.py`](../packages/sdk-python/berth_sdk/runtime.py)) loads the manifest, imports your entry file, checks your exports, runs your hooks and then serves your exports. These are its steps, in order.
+
+### How an app boots
+
+1. Load and validate `berth.yml`.
+2. Import the entry file and find `app`.
+3. Check the app's exports against `berth.yml`'s `exports:`, and stop with an error if they differ.
+4. Run `on_install` hooks.
+5. Connect to the context bus.
+6. Run `on_agent_ready` hooks with an `AppContext`.
+7. Log `[berth:runtime] "<name>" ready` and serve exports.
+
+## Code
+
+### Example
 
 `berth.yml`:
 
@@ -48,39 +98,13 @@ app = define_app(setup)
 
 The runtime loads `src/app.py` and looks for a module-level variable named `app`. A full example is [`apps/hello-world-py`](../apps/hello-world-py).
 
-## Running a Python app
+### API
 
-Declare the runtime in `berth.yml`:
-
-```yaml
-name: my-app
-version: 0.1.0
-runtime: python
-```
-
-Then run it like any other app: `berth dev`, `berth test`, `berth mcp`, `berth os up`, or `Computer.boot()`. A Python app can share a sandbox with TypeScript apps; each is started with its own runtime, and they talk over the same context bus. It can call and be called with `app:invoke:`, and is gated by a `governs: true` app in the same sandbox (or be that app), exactly as a TypeScript app is.
-
-Every sandbox image carries the SDK at `/opt/berth/sdk-python`, and already has `pydantic`, `pyyaml` and `protobuf`. When `berth dev` bind-mounts a clone of the repo, the app's process imports the repo's own `packages/sdk-python` instead, so SDK edits need no rebuild; the capability policy is always compiled by the image's copy. Your capabilities are compiled into the same kernel policy a TypeScript app gets. Put your own dependencies in `on_install` (`pip install -r requirements.txt`).
-
-`berth test` checks your exports against `berth.yml` and calls each one with a stub input built from its Pydantic model, as it does for a TypeScript app. If the app has a `tests/` directory it then runs `python3 -m pytest -q tests` in the image. pytest isn't in the base image, so install it through `on_install`.
-
-## How an app boots
-
-1. Load and validate `berth.yml`.
-2. Import the entry file and find `app`.
-3. Check the app's exports against `berth.yml`'s `exports:`, and stop with an error if they differ.
-4. Run `on_install` hooks.
-5. Connect to the context bus.
-6. Run `on_agent_ready` hooks with an `AppContext`.
-7. Log `[berth:runtime] "<name>" ready` and serve exports.
-
-## API
-
-### `define_app(setup) -> BerthApp`
+#### `define_app(setup) -> BerthApp`
 
 Calls `setup(app)` and returns the app. Assign the result to a module-level `app`.
 
-### `app.export(name, handler, input_model=None, output_model=None)`
+#### `app.export(name, handler, input_model=None, output_model=None)`
 
 Registers an export. `name` must match an entry in `berth.yml`'s `exports:`, and registering the same name twice raises `ValueError`.
 
@@ -88,11 +112,11 @@ Registers an export. `name` must match an entry in `berth.yml`'s `exports:`, and
 - With `output_model`, a return value that isn't already an instance is validated into one. A pydantic model is sent back as its `model_dump()`; anything else is sent as returned.
 - A raised exception is sent back to the caller as an error; it doesn't stop the app.
 
-### `app.on_install(fn)`
+#### `app.on_install(fn)`
 
 Registers `fn()` to run once at startup, before `on_agent_ready`, inside the sandboxed process. For build-time setup, use `berth.yml`'s [`on_install`](./manifest-reference.md#on_install-default-).
 
-### `app.on_agent_ready(fn)`
+#### `app.on_agent_ready(fn)`
 
 Registers `fn(ctx)` to run once at startup, before exports are served. `ctx` is an `AppContext`:
 
@@ -103,7 +127,7 @@ Registers `fn(ctx)` to run once at startup, before exports are served. `ctx` is 
 
 Hooks are plain functions, not `async`. A handler only receives its input, so keep `ctx.context_bus` in a module-level variable if an export needs it.
 
-### Manifest helpers
+#### Manifest helpers
 
 | Name | What it does |
 |---|---|
@@ -114,17 +138,7 @@ Hooks are plain functions, not `async`. A handler only receives its input, so ke
 
 `BerthManifest` validates `name`, `version`, `description`, `capabilities`, `exports`, `on_install` and `on_agent_ready`. Other fields (`secrets`, `expose`, `governs`, `governance`, `resources`) are accepted but not checked; use `@berthos/manifest-schema` for full validation.
 
-## Protocol
-
-Exports are served as line-delimited JSON on stdio, and also on a Unix socket when `BERTH_RPC_SOCKET` is set. Next to that socket, the runtime binds one socket per sibling allowed to call the app, at `peers/<caller>/rpc.sock`; which socket a call arrives on is how the app, and its governor, know who called:
-
-```json
-{"id": "1", "export": "greet", "input": {"name": "Ada"}}
-{"id": "1", "result": {"message": "Hello, Ada!"}}
-{"id": "2", "error": "no such export \"nope\""}
-```
-
-## Environment variables
+### Environment variables
 
 | Variable | Default |
 |---|---|

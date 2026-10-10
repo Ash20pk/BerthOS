@@ -25,7 +25,63 @@ export default defineApp((app) => {
 });
 ```
 
-## How an app boots
+## Context
+
+Your app's code runs inside a Berth sandbox, on top of this library. Callers reach your exports from outside: the host through `berth rpc` and `berth mcp`, or your own client over HTTP when the sandbox is deployed to a remote fleet. Inside the sandbox, the SDK connects your app to the context bus and the semantic filesystem, routes its `fetch()` through the egress proxy, lets sibling apps call it, and checks each call with a governing app if one is loaded. For how this sits among the rest of Berth, see the [README](../README.md#level-3-components-inside-a-sandbox).
+
+## Containers
+
+<p align="center"><img src="./images/c4/sdk-reference.svg" alt="@berthos/sdk containers: inside the sandbox, your app's Node.js process is called over stdio by the host CLI (berth rpc, berth mcp) and over HTTP with a bearer token by a remote client. It reaches the context bus daemon and the semantic filesystem daemon over Unix sockets, asks a governing app's evaluate_action first, sends fetch() through the egress proxy on port 8090, and is called by sibling apps through their own peers socket." width="100%"></p>
+
+Your app is one Node.js process in the sandbox. The context bus daemon ([`packages/context-bus-daemon`](../packages/context-bus-daemon)) and the semantic filesystem daemon ([`packages/semantic-fs-daemon`](../packages/semantic-fs-daemon)) are separate processes the sandbox starts before your app, reached over the Unix sockets in [Environment variables](#environment-variables). The ways callers reach your exports are below.
+
+### How exports are called
+
+You don't call this layer yourself. The runtime serves your exports as line-delimited JSON: one request per line in, one response per line out.
+
+```json
+{"id": "1", "export": "ping", "input": {}}
+{"id": "1", "result": {"message": "pong"}}
+{"id": "2", "error": "no such export \"pong\""}
+```
+
+It listens on these transports:
+
+| Transport | When | Who can reach it |
+|---|---|---|
+| stdio | Always | The host (`berth rpc`, `berth mcp`) |
+| Unix socket at `$BERTH_RPC_SOCKET` | Several apps in one sandbox | This app and root on the host (mode `0600`) |
+| `/run/berth/<app>/peers/<caller>/rpc.sock` | Another app declares `app:invoke:<app>` | That one app |
+| HTTP(S) on `$BERTH_HTTP_RPC_PORT` | A sandbox deployed to a remote fleet | Anyone holding the bearer token |
+| TCP on `$BERTH_NETWORK_PORT` | Only if you set it yourself | Other containers on the Docker network |
+
+When a governing app is loaded ([`governs: true`](./manifest-reference.md#governs-default-false)), every call on every transport is checked with it first, and refused if it says no or can't be reached. See the [governance reference](./governance-reference.md).
+
+#### HTTP RPC server
+
+A sandbox deployed to E2B, Daytona or Kubernetes has no stdio the host can attach to, so the runtime can serve your exports over HTTP instead. The deploy tooling sets this up; you only need it to call a deployed app from your own client.
+
+| Endpoint | Auth | Body | Response |
+|---|---|---|---|
+| `GET /healthz` | none | | `{"ok": true}` |
+| `POST /rpc` | `Authorization: Bearer <token>` | `{"id", "export", "input"}` | `{"id", "result"}` or `{"id", "error"}` |
+
+A missing or wrong token gets `401`, a body that isn't JSON gets `400`, and any other path gets `404`.
+
+| Env var | Meaning |
+|---|---|
+| `BERTH_HTTP_RPC_PORT` | Port to listen on. Unset means no HTTP server. |
+| `BERTH_HTTP_RPC_TOKEN` | Required bearer token. The app refuses to start if the port is set without it. |
+| `BERTH_HTTP_RPC_APP` | In a multi-app sandbox, the one app that listens. Unset means the only app does. |
+| `BERTH_HTTP_RPC_TLS_CERT`, `BERTH_HTTP_RPC_TLS_KEY` | Paths to a PEM certificate and key to serve HTTPS. Set both or neither. |
+
+Without TLS the server speaks plain HTTP. That's fine behind E2B's and Daytona's HTTPS URLs, which terminate TLS in front of it. Anywhere the port is reached directly, such as a Kubernetes NodePort, set the certificate and key, or the token crosses the network in the clear.
+
+## Components
+
+Inside your process, the SDK's runtime ([`packages/sdk/src/runtime.ts`](../packages/sdk/src/runtime.ts)) loads the manifest, imports your entry file, checks your exports, connects the clients, runs your hooks and serves your exports, in this order.
+
+### How an app boots
 
 1. Berth loads and validates `berth.yml`.
 2. It imports your built entry file, `dist/index.js`, and reads its default export.
@@ -36,7 +92,9 @@ export default defineApp((app) => {
 
 By the time your code runs, the kernel policy compiled from your capabilities is already in force.
 
-## `defineApp(setup)`
+## Code
+
+### `defineApp(setup)`
 
 ```ts
 function defineApp(setup: (app: BerthApp) => void): BerthApp;
@@ -44,7 +102,7 @@ function defineApp(setup: (app: BerthApp) => void): BerthApp;
 
 Calls `setup` with an app object you register exports and hooks on, and returns it. Your entry file must `export default` the result.
 
-## `app.export(definition)`
+### `app.export(definition)`
 
 ```ts
 interface ExportDefinition<In, Out> {
@@ -62,7 +120,7 @@ Registers one export. The export becomes a tool, and `name` must match an entry 
 - A thrown error is returned to the caller as `{ id, error: message }`; it doesn't crash the app.
 - Registering the same `name` twice throws.
 
-## `app.onInstall(fn)`
+### `app.onInstall(fn)`
 
 ```ts
 app.onInstall(fn: () => Promise<void> | void): void;
@@ -70,7 +128,7 @@ app.onInstall(fn: () => Promise<void> | void): void;
 
 Runs once at startup, before `onAgentReady`, inside your app's own sandboxed process and under its declared capabilities. Use it for setup that's easier in TypeScript than as a shell command. For build-time setup such as installing packages, use `berth.yml`'s [`on_install`](./manifest-reference.md#on_install-default-) instead.
 
-## `app.onAgentReady(fn)`
+### `app.onAgentReady(fn)`
 
 ```ts
 app.onAgentReady(fn: (ctx: AppContext) => Promise<void> | void): void;
@@ -86,7 +144,7 @@ Runs once at startup, after `onInstall` and before your exports are served. This
 
 Not to be confused with `berth.yml`'s `on_agent_ready` field, which is never run.
 
-## `ContextBusClient`
+### `ContextBusClient`
 
 ```ts
 interface ContextBusClient {
@@ -110,7 +168,7 @@ app.onAgentReady(async (ctx) => {
 
 Outside a sandbox (a bare `node dist/index.js`, a unit test), the runtime logs a warning and uses an in-process stand-in. `createLocalContextBus()` gives you the same stand-in for your own tests. See the [context bus reference](./context-bus-reference.md).
 
-## `SemanticFsClient`
+### `SemanticFsClient`
 
 ```ts
 interface SemanticFsClient {
@@ -141,7 +199,7 @@ A filesystem mounted at `$BERTH_CONTEXT_MOUNT` (`/context` by default) that reco
 
 Inside a sandbox, if the daemon isn't reachable, `tag` and `query` throw instead of returning nothing. Outside one, they use an always-empty stand-in, also available as `createLocalSemanticFs()`. See the [semantic filesystem reference](./semantic-fs-reference.md#query-semantics--hybrid-keyword--embedding-similarity).
 
-## `requestCapability(appName, capability)`
+### `requestCapability(appName, capability)`
 
 ```ts
 function requestCapability(appName: string, capability: string): Promise<{ granted: boolean }>;
@@ -156,7 +214,7 @@ if (!granted) throw new Error("declare filesystem:write:/workspace in berth.yml"
 
 Reports whether a capability is covered by what your app declared, using the same glob matching as the policy. It reads the policy compiled at boot, falling back to `berth.yml` outside a sandbox. It doesn't grant anything: the kernel already enforces what you declared, and this lets your code check before it tries.
 
-## `configureEgressProxy()`
+### `configureEgressProxy()`
 
 ```ts
 import { configureEgressProxy } from "@berthos/sdk";
@@ -172,7 +230,7 @@ A few consequences of that swap:
 - Compressed responses (`gzip`, `deflate`, `br`) are decoded for you, and `content-encoding` is kept on the response. `content-length`, when the server sends it, is the size of the compressed body as it came over the wire, not of what `res.text()` returns; don't use it to size a buffer.
 - Decoding has no size limit. A small compressed body can expand to far more memory than its `content-length` suggests, so when you fetch from a host you don't control, read the body as a stream (`res.body`) and stop past a limit of your own instead of calling `res.text()` or `res.arrayBuffer()`.
 
-## `defineConnectorApp(config)`: a resident app from a declarative REST API description
+### `defineConnectorApp(config)`: a resident app from a declarative REST API description
 
 For an app that is only "call this REST endpoint with these parameters", describe the API instead of writing handlers. Each operation becomes an export.
 
@@ -257,49 +315,7 @@ A live call returns `{ status, data }`, where `data` is the response parsed as J
 
 It scopes by hostname only. To restrict which methods and paths an API token can call, you need an API proxy such as the [GitHub one](./github-api-scoping-reference.md). A complete example against a public API: [`examples/resident-apps/generic-connector`](../examples/resident-apps/generic-connector).
 
-## How exports are called
-
-You don't call this layer yourself. The runtime serves your exports as line-delimited JSON: one request per line in, one response per line out.
-
-```json
-{"id": "1", "export": "ping", "input": {}}
-{"id": "1", "result": {"message": "pong"}}
-{"id": "2", "error": "no such export \"pong\""}
-```
-
-It listens on these transports:
-
-| Transport | When | Who can reach it |
-|---|---|---|
-| stdio | Always | The host (`berth rpc`, `berth mcp`) |
-| Unix socket at `$BERTH_RPC_SOCKET` | Several apps in one sandbox | This app and root on the host (mode `0600`) |
-| `/run/berth/<app>/peers/<caller>/rpc.sock` | Another app declares `app:invoke:<app>` | That one app |
-| HTTP(S) on `$BERTH_HTTP_RPC_PORT` | A sandbox deployed to a remote fleet | Anyone holding the bearer token |
-| TCP on `$BERTH_NETWORK_PORT` | Only if you set it yourself | Other containers on the Docker network |
-
-When a governing app is loaded ([`governs: true`](./manifest-reference.md#governs-default-false)), every call on every transport is checked with it first, and refused if it says no or can't be reached. See the [governance reference](./governance-reference.md).
-
-### HTTP RPC server
-
-A sandbox deployed to E2B, Daytona or Kubernetes has no stdio the host can attach to, so the runtime can serve your exports over HTTP instead. The deploy tooling sets this up; you only need it to call a deployed app from your own client.
-
-| Endpoint | Auth | Body | Response |
-|---|---|---|---|
-| `GET /healthz` | none | | `{"ok": true}` |
-| `POST /rpc` | `Authorization: Bearer <token>` | `{"id", "export", "input"}` | `{"id", "result"}` or `{"id", "error"}` |
-
-A missing or wrong token gets `401`, a body that isn't JSON gets `400`, and any other path gets `404`.
-
-| Env var | Meaning |
-|---|---|
-| `BERTH_HTTP_RPC_PORT` | Port to listen on. Unset means no HTTP server. |
-| `BERTH_HTTP_RPC_TOKEN` | Required bearer token. The app refuses to start if the port is set without it. |
-| `BERTH_HTTP_RPC_APP` | In a multi-app sandbox, the one app that listens. Unset means the only app does. |
-| `BERTH_HTTP_RPC_TLS_CERT`, `BERTH_HTTP_RPC_TLS_KEY` | Paths to a PEM certificate and key to serve HTTPS. Set both or neither. |
-
-Without TLS the server speaks plain HTTP. That's fine behind E2B's and Daytona's HTTPS URLs, which terminate TLS in front of it. Anywhere the port is reached directly, such as a Kubernetes NodePort, set the certificate and key, or the token crosses the network in the clear.
-
-## Environment variables
+### Environment variables
 
 Set by Berth inside the sandbox. You rarely need to change them.
 
@@ -314,6 +330,6 @@ Set by Berth inside the sandbox. You rarely need to change them.
 | `BERTH_EGRESS_PROXY_URL` | set when needed | Proxy `configureEgressProxy()` uses |
 | `BERTH_GOVERNANCE_TIMEOUT_MS` | `5000` | How long the governing app has to answer |
 
-## Using the SDK outside this repo
+### Using the SDK outside this repo
 
 `berth init` vendors a self-contained build of the SDK into your project so it installs anywhere. See [app registry reference](./app-registry-reference.md#making-berthossdk-installable-outside-this-monorepo).

@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1070 800" width="1070" height="800" role="img" aria-label="How enforcement works: containers (C4 level 2)">
+<title>How enforcement works: containers (C4 level 2)</title>
+<style>
+  text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  .ln { stroke: #57606a; }
+  .bd { stroke: #8c959f; }
+  .bl { fill: #57606a; }
+  .ah { fill: #57606a; }
+  .pill { fill: #f6f8fa; stroke: #d0d7de; }
+  .pt { fill: #24292f; }
+  @media (prefers-color-scheme: dark) {
+    .ln { stroke: #8b949e; }
+    .bd { stroke: #6e7681; }
+    .bl { fill: #9198a1; }
+    .ah { fill: #8b949e; }
+    .pill { fill: #161b22; stroke: #30363d; }
+    .pt { fill: #e6edf3; }
+  }
+</style>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+  <marker id="arrow-start" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+</defs>
+
+<path d="M300,122 L418,122" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="302.85" y="110" width="112.3" height="24" rx="6" class="pill"/>
+<text x="359" y="122" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="359" dy="0">runs, as root</tspan>
+</text>
+<path d="M680,122 L798,122" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="707.7" y="110" width="62.599999999999994" height="24" rx="6" class="pill"/>
+<text x="739" y="122" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="739" dy="0">writes</tspan>
+</text>
+<path d="M170,185 L170,328" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="117.4" y="236" width="105.19999999999999" height="40" rx="6" class="pill"/>
+<text x="170" y="248" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="170" dy="0">execs,</tspan>
+<tspan x="170" dy="16">once per app</tspan>
+</text>
+<path d="M270,330 L270,268 L920,268 L920,187" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="533.2" y="256" width="133.6" height="24" rx="6" class="pill"/>
+<text x="600" y="268" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="600" dy="0">reads the policy</tspan>
+</text>
+<path d="M300,392 L458,392" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="305.1" y="372" width="147.8" height="40" rx="6" class="pill"/>
+<text x="379" y="384" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="379" dy="0">Landlock, seccomp,</tspan>
+<tspan x="379" dy="16">drops capabilities</tspan>
+</text>
+<path d="M170,455 L170,588" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="96.1" y="502" width="147.8" height="40" rx="6" class="pill"/>
+<text x="170" y="514" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="170" dy="0">exec()</tspan>
+<tspan x="170" dy="16" font-style="italic">[as the app's uid]</tspan>
+</text>
+<path d="M590,455 L590,652 L302,652" fill="none" class="ln" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrow)"/>
+<rect x="379.2" y="632" width="133.6" height="40" rx="6" class="pill"/>
+<text x="446" y="644" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="446" dy="0">inherited,</tspan>
+<tspan x="446" dy="16">can't be removed</tspan>
+</text>
+<rect x="40" y="60" width="260" height="125" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="170" y="97" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="170" font-size="15.5" font-weight="700">entrypoint.sh</tspan>
+<tspan x="170" dy="17" font-size="11.5" opacity="0.85">[Container: shell, as root]</tspan>
+<tspan x="170" dy="20" font-size="12.5">Or berth-init in a microVM.</tspan>
+<tspan x="170" dy="17" font-size="12.5">Prepares each app before it starts</tspan>
+</text>
+<rect x="420" y="60" width="260" height="125" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="550" y="97" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="550" font-size="15.5" font-weight="700">Policy compiler</tspan>
+<tspan x="550" dy="17" font-size="11.5" opacity="0.85">[Container: Node.js, @berthos/sdk]</tspan>
+<tspan x="550" dy="20" font-size="12.5">generate-capability-policy: reads</tspan>
+<tspan x="550" dy="17" font-size="12.5">berth.yml</tspan>
+</text>
+<path d="M800,70 a120,10 0 0 0 240,0 v105 a120,10 0 0 1 -240,0 z" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<ellipse cx="920" cy="70" rx="120" ry="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="920" y="103" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="920" font-size="15.5" font-weight="700">Policy file</tspan>
+<tspan x="920" dy="17" font-size="11.5" opacity="0.85">[Data store: JSON]</tspan>
+<tspan x="920" dy="20" font-size="12.5">One per app. The app can read</tspan>
+<tspan x="920" dy="17" font-size="12.5">it, not change it</tspan>
+</text>
+<rect x="40" y="330" width="260" height="125" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="170" y="367" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="170" font-size="15.5" font-weight="700">agent-init</tspan>
+<tspan x="170" dy="17" font-size="11.5" opacity="0.85">[Container: Rust binary]</tspan>
+<tspan x="170" dy="20" font-size="12.5">Applies the rules to itself, then</tspan>
+<tspan x="170" dy="17" font-size="12.5">switches to the app's uid</tspan>
+</text>
+<rect x="460" y="330" width="260" height="125" rx="10" fill="#6b7280" stroke="#4b5563" stroke-width="1.5"/>
+<text x="590" y="367" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="590" font-size="15.5" font-weight="700">Kernel</tspan>
+<tspan x="590" dy="17" font-size="11.5" opacity="0.85">[Landlock + seccomp]</tspan>
+<tspan x="590" dy="20" font-size="12.5">Holds the ruleset and filters for</tspan>
+<tspan x="590" dy="17" font-size="12.5">the life of the process tree</tspan>
+</text>
+<rect x="40" y="590" width="260" height="125" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="170" y="627" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="170" font-size="15.5" font-weight="700">Resident app</tspan>
+<tspan x="170" dy="17" font-size="11.5" opacity="0.85">[Container: uid 10000 + index]</tspan>
+<tspan x="170" dy="20" font-size="12.5">Its code starts only after all of</tspan>
+<tspan x="170" dy="17" font-size="12.5">the above</tspan>
+</text>
+<rect x="24" y="766" width="16" height="16" rx="4" fill="#438dd5" stroke="#3c7fc0"/>
+<text x="46" y="778.5" font-size="12.5" class="bl">Container</text>
+<rect x="117" y="766" width="16" height="16" rx="4" fill="#6b7280" stroke="#4b5563"/>
+<text x="139" y="778.5" font-size="12.5" class="bl">External</text>
+</svg>

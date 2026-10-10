@@ -1,0 +1,32 @@
+export default {
+  name: "readme-2-containers",
+  w: 1100,
+  h: 900,
+  title: "Berth: containers (C4 level 2)",
+  boundaries: [
+    { x: 20, y: 230, w: 820, h: 610, label: "Berth", sub: "[Software System]" },
+    { x: 45, y: 520, w: 520, h: 260, label: "Sandbox", sub: "one per dev session or MCP server" },
+  ],
+  boxes: [
+    { kind: "person", name: "Developer", type: "Person", desc: "Runs berth init, dev, test, deploy", x: 190, y: 60, w: 240, h: 105 },
+    { kind: "external", name: "AI agent", type: "Software System", desc: "Any MCP client", x: 500, y: 60, w: 240, h: 105 },
+    { kind: "container", name: "berth CLI", type: "Container: Node.js, @berthos/cli", desc: "Every command. The MCP server, and the host side of every sandbox: bundles apps, boots and stops sandboxes", x: 300, y: 270, w: 330, h: 140 },
+    { kind: "container", name: "Audit trail", type: "Data store: JSONL", desc: "Hash-chained; one record per tool call and boot", x: 40, y: 280, w: 170, h: 135, shape: "db" },
+    { kind: "container", name: "Container sandbox", type: "Container: Docker / Colima", desc: "The default. Alpine image; entrypoint.sh starts daemons and apps", x: 65, y: 545, w: 230, h: 160 },
+    { kind: "container", name: "microVM sandbox", type: "Container: berth-vmm, Rust + libkrun", desc: "Pinned kernel and rootfs, berth-init as PID 1, no network device. --runtime vm", x: 315, y: 545, w: 230, h: 160 },
+    { kind: "container", name: "Registry server", type: "Container: Node.js", desc: "Publish, discover, install resident apps. Optional", x: 600, y: 545, w: 215, h: 120 },
+    { kind: "container", name: "Mesh coordinator", type: "Container: Node.js", desc: "Introduces sandboxes on a WireGuard mesh. Optional", x: 600, y: 690, w: 215, h: 120 },
+    { kind: "external", name: "Remote sandboxes", type: "External System", desc: "E2B, Daytona, Kubernetes", x: 870, y: 280, w: 210, h: 120 },
+  ],
+  edges: [
+    { pts: [[310, 165], [310, 210], [400, 210], [400, 268]], label: "runs", at: [355, 210] },
+    { pts: [[620, 165], [620, 210], [540, 210], [540, 268]], label: "tools/call\n[MCP, stdio]", at: [585, 205] },
+    { pts: [[298, 347], [212, 347]], label: "appends,\nattests", at: [255, 347] },
+    { pts: [[630, 340], [868, 340]], label: "deploys through\n[deploy adapters]", at: [750, 340] },
+    { pts: [[380, 410], [380, 470], [180, 470], [180, 543]], label: "RPC to apps\n[stdio relay, docker exec]", at: [250, 470] },
+    { pts: [[460, 410], [460, 543]], label: "RPC to apps\n[vsock]", at: [460, 480] },
+    { pts: [[560, 410], [560, 460], [707, 460], [707, 543]], label: "publish / install\n[HTTP(S)]", at: [660, 460] },
+    { pts: [[565, 750], [598, 750]], dashed: true },
+  ],
+  legendKinds: [["person", "Person"], ["container", "Container"], ["external", "External system"]],
+};

@@ -8,38 +8,15 @@ This spike checks the plan in the microVM research note (`/Users/ash/berth-wt/mi
 
 Code lives in `packages/vmm/`. Nothing big is committed. Kernels, root filesystems and disk images go in `/Users/ash/berth-wt/libkrun-vm-artifacts/` (outside the repo; `$ART` below).
 
-## Results at a glance
+## Context
 
-| Goal | Result | Evidence (details below) |
-|---|---|---|
-| 1. `berth-vmm` boots a guest with no NIC and TSI off, one vsock port, a fixed CPU/RAM cap, stock kernel | **Pass** | Guest runs commands, `connect(1.1.1.1:443)` fails with "Network unreachable", no routes. The stock kernel still creates a `dummy0` device (down, no address). Our kernel removes it (goal 2) |
-| 2. Our own kernel with Landlock, built inside a libkrun guest | **Pass** | `/sys/kernel/security/lsm` = `capability,landlock,yama`, `landlock_create_ruleset(NULL,0,VERSION)` = **6**. Built in an Alpine builder VM in about 4.5 minutes, bit-for-bit reproducible across 3 builds; nothing installed on the host |
-| 3. agent-init + apps/notes in the VM, RPC over vsock from the host | **Pass** | The host calls `add_note` then `list_notes`; `list_notes` returns the note just added. agent-init was built in a builder VM with Alpine's rustc |
-| 4. Enforcement checks and measurements | **Pass** | `ruleset=FullyEnforced`; `/etc/x` gives `EACCES`; connect gives `EACCES` (Landlock) under the app and `ENETUNREACH` (no NIC) as root; io_uring and AF_VSOCK are refused. First boot to first RPC takes 0.54 s; the median of 5 repeats is **0.39 s** |
-| Stretch: `berth-vmm` under a macOS sandbox profile | **Pass** | HVF works under a `(deny default)` Seatbelt profile. A virtio-fs share outside the allowed paths fails with `EPERM` |
-| Stretch: virtio-fs shares only the app directory, read only | **Pass** | `/app` is a read-only share of the app dir, and the root filesystem is read only too (`EROFS` for root in the guest) |
+The spike asks whether Berth's sandbox can run in a microVM we launch ourselves on macOS, in place of a Docker container. There is no CLI yet: you run the build and boot scripts in `packages/vmm/scripts/` by hand. The host is the M4 above, on HVF, with libkrun 1.19.6 and libkrunfw from Homebrew (`/opt/homebrew/opt`). The guest has no network. Only the builder VMs reach the internet, for Alpine packages and the kernel source (problem 8). The baseline it is measured against is the Docker path ([Compared with the Docker baseline](#compared-with-the-docker-baseline)).
 
-## What was built
+## Containers
 
-```
-packages/vmm/
-  src/main.rs                 berth-vmm: hand-written FFI over libkrun 1.19.6's C API
-  build.rs                    links /opt/homebrew/opt/libkrun/lib/libkrun.dylib
-  berth-vmm.entitlements      com.apple.security.hypervisor (+ disable-library-validation)
-  berth-vmm.sb                Seatbelt profile (stretch goal)
-  kernel/berth-kernel.config  our config delta on top of libkrunfw v5.6.2
-  kernel/build-in-vm.sh       kernel build, runs inside the builder VM
-  guest/berth-init.sh         guest init: the single-app part of entrypoint.sh
-  guest/probe.c               enforcement probe (static musl C)
-  guest/build-agent-init-in-vm.sh, prep-rootfs-in-vm.sh, net-probe.sh, vsock-echo.sh, leak-probe.sh
-  scripts/common.sh           paths, disk-space guard, Alpine download + sha256 check
-  scripts/build-kernel.sh     builder VM -> Image -> libkrunfw.5.dylib
-  scripts/build-agent-init.sh builder VM -> static agent-init + probe
-  scripts/build-rootfs.sh     guest rootfs + read-only app dir
-  scripts/bundle-notes.mjs    esbuild bundles: policy compiler, SDK runtime, notes app
-  scripts/run-probe.sh        boots in probe mode (goal 4 checks)
-  scripts/boot-notes.mjs      boots, calls the app from the host, times it, samples memory
-```
+<p align="center"><img src="../images/c4/design-microvm-spike.svg" alt="libkrun spike containers: a host script spawns berth-vmm and calls the app over a Unix socket. berth-vmm boots one microVM with no NIC and maps vsock 5000 to that socket. In the guest, berth-init.sh, exec'd by init.krun, mounts the read-only root and app shares and runs socat, which starts the notes app under agent-init for each connection. Builder VMs, the only ones with TSI, fetch packages and kernel source from Alpine and kernel.org." width="100%"></p>
+
+On the host, a script (`scripts/boot-notes.mjs` or `scripts/run-probe.sh`) starts `berth-vmm`, one VM per process, and calls the app over the Unix socket that berth-vmm maps to vsock port 5000. In the guest, libkrun's `init.krun` is PID 1 and execs `guest/berth-init.sh`, which compiles the policy and runs socat on vsock 5000. Each host connection gets a new app process under agent-init. The root is a host directory over virtio-fs, read-only, and the app is a second read-only share at `/app`. Builder VMs are the same berth-vmm with `--tsi`, used only to build the kernel, agent-init and the rootfs.
 
 ### berth-vmm
 
@@ -59,6 +36,10 @@ The guest kernel is selected in one of two ways:
 
 1. `DYLD_LIBRARY_PATH=<dir with libkrunfw.5.dylib>`. libkrun `dlopen`s `libkrunfw.5.dylib` by bare name. Without either option the launch fails with "Couldn't find or load libkrunfw.5.dylib".
 2. `--kernel <raw arm64 Image> --kernel-format 0 --cmdline "…"` (`krun_set_kernel`). This **also works on the macOS build without any libkrunfw**, and the research note had listed that as unverified. Boot time is the same (median 136 ms from spawn to `/bin/true` exiting, for both methods).
+
+## Components
+
+What goes into the guest: the kernel and its config delta, agent-init and the enforcement probe, the root filesystem and app directory, and the shell init that ties them together.
 
 ### Guest kernel
 
@@ -104,7 +85,33 @@ libkrun's `init.krun` is PID 1. It mounts `/proc`, `/sys` and `/dev` and execs o
 4. `rpc` mode: `socat VSOCK-LISTEN:5000,fork EXEC:"agent-init node /app/runtime.mjs"`. Each host connection gets an app process under agent-init, and its stdio is the SDK's line-JSON RPC. The app itself never touches vsock; socat is the root-side relay.
 5. `probe` mode: runs `berth-probe` as root, then as the app under agent-init, and exits.
 
-## How to run it
+## Code
+
+The files the spike added, and the commands that build and run it.
+
+### What was built
+
+```
+packages/vmm/
+  src/main.rs                 berth-vmm: hand-written FFI over libkrun 1.19.6's C API
+  build.rs                    links /opt/homebrew/opt/libkrun/lib/libkrun.dylib
+  berth-vmm.entitlements      com.apple.security.hypervisor (+ disable-library-validation)
+  berth-vmm.sb                Seatbelt profile (stretch goal)
+  kernel/berth-kernel.config  our config delta on top of libkrunfw v5.6.2
+  kernel/build-in-vm.sh       kernel build, runs inside the builder VM
+  guest/berth-init.sh         guest init: the single-app part of entrypoint.sh
+  guest/probe.c               enforcement probe (static musl C)
+  guest/build-agent-init-in-vm.sh, prep-rootfs-in-vm.sh, net-probe.sh, vsock-echo.sh, leak-probe.sh
+  scripts/common.sh           paths, disk-space guard, Alpine download + sha256 check
+  scripts/build-kernel.sh     builder VM -> Image -> libkrunfw.5.dylib
+  scripts/build-agent-init.sh builder VM -> static agent-init + probe
+  scripts/build-rootfs.sh     guest rootfs + read-only app dir
+  scripts/bundle-notes.mjs    esbuild bundles: policy compiler, SDK runtime, notes app
+  scripts/run-probe.sh        boots in probe mode (goal 4 checks)
+  scripts/boot-notes.mjs      boots, calls the app from the host, times it, samples memory
+```
+
+### How to run it
 
 ```sh
 cd packages/vmm
@@ -140,6 +147,17 @@ target/release/berth-vmm --kernel $A/kernel/Image --kernel-format 0 \
     --cmdline "reboot=k panic=-1 panic_print=0 nomodule console=hvc0 rootfstype=virtiofs rw quiet no-kvmapf init=/init.krun" \
     --root $A/rootfs-notes --root-ro -- /usr/local/bin/net-probe
 ```
+
+## Results at a glance
+
+| Goal | Result | Evidence (details below) |
+|---|---|---|
+| 1. `berth-vmm` boots a guest with no NIC and TSI off, one vsock port, a fixed CPU/RAM cap, stock kernel | **Pass** | Guest runs commands, `connect(1.1.1.1:443)` fails with "Network unreachable", no routes. The stock kernel still creates a `dummy0` device (down, no address). Our kernel removes it (goal 2) |
+| 2. Our own kernel with Landlock, built inside a libkrun guest | **Pass** | `/sys/kernel/security/lsm` = `capability,landlock,yama`, `landlock_create_ruleset(NULL,0,VERSION)` = **6**. Built in an Alpine builder VM in about 4.5 minutes, bit-for-bit reproducible across 3 builds; nothing installed on the host |
+| 3. agent-init + apps/notes in the VM, RPC over vsock from the host | **Pass** | The host calls `add_note` then `list_notes`; `list_notes` returns the note just added. agent-init was built in a builder VM with Alpine's rustc |
+| 4. Enforcement checks and measurements | **Pass** | `ruleset=FullyEnforced`; `/etc/x` gives `EACCES`; connect gives `EACCES` (Landlock) under the app and `ENETUNREACH` (no NIC) as root; io_uring and AF_VSOCK are refused. First boot to first RPC takes 0.54 s; the median of 5 repeats is **0.39 s** |
+| Stretch: `berth-vmm` under a macOS sandbox profile | **Pass** | HVF works under a `(deny default)` Seatbelt profile. A virtio-fs share outside the allowed paths fails with `EPERM` |
+| Stretch: virtio-fs shares only the app directory, read only | **Pass** | `/app` is a read-only share of the app dir, and the root filesystem is read only too (`EROFS` for root in the guest) |
 
 ## Evidence per goal
 
