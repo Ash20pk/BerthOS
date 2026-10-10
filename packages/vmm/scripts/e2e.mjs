@@ -740,7 +740,9 @@ async function host() {
   // Stand-ins for the user's own files: outside every path the sandbox uses.
   const outside = join(os.tmpdir(), `berth-host-probe-${process.pid}.txt`);
   writeFileSync(outside, "a file of the user's");
-  const sibling = join(ART, "rootfs", "LATEST");
+  // A file beside the pinned rootfs that the sandbox isn't granted.
+  const sibling = join(ART, "rootfs", `berth-host-probe-${process.pid}.txt`);
+  writeFileSync(sibling, "beside the rootfs");
   const kernel = join(ART, "kernel/sha256", KERNEL_PIN, "Image");
   const inRun = join(RUN, "host", "probe-target.txt");
   mkdirSync(join(RUN, "host"), { recursive: true });
@@ -751,6 +753,7 @@ async function host() {
   const { result: added } = await rpcConnect(rpcPath(b, 0), (r) => r.call("add_note", { text: "under the host sandbox" }));
   const off = await shutdown(b, s);
   rmSync(outside, { force: true });
+  rmSync(sibling, { force: true });
   const hs = b.vmm.host_sandbox;
   const at = (p) => hs?.probes?.find((x) => x.path === p) ?? {};
   const denied = (v) => v === "EPERM" || v === "EACCES";
@@ -900,8 +903,17 @@ async function layer() {
   const refuse = (args) => spawnSync(VMM, ["run", "--artifacts", ART, "--run-dir", join(RUN, "layer-refused"), "--app", join(APPS, "notes"), ...args], { encoding: "utf8" });
   const unpinned = refuse(["--layer", "nosuch"]);
   check(results, unpinned.status !== 0 && /no layer "nosuch" is pinned/.test(unpinned.stderr), `an unpinned layer is refused: ${unpinned.stderr.trim().split("\n")[0]}`);
-  const other = join(ART, "rootfs", readdirSync(join(ART, "rootfs")).find((f) => f.endsWith(".erofs") && !f.includes(ROOTFS_PIN)) ?? "none.erofs");
-  const wrongBase = existsSync(other) ? refuse(["--rootfs", other, "--layer", "example"]) : { status: 0, stderr: "no other rootfs to try" };
+  let other = join(ART, "rootfs", readdirSync(join(ART, "rootfs")).find((f) => f.endsWith(".erofs") && !f.includes(ROOTFS_PIN)) ?? "none.erofs");
+  if (!existsSync(other)) {
+    // None left from an earlier build (a fresh CI runner): the pinned image
+    // with its last byte changed is a valid, content-addressed other base.
+    const img = readFileSync(join(ART, "rootfs", `rootfs-${ROOTFS_PIN}.erofs`));
+    img[img.length - 1] ^= 1;
+    other = join(RUN, `rootfs-${createHash("sha256").update(img).digest("hex")}.erofs`);
+    writeFileSync(other, img);
+  }
+  const wrongBase = refuse(["--rootfs", other, "--layer", "example"]);
+  if (other.startsWith(RUN)) rmSync(other, { force: true });
   check(results, wrongBase.status !== 0 && /was built for rootfs/.test(wrongBase.stderr), `a layer on a base it wasn't built for is refused: ${wrongBase.stderr.trim().split("\n")[0]}`);
   return { results, measured: m };
 }
