@@ -32,10 +32,10 @@ build_timestamp = "Mon Sep 21 20:29:27 CEST 2026"
 
 # Output. x86_64: the ELF vmlinux, stripped of symbols (libkrun's x86_64
 # loader takes ELF), kept under the file name Image like aarch64's raw Image.
-config_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+config_sha256 = "6e0fd31c75cd563f8bf650765504d97989316f70e9bbb333fb0230db78fe4283"
 image_format = "elf"
-image_size = 0
-image_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+image_size = 27928992
+image_sha256 = "10d4b54c0896668a93f9d26d0a701aac4a14ce813f3ed4d3b4d26e50d7b7b8d1"
 # The command line for a sandbox: the read-only erofs rootfs is the kernel's
 # own root (/dev/vda, the first disk berth-vmm attaches) and berth-init is
 # PID 1, with no init.krun in between. So every instruction the guest runs
