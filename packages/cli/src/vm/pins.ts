@@ -1,10 +1,11 @@
 /**
- * The guest kernel and base rootfs this CLI boots, by sha256. They are the
- * same pins berth-vmm compiles in (packages/vmm/kernel/manifest.toml and
- * rootfs/manifest.toml, image_sha256); berth-vmm refuses anything else, so a
- * mismatch here only means the CLI fetched the wrong thing, never that it
- * booted it. pins.test.ts checks these against the manifests in a checkout,
- * and `berth doctor` checks that the berth-vmm binary it finds carries them.
+ * The guest kernel and base rootfs this CLI boots, by sha256, per guest
+ * architecture. They are the same pins berth-vmm compiles in
+ * (packages/vmm/kernel/manifest-<arch>.toml and rootfs/manifest-<arch>.toml,
+ * image_sha256); berth-vmm refuses anything else, so a mismatch here only
+ * means the CLI fetched the wrong thing, never that it booted it. pins.test.ts
+ * checks these against the manifests in a checkout, and `berth doctor` checks
+ * that the berth-vmm binary it finds carries them.
  */
 export interface ArtifactPin {
   kind: "kernel" | "rootfs" | "vmm" | "layer";
@@ -22,12 +23,39 @@ export interface ArtifactPin {
   asset: string;
 }
 
-export const KERNEL_SHA256 = "8f79e8dae97ebc0ab8fcdc4ad209bb025ec967be82c713503e0612cfdd340ec8";
-export const KERNEL_SIZE = 23668744;
-export const KERNEL_LINUX = "6.12.109";
-export const KERNEL_CONFIG_SHA256 = "e3f33c2bd4bffa16e52a066c325967e4bde091f20063e6eb5b81e8a2efac4dc8";
-export const ROOTFS_SHA256 = "c2dd5975de3c6c23a764d126a66cb0db6c69dc95d6c5cd05810a523683965e59";
-export const ROOTFS_SIZE = 109670400;
+/** A guest architecture. A VM boots a guest of its host's architecture. */
+export type GuestArch = "aarch64" | "x86_64";
+
+/** The guest architecture for a Node `process.arch`, if berth-vmm has one for it. */
+export function guestArch(arch: string = process.arch): GuestArch | undefined {
+  return arch === "arm64" ? "aarch64" : arch === "x64" ? "x86_64" : undefined;
+}
+
+export interface GuestPins {
+  kernel: { sha256: string; size: number; linux: string; configSha256: string };
+  rootfs: { sha256: string; size: number };
+}
+
+/** Each architecture's pins, from its manifests (pins.test.ts keeps them equal). */
+export const GUEST_PINS: Partial<Record<GuestArch, GuestPins>> = {
+  aarch64: {
+    kernel: { sha256: "8f79e8dae97ebc0ab8fcdc4ad209bb025ec967be82c713503e0612cfdd340ec8", size: 23668744, linux: "6.12.109", configSha256: "e3f33c2bd4bffa16e52a066c325967e4bde091f20063e6eb5b81e8a2efac4dc8" },
+    rootfs: { sha256: "c2dd5975de3c6c23a764d126a66cb0db6c69dc95d6c5cd05810a523683965e59", size: 109670400 },
+  },
+};
+
+/**
+ * This host's pins. A host with no pinned architecture gets aarch64's: the
+ * host check refuses to boot there anyway, and says why.
+ */
+export const HOST_GUEST: GuestPins = GUEST_PINS[guestArch() ?? "aarch64"] ?? GUEST_PINS.aarch64!;
+
+export const KERNEL_SHA256 = HOST_GUEST.kernel.sha256;
+export const KERNEL_SIZE = HOST_GUEST.kernel.size;
+export const KERNEL_LINUX = HOST_GUEST.kernel.linux;
+export const KERNEL_CONFIG_SHA256 = HOST_GUEST.kernel.configSha256;
+export const ROOTFS_SHA256 = HOST_GUEST.rootfs.sha256;
+export const ROOTFS_SIZE = HOST_GUEST.rootfs.size;
 /** The libkrun berth-vmm is built against (packages/vmm/src/main.rs declares its API at this version). */
 export const LIBKRUN_VERSION = "1.19.6";
 
