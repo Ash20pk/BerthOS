@@ -376,8 +376,19 @@ fn deny(id: u64, mut conn: &UnixStream, code: &str, host: &str, port: u16, why: 
     let decision = if code == "unreachable" { "failed" } else { "denied" };
     log(format!("\"event\":\"egress\",\"id\":{id},\"decision\":\"{decision}\",\"code\":\"{code}\",\"host\":{},\"port\":{port},\"reason\":{}", js(host), js(why)));
     let _ = conn.write_all(format!("ERR {code} {why}\n").as_bytes());
+    // Half-close, then let the guest hang up first: libkrun on Linux drops a
+    // stream's undelivered bytes when the host side closes it outright, and
+    // the guest saw EOF without the ERR line. Bounded, so a guest that never
+    // closes holds the thread for at most DENY_LINGER.
+    let _ = conn.shutdown(Shutdown::Write);
+    let _ = conn.set_read_timeout(Some(DENY_LINGER));
+    let mut sink = [0u8; 512];
+    while matches!(conn.read(&mut sink), Ok(n) if n > 0) {}
     let _ = conn.shutdown(Shutdown::Both);
 }
+
+/// How long a refused connection waits for the guest to close it.
+const DENY_LINGER: std::time::Duration = std::time::Duration::from_secs(5);
 
 fn read_request(conn: &UnixStream) -> Result<String, &'static str> {
     conn.set_read_timeout(Some(REQUEST_TIMEOUT)).map_err(|_| "socket error")?;
