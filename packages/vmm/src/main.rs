@@ -333,8 +333,9 @@ fn cvec(items: &[String]) -> (Vec<CString>, Vec<*const c_char>) {
     (owned, ptrs)
 }
 
-/// Applies sandbox.rs's profile for this run and reports it on stderr as one
-/// `host_sandbox` line. Fails closed: a profile that doesn't apply stops the
+/// Applies sandbox.rs's plan for this run (a Seatbelt profile on macOS,
+/// Landlock and seccomp on Linux) and reports it on stderr as one
+/// `host_sandbox` line. Fails closed: a sandbox that doesn't apply stops the
 /// boot (`--no-host-sandbox` is the explicit way to run without one).
 fn confine(o: &Opts, hs: &HostSandbox, kernel: Option<&str>, rootfs: Option<&str>, state: Option<&str>, layers: &[&str]) {
     let canon = |p: &str| std::fs::canonicalize(p).map(|c| c.display().to_string()).unwrap_or_else(|e| die(&format!("host sandbox: {p}: {e}")));
@@ -344,8 +345,7 @@ fn confine(o: &Opts, hs: &HostSandbox, kernel: Option<&str>, rootfs: Option<&str
     plan.write_dirs.extend(o.shares.iter().filter(|s| !s.read_only).map(|s| canon(&s.path)));
     plan.write_files.extend(state.map(canon));
     plan.write_dirs.push(canon(&hs.run_dir));
-    let profile = sandbox::profile(&plan);
-    sandbox::apply(&profile).unwrap_or_else(|e| die(&format!("could not confine berth-vmm with its Seatbelt profile ({e}); --no-host-sandbox runs without one")));
+    let detail = apply_host_sandbox(&plan);
     let probes: Vec<String> = hs
         .probes
         .iter()
@@ -356,14 +356,51 @@ fn confine(o: &Opts, hs: &HostSandbox, kernel: Option<&str>, rootfs: Option<&str
         .collect();
     let list = |v: &[String]| v.iter().map(|s| json_str(s)).collect::<Vec<_>>().join(",");
     eprintln!(
-        "{{\"source\":\"berth-vmm\",\"event\":\"host_sandbox\",\"kind\":\"seatbelt\",\"applied\":true,\"read\":[{}],\"readWrite\":[{}],\"socketDir\":{},\"tcpOut\":{},\"profileBytes\":{},\"probes\":[{}]}}",
+        "{{\"source\":\"berth-vmm\",\"event\":\"host_sandbox\",{detail},\"applied\":true,\"read\":[{}],\"readWrite\":[{}],\"socketDir\":{},\"tcpOut\":{},\"probes\":[{}]{}}}",
         list(&[plan.read_files.clone(), plan.read_dirs.clone()].concat()),
         list(&[plan.write_files.clone(), plan.write_dirs.clone()].concat()),
         json_str(&plan.socket_dir),
         plan.egress,
-        profile.len(),
-        probes.join(",")
+        probes.join(","),
+        if hs.probes.is_empty() { String::new() } else { exec_probe() }
     );
+}
+
+/// Applies the plan; the platform's fields for the host_sandbox line.
+#[cfg(target_os = "macos")]
+fn apply_host_sandbox(plan: &sandbox::Plan) -> String {
+    let profile = sandbox::profile(plan);
+    sandbox::apply(&profile).unwrap_or_else(|e| die(&format!("could not confine berth-vmm with its Seatbelt profile ({e}); --no-host-sandbox runs without one")));
+    format!("\"kind\":\"seatbelt\",\"profileBytes\":{}", profile.len())
+}
+
+#[cfg(target_os = "linux")]
+fn apply_host_sandbox(plan: &sandbox::Plan) -> String {
+    let a = sandbox::apply_plan(plan).unwrap_or_else(|e| die(&format!("could not confine berth-vmm with Landlock and seccomp ({e}); --no-host-sandbox runs without one")));
+    let missing = a.missing.iter().map(|s| json_str(s)).collect::<Vec<_>>().join(",");
+    format!(
+        "\"kind\":\"landlock\",\"landlockAbi\":{},\"tcpRules\":{},\"scoped\":{},\"seccomp\":{},\"seccompDenied\":{},\"absent\":[{missing}]",
+        a.abi,
+        a.tcp_rules,
+        a.scoped,
+        a.seccomp,
+        sandbox::linux_denied_count()
+    )
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn apply_host_sandbox(_plan: &sandbox::Plan) -> String {
+    die("no host sandbox on this platform; --no-host-sandbox runs without one")
+}
+
+/// With probes: what an exec attempt gets once confined (Linux's seccomp
+/// answers EPERM; Seatbelt has no process-exec rule, so EPERM too).
+fn exec_probe() -> String {
+    #[cfg(target_os = "linux")]
+    let r = sandbox::linux_probe_exec();
+    #[cfg(not(target_os = "linux"))]
+    let r = String::from("not probed");
+    format!(",\"execProbe\":{}", json_str(&r))
 }
 
 fn json_str(s: &str) -> String {
@@ -462,6 +499,7 @@ fn main() {
         .collect();
     let state = o.state.as_deref().map(|s| pins::open_state(s, o.state_size_mib).unwrap_or_else(|e| die(&e)));
     let mut o = o;
+    let mut egress_bound: Option<egress::Bound> = None;
     if let Some(e) = &o.egress {
         if o.tsi {
             die("--egress-allow with --tsi: TSI is a second way out that nothing filters");
@@ -470,8 +508,9 @@ fn main() {
             die(&format!("vsock port {} is the egress dialer's", egress::EGRESS_PORT));
         }
         // Listening before the guest exists: libkrun connects here when the
-        // guest connects out on the port (a non-listen mapping).
-        egress::start(e).unwrap_or_else(|err| die(&err));
+        // guest connects out on the port (a non-listen mapping). Served once
+        // berth-vmm is confined, below.
+        egress_bound = Some(egress::bind(e).unwrap_or_else(|err| die(&err)));
         o.vsocks.push(Vsock { port: egress::EGRESS_PORT, path: e.socket.display().to_string(), listen: false });
     }
     unsafe {
@@ -582,6 +621,9 @@ fn main() {
         if let Some(hs) = &o.host_sandbox {
             let layer_paths: Vec<&str> = layers.iter().map(|l| l.path.as_str()).collect();
             confine(&o, hs, kernel.as_ref().map(|k| k.path.as_str()), rootfs.as_ref().map(|r| r.path.as_str()), state.as_ref().map(|s| s.path.as_str()), &layer_paths);
+        }
+        if let Some(b) = egress_bound.take() {
+            b.serve().unwrap_or_else(|err| die(&err));
         }
 
         // One structured line describing what this VM was given; doctor/attestation

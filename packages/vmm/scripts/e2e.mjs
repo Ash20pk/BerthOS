@@ -29,7 +29,7 @@
 //                          killed (test hook): queries, tags and writes fail
 //                          with errors, the apps keep running, shutdown is
 //                          clean (docs/design/microvm-semantic-fs.md)
-//   node e2e.mjs host      berth-vmm confined by its own Seatbelt profile
+//   node e2e.mjs host      berth-vmm confined by its own host sandbox (Seatbelt; Landlock + seccomp on Linux)
 //                          (src/sandbox.rs): a file of the user's outside the
 //                          sandbox can't be read or written, the pinned kernel
 //                          is readable but not writable, the run directory is
@@ -748,13 +748,18 @@ async function host() {
   const probes = [outside, sibling, kernel, inRun];
   const b = await run("host", ["notes"], { extra: probes.flatMap((p) => ["--host-sandbox-probe", p]) });
   const s = await attach(b);
-  const { result: added } = await rpcConnect(rpcPath(b, 0), (r) => r.call("add_note", { text: "under seatbelt" }));
+  const { result: added } = await rpcConnect(rpcPath(b, 0), (r) => r.call("add_note", { text: "under the host sandbox" }));
   const off = await shutdown(b, s);
   rmSync(outside, { force: true });
   const hs = b.vmm.host_sandbox;
   const at = (p) => hs?.probes?.find((x) => x.path === p) ?? {};
   const denied = (v) => v === "EPERM" || v === "EACCES";
-  check(results, hs?.applied === true && hs.kind === "seatbelt", `berth-vmm confined itself (${hs?.kind}, ${hs?.profileBytes} bytes of profile; tcpOut ${hs?.tcpOut})`);
+  if (process.platform === "linux") {
+    check(results, hs?.applied === true && hs.kind === "landlock" && hs.landlockAbi >= 1 && hs.seccomp === true, `berth-vmm confined itself (landlock ABI ${hs?.landlockAbi}, tcpRules ${hs?.tcpRules}, scoped ${hs?.scoped}, seccomp ${hs?.seccompDenied} denied; tcpOut ${hs?.tcpOut}; absent ${JSON.stringify(hs?.absent)})`);
+    check(results, hs?.execProbe === "EPERM", `exec is refused once confined (${hs?.execProbe})`);
+  } else {
+    check(results, hs?.applied === true && hs.kind === "seatbelt", `berth-vmm confined itself (${hs?.kind}, ${hs?.profileBytes} bytes of profile; tcpOut ${hs?.tcpOut})`);
+  }
   check(results, denied(at(outside).read) && denied(at(outside).write), `a file of the user's outside the sandbox: read ${at(outside).read}, write ${at(outside).write}`);
   check(results, denied(at(sibling).read), `a file next to the pinned rootfs, not granted: read ${at(sibling).read}`);
   check(results, at(kernel).read === "ok" && denied(at(kernel).write), `the pinned kernel: read ${at(kernel).read}, write ${at(kernel).write}`);

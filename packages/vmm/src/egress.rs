@@ -312,9 +312,16 @@ struct Dialer {
     next_id: AtomicU64,
 }
 
-/// Starts the dialer on its own threads. It lives as long as the process
-/// (libkrun exits the process when the guest powers off).
-pub fn start(cfg: &Config) -> Result<(), String> {
+/// The dialer's socket, bound and logged, not yet served.
+pub struct Bound {
+    listener: UnixListener,
+    d: Arc<Dialer>,
+}
+
+/// Binds the dialer's socket. Nothing is served until `serve`: on Linux the
+/// host sandbox binds only threads started after it, so the dialer's threads
+/// start once berth-vmm is confined.
+pub fn bind(cfg: &Config) -> Result<Bound, String> {
     let _ = std::fs::remove_file(&cfg.socket);
     let listener = UnixListener::bind(&cfg.socket).map_err(|e| format!("egress dialer: cannot listen on {}: {e}", cfg.socket.display()))?;
     {
@@ -329,26 +336,40 @@ pub fn start(cfg: &Config) -> Result<(), String> {
         allow.join(","),
         cfg.max_conns
     ));
-    std::thread::Builder::new()
-        .name("egress".into())
-        .spawn(move || {
-            for conn in listener.incoming() {
-                let Ok(conn) = conn else { continue };
-                let id = d.next_id.fetch_add(1, Ordering::SeqCst);
-                if d.active.fetch_add(1, Ordering::SeqCst) >= d.max_conns {
-                    d.active.fetch_sub(1, Ordering::SeqCst);
-                    deny(id, &conn, "busy", "", 0, &format!("{} tunnels open, the cap", d.max_conns));
-                    continue;
+    Ok(Bound { listener, d })
+}
+
+impl Bound {
+    /// Serves the dialer on its own threads. It lives as long as the process
+    /// (libkrun exits the process when the guest powers off).
+    pub fn serve(self) -> Result<(), String> {
+        let Bound { listener, d } = self;
+        std::thread::Builder::new()
+            .name("egress".into())
+            .spawn(move || {
+                for conn in listener.incoming() {
+                    let Ok(conn) = conn else { continue };
+                    let id = d.next_id.fetch_add(1, Ordering::SeqCst);
+                    if d.active.fetch_add(1, Ordering::SeqCst) >= d.max_conns {
+                        d.active.fetch_sub(1, Ordering::SeqCst);
+                        deny(id, &conn, "busy", "", 0, &format!("{} tunnels open, the cap", d.max_conns));
+                        continue;
+                    }
+                    let d = d.clone();
+                    std::thread::spawn(move || {
+                        handle(&d, id, conn);
+                        d.active.fetch_sub(1, Ordering::SeqCst);
+                    });
                 }
-                let d = d.clone();
-                std::thread::spawn(move || {
-                    handle(&d, id, conn);
-                    d.active.fetch_sub(1, Ordering::SeqCst);
-                });
-            }
-        })
-        .map_err(|e| format!("egress dialer thread: {e}"))?;
-    Ok(())
+            })
+            .map_err(|e| format!("egress dialer thread: {e}"))?;
+        Ok(())
+    }
+}
+
+/// Binds and serves at once (the dialer alone, with no VM to confine first).
+pub fn start(cfg: &Config) -> Result<(), String> {
+    bind(cfg)?.serve()
 }
 
 fn deny(id: u64, mut conn: &UnixStream, code: &str, host: &str, port: u16, why: &str) {
