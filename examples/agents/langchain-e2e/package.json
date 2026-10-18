@@ -8,12 +8,12 @@
   },
   "dependencies": {
     "@berthos/agents": "workspace:*",
-    "@langchain/core": "^1.2.13",
+    "@langchain/core": "^1.2.17",
     "@langchain/openai": "^1.6.0",
-    "langchain": "^1.5.14",
-    "@langchain/mcp-adapters": "^1.1.4",
-    "@ai-sdk/openai": "^4.0.73",
-    "ai": "^7.0.112",
+    "langchain": "^1.5.16",
+    "@langchain/mcp-adapters": "^2.0.1",
+    "@ai-sdk/openai": "^4.0.94",
+    "ai": "^7.0.141",
     "@berthos/audit": "workspace:*"
   }
 }

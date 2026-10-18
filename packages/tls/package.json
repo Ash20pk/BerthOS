@@ -47,10 +47,10 @@
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
-    "undici": "^8.11.2"
+    "undici": "^8.12.1"
   },
   "devDependencies": {
     "typescript": "^7.0.2",
-    "@types/node": "^26.6.2"
+    "@types/node": "^26.6.5"
   }
 }

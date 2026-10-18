@@ -51,11 +51,11 @@
   "dependencies": {},
   "devDependencies": {
     "typescript": "^7.0.2",
-    "@types/node": "^26.6.2",
-    "@openai/agents": "^0.18.0"
+    "@types/node": "^26.6.5",
+    "@openai/agents": "^0.20.0"
   },
   "peerDependencies": {
-    "@openai/agents": "^0.18.0"
+    "@openai/agents": "^0.20.0"
   },
   "peerDependenciesMeta": {
     "@openai/agents": {

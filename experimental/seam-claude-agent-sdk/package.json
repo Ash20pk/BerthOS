@@ -49,15 +49,15 @@
     "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
-    "zod": "^4.6.5"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "typescript": "^7.0.2",
-    "@types/node": "^26.6.2",
-    "@anthropic-ai/claude-agent-sdk": "^0.3.281"
+    "@types/node": "^26.6.5",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.300"
   },
   "peerDependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.281"
+    "@anthropic-ai/claude-agent-sdk": "^0.3.300"
   },
   "peerDependenciesMeta": {
     "@anthropic-ai/claude-agent-sdk": {
