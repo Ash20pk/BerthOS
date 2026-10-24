@@ -21,7 +21,7 @@ export type CheckStatus = "ok" | "warn" | "fail" | "unknown";
 
 export interface DoctorCheck {
   /** Stable machine-readable id. Part of the `--json` contract; do not rename. Additions (like `runtime`) are non-breaking — consumers must tolerate ids they don't know. */
-  id: "docker" | "landlock" | "seccomp" | "fuse" | "runtime" | "cgroups";
+  id: "docker" | "memory" | "landlock" | "seccomp" | "fuse" | "runtime" | "cgroups";
   /** Human-readable one-liner. */
   title: string;
   status: CheckStatus;
@@ -375,6 +375,7 @@ export async function runDoctor(options: RunDoctorOptions = {}): Promise<DoctorR
       SecurityOptions?: string[];
       Runtimes?: Record<string, unknown>;
       DefaultRuntime?: string;
+      MemTotal?: number;
     };
     daemonRuntimes = { names: Object.keys(info.Runtimes ?? {}), default: info.DefaultRuntime };
     dockerReachable = true;
@@ -391,6 +392,8 @@ export async function runDoctor(options: RunDoctorOptions = {}): Promise<DoctorR
       status: "ok",
       detail: `${daemon.operatingSystem} (${daemon.serverVersion}), kernel ${daemon.kernelVersion} on ${daemon.arch}${via}`,
     });
+    const memory = memoryCheck(info.MemTotal, daemon.operatingSystem);
+    if (memory) checks.push(memory);
   } catch (err) {
     checks.push({
       id: "docker",
@@ -604,6 +607,24 @@ function cgroupsCheck(cgroup: CgroupProbe | undefined, runtime?: string): Doctor
       ? undefined
       : "Run Berth on a host whose cgroup2 hierarchy is mounted with nsdelegate (systemd hosts, Colima and Lima all do), with Docker 28 or later. See docs/resource-limits.md.",
   };
+}
+
+/**
+ * The first image build compiles Berth's Rust and Go helpers and installs
+ * Chromium; with Colima's default 2 GB it runs out of memory partway through.
+ * Not an enforcement check, so it never fails the verdict, but it warns before
+ * a build that won't finish.
+ */
+export const MIN_DOCKER_MEMORY_BYTES = 4 * 1024 ** 3;
+
+export function memoryCheck(memTotal: number | undefined, operatingSystem: string): DoctorCheck | undefined {
+  if (!memTotal) return undefined;
+  const gb = (memTotal / 1024 ** 3).toFixed(1);
+  if (memTotal >= MIN_DOCKER_MEMORY_BYTES) return { id: "memory", title: "Memory for image builds", status: "ok", detail: `${gb} GB in the Docker VM` };
+  const remedy = /docker desktop/i.test(operatingSystem)
+    ? "Docker Desktop → Settings → Resources → Memory: 8 GB, then Apply & restart"
+    : "give the Docker VM 8 GB, e.g. `colima stop && colima start --memory 8` (or `berth doctor --fix` for a new Colima VM)";
+  return { id: "memory", title: "Memory for image builds", status: "warn", detail: `${gb} GB in the Docker VM; the first image build needs at least 4 GB and can run out of memory with less`, remedy };
 }
 
 /** The `reasons` list, in the order a reader should act on them. */

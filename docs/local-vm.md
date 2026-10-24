@@ -19,8 +19,8 @@ You run the `berth` CLI on your own machine, and it boots a VM where it would ot
 ### Requirements
 
 - **macOS on Apple silicon** (Hypervisor.framework), or **Linux with KVM** (`/dev/kvm` readable and writable).
-- **libkrun 1.19.6**. On macOS: `brew tap libkrun/krun && brew install libkrun`. Newer Homebrew asks you to trust a third-party tap's formulae first: `brew trust --formula libkrun/krun/libkrun libkrun/krun/libkrunfw libkrun/krun/virglrenderer-krun`.
-- **berth-vmm**, the small launcher that runs one VM per process. `berth vm install` downloads it on macOS arm64. On other platforms, build it from `packages/vmm` with `cargo build --release`. On macOS it has to be signed with the hypervisor entitlement. The published build is, and the build scripts sign a local one. `berth doctor` prints the `codesign` command if it isn't.
+- **libkrun 1.19.6**, which `berth vm install` puts beside the published berth-vmm on every platform: built from its pinned tag by CI, checked against its sha256, and loaded first by berth-vmm (`LC_RPATH @loader_path` on macOS, `RUNPATH $ORIGIN` on Linux). Nothing to install yourself. Only a berth-vmm you build from source links a system libkrun instead: on macOS, Homebrew's (`brew tap libkrun/krun && brew install libkrun`, at 1.19.6).
+- **berth-vmm**, the small launcher that runs one VM per process. `berth vm install` downloads it for macOS arm64, Linux arm64 and Linux x86_64, once the CLI pins that platform's build. Otherwise build it from `packages/vmm` with `cargo build --release`. On macOS it has to be signed with the hypervisor entitlement. The published build is, and the build scripts sign a local one. `berth doctor` prints the `codesign` command if it isn't. The Linux builds need glibc 2.39 or later (Ubuntu 24.04, Debian 13, Fedora 40).
 - **The pinned kernel and rootfs**, about 100 MB, installed with `berth vm install`.
 
 ## Containers
@@ -56,21 +56,22 @@ berth vm install
 berth doctor --sandbox vm
 ```
 
-`berth vm install` puts the kernel and rootfs in `~/.berth/vm`, where berth-vmm looks for them. If no berth-vmm is found, it also puts berth-vmm in `~/.berth/vm/bin`. Each file is checked against its sha256 pin before it is put in place, and a file that doesn't match is refused. The kernel and rootfs pins are the ones berth-vmm was built with. The CLI reads them out of the binary, because berth-vmm refuses to boot anything else. If there is no berth-vmm yet, it uses its own copy of the same pins.
+`berth vm install` puts the kernel and rootfs in `~/.berth/vm`, where berth-vmm looks for them. It also puts the published berth-vmm in `~/.berth/vm/bin` when none is found, and replaces the one there when it is an older release's (built for a different rootfs). A local build that boots this CLI's kernel and rootfs is kept; `--force` replaces it. Each file is checked against its sha256 pin before it is put in place, and a file that doesn't match is refused. The kernel and rootfs pins are the ones berth-vmm was built with. The CLI reads them out of the binary, because berth-vmm refuses to boot anything else. If there is no berth-vmm yet, it uses its own copy of the same pins.
 
 #### What is downloaded, and from where
 
-By default, from the GitHub release that [`.github/workflows/vm-artifacts.yml`](../.github/workflows/vm-artifacts.yml) publishes for the kernel and rootfs pair, `vm-artifacts-<first 8 hex of the kernel pin>-<first 8 of the rootfs pin>`:
+By default, from the GitHub release that [`.github/workflows/vm-artifacts.yml`](../.github/workflows/vm-artifacts.yml) publishes for your architecture's kernel and rootfs pair, `vm-artifacts-<first 8 hex of the kernel pin>-<first 8 of the rootfs pin>`. Each guest architecture (aarch64 on Apple silicon and arm64 Linux, x86_64 on x86_64 Linux) has its own pins, in `packages/vmm/{kernel,rootfs}/manifest-<arch>.toml`, and so its own release. The aarch64 one:
 
 | File | Asset | sha256 (this CLI) | Size |
 |---|---|---|---|
 | `~/.berth/vm/kernel/sha256/<sha>/Image` | `Image-<sha>` | `8f79e8dae97ebc0ab8fcdc4ad209bb025ec967be82c713503e0612cfdd340ec8` | 23,668,744 B |
-| `~/.berth/vm/rootfs/rootfs-<sha>.erofs` | `rootfs-<sha>.erofs` | `15a8892b56260aa983a4cc8792260180e7618cc84c68f7cf98aff072c971f541` | 109,654,016 B |
-| `~/.berth/vm/bin/berth-vmm` | `berth-vmm-darwin-arm64-<sha>` | `VMM_PINS` in `packages/cli/src/vm/pins.ts` | about 600 KB |
+| `~/.berth/vm/rootfs/rootfs-<sha>.erofs` | `rootfs-<sha>.erofs` | `bf06cedb9b40c5f23a74e2b2fe87458cd43b81a7d65ce09a65730b1e7cf590fa` | 107,937,792 B |
+| `~/.berth/vm/bin/berth-vmm` | `berth-vmm-darwin-arm64-<sha>`, `berth-vmm-linux-arm64-<sha>` | `VMM_PINS` in `packages/cli/src/vm/pins.ts` | about 700 KB (macOS), 2.7 MB (Linux) |
+| `~/.berth/vm/bin/libkrun.1.19.6.dylib`, `libkrun.so.1.19.6` | `libkrun-darwin-arm64-<sha>.dylib`, `libkrun-linux-arm64-<sha>.so` | `LIBKRUN_PINS` in the same file | about 4.7 MB |
 
-That is `https://github.com/Ash20pk/BerthOS/releases/download/vm-artifacts-8f79e8da-15a8892b/`. CI rebuilds the kernel and rootfs for it from source on GitHub's arm64 Linux runners, and publishes the release only if they match the pins bit for bit. The release also carries `SHA256SUMS`, each rootfs's input record, berth-vmm's build record, and the kernel's GPL sources (the exact linux and libkrunfw tarballs, the config delta, the resolved config and the build script; see `SOURCES.md` there).
+That is `https://github.com/Ash20pk/BerthOS/releases/download/vm-artifacts-8f79e8da-bf06cedb/`. The x86_64 one is `vm-artifacts-10d4b54c-4f4e67cb`: kernel `10d4b54c0896668a93f9d26d0a701aac4a14ce813f3ed4d3b4d26e50d7b7b8d1` (an ELF `vmlinux`, 27,928,992 B), rootfs `4f4e67cb49a1b07e96412e802bd2c6e42cfabee95d7c126b8589b1048a79a538` (108,765,184 B), and `berth-vmm-linux-x64-<sha>` with `libkrun-linux-x64-<sha>.so`. CI rebuilds each architecture's kernel and rootfs from source on GitHub's Linux runners of that architecture, and publishes the release only if they match the pins bit for bit. The release also carries `SHA256SUMS`, each rootfs's input record, berth-vmm's build record, and the kernel's GPL sources (the exact linux and libkrunfw tarballs, the config delta, the resolved config and the build script; see `SOURCES.md` there).
 
-berth-vmm is downloaded only when the CLI pins its sha256 for your platform (macOS arm64 is the only published one). A build from CI can't be pinned until CI has built it, so a CLI released before the first artifacts release has no pin, and says so. Then build berth-vmm and pass `--vmm`, or download it by hand (below).
+berth-vmm and its libkrun are downloaded only when the CLI pins their sha256 for your platform (macOS arm64, Linux arm64 and Linux x86_64). A build from CI can't be pinned until CI has built it, so a CLI released before the first artifacts release has no pin, and says so. Then build berth-vmm and pass `--vmm`, or download it by hand (below).
 
 A download is checked against the pinned size as it streams, and against the sha256 before it's renamed into place, so nothing unverified is ever at the final path. A download that receives nothing for 30 seconds is aborted and retried, up to four attempts, resuming with an HTTP range request where the server supports one (GitHub's CDN does) and starting over where it doesn't. `BERTH_VM_DOWNLOAD_STALL_MS` changes the 30 seconds.
 
@@ -81,7 +82,7 @@ A download is checked against the pinned size as it streams, and against the sha
 
    | Placeholder | |
    |---|---|
-   | `{asset}` | the release asset name: `Image-<sha>`, `rootfs-<sha>.erofs`, `berth-vmm-darwin-arm64-<sha>` |
+   | `{asset}` | the release asset name: `Image-<sha>`, `rootfs-<sha>.erofs`, `berth-vmm-darwin-arm64-<sha>`, `libkrun-darwin-arm64-<sha>.dylib` |
    | `{kernel8}`, `{rootfs8}` | the first 8 hex digits of the kernel and rootfs pins (the release tag); `{kernel}` and `{rootfs}` are the full pins |
    | `{kind}`, `{sha256}`, `{file}` | `kernel`, `rootfs` or `vmm`; the artifact's own pin; its file name in `~/.berth/vm` (`Image`, `rootfs-<sha>.erofs`, `berth-vmm`) |
 
@@ -94,11 +95,11 @@ If the kernel and rootfs aren't installed, `berth dev --runtime vm` installs the
 #### Verifying by hand
 
 ```bash
-tag=vm-artifacts-8f79e8da-15a8892b
-gh release download "$tag" -R Ash20pk/BerthOS -p 'Image-*' -p 'rootfs-*.erofs' -p 'berth-vmm-darwin-arm64-*' -p SHA256SUMS
+tag=vm-artifacts-8f79e8da-bf06cedb
+gh release download "$tag" -R Ash20pk/BerthOS -p 'Image-*' -p 'rootfs-*.erofs' -p 'berth-vmm-darwin-arm64-*' -p 'libkrun-darwin-arm64-*' -p SHA256SUMS
 shasum -a 256 -c --ignore-missing SHA256SUMS     # each asset against the list
 shasum -a 256 Image-* rootfs-*.erofs              # and against the pins above, which are also in
-                                                  # packages/vmm/{kernel,rootfs}/manifest.toml
+                                                  # packages/vmm/{kernel,rootfs}/manifest-<arch>.toml
 berth vm install --from .                         # installs from this directory, checked again
 ```
 
@@ -119,15 +120,15 @@ The same scripts CI runs, from `packages/vmm` (a libkrun builder VM on macOS, a 
 
 ```bash
 cd packages/vmm
-./scripts/build-kernel.sh       # checks the Image against kernel/manifest.toml
-./scripts/build-agent-init.sh   # agent-init + probe, checked against rootfs/manifest.toml
+./scripts/build-kernel.sh       # checks the Image against kernel/manifest-<arch>.toml
+./scripts/build-agent-init.sh   # agent-init + probe, checked against rootfs/manifest-<arch>.toml
 ./scripts/build-berth-init.sh   # berth-init + context-bus-daemon, checked likewise
 ./scripts/build-rootfs.sh       # the erofs image, checked likewise
-cargo build --release           # berth-vmm (the scripts also sign it)
+cargo build --release           # berth-vmm, linked against the system libkrun 1.19.6 (the scripts also sign it)
 berth vm install --from "$BERTH_VMM_ARTIFACTS" --vmm target/release/berth-vmm
 ```
 
-Each script fails on a hash that isn't its pin and prints both. The builds are reproducible while Alpine 3.24 still serves the package versions in `kernel/apk.lock`, `guest/*.apk.lock` and `rootfs/apk.lock`, which is how long the pins can be rebuilt bit for bit. See [Distribution](design/microvm-image.md#distribution).
+Each script fails on a hash that isn't its pin and prints both. The builds are reproducible while Alpine 3.24 still serves the package versions in `kernel/<arch>.apk.lock`, `guest/*.<arch>.apk.lock` and `rootfs/<arch>.apk.lock` (`<arch>` is the host's: `aarch64` or `x86_64`), which is how long the pins can be rebuilt bit for bit. See [Distribution](design/microvm-image.md#distribution).
 
 ### Run an app
 
@@ -215,8 +216,8 @@ An app whose `berth.yml` needs something the VM doesn't have yet is refused befo
 - **Other `<service>:*` capabilities** have no broker in the VM yet.
 - **Native addons** (`.node` files) can't run in the guest, because they were built for your host, not for Linux on arm64. Bundling stops with that error.
 - **Files your app reads from its own directory** at run time, beyond `berth.yml`, aren't in the share. Only the bundle is.
-- **Architecture.** The pinned kernel and rootfs are built for arm64, and berth-vmm is published for macOS arm64 only.
-- **berth-vmm is confined too.** libkrun runs the VMM and the guest as one security context, so `berth-vmm run` puts itself under a Seatbelt profile that allows only this sandbox's files (and the network only for the egress dialer). `berth attest` records it as `boot.isolation.hostSandbox`. macOS only; `--no-host-sandbox` turns it off for debugging.
+- **Architecture.** A guest is its host's architecture: aarch64 on Apple silicon and arm64 Linux, x86_64 on x86_64 Linux, each with its own pinned kernel and rootfs. Intel Macs aren't supported (libkrun has no backend there). CI boots the x86_64 guest under KVM on every artifacts build; GitHub's arm64 runners have no KVM, so Linux arm64 is built the same way but booted only on machines that have it.
+- **berth-vmm is confined too.** libkrun runs the VMM and the guest as one security context, so `berth-vmm run` confines itself to this sandbox's files (and the network only for the egress dialer): a Seatbelt profile on macOS; on Linux, Landlock (filesystem, TCP from Linux 6.7, abstract sockets and signals from 6.12) and a seccomp filter that refuses exec, ptrace, mounts, namespaces, module loading, bpf, keyrings and io_uring. A Linux kernel without Landlock can't run it confined, and berth-vmm stops rather than run unconfined. `berth attest` records it as `boot.isolation.hostSandbox`; `--no-host-sandbox` turns it off for debugging.
 - **`/app` is measured at boot, and it stays live.** berth-vmm hashes each app share before the VM starts and records it as `boot.isolation.apps` (the sha256 of its sorted file listing). The share is virtio-fs, so a change after boot isn't in that digest; `berth dev` reboots on a new bundle, which measures it again.
 - **Policy digests** are berth-init's: it hashes each app's compiled policy, the bytes agent-init reads, and `berth attest` records them under `policies`, as for a container.
 

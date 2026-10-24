@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { loadManifest } from "@berthos/manifest-schema";
 import { excludedFromPythonImage, stageAppRuntimes } from "./app-runtime.js";
 import { phaseTimer } from "./timing.js";
+import { SCAFFOLD_BUILD_APPROVALS } from "./build-approvals.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -341,12 +342,63 @@ export async function stageProductionSource(appDir: string, stagingDir: string, 
     recursive: true,
     filter: (src) => !excludedFromBuildContext(appDir, src),
   });
+  const stagedPkg = join(stagingDir, "package.json");
+  if (existsSync(stagedPkg)) {
+    const pkg = JSON.parse(await readFile(stagedPkg, "utf-8")) as PackageDeps;
+    if (pinWorkspaceSpecs(pkg, berthReleaseVersion)) {
+      await writeFile(stagedPkg, `${JSON.stringify(pkg, null, 2)}\n`);
+      // Copied out of the monorepo, it also lost the monorepo's build-script
+      // approvals, without which pnpm fails the install (ERR_PNPM_IGNORED_BUILDS).
+      const workspaceYaml = join(stagingDir, "pnpm-workspace.yaml");
+      if (!existsSync(workspaceYaml)) {
+        const lines = Object.entries(SCAFFOLD_BUILD_APPROVALS).map(([name, ok]) => `  ${JSON.stringify(name)}: ${ok}`);
+        await writeFile(workspaceYaml, `allowBuilds:\n${lines.join("\n")}\n`);
+      }
+    }
+  }
   try {
     await execFileAsync("pnpm", ["install", "--prod"], { cwd: stagingDir });
   } catch {
     await execFileAsync("npm", ["install", "--omit=dev"], { cwd: stagingDir });
   }
   await makeDeployReproducible(stagingDir, containerAppRoot);
+}
+
+type PackageDeps = Partial<Record<"dependencies" | "optionalDependencies" | "peerDependencies", Record<string, string>>>;
+
+/** This release's version, which every published @berthos/* package shares. */
+function berthReleaseVersion(name: string): string | undefined {
+  if (!name.startsWith("@berthos/")) return undefined;
+  return (JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8")) as { version: string }).version;
+}
+
+/**
+ * Rewrites `workspace:` specifiers the way `pnpm publish` does (`workspace:*`
+ * -> `1.2.3`, `workspace:^` -> `^1.2.3`, `workspace:<range>` -> `<range>`), in
+ * place. Returns whether anything changed. An app copied out of the Berth
+ * monorepo (apps/browser-native, say) still says `"@berthos/sdk":
+ * "workspace:*"`, which neither pnpm nor npm can install outside a workspace;
+ * this is the staged copy only, never the app's own package.json.
+ */
+export function pinWorkspaceSpecs(pkg: PackageDeps, versionOf: (name: string) => string | undefined): boolean {
+  let changed = false;
+  for (const field of ["dependencies", "optionalDependencies", "peerDependencies"] as const) {
+    const deps = pkg[field];
+    if (!deps) continue;
+    for (const [name, spec] of Object.entries(deps)) {
+      if (!spec.startsWith("workspace:")) continue;
+      const range = spec.slice("workspace:".length);
+      if (range !== "*" && range !== "^" && range !== "~") {
+        deps[name] = range;
+      } else {
+        const version = versionOf(name);
+        if (!version) throw new Error(`${name} is "${spec}", which only means something inside the pnpm workspace it came from; give it a published version range`);
+        deps[name] = range === "*" ? version : `${range}${version}`;
+      }
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 /** Wraps a string so a shell reads it as one literal argument, single quotes included. */
@@ -735,6 +787,7 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
   signal?.throwIfAborted();
   const mark = phaseTimer();
   const stagingDir = await mkdtemp(join(tmpdir(), "berth-build-"));
+  let tarStream: ReturnType<typeof tarFs.pack> | undefined;
 
   try {
     if (options.target === "production") {
@@ -818,7 +871,7 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
 
     mark("build.stage-assets");
     signal?.throwIfAborted();
-    const tarStream = tarFs.pack(stagingDir);
+    tarStream = tarFs.pack(stagingDir);
     const buildStream = await docker.buildImage(tarStream, {
       t: options.tag,
       target: options.target,
@@ -865,6 +918,11 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
     await retainLatestBuild(docker, options.tag, cacheRef, previousIds, legacyBuildCacheRef(options.tag, options.target));
     mark("build.retain-cache");
   } finally {
+    // The daemon may stop reading the context (a cancelled or failed build)
+    // while tar-fs is still walking stagingDir. Stop it before removing the
+    // directory, or its next read fails with no one listening and takes the
+    // process down with an uncaught ENOENT.
+    tarStream?.destroy();
     await rm(stagingDir, { recursive: true, force: true });
   }
 }

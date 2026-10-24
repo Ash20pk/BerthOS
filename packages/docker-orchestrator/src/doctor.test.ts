@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   runDoctor,
+  memoryCheck,
   probeKernel,
   findProbeImage,
   PROBE_FALLBACK_IMAGE,
@@ -547,4 +548,14 @@ test("strict mode refuses when per-app cgroups were turned off on the host", () 
     if (prev === undefined) delete process.env.BERTH_DISABLE_APP_CGROUPS;
     else process.env.BERTH_DISABLE_APP_CGROUPS = prev;
   }
+});
+
+test("memory: a 2 GB Docker VM warns before a build that would run out, with a remedy for its kind of VM", () => {
+  const colima = memoryCheck(2054836224, "Ubuntu 24.04 LTS");
+  assert.equal(colima?.status, "warn");
+  assert.match(colima!.detail, /^1\.9 GB/);
+  assert.match(colima!.remedy!, /colima start --memory 8/);
+  assert.match(memoryCheck(2 * 1024 ** 3, "Docker Desktop")!.remedy!, /Settings → Resources/);
+  assert.equal(memoryCheck(8 * 1024 ** 3, "Ubuntu")?.status, "ok");
+  assert.equal(memoryCheck(undefined, "Ubuntu"), undefined);
 });

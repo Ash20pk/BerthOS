@@ -33,6 +33,17 @@ Nothing in that script, or in the app's own code, checks the second path. The ke
 
 > **On a Mac, run `doctor` first.** Docker Desktop's VM has no Landlock, so nothing would be enforced, and the demo says so and exits non-zero rather than faking a pass. `berth doctor --fix` sets up a [Colima](./docs/mac-enforcement.md) VM whose kernel can enforce, or use the [microVM runtime](./docs/local-vm.md), which boots Berth's own kernel. Linux 6.7+ works out of the box.
 
+### Or in a microVM, with no Docker (preview)
+
+```bash
+npm install -g @berthos/cli
+berth vm install              # pinned kernel, rootfs, berth-vmm and libkrun, each checked against its sha256
+berth doctor --sandbox vm
+cd my-app && berth dev --runtime vm
+```
+
+On Apple silicon Macs and on Linux with KVM (arm64 or x86_64). The VM boots Berth's own kernel, so enforcement is the same on every machine, and it is up in about half a second. Docker stays the default while the VM is in preview: an app that needs something the VM doesn't run yet is refused before boot, with the reason. See [the microVM runtime](./docs/local-vm.md) and its [limits](./docs/local-vm.md#limits).
+
 More demos, each proving one boundary: a [fully compromised model](./examples/prompt-injection) told to backdoor `/etc`, [attacker-chosen code with no network](./examples/no-egress), and a [tamper-evident audit trail](./examples/audit-trail) catching an edited record. See the [catalog](./examples/README.md).
 
 ## Level 1: System context

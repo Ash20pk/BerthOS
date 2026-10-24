@@ -1,6 +1,7 @@
 // What berth-vmm is willing to boot, and how it checks it.
 //
-//  - The kernel is pinned: kernel/manifest.toml is compiled into the binary,
+//  - The kernel is pinned: kernel/manifest-<arch>.toml (the target's guest
+//    architecture, picked by build.rs) is compiled into the binary,
 //    and a --kernel whose sha256 differs from the manifest's image_sha256 is
 //    refused. The command line comes from the manifest as well.
 //  - The root filesystem is content-addressed: its sha256 is its name
@@ -16,11 +17,14 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom};
 use std::time::Instant;
 
-pub const KERNEL_MANIFEST: &str = include_str!("../kernel/manifest.toml");
+/// The guest architecture this berth-vmm boots: its own target's.
+pub const ARCH: &str = env!("BERTH_GUEST_ARCH");
+
+pub const KERNEL_MANIFEST: &str = include_str!(concat!("../kernel/manifest-", env!("BERTH_GUEST_ARCH"), ".toml"));
 /// The base rootfs this berth-vmm was released with (`berth-vmm run`'s
 /// default). Any content-addressed image still boots with --rootfs; the
 /// measurement line says whether it was this one.
-pub const ROOTFS_MANIFEST: &str = include_str!("../rootfs/manifest.toml");
+pub const ROOTFS_MANIFEST: &str = include_str!(concat!("../rootfs/manifest-", env!("BERTH_GUEST_ARCH"), ".toml"));
 
 pub fn kernel_pin() -> &'static str {
     manifest_get(KERNEL_MANIFEST, "image_sha256").expect("kernel manifest has image_sha256")
@@ -74,7 +78,7 @@ pub fn verify_kernel(path: &str, block_root: bool) -> Result<Kernel, String> {
     if got != want {
         return Err(format!(
             "kernel {path} has sha256 {got}, but this berth-vmm is pinned to {want} \
-             (linux {}, kernel/manifest.toml); refusing to boot it",
+             (linux {}, kernel/manifest-{ARCH}.toml); refusing to boot it",
             manifest_get(m, "linux_version").unwrap_or("?")
         ));
     }
@@ -131,7 +135,7 @@ pub struct Layer {
 /// Checks a layer image against its pin, and that it was built for the base
 /// being booted: a layer's libraries are linked against that base's.
 pub fn verify_layer(name: &str, path: &str, booted_rootfs: &str) -> Result<Layer, String> {
-    let pin = layer_pin(name).ok_or_else(|| format!("no layer {name:?} is pinned in this berth-vmm (rootfs/manifest.toml has {:?})", layer_names()))?;
+    let pin = layer_pin(name).ok_or_else(|| format!("no layer {name:?} is pinned in this berth-vmm (rootfs/manifest-{ARCH}.toml has {:?})", layer_names()))?;
     if pin.base != booted_rootfs {
         return Err(format!("layer {name} was built for rootfs {}, not the {} being booted; refusing to attach it", &pin.base[..12], &booted_rootfs[..12.min(booted_rootfs.len())]));
     }
@@ -281,6 +285,12 @@ mod tests {
         assert_eq!((p.sha256.as_str(), p.size, p.base.as_str()), ("b".repeat(64).as_str(), 471040, "a".repeat(64).as_str()));
         assert!(layer_pin_in(&m, "bad").is_none());
         assert!(layer_pin_in(&m, "missing").is_none());
+    }
+
+    #[test]
+    fn manifests_are_for_this_architecture() {
+        assert_eq!(manifest_get(KERNEL_MANIFEST, "arch"), Some(ARCH));
+        assert_eq!(manifest_get(ROOTFS_MANIFEST, "arch"), Some(ARCH));
     }
 
     #[test]

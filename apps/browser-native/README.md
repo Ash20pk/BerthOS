@@ -1,6 +1,6 @@
 # browser-native
 
-Gives an agent a real Chromium browser that you can watch live over VNC while it works. The agent can search, navigate, click and read page text, and every request goes through a proxy that checks the hostname against the app's `browser:navigate:*` capabilities.
+Gives an agent a real Chromium browser that you can watch live over VNC while it works. The agent can search, navigate, click, fill in forms and read page text, and every request goes through a proxy that checks the hostname against the app's `browser:navigate:*` capabilities.
 
 ## Run it
 
@@ -39,6 +39,8 @@ Chromium's only route out is the egress proxy on port 8090, and the kernel refus
 |---|---|---|---|
 | `navigate` | `{ url }` | | Opens `url` in the current page |
 | `click` | `{ selector }` | | Clicks the element matching `selector` (a Playwright selector, such as CSS) |
+| `fill` | `{ selector, value }` | | Clears the input, textarea or contenteditable element matching `selector` and types `value` into it |
+| `press` | `{ selector, key }` | | Focuses the element matching `selector` and presses `key` (a Playwright key name, such as `Enter` or `Tab`) |
 | `get_page_text` | | `{ text }` | Returns the visible text of the page's `<body>` |
 | `search` | `{ query, maxResults? }` | `{ results: { title, url, snippet }[] }` | Searches DuckDuckGo and returns the top results (5 by default) |
 
