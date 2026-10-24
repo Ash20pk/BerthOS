@@ -787,6 +787,7 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
   signal?.throwIfAborted();
   const mark = phaseTimer();
   const stagingDir = await mkdtemp(join(tmpdir(), "berth-build-"));
+  let tarStream: ReturnType<typeof tarFs.pack> | undefined;
 
   try {
     if (options.target === "production") {
@@ -870,7 +871,7 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
 
     mark("build.stage-assets");
     signal?.throwIfAborted();
-    const tarStream = tarFs.pack(stagingDir);
+    tarStream = tarFs.pack(stagingDir);
     const buildStream = await docker.buildImage(tarStream, {
       t: options.tag,
       target: options.target,
@@ -917,6 +918,11 @@ export async function buildImage(options: BuildImageOptions): Promise<void> {
     await retainLatestBuild(docker, options.tag, cacheRef, previousIds, legacyBuildCacheRef(options.tag, options.target));
     mark("build.retain-cache");
   } finally {
+    // The daemon may stop reading the context (a cancelled or failed build)
+    // while tar-fs is still walking stagingDir. Stop it before removing the
+    // directory, or its next read fails with no one listening and takes the
+    // process down with an uncaught ENOENT.
+    tarStream?.destroy();
     await rm(stagingDir, { recursive: true, force: true });
   }
 }
