@@ -133,10 +133,22 @@ Each is its own branch, tested before the next.
   install --from`, a local berth-vmm with its libkrun beside it, doctor, dev, mcp, secrets, python,
   `/context`, the terminal, attest). The re-pinned aarch64 rootfs boots on macOS (single, multi, enforce,
   stdio, exits, context, host, egress, terminal all passing).
-- **Not verified:** a Linux arm64 boot (no KVM on GitHub's arm64 runners, and no disk left on the
-  development Mac for a nested-KVM Lima VM; the linux-arm64 berth-vmm is built and loads its libkrun, no
-  more), and a clean `berth vm install` that downloads (needs both releases published and `VMM_PINS` /
-  `LIBKRUN_PINS` set from that run's notices).
+- **Re-pinned again, 2026-10-24.** Alpine moved go to 1.26.9 and musl to 1.2.6-r3, so semantic-fs-daemon
+  no longer rebuilt to its pin and no release could be published. `update_pins` runs 40103596964
+  (aarch64) and 40103557191 (x86_64, its e2e under KVM passing) give semantic-fs-daemon `957bb963…` /
+  `4a6755ac…`, rootfs `bf06cedb…` (aarch64) and `4f4e67cb…` (x86_64), and the layers over them. The
+  kernels, agent-init and berth-init rebuilt unchanged. This will recur until the apk cache is pinned
+  (open problem 10 in `microvm-runtime.md`).
+- **Linux arm64 booted**, 2026-10-24, on a nested-KVM Lima VM (Ubuntu 24.04, Linux 6.8, VZ on an M4) with
+  the published linux-arm64 berth-vmm `a3cf2a09…` and its libkrun, rootfs `62f96e1b…`: host sandbox
+  Landlock ABI 4 with TCP rules and seccomp; `e2e.mjs` single 18/18, multi 17/17, enforce 12/12, stdio 3/3,
+  exits 3/3, context 23/23, host 8/8, terminal 12/12, egress 28/28, github 10/10, layer 8/8. Nested
+  virtualization is about a hundred times slower (apps ready at ~40 s of guest uptime), so multi, host and
+  context needed the harness's 20 s call timeout raised. browser failed: Chromium did not launch inside
+  Playwright's own 20 s there, with 2 or 4 vCPUs. The same layer passes on macOS, so this is unverified
+  rather than known broken, and wants an arm64 host with KVM on bare metal.
+- **Not verified:** a clean `berth vm install` that downloads (needs both releases published and
+  `VMM_PINS` / `LIBKRUN_PINS` set from that run's notices).
 
 ## What it doesn't cover
 
