@@ -16,12 +16,12 @@ name: VM artifacts
 #                               from the guest job's binaries
 #   layers   per arch           scripts/build-layer.sh: each optional layer in
 #                               rootfs/layers/, built over the rootfs job's image
-#   vmm      per platform       berth-vmm: darwin-arm64 (macos-15, Homebrew
-#                               libkrun, ad hoc signed with the hypervisor
-#                               entitlement); linux-arm64 and linux-x64 (libkrun
-#                               built from its pinned tag, shipped beside berth-vmm
-#                               as libkrun-<platform>-<sha>.so, found through
-#                               RUNPATH $ORIGIN)
+#   vmm      per platform       berth-vmm: darwin-arm64 (macos-15, ad hoc signed
+#                               with the hypervisor entitlement), linux-arm64 and
+#                               linux-x64. Each ships with libkrun built from its
+#                               pinned tag, beside berth-vmm as
+#                               libkrun-<platform>-<sha>.dylib or .so, found
+#                               through LC_RPATH @loader_path / RUNPATH $ORIGIN
 #   e2e      ubuntu-24.04       the x86_64 guest booted under KVM by the linux-x64
 #                               berth-vmm: scripts/e2e.mjs. GitHub's arm64 runners
 #                               have no /dev/kvm, and its macOS runners no nested
@@ -53,7 +53,7 @@ name: VM artifacts
 #     one the manifests name.
 #
 # Release assets are named by sha256 (Image-<sha>, rootfs-<sha>.erofs,
-# berth-vmm-<platform>-<sha>, libkrun-<platform>-<sha>.so), so re-running
+# berth-vmm-<platform>-<sha>, libkrun-<platform>-<sha>.dylib or .so), so re-running
 # against the same tag only adds or re-uploads identical files; SHA256SUMS lists
 # every asset. The kernel's GPL sources go with it: the exact linux and
 # libkrunfw tarballs, the config delta and the resolved .config.
@@ -458,9 +458,6 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     env:
-      # libkrun/homebrew-krun at the commit that ships libkrun 1.19.6 with an
-      # arm64_sequoia bottle.
-      KRUN_TAP_COMMIT: 9a2429bb157c5a0460a5ad6f4c12f368bf52b078
       LIBKRUN_TARBALL_SHA256: 7025d72208172dc06f791ad5af7ccaafeabdac9869f74ccb45fb6d4f6e5991cd
       HOMEBREW_NO_AUTO_UPDATE: "1"
       PLATFORM: ${{ matrix.platform }}
@@ -485,21 +482,6 @@ jobs:
         run: |
           grep -q "LIBKRUN_VERSION = \"$LIBKRUN_VERSION\"" packages/cli/src/vm/pins.ts \
             || { echo "::error::packages/cli/src/vm/pins.ts does not expect libkrun $LIBKRUN_VERSION"; exit 1; }
-
-      - name: Install libkrun from the libkrun/krun tap, pinned
-        if: runner.os == 'macOS'
-        run: |
-          brew tap libkrun/krun
-          git -C "$(brew --repo libkrun/krun)" fetch -q origin "$KRUN_TAP_COMMIT"
-          git -C "$(brew --repo libkrun/krun)" checkout -q "$KRUN_TAP_COMMIT"
-          # Newer Homebrew loads formulae from a third-party tap only once
-          # they are trusted; older Homebrew has no `brew trust`.
-          if brew trust --help >/dev/null 2>&1; then
-            brew trust --formula libkrun/krun/libkrun libkrun/krun/libkrunfw libkrun/krun/virglrenderer-krun
-          fi
-          brew install libkrun/krun/libkrun
-          have=$(brew list --versions libkrun | awk '{print $2}')
-          [ "$have" = "$LIBKRUN_VERSION" ] || { echo "::error::installed libkrun $have, expected $LIBKRUN_VERSION"; exit 1; }
 
       - name: Install Rust ${{ env.RUST_TOOLCHAIN }}
         run: |
@@ -528,10 +510,37 @@ jobs:
           objdump -p "$so" | grep -E 'SONAME|NEEDED'
           echo "LIBKRUN_LIB_DIR=$RUNNER_TEMP/libkrun" >> "$GITHUB_ENV"
 
+      - name: Build libkrun ${{ env.LIBKRUN_VERSION }} from its tag for macOS, pinned
+        if: runner.os == 'macOS'
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -fsSL -o libkrun.tar.gz "https://github.com/containers/libkrun/archive/refs/tags/v$LIBKRUN_VERSION.tar.gz"
+          echo "$LIBKRUN_TARBALL_SHA256  libkrun.tar.gz" | shasum -a 256 -c -
+          tar -xzf libkrun.tar.gz
+          cd "libkrun-$LIBKRUN_VERSION"
+          # BLK and NET, as on Linux. No GPU (Homebrew's build adds it, and with
+          # it libepoxy and virglrenderer), and no init blob: berth-vmm boots
+          # berth-init directly, and the Makefile would cross-build init.krun
+          # against an unpinned Debian sysroot. So the library alone, by cargo.
+          cargo build --release --locked -p libkrun --no-default-features --features blk,net
+          mkdir -p "$RUNNER_TEMP/libkrun"
+          lib="$RUNNER_TEMP/libkrun/libkrun.$LIBKRUN_VERSION.dylib"
+          cp target/release/libkrun.dylib "$lib"
+          # berth-vmm finds it beside itself, through LC_RPATH @loader_path.
+          install_name_tool -id @rpath/libkrun.1.dylib "$lib"
+          codesign --sign - --force "$lib"
+          ln -s "libkrun.$LIBKRUN_VERSION.dylib" "$RUNNER_TEMP/libkrun/libkrun.1.dylib"
+          ln -s "libkrun.$LIBKRUN_VERSION.dylib" "$RUNNER_TEMP/libkrun/libkrun.dylib"
+          otool -L "$lib" | tee "$RUNNER_TEMP/libkrun-links.txt"
+          if grep -qE '/opt/homebrew|/usr/local' "$RUNNER_TEMP/libkrun-links.txt"; then
+            echo "::error::libkrun links a library outside the system"; exit 1
+          fi
+          echo "LIBKRUN_LIB_DIR=$RUNNER_TEMP/libkrun" >> "$GITHUB_ENV"
+
       - name: Test and build berth-vmm
         working-directory: packages/vmm
         run: |
-          if [ "$RUNNER_OS" = Linux ]; then export LD_LIBRARY_PATH="$LIBKRUN_LIB_DIR"; fi
+          if [ "$RUNNER_OS" = Linux ]; then export LD_LIBRARY_PATH="$LIBKRUN_LIB_DIR"; else export DYLD_LIBRARY_PATH="$LIBKRUN_LIB_DIR"; fi
           cargo test --release --locked
           cargo build --release --locked
 
@@ -551,16 +560,31 @@ jobs:
             codesign --sign - --force --entitlements berth-vmm.entitlements "$bin"
             codesign -d --entitlements - --xml "$bin" | grep -q 'com.apple.security.hypervisor' \
               || { echo "::error::berth-vmm lacks the hypervisor entitlement"; exit 1; }
+            # Found beside berth-vmm once installed: LC_RPATH @loader_path,
+            # and @rpath/libkrun.1.dylib the only libkrun it needs.
             otool -L "$bin" | tee links.txt
-            grep -q '/opt/homebrew/opt/libkrun/lib/libkrun.1.dylib' links.txt \
-              || { echo "::error::berth-vmm does not link Homebrew's libkrun"; exit 1; }
-            size() { stat -f %z "$1"; }
-            sum() { shasum -a 256 "$1" | cut -d' ' -f1; }
+            grep -q '@rpath/libkrun.1.dylib' links.txt || { echo "::error::berth-vmm does not link @rpath/libkrun.1.dylib"; exit 1; }
+            otool -l "$bin" | grep -A2 LC_RPATH > rpath.txt || true
+            cat rpath.txt >> links.txt
+            grep -q 'path @loader_path ' rpath.txt || { echo "::error::berth-vmm has no LC_RPATH @loader_path"; exit 1; }
+            # Run from a directory holding only it and libkrun, as installed.
             # A GitHub macOS runner cannot boot a VM (no nested
             # virtualization), so the boot itself is tested on developer
             # machines (scripts/e2e.mjs).
-            "$bin" run --help >/dev/null
-            libkrun_line="libkrun: $LIBKRUN_VERSION (Homebrew, libkrun/krun tap at $KRUN_TAP_COMMIT)"
+            t=$(mktemp -d)
+            cp "$bin" "$t/berth-vmm"
+            cp "$LIBKRUN_LIB_DIR/libkrun.$LIBKRUN_VERSION.dylib" "$t/"
+            ln -s "libkrun.$LIBKRUN_VERSION.dylib" "$t/libkrun.1.dylib"
+            env -u DYLD_LIBRARY_PATH "$t/berth-vmm" run --help >/dev/null
+            cat "$RUNNER_TEMP/libkrun-links.txt" >> links.txt
+            size() { stat -f %z "$1"; }
+            sum() { shasum -a 256 "$1" | cut -d' ' -f1; }
+            lib="$LIBKRUN_LIB_DIR/libkrun.$LIBKRUN_VERSION.dylib"
+            lsha=$(sum "$lib")
+            cp "$lib" "$GITHUB_WORKSPACE/dist/libkrun-$PLATFORM-$lsha.dylib"
+            echo "libkrun_sha256=$lsha" >> "$GITHUB_OUTPUT"
+            echo "libkrun_size=$(size "$lib")" >> "$GITHUB_OUTPUT"
+            libkrun_line="libkrun: $LIBKRUN_VERSION, built from https://github.com/containers/libkrun/archive/refs/tags/v$LIBKRUN_VERSION.tar.gz (sha256 $LIBKRUN_TARBALL_SHA256) with features blk,net; libkrun-$PLATFORM-$lsha.dylib"
           else
             # Found beside berth-vmm once installed: RUNPATH $ORIGIN, and
             # libkrun.so.1 the only libkrun it needs.
@@ -870,10 +894,10 @@ jobs:
         working-directory: dist
         run: |
           ls -l
-          for f in Image-* rootfs-*.erofs layer-*.erofs berth-vmm-*-* libkrun-*.so; do
+          for f in Image-* rootfs-*.erofs layer-*.erofs berth-vmm-*-* libkrun-*.so libkrun-*.dylib; do
             [ -e "$f" ] || continue
             case "$f" in *.txt) continue ;; esac
-            want=$(echo "$f" | sed -E 's/^(Image|rootfs|layer-[a-z]+|berth-vmm-[a-z]+-[a-z0-9]+|libkrun-[a-z]+-[a-z0-9]+)-//; s/\.(erofs|so)$//')
+            want=$(echo "$f" | sed -E 's/^(Image|rootfs|layer-[a-z]+|berth-vmm-[a-z]+-[a-z0-9]+|libkrun-[a-z]+-[a-z0-9]+)-//; s/\.(erofs|so|dylib)$//')
             have=$(sha256sum "$f" | cut -d' ' -f1)
             [ "$have" = "$want" ] || { echo "::error::$f hashes to $have"; exit 1; }
           done
@@ -891,14 +915,14 @@ jobs:
           for v in $(ls berth-vmm-*-* | grep -v '\.txt$'); do
             p=$(echo "$v" | sed -E 's/^berth-vmm-([a-z]+-[a-z0-9]+)-.*/\1/')
             case "$p" in
-              darwin-arm64) what="macOS arm64, ad hoc signed, links Homebrew libkrun $LIBKRUN_VERSION" ;;
+              darwin-arm64) what="macOS arm64, ad hoc signed, loads the libkrun $LIBKRUN_VERSION beside it" ;;
               linux-*) what="Linux ${p#linux-}, loads the libkrun $LIBKRUN_VERSION beside it" ;;
             esac
             rows="$rows| \`$v\` ($what) | \`${v##*-}\` |
           "
           done
-          for l in $(ls libkrun-*.so 2>/dev/null); do
-            rows="$rows| \`$l\` (libkrun $LIBKRUN_VERSION, built from its tag with BLK=1 NET=1) | \`$(basename "${l##*-}" .so)\` |
+          for l in $(ls libkrun-*.so libkrun-*.dylib 2>/dev/null); do
+            rows="$rows| \`$l\` (libkrun $LIBKRUN_VERSION, built from its tag with blk and net) | \`$(echo "${l##*-}" | sed -E 's/\.(so|dylib)$//')\` |
           "
           done
           cat > SOURCES.md <<EOF
