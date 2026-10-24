@@ -121,12 +121,15 @@ export type VmmPlatform = "darwin-arm64" | "linux-arm64" | "linux-x64";
  * `berth vm install` refuses any other bytes, and clears macOS's quarantine
  * attribute only on a file that matched.
  *
- * darwin-arm64 is from release vm-artifacts-8f79e8da-c2dd5975 (run
- * 37118480648): rootfs c2dd5975, and berth-vmm with optional layers (the
- * browser layer is pinned in it, and published with the release).
+ * All three are from the per-architecture releases vm-artifacts-8f79e8da-bf06cedb
+ * (aarch64: darwin-arm64, linux-arm64) and vm-artifacts-10d4b54c-4f4e67cb
+ * (x86_64: linux-x64). Runs 40103596964 / 40103557191 and 40104945503 built
+ * each of them to the same bytes.
  */
 export const VMM_PINS: Partial<Record<VmmPlatform, { sha256: string; size: number }>> = {
-  "darwin-arm64": { sha256: "ad6214dc9b4a89e73ce8a78ebf06856caa076453e5166f87951b3c29d434089b", size: 700400 },
+  "darwin-arm64": { sha256: "92fd7ae2a97e029f1689cfd626600dfcbef39e8933ed304b0e2466a385c167ae", size: 700608 },
+  "linux-arm64": { sha256: "2ecc29d88ea0fd1abadc7a142bb0f7b53de5f8e104860ef2e24ce3c487646dc6", size: 725632 },
+  "linux-x64": { sha256: "e5809f8c43281b1e821be4b48003855a7913fe5905d2f32a52c7bf377b91e6d1", size: 742152 },
 };
 
 export function vmmPin(platform: string = `${process.platform}-${process.arch}`, pins: Partial<Record<string, { sha256: string; size: number }>> = VMM_PINS): ArtifactPin | undefined {
@@ -143,7 +146,11 @@ export function vmmPin(platform: string = `${process.platform}-${process.arch}`,
  * for (libkrunNames), which it finds first (RUNPATH $ORIGIN on Linux,
  * LC_RPATH @loader_path on macOS).
  */
-export const LIBKRUN_PINS: Partial<Record<VmmPlatform, { sha256: string; size: number }>> = {};
+export const LIBKRUN_PINS: Partial<Record<VmmPlatform, { sha256: string; size: number }>> = {
+  "darwin-arm64": { sha256: "92e728713af2fc723ec67ab76751c3fc83909bab404125cf7459e1ff2fb312da", size: 4727600 },
+  "linux-arm64": { sha256: "1806ef7a1ea323fa08f30330fcda5cc2e7102662c307c1ffcc7b302a2e566454", size: 6324640 },
+  "linux-x64": { sha256: "ae1f1b6407a13ec8bb9adf4a97c0a0c160c555663fbc713b8a92736c3a75e58e", size: 6987512 },
+};
 
 /** libkrun's file on a platform, and the name berth-vmm loads it by. */
 export function libkrunNames(platform: string = `${process.platform}-${process.arch}`): { file: string; link: string; ext: "so" | "dylib" } {
