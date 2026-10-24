@@ -101,7 +101,7 @@ export default class VmInstall extends Command {
       const vmm = locateVmm(process.env, config.vm?.vmm);
       if (!vmm) this.error("--layer needs a berth-vmm, which carries the layer pins");
       try {
-        await ensureLayers(flags.layer, vmm, (m) => this.log(m), "--layer");
+        await ensureLayers(flags.layer, vmm, (m) => this.log(m), "--layer", { ...(from ? { from: resolve(from) } : {}), ...(urlTemplate ? { urlTemplate } : {}) });
       } catch (err) {
         this.error(err instanceof Error ? err.message : String(err));
       }
