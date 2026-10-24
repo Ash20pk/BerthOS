@@ -5,7 +5,7 @@ import { clearQuarantine, installArtifacts, releasePair, sha256File } from "../.
 import { readConfigFile, resolveArtifactsDir, resolveArtifactsUrl } from "../../vm/config.js";
 import { activePins, checkHost, locateVmm, staleInstalledVmm, writeEntitlementsFile } from "../../vm/host.js";
 import { vmHome } from "../../vm/paths.js";
-import { LIBKRUN_VERSION, PINS, libkrunPin, vmmPin } from "../../vm/pins.js";
+import { PINS, libkrunNames, libkrunPin, vmmPin } from "../../vm/pins.js";
 import { ensureLayers } from "../../vm/runtime.js";
 
 export default class VmInstall extends Command {
@@ -60,15 +60,16 @@ export default class VmInstall extends Command {
       }
       renameSync(`${dest}.tmp`, dest);
       this.log(`✔ berth-vmm copied to ${dest}`);
-      // Linux: a libkrun beside the build (as CI and a release lay them out)
-      // goes with it, since berth-vmm loads the one beside itself first.
-      const lib = join(dirname(src), "libkrun.so.1");
-      if (process.platform === "linux" && existsSync(lib)) {
+      // A libkrun beside the build (as CI and a release lay them out) goes
+      // with it, since berth-vmm loads the one beside itself first.
+      const names = libkrunNames();
+      const lib = join(dirname(src), names.link);
+      if (existsSync(lib)) {
         const real = realpathSync(lib);
-        const name = basename(real) === "libkrun.so.1" ? `libkrun.so.${LIBKRUN_VERSION}` : basename(real);
+        const name = basename(real) === names.link ? names.file : basename(real);
         copyFileSync(real, join(vmHome(), "bin", name));
-        rmSync(join(vmHome(), "bin", "libkrun.so.1"), { force: true });
-        symlinkSync(name, join(vmHome(), "bin", "libkrun.so.1"));
+        rmSync(join(vmHome(), "bin", names.link), { force: true });
+        symlinkSync(name, join(vmHome(), "bin", names.link));
         this.log(`✔ ${name} copied beside it, from ${real}`);
       }
     } else if (!process.env.BERTH_VMM && !config.vm?.vmm) {
@@ -94,14 +95,15 @@ export default class VmInstall extends Command {
         }
       }
     }
-    // Linux: the libkrun the published berth-vmm was built against, beside it
-    // (its RUNPATH is $ORIGIN), with the soname link the loader looks for.
+    // The libkrun the published berth-vmm was built against, beside it (its
+    // RUNPATH is $ORIGIN, its LC_RPATH @loader_path), with the link the
+    // loader looks for.
     const libkrun = libkrunPin();
     const home = join(vmHome(), "bin", "berth-vmm");
     if (libkrun && published && !flags.vmm && existsSync(home) && (await sha256File(home)) === published.sha256) {
       try {
         const [r] = await installArtifacts({ ...(from ? { from: resolve(from) } : {}), ...(urlTemplate ? { urlTemplate } : {}), force: flags.force, pins: [libkrun], release: releasePair(PINS), log: (m) => this.log(m) });
-        const link = join(vmHome(), "bin", "libkrun.so.1");
+        const link = join(vmHome(), "bin", libkrunNames().link);
         let current: string | undefined;
         try {
           current = readlinkSync(link);

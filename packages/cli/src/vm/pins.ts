@@ -136,19 +136,27 @@ export function vmmPin(platform: string = `${process.platform}-${process.arch}`,
 }
 
 /**
- * The libkrun a published Linux berth-vmm is built against, by platform:
- * built from the LIBKRUN_VERSION tag by the vm-artifacts workflow, published
- * next to berth-vmm as libkrun-<platform>-<sha256>.so, and installed beside it
- * as bin/libkrun.so.<version> with the soname link bin/libkrun.so.1, which
- * berth-vmm finds first (RUNPATH $ORIGIN). macOS links Homebrew's instead.
+ * The libkrun a published berth-vmm is built against, by platform: built from
+ * the LIBKRUN_VERSION tag by the vm-artifacts workflow, published next to
+ * berth-vmm as libkrun-<platform>-<sha256>.so (.dylib on macOS), and installed
+ * beside it under its versioned name with the link berth-vmm asks the loader
+ * for (libkrunNames), which it finds first (RUNPATH $ORIGIN on Linux,
+ * LC_RPATH @loader_path on macOS).
  */
 export const LIBKRUN_PINS: Partial<Record<VmmPlatform, { sha256: string; size: number }>> = {};
+
+/** libkrun's file on a platform, and the name berth-vmm loads it by. */
+export function libkrunNames(platform: string = `${process.platform}-${process.arch}`): { file: string; link: string; ext: "so" | "dylib" } {
+  return platform.startsWith("darwin-")
+    ? { file: `libkrun.${LIBKRUN_VERSION}.dylib`, link: "libkrun.1.dylib", ext: "dylib" }
+    : { file: `libkrun.so.${LIBKRUN_VERSION}`, link: "libkrun.so.1", ext: "so" };
+}
 
 export function libkrunPin(platform: string = `${process.platform}-${process.arch}`, pins: Partial<Record<string, { sha256: string; size: number }>> = LIBKRUN_PINS): ArtifactPin | undefined {
   const p = pins[platform];
   if (!p) return undefined;
-  const file = `libkrun.so.${LIBKRUN_VERSION}`;
-  return { kind: "libkrun", sha256: p.sha256, size: p.size, file, relPath: `bin/${file}`, asset: `libkrun-${platform}-${p.sha256}.so` };
+  const { file, ext } = libkrunNames(platform);
+  return { kind: "libkrun", sha256: p.sha256, size: p.size, file, relPath: `bin/${file}`, asset: `libkrun-${platform}-${p.sha256}.${ext}` };
 }
 
 /** `key = "value"` / `key = 123` lines of a flat manifest. */

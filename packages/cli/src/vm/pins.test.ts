@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_ARTIFACTS_URL } from "./config.js";
-import { GUEST_PINS, LIBKRUN_VERSION, guestArch, layerPinsFromManifest, libkrunPin, VMM_PINS, manifestsInBinary, pinsFromManifests, type GuestArch } from "./pins.js";
+import { GUEST_PINS, LIBKRUN_VERSION, guestArch, layerPinsFromManifest, libkrunNames, libkrunPin, VMM_PINS, manifestsInBinary, pinsFromManifests, type GuestArch } from "./pins.js";
 
 const vmm = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "vmm");
 const get = (manifest: string, key: string) => manifest.split("\n").map((l) => l.split("=")).find(([k]) => k!.trim() === key)?.[1]?.trim().replace(/^"|"$/g, "");
@@ -51,6 +51,15 @@ test("a Linux libkrun pin installs as libkrun.so.<version> under bin/", () => {
   assert.equal(p.relPath, `bin/libkrun.so.${LIBKRUN_VERSION}`);
   assert.equal(p.asset, `libkrun-linux-x64-${sha}.so`);
   assert.equal(libkrunPin("darwin-arm64", { "linux-x64": { sha256: sha, size: 5 } }), undefined);
+});
+
+test("a macOS libkrun pin installs as libkrun.<version>.dylib, loaded as libkrun.1.dylib", () => {
+  const sha = "e".repeat(64);
+  const p = libkrunPin("darwin-arm64", { "darwin-arm64": { sha256: sha, size: 5 } })!;
+  assert.equal(p.relPath, `bin/libkrun.${LIBKRUN_VERSION}.dylib`);
+  assert.equal(p.asset, `libkrun-darwin-arm64-${sha}.dylib`);
+  assert.equal(libkrunNames("darwin-arm64").link, "libkrun.1.dylib");
+  assert.equal(libkrunNames("linux-arm64").link, "libkrun.so.1");
 });
 
 test("a Node arch names its guest architecture", () => {
