@@ -18,7 +18,30 @@
 // plus what any process needs to run (system libraries, Homebrew's libkrun,
 // dyld's cache) and what Hypervisor.framework needs. The spike's static
 // berth-vmm.sb is where these baseline rules were found to be enough.
+//
+// On Linux the same plan is enforced with Landlock and seccomp (linux.rs,
+// docs/design/microvm-linux.md decision 5). Both apply to the calling thread
+// and the threads it starts afterwards, not to threads already running, so
+// confinement happens while berth-vmm is still single-threaded (the egress
+// dialer serves only after it) and checks that it is.
+#[cfg(target_os = "macos")]
 use std::os::raw::{c_char, c_int};
+
+#[cfg(target_os = "linux")]
+#[path = "linux_sandbox.rs"]
+mod linux;
+#[cfg(target_os = "linux")]
+pub use linux::apply_plan;
+
+#[cfg(target_os = "linux")]
+pub fn linux_denied_count() -> usize {
+    linux::DENIED.len()
+}
+
+#[cfg(target_os = "linux")]
+pub fn linux_probe_exec() -> String {
+    linux::probe_exec()
+}
 
 /// What one sandbox may touch. Paths must already be canonical (Seatbelt
 /// matches the real path: /private/var, not /var).
@@ -35,6 +58,7 @@ pub struct Plan {
 }
 
 /// A Scheme string literal for SBPL.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn q(s: &str) -> String {
     let mut o = String::with_capacity(s.len() + 2);
     o.push('"');
@@ -49,6 +73,7 @@ fn q(s: &str) -> String {
     o
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn profile(p: &Plan) -> String {
     let lit = |v: &[String]| v.iter().map(|s| format!("(literal {})", q(s))).collect::<Vec<_>>().join(" ");
     let sub = |v: &[String]| v.iter().map(|s| format!("(subpath {})", q(s))).collect::<Vec<_>>().join(" ");
@@ -124,9 +149,9 @@ pub fn apply(profile: &str) -> Result<(), String> {
     Err(msg)
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn apply(_profile: &str) -> Result<(), String> {
-    Err("no host sandbox on this platform yet".into())
+    Err("no host sandbox on this platform".into())
 }
 
 /// What the confined process may do with `path`, for --host-sandbox-probe:
