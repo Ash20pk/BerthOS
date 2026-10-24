@@ -4,27 +4,68 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_ARTIFACTS_URL } from "./config.js";
-import { layerPinsFromManifest, KERNEL_CONFIG_SHA256, KERNEL_LINUX, KERNEL_SHA256, KERNEL_SIZE, ROOTFS_SHA256, ROOTFS_SIZE, VMM_PINS, manifestsInBinary, pinsFromManifests } from "./pins.js";
+import { GUEST_PINS, LIBKRUN_VERSION, guestArch, layerPinsFromManifest, libkrunNames, libkrunPin, VMM_PINS, manifestsInBinary, pinsFromManifests, type GuestArch } from "./pins.js";
 
 const vmm = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "vmm");
 const get = (manifest: string, key: string) => manifest.split("\n").map((l) => l.split("=")).find(([k]) => k!.trim() === key)?.[1]?.trim().replace(/^"|"$/g, "");
 
-test("the CLI's pins are the ones berth-vmm compiles in (packages/vmm manifests)", { skip: !existsSync(join(vmm, "kernel", "manifest.toml")) && "not in a checkout" }, () => {
-  const kernel = readFileSync(join(vmm, "kernel", "manifest.toml"), "utf8");
-  const rootfs = readFileSync(join(vmm, "rootfs", "manifest.toml"), "utf8");
-  assert.equal(get(kernel, "image_sha256"), KERNEL_SHA256);
-  assert.equal(Number(get(kernel, "image_size")), KERNEL_SIZE);
-  assert.equal(get(kernel, "linux_version"), KERNEL_LINUX);
-  assert.equal(get(kernel, "config_sha256"), KERNEL_CONFIG_SHA256);
-  assert.equal(get(rootfs, "image_sha256"), ROOTFS_SHA256);
-  assert.equal(Number(get(rootfs, "image_size")), ROOTFS_SIZE);
-  // The kernel manifest's dist_url is the CLI's default template, for the kernel.
-  assert.equal(get(kernel, "dist_url"), DEFAULT_ARTIFACTS_URL.replace("{asset}", "Image-{image_sha256}"));
-  // Every layer is pinned in full, and for this base.
-  const layers = layerPinsFromManifest(Object.fromEntries(rootfs.split("\n").map((l) => l.split("=")).filter((kv) => kv.length === 2).map(([k, v]) => [k!.trim(), v!.trim().replace(/^"|"$/g, "")])));
-  for (const l of Object.values(layers)) assert.equal(l.base, ROOTFS_SHA256, `layer ${l.name} was built for this rootfs`);
-  // A pinned berth-vmm was built for this pair (the release it is published in).
+const ARCHES: GuestArch[] = ["aarch64", "x86_64"];
+
+for (const arch of ARCHES) {
+  const kernelFile = join(vmm, "kernel", `manifest-${arch}.toml`);
+  // A new architecture's manifests start with zeros for every output, until
+  // its first build fills them (UPDATE_MANIFEST=1).
+  const unpinned = existsSync(kernelFile) && get(readFileSync(kernelFile, "utf8"), "image_sha256") === "0".repeat(64);
+  test(`the CLI's ${arch} pins are the ones berth-vmm compiles in (packages/vmm manifests)`, { skip: (!existsSync(kernelFile) && `no ${arch} manifests in this checkout`) || (unpinned && `${arch} is not pinned yet`) }, () => {
+    const kernel = readFileSync(kernelFile, "utf8");
+    const rootfs = readFileSync(join(vmm, "rootfs", `manifest-${arch}.toml`), "utf8");
+    const pins = GUEST_PINS[arch];
+    assert.ok(pins, `pins.ts has no ${arch} pins`);
+    assert.equal(get(kernel, "arch"), arch);
+    assert.equal(get(rootfs, "arch"), arch);
+    assert.equal(get(kernel, "image_sha256"), pins.kernel.sha256);
+    assert.equal(Number(get(kernel, "image_size")), pins.kernel.size);
+    assert.equal(get(kernel, "linux_version"), pins.kernel.linux);
+    assert.equal(get(kernel, "config_sha256"), pins.kernel.configSha256);
+    assert.equal(get(rootfs, "image_sha256"), pins.rootfs.sha256);
+    assert.equal(Number(get(rootfs, "image_size")), pins.rootfs.size);
+    // The kernel manifest's dist_url is the CLI's default template, for the kernel.
+    assert.equal(get(kernel, "dist_url"), DEFAULT_ARTIFACTS_URL.replace("{asset}", "Image-{image_sha256}"));
+    // Every layer is pinned in full, and for this base.
+    const layers = layerPinsFromManifest(Object.fromEntries(rootfs.split("\n").map((l) => l.split("=")).filter((kv) => kv.length === 2).map(([k, v]) => [k!.trim(), v!.trim().replace(/^"|"$/g, "")])));
+    for (const l of Object.values(layers)) assert.equal(l.base, pins.rootfs.sha256, `layer ${l.name} was built for this rootfs`);
+  });
+}
+
+test("every pinned architecture has its manifests, and berth-vmm pins are well formed", () => {
+  for (const arch of Object.keys(GUEST_PINS)) {
+    if (existsSync(join(vmm, "kernel"))) assert.ok(existsSync(join(vmm, "kernel", `manifest-${arch}.toml`)), `pins.ts pins ${arch}, the checkout has no manifest`);
+  }
   for (const p of Object.values(VMM_PINS)) assert.match(p!.sha256, /^[0-9a-f]{64}$/);
+});
+
+test("a Linux libkrun pin installs as libkrun.so.<version> under bin/", () => {
+  const sha = "d".repeat(64);
+  const p = libkrunPin("linux-x64", { "linux-x64": { sha256: sha, size: 5 } })!;
+  assert.equal(p.kind, "libkrun");
+  assert.equal(p.relPath, `bin/libkrun.so.${LIBKRUN_VERSION}`);
+  assert.equal(p.asset, `libkrun-linux-x64-${sha}.so`);
+  assert.equal(libkrunPin("darwin-arm64", { "linux-x64": { sha256: sha, size: 5 } }), undefined);
+});
+
+test("a macOS libkrun pin installs as libkrun.<version>.dylib, loaded as libkrun.1.dylib", () => {
+  const sha = "e".repeat(64);
+  const p = libkrunPin("darwin-arm64", { "darwin-arm64": { sha256: sha, size: 5 } })!;
+  assert.equal(p.relPath, `bin/libkrun.${LIBKRUN_VERSION}.dylib`);
+  assert.equal(p.asset, `libkrun-darwin-arm64-${sha}.dylib`);
+  assert.equal(libkrunNames("darwin-arm64").link, "libkrun.1.dylib");
+  assert.equal(libkrunNames("linux-arm64").link, "libkrun.so.1");
+});
+
+test("a Node arch names its guest architecture", () => {
+  assert.equal(guestArch("arm64"), "aarch64");
+  assert.equal(guestArch("x64"), "x86_64");
+  assert.equal(guestArch("ia32"), undefined);
 });
 
 test("the pins are read out of a berth-vmm binary's compiled-in manifests", () => {
