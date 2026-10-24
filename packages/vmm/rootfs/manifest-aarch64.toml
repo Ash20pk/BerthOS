@@ -28,7 +28,7 @@ context_bus_daemon_sha256 = "1138c3595142a3235145b530d0cf1157b0971aa2230d417befe
 # /usr/local/bin/semantic-fs-daemon: build-semantic-fs.sh, from
 # packages/semantic-fs-daemon at HEAD: the daemon that serves /context
 # (docs/design/microvm-semantic-fs.md).
-semantic_fs_daemon_sha256 = "469dce88701aae0a64f0ff481205ddec5004e1fb55925c449b4d754acb7e3a97"
+semantic_fs_daemon_sha256 = "957bb9632d4faa4a3cd92436a95d18e07f7a01ea0314cf1553d72137b40c023a"
 # /usr/local/bin/berth-github-api-broker.cjs: packages/docker-orchestrator/docker/github-api-broker.cjs.
 github_api_broker_sha256 = "0a809855c067d76b2074746b2390f6b204d1d80a7cafdc8cea4371efa624baaa"
 # /usr/local/bin/berth-egress-broker.cjs: packages/docker-orchestrator/docker/egress-broker.cjs.
@@ -56,13 +56,13 @@ terminal = "tmux"
 # builder.apk.lock the builder's (erofs-utils). .github/workflows/vm-artifacts.yml
 # rebuilds it on a Linux runner and fails on any other hash. berth-vmm
 # compiles this in; berth-vmm run boots it by default.
-image_sha256 = "62f96e1b760a9a23e82817880be12ae04d458549c8e8ac4aba55ead2425927b3"
-image_size = 109670400
+image_sha256 = "bf06cedb9b40c5f23a74e2b2fe87458cd43b81a7d65ce09a65730b1e7cf590fa"
+image_size = 107937792
 # Optional layer example (rootfs/layers/example, build-layer.sh), built for the base above.
-layer_example_sha256 = "ea9416dcf9076953299f163647a9621a269f1449c0f88c72d7d83c98e242bd79"
+layer_example_sha256 = "707d1c9ea2b77472954ae2cddb281dbbd1ca2e8f45b1bd191ba8c1f1ee3359c6"
 layer_example_size = 471040
-layer_example_base = "62f96e1b760a9a23e82817880be12ae04d458549c8e8ac4aba55ead2425927b3"
+layer_example_base = "bf06cedb9b40c5f23a74e2b2fe87458cd43b81a7d65ce09a65730b1e7cf590fa"
 # Optional layer browser (rootfs/layers/browser, build-layer.sh), built for the base above.
-layer_browser_sha256 = "be56baa99c102070ddfa5c49bf40b59f14a142adf23182df1854ee3a606e3fa1"
-layer_browser_size = 478527488
-layer_browser_base = "62f96e1b760a9a23e82817880be12ae04d458549c8e8ac4aba55ead2425927b3"
+layer_browser_sha256 = "92ad1a7b184bdc844c4611918930834c831d5cfed54e1e3c48100e1a794eb827"
+layer_browser_size = 485199872
+layer_browser_base = "bf06cedb9b40c5f23a74e2b2fe87458cd43b81a7d65ce09a65730b1e7cf590fa"

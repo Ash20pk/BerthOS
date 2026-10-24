@@ -35,11 +35,11 @@ By default, from the GitHub release that [`.github/workflows/vm-artifacts.yml`](
 | File | Asset | sha256 (this CLI) | Size |
 |---|---|---|---|
 | `~/.berth/vm/kernel/sha256/<sha>/Image` | `Image-<sha>` | `8f79e8dae97ebc0ab8fcdc4ad209bb025ec967be82c713503e0612cfdd340ec8` | 23,668,744 B |
-| `~/.berth/vm/rootfs/rootfs-<sha>.erofs` | `rootfs-<sha>.erofs` | `62f96e1b760a9a23e82817880be12ae04d458549c8e8ac4aba55ead2425927b3` | 109,670,400 B |
+| `~/.berth/vm/rootfs/rootfs-<sha>.erofs` | `rootfs-<sha>.erofs` | `bf06cedb9b40c5f23a74e2b2fe87458cd43b81a7d65ce09a65730b1e7cf590fa` | 107,937,792 B |
 | `~/.berth/vm/bin/berth-vmm` | `berth-vmm-darwin-arm64-<sha>`, `berth-vmm-linux-arm64-<sha>` | `VMM_PINS` in `packages/cli/src/vm/pins.ts` | about 700 KB (macOS), 2.7 MB (Linux) |
 | `~/.berth/vm/bin/libkrun.1.19.6.dylib`, `libkrun.so.1.19.6` | `libkrun-darwin-arm64-<sha>.dylib`, `libkrun-linux-arm64-<sha>.so` | `LIBKRUN_PINS` in the same file | about 4.7 MB |
 
-That is `https://github.com/Ash20pk/BerthOS/releases/download/vm-artifacts-8f79e8da-62f96e1b/`. The x86_64 one is `vm-artifacts-10d4b54c-11696a0f`: kernel `10d4b54c0896668a93f9d26d0a701aac4a14ce813f3ed4d3b4d26e50d7b7b8d1` (an ELF `vmlinux`, 27,928,992 B), rootfs `11696a0fad8a7546ff44b018c795876311e21f3f2f438b54a07bb8dd95c18e58` (110,456,832 B), and `berth-vmm-linux-x64-<sha>` with `libkrun-linux-x64-<sha>.so`. CI rebuilds each architecture's kernel and rootfs from source on GitHub's Linux runners of that architecture, and publishes the release only if they match the pins bit for bit. The release also carries `SHA256SUMS`, each rootfs's input record, berth-vmm's build record, and the kernel's GPL sources (the exact linux and libkrunfw tarballs, the config delta, the resolved config and the build script; see `SOURCES.md` there).
+That is `https://github.com/Ash20pk/BerthOS/releases/download/vm-artifacts-8f79e8da-bf06cedb/`. The x86_64 one is `vm-artifacts-10d4b54c-4f4e67cb`: kernel `10d4b54c0896668a93f9d26d0a701aac4a14ce813f3ed4d3b4d26e50d7b7b8d1` (an ELF `vmlinux`, 27,928,992 B), rootfs `4f4e67cb49a1b07e96412e802bd2c6e42cfabee95d7c126b8589b1048a79a538` (108,765,184 B), and `berth-vmm-linux-x64-<sha>` with `libkrun-linux-x64-<sha>.so`. CI rebuilds each architecture's kernel and rootfs from source on GitHub's Linux runners of that architecture, and publishes the release only if they match the pins bit for bit. The release also carries `SHA256SUMS`, each rootfs's input record, berth-vmm's build record, and the kernel's GPL sources (the exact linux and libkrunfw tarballs, the config delta, the resolved config and the build script; see `SOURCES.md` there).
 
 berth-vmm and its libkrun are downloaded only when the CLI pins their sha256 for your platform (macOS arm64, Linux arm64 and Linux x86_64). A build from CI can't be pinned until CI has built it, so a CLI released before the first artifacts release has no pin, and says so. Then build berth-vmm and pass `--vmm`, or download it by hand (below).
 
@@ -65,7 +65,7 @@ If the kernel and rootfs aren't installed, `berth dev --runtime vm` installs the
 ### Verifying by hand
 
 ```bash
-tag=vm-artifacts-8f79e8da-62f96e1b
+tag=vm-artifacts-8f79e8da-bf06cedb
 gh release download "$tag" -R Ash20pk/BerthOS -p 'Image-*' -p 'rootfs-*.erofs' -p 'berth-vmm-darwin-arm64-*' -p 'libkrun-darwin-arm64-*' -p SHA256SUMS
 shasum -a 256 -c --ignore-missing SHA256SUMS     # each asset against the list
 shasum -a 256 Image-* rootfs-*.erofs              # and against the pins above, which are also in

@@ -40,11 +40,11 @@ export interface GuestPins {
 export const GUEST_PINS: Partial<Record<GuestArch, GuestPins>> = {
   aarch64: {
     kernel: { sha256: "8f79e8dae97ebc0ab8fcdc4ad209bb025ec967be82c713503e0612cfdd340ec8", size: 23668744, linux: "6.12.109", configSha256: "e3f33c2bd4bffa16e52a066c325967e4bde091f20063e6eb5b81e8a2efac4dc8" },
-    rootfs: { sha256: "62f96e1b760a9a23e82817880be12ae04d458549c8e8ac4aba55ead2425927b3", size: 109670400 },
+    rootfs: { sha256: "bf06cedb9b40c5f23a74e2b2fe87458cd43b81a7d65ce09a65730b1e7cf590fa", size: 107937792 },
   },
   x86_64: {
     kernel: { sha256: "10d4b54c0896668a93f9d26d0a701aac4a14ce813f3ed4d3b4d26e50d7b7b8d1", size: 27928992, linux: "6.12.109", configSha256: "6e0fd31c75cd563f8bf650765504d97989316f70e9bbb333fb0230db78fe4283" },
-    rootfs: { sha256: "11696a0fad8a7546ff44b018c795876311e21f3f2f438b54a07bb8dd95c18e58", size: 110456832 },
+    rootfs: { sha256: "4f4e67cb49a1b07e96412e802bd2c6e42cfabee95d7c126b8589b1048a79a538", size: 108765184 },
   },
 };
 
