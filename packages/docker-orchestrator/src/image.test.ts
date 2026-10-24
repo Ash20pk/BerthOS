@@ -290,12 +290,12 @@ interface FakeImage {
  */
 function fakeDocker(images: FakeImage[], inUse: string[] = [], { tagFails = false } = {}) {
   const removed: string[] = [];
-  const builds: { abortSignal?: AbortSignal; labels?: Record<string, string> }[] = [];
+  const builds: { abortSignal?: AbortSignal; labels?: Record<string, string>; context?: { destroyed?: boolean } }[] = [];
   let stream: PassThrough | undefined;
   const find = (ref: string) => images.find((i) => i.Id === ref || i.RepoTags.includes(ref));
   const docker = {
-    buildImage: async (_context: unknown, options: { abortSignal?: AbortSignal; labels?: Record<string, string> }) => {
-      builds.push(options);
+    buildImage: async (context: { destroyed?: boolean }, options: { abortSignal?: AbortSignal; labels?: Record<string, string> }) => {
+      builds.push({ ...options, context });
       stream = new PassThrough();
       return stream;
     },
@@ -532,6 +532,9 @@ test("a build is cancelled when its signal aborts, including the request to the 
   controller.abort();
   await assert.rejects(building, /build of berth\/probe:dev was cancelled/);
   assert.equal(fake.stream()!.destroyed, true);
+  // The context the daemon stopped reading is stopped too, before its
+  // directory goes: tar-fs walking a deleted directory throws uncaught.
+  assert.equal(fake.builds[0]!.context!.destroyed, true, "the build context stream is destroyed");
 });
 
 test("a build whose signal has already aborted doesn't start", async () => {

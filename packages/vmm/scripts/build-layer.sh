@@ -6,7 +6,7 @@
 #   build-layer.sh <name>
 #
 # Inputs: rootfs/layers/<name>/packages.txt (apk packages, locked in
-# rootfs/layers/<name>/apk.lock), and, if the layer has one,
+# rootfs/layers/<name>/<arch>.apk.lock), and, if the layer has one,
 # rootfs/layers/<name>/stage-files.sh, which fills a directory with files laid
 # over the root as is (run with that directory and NODE_MODULES_FROM). The
 # base is the pinned rootfs image, $ART/rootfs/rootfs-<image_sha256>.erofs
@@ -14,10 +14,10 @@
 #
 # Output: $ART/layers/layer-<name>-<sha256>.erofs, with its .tree.txt (every
 # path, owner and mode) and .delta.txt (the paths it adds or changes). A layer
-# is built for one base: rootfs/manifest.toml pins it as
+# is built for one base: rootfs/manifest-<arch>.toml pins it as
 #   layer_<name>_sha256, layer_<name>_size, layer_<name>_base
 # and berth-vmm refuses it on any other base. UPDATE_MANIFEST=1 rewrites those
-# pins (and the apk.lock); CHECK=0 skips the check.
+# pins (and the <arch>.apk.lock); CHECK=0 skips the check.
 set -eu
 . "$(dirname "$0")/common.sh"
 NAME=${1:?usage: build-layer.sh <name>}
@@ -50,7 +50,7 @@ fi
 
 run_builder "layer-$NAME" "${CPUS:-4}" "${MEM:-2048}" 8 "$VMM_DIR/rootfs/build-layer-in-vm.sh" \
     in:"$B/in":ro out:"$B/out"
-compare_lock "$L/apk.lock" "$B/out/packages.lock"
+compare_lock "$(arch_lock "$L")" "$B/out/packages.lock"
 
 h=$(sha256_of "$B/out/layer.erofs")
 size=$(file_size "$B/out/layer.erofs")
@@ -75,13 +75,13 @@ if [ "${UPDATE_MANIFEST:-0}" = 1 ]; then
         printf '# Optional layer %s (rootfs/layers/%s, build-layer.sh), built for the base above.\nlayer_%s_sha256 = "%s"\nlayer_%s_size = %s\nlayer_%s_base = "%s"\n' \
             "$NAME" "$NAME" "$NAME" "$h" "$NAME" "$size" "$NAME" "$BASE" >> "$M"
     fi
-    cp "$D/layer-$NAME-$h.packages.lock" "$L/apk.lock"
-    echo "rootfs/manifest.toml updated; rebuild berth-vmm so it embeds the new pin"
+    cp "$D/layer-$NAME-$h.packages.lock" "$(arch_lock "$L")"
+    echo "rootfs/manifest-$ARCH.toml updated; rebuild berth-vmm so it embeds the new pin"
 elif [ "${CHECK:-1}" = 1 ]; then
     if [ "$h" != "$(pin "layer_${NAME}_sha256")" ] || [ "$BASE" != "$(pin "layer_${NAME}_base")" ]; then
         echo "MISMATCH: built   layer $NAME $h on base $BASE" >&2
-        echo "          pinned  layer $NAME $(pin "layer_${NAME}_sha256") on base $(pin "layer_${NAME}_base") (rootfs/manifest.toml)" >&2
+        echo "          pinned  layer $NAME $(pin "layer_${NAME}_sha256") on base $(pin "layer_${NAME}_base") (rootfs/manifest-$ARCH.toml)" >&2
         exit 1
     fi
-    echo "matches rootfs/manifest.toml"
+    echo "matches rootfs/manifest-$ARCH.toml"
 fi
