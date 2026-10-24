@@ -1,0 +1,192 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 1150" width="1180" height="1150" role="img" aria-label="Berth: components inside a sandbox (C4 level 3)">
+<title>Berth: components inside a sandbox (C4 level 3)</title>
+<style>
+  text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  .ln { stroke: #57606a; }
+  .bd { stroke: #8c959f; }
+  .bl { fill: #57606a; }
+  .ah { fill: #57606a; }
+  .pill { fill: #f6f8fa; stroke: #d0d7de; }
+  .pt { fill: #24292f; }
+  @media (prefers-color-scheme: dark) {
+    .ln { stroke: #8b949e; }
+    .bd { stroke: #6e7681; }
+    .bl { fill: #9198a1; }
+    .ah { fill: #8b949e; }
+    .pill { fill: #161b22; stroke: #30363d; }
+    .pt { fill: #e6edf3; }
+  }
+</style>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+  <marker id="arrow-start" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+</defs>
+<rect x="20" y="150" width="1090" height="770" rx="14" fill="none" class="bd" stroke-width="1.5" stroke-dasharray="7 5"/>
+<text x="36" y="906" class="bl" font-size="13.5" font-weight="700">Sandbox</text>
+<text x="36" y="906" dx="59.199999999999996" class="bl" font-size="12">[Container: Docker or microVM]</text>
+<rect x="295" y="545" width="510" height="175" rx="14" fill="none" class="bd" stroke-width="1.5" stroke-dasharray="7 5"/>
+<text x="311" y="706" class="bl" font-size="13.5" font-weight="700">Resident apps</text>
+<text x="311" y="706" dx="104.8" class="bl" font-size="12">one uid and policy each</text>
+<path d="M550,115 L550,183" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="458.35" y="128" width="183.29999999999998" height="40" rx="6" class="pill"/>
+<text x="550" y="140" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="550" dy="0">RPC</tspan>
+<tspan x="550" dy="16" font-style="italic">[stdio relay, or vsock]</tspan>
+</text>
+<path d="M550,305 L550,363" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="415.75" y="322" width="268.5" height="24" rx="6" class="pill"/>
+<text x="550" y="334" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="550" dy="0">starts every app and daemon through</tspan>
+</text>
+<path d="M550,485 L550,543" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="433.5" y="502" width="233" height="24" rx="6" class="pill"/>
+<text x="550" y="514" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="550" dy="0">applies the policy, then execs</tspan>
+</text>
+<path d="M240,440 L340,440 L340,563" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)" marker-start="url(#arrow-start)"/>
+<rect x="298.05" y="495" width="83.9" height="40" rx="6" class="pill"/>
+<text x="340" y="507" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="340" dy="0">publish /</tspan>
+<tspan x="340" dy="16">subscribe</tspan>
+</text>
+<path d="M320,622 L242,622" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="242.6" y="610" width="76.8" height="24" rx="6" class="pill"/>
+<text x="281" y="622" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="281" dy="0">/context</tspan>
+</text>
+<path d="M132,680 L132,763" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="82.95" y="702" width="98.1" height="40" rx="6" class="pill"/>
+<text x="132" y="714" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="132" dy="0">embeds text</tspan>
+<tspan x="132" dy="16">through</tspan>
+</text>
+<path d="M780,622 L858,622" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="791.25" y="610" width="55.5" height="24" rx="6" class="pill"/>
+<text x="819" y="622" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="819" dy="0">proxy</tspan>
+</text>
+<path d="M760,565 L760,440 L858,440" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="732.25" y="495" width="55.5" height="40" rx="6" class="pill"/>
+<text x="760" y="507" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="760" dy="0">draws</tspan>
+<tspan x="760" dy="16">into</tspan>
+</text>
+<path d="M700,720 L700,820 L858,820" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="722.4" y="808" width="105.19999999999999" height="24" rx="6" class="pill"/>
+<text x="775" y="820" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="775" dy="0">GitHub calls</tspan>
+</text>
+<path d="M1085,622 L1140,622 L1140,1030 L1087,1030" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="1101.6" y="925" width="76.8" height="40" rx="6" class="pill"/>
+<text x="1140" y="937" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="1140" dy="0">declared</tspan>
+<tspan x="1140" dy="16">hosts</tspan>
+</text>
+<path d="M972,875 L972,973" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="894.55" y="928" width="154.9" height="24" rx="6" class="pill"/>
+<text x="972" y="940" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="972" dy="0">api.github.com only</tspan>
+</text>
+<path d="M550,720 L550,973" fill="none" class="ln" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrow)"/>
+<rect x="454.8" y="928" width="190.39999999999998" height="24" rx="6" class="pill"/>
+<text x="550" y="940" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="550" dy="0">every syscall checked by</tspan>
+</text>
+<rect x="420" y="25" width="260" height="90" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="550" y="53" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="550" font-size="15.5" font-weight="700">berth CLI</tspan>
+<tspan x="550" dy="17" font-size="11.5" opacity="0.85">[Container, on the host]</tspan>
+<tspan x="550" dy="20" font-size="12.5">Calls app exports</tspan>
+</text>
+<rect x="405" y="185" width="290" height="120" rx="10" fill="#85bbf0" stroke="#5d82a8" stroke-width="1.5"/>
+<text x="550" y="219.5" text-anchor="middle" dominant-baseline="middle" fill="#0b2140">
+<tspan x="550" font-size="15.5" font-weight="700">Init</tspan>
+<tspan x="550" dy="17" font-size="11.5" opacity="0.85">[Component: entrypoint.sh, or berth-init (Rust)]</tspan>
+<tspan x="550" dy="20" font-size="12.5">Mounts, secrets, per-app cgroups;</tspan>
+<tspan x="550" dy="17" font-size="12.5">starts everything below; relays RPC</tspan>
+</text>
+<rect x="405" y="365" width="290" height="120" rx="10" fill="#85bbf0" stroke="#5d82a8" stroke-width="1.5"/>
+<text x="550" y="391" text-anchor="middle" dominant-baseline="middle" fill="#0b2140">
+<tspan x="550" font-size="15.5" font-weight="700">agent-init</tspan>
+<tspan x="550" dy="17" font-size="11.5" opacity="0.85">[Component: Rust]</tspan>
+<tspan x="550" dy="20" font-size="12.5">Compiles a berth.yml into Landlock +</tspan>
+<tspan x="550" dy="17" font-size="12.5">seccomp, drops to the app's uid, then</tspan>
+<tspan x="550" dy="17" font-size="12.5">execs it</tspan>
+</text>
+<rect x="320" y="565" width="220" height="115" rx="10" fill="#85bbf0" stroke="#5d82a8" stroke-width="1.5"/>
+<text x="430" y="597" text-anchor="middle" dominant-baseline="middle" fill="#0b2140">
+<tspan x="430" font-size="15.5" font-weight="700">filesystem</tspan>
+<tspan x="430" dy="17" font-size="11.5" opacity="0.85">[Component: app, Node.js SDK]</tspan>
+<tspan x="430" dy="20" font-size="12.5">e.g. read and write</tspan>
+<tspan x="430" dy="17" font-size="12.5">/workspace and /context</tspan>
+</text>
+<rect x="560" y="565" width="220" height="115" rx="10" fill="#85bbf0" stroke="#5d82a8" stroke-width="1.5"/>
+<text x="670" y="605.5" text-anchor="middle" dominant-baseline="middle" fill="#0b2140">
+<tspan x="670" font-size="15.5" font-weight="700">browser-native</tspan>
+<tspan x="670" dy="17" font-size="11.5" opacity="0.85">[Component: app, Node.js SDK]</tspan>
+<tspan x="670" dy="20" font-size="12.5">e.g. drive Chromium</tspan>
+</text>
+<rect x="25" y="365" width="215" height="120" rx="10" fill="#85bbf0" stroke="#5d82a8" stroke-width="1.5"/>
+<text x="132.5" y="399.5" text-anchor="middle" dominant-baseline="middle" fill="#0b2140">
+<tspan x="132.5" font-size="15.5" font-weight="700">Context bus</tspan>
+<tspan x="132.5" dy="17" font-size="11.5" opacity="0.85">[Component: Rust]</tspan>
+<tspan x="132.5" dy="20" font-size="12.5">Pub/sub between apps,</tspan>
+<tspan x="132.5" dy="17" font-size="12.5">protobuf over a Unix socket</tspan>
+</text>
+<rect x="25" y="565" width="215" height="115" rx="10" fill="#85bbf0" stroke="#5d82a8" stroke-width="1.5"/>
+<text x="132.5" y="597" text-anchor="middle" dominant-baseline="middle" fill="#0b2140">
+<tspan x="132.5" font-size="15.5" font-weight="700">Semantic FS</tspan>
+<tspan x="132.5" dy="17" font-size="11.5" opacity="0.85">[Component: Go, FUSE]</tspan>
+<tspan x="132.5" dy="20" font-size="12.5">/context: files tagged by</tspan>
+<tspan x="132.5" dy="17" font-size="12.5">task, queried by meaning</tspan>
+</text>
+<rect x="25" y="765" width="215" height="110" rx="10" fill="#85bbf0" stroke="#5d82a8" stroke-width="1.5"/>
+<text x="132.5" y="794.5" text-anchor="middle" dominant-baseline="middle" fill="#0b2140">
+<tspan x="132.5" font-size="15.5" font-weight="700">Embeddings daemon</tspan>
+<tspan x="132.5" dy="17" font-size="11.5" opacity="0.85">[Component: Node.js]</tspan>
+<tspan x="132.5" dy="20" font-size="12.5">One model per sandbox</tspan>
+<tspan x="132.5" dy="17" font-size="12.5">(microVM)</tspan>
+</text>
+<rect x="860" y="365" width="225" height="120" rx="10" fill="#85bbf0" stroke="#5d82a8" stroke-width="1.5"/>
+<text x="972.5" y="399.5" text-anchor="middle" dominant-baseline="middle" fill="#0b2140">
+<tspan x="972.5" font-size="15.5" font-weight="700">Display stack</tspan>
+<tspan x="972.5" dy="17" font-size="11.5" opacity="0.85">[Component: Xvfb, x11vnc, noVNC]</tspan>
+<tspan x="972.5" dy="20" font-size="12.5">For browser apps; watch it</tspan>
+<tspan x="972.5" dy="17" font-size="12.5">over VNC</tspan>
+</text>
+<rect x="860" y="565" width="225" height="115" rx="10" fill="#85bbf0" stroke="#5d82a8" stroke-width="1.5"/>
+<text x="972.5" y="588.5" text-anchor="middle" dominant-baseline="middle" fill="#0b2140">
+<tspan x="972.5" font-size="15.5" font-weight="700">Egress broker</tspan>
+<tspan x="972.5" dy="17" font-size="11.5" opacity="0.85">[Component: Node.js]</tspan>
+<tspan x="972.5" dy="20" font-size="12.5">Allows only declared hosts</tspan>
+<tspan x="972.5" dy="17" font-size="12.5">(network:host,</tspan>
+<tspan x="972.5" dy="17" font-size="12.5">browser:navigate)</tspan>
+</text>
+<rect x="860" y="765" width="225" height="110" rx="10" fill="#85bbf0" stroke="#5d82a8" stroke-width="1.5"/>
+<text x="972.5" y="794.5" text-anchor="middle" dominant-baseline="middle" fill="#0b2140">
+<tspan x="972.5" font-size="15.5" font-weight="700">GitHub API broker</tspan>
+<tspan x="972.5" dy="17" font-size="11.5" opacity="0.85">[Component: Node.js]</tspan>
+<tspan x="972.5" dy="20" font-size="12.5">Allows only declared API</tspan>
+<tspan x="972.5" dy="17" font-size="12.5">verbs (github:*)</tspan>
+</text>
+<rect x="410" y="975" width="280" height="110" rx="10" fill="#6b7280" stroke="#4b5563" stroke-width="1.5"/>
+<text x="550" y="1004.5" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="550" font-size="15.5" font-weight="700">Kernel</tspan>
+<tspan x="550" dy="17" font-size="11.5" opacity="0.85">[Landlock, seccomp, cgroups]</tspan>
+<tspan x="550" dy="20" font-size="12.5">Checks every syscall against the</tspan>
+<tspan x="550" dy="17" font-size="12.5">app's policy</tspan>
+</text>
+<rect x="860" y="975" width="225" height="110" rx="10" fill="#6b7280" stroke="#4b5563" stroke-width="1.5"/>
+<text x="972.5" y="1004.5" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="972.5" font-size="15.5" font-weight="700">Internet hosts</tspan>
+<tspan x="972.5" dy="17" font-size="11.5" opacity="0.85">[External System]</tspan>
+<tspan x="972.5" dy="20" font-size="12.5">Reached only through the</tspan>
+<tspan x="972.5" dy="17" font-size="12.5">brokers</tspan>
+</text>
+<rect x="24" y="1116" width="16" height="16" rx="4" fill="#438dd5" stroke="#3c7fc0"/>
+<text x="46" y="1128.5" font-size="12.5" class="bl">Container</text>
+<rect x="117" y="1116" width="16" height="16" rx="4" fill="#85bbf0" stroke="#5d82a8"/>
+<text x="139" y="1128.5" font-size="12.5" class="bl">Component</text>
+<rect x="210" y="1116" width="16" height="16" rx="4" fill="#6b7280" stroke="#4b5563"/>
+<text x="232" y="1128.5" font-size="12.5" class="bl">External</text>
+</svg>

@@ -1,16 +1,16 @@
 import { Command, Flags } from "@oclif/core";
-import { chmodSync, constants, copyFileSync, existsSync, mkdirSync, renameSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { chmodSync, constants, copyFileSync, existsSync, mkdirSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { clearQuarantine, installArtifacts, releasePair, sha256File } from "../../vm/artifacts.js";
 import { readConfigFile, resolveArtifactsDir, resolveArtifactsUrl } from "../../vm/config.js";
-import { activePins, checkHost, locateVmm, writeEntitlementsFile } from "../../vm/host.js";
+import { activePins, checkHost, locateVmm, staleInstalledVmm, writeEntitlementsFile } from "../../vm/host.js";
 import { vmHome } from "../../vm/paths.js";
-import { PINS, vmmPin } from "../../vm/pins.js";
+import { PINS, libkrunNames, libkrunPin, vmmPin } from "../../vm/pins.js";
 import { ensureLayers } from "../../vm/runtime.js";
 
 export default class VmInstall extends Command {
   static override description =
-    "Install the pinned microVM kernel and rootfs (and, when it isn't there, berth-vmm) into ~/.berth/vm, verified against their sha256 pins, and check that berth-vmm and libkrun can boot them";
+    "Install the pinned microVM kernel and rootfs (and berth-vmm, when it isn't there or is an older release's) into ~/.berth/vm, verified against their sha256 pins, and check that berth-vmm and libkrun can boot them";
   static override examples = [
     "<%= config.bin %> vm install",
     "<%= config.bin %> vm install --from ../vm-runtime-artifacts --vmm packages/vmm/target/release/berth-vmm",
@@ -60,18 +60,62 @@ export default class VmInstall extends Command {
       }
       renameSync(`${dest}.tmp`, dest);
       this.log(`✔ berth-vmm copied to ${dest}`);
-    } else if (!process.env.BERTH_VMM && !locateVmm(process.env, config.vm?.vmm)) {
-      // No berth-vmm anywhere: fetch the published one, pinned in this CLI.
-      if (!published) {
-        this.log(`! no berth-vmm found, and none is published for ${process.platform}-${process.arch} in this CLI version; build it (packages/vmm: cargo build --release) and pass --vmm`);
-      } else {
+      // A libkrun beside the build (as CI and a release lay them out) goes
+      // with it, since berth-vmm loads the one beside itself first.
+      const names = libkrunNames();
+      const lib = join(dirname(src), names.link);
+      if (existsSync(lib)) {
+        const real = realpathSync(lib);
+        const name = basename(real) === names.link ? names.file : basename(real);
+        copyFileSync(real, join(vmHome(), "bin", name));
+        rmSync(join(vmHome(), "bin", names.link), { force: true });
+        symlinkSync(name, join(vmHome(), "bin", names.link));
+        this.log(`✔ ${name} copied beside it, from ${real}`);
+      }
+    } else if (!process.env.BERTH_VMM && !config.vm?.vmm) {
+      // The published berth-vmm, pinned in this CLI, into ~/.berth/vm/bin:
+      // when none is there, or the one there is an older release's.
+      const home = join(vmHome(), "bin", "berth-vmm");
+      const found = locateVmm(process.env);
+      const decision = found && found !== home ? { replace: false, reason: `using ${found}` } : staleInstalledVmm(home, published, flags.force);
+      if (!decision.replace) {
+        if (!found && !published) {
+          this.log(`! no berth-vmm found, and none is published for ${process.platform}-${process.arch} in this CLI version; build it (packages/vmm: cargo build --release) and pass --vmm`);
+        } else if (found === home) {
+          this.log(`  berth-vmm in ${home}: ${decision.reason}`);
+        }
+      } else if (published) {
+        if (found) this.log(`  berth-vmm in ${home}: ${decision.reason}; replacing it`);
         try {
-          const [r] = await installArtifacts({ ...(from ? { from: resolve(from) } : {}), ...(urlTemplate ? { urlTemplate } : {}), pins: [published], release: releasePair(PINS), log: (m) => this.log(m) });
+          const [r] = await installArtifacts({ ...(from ? { from: resolve(from) } : {}), ...(urlTemplate ? { urlTemplate } : {}), force: true, pins: [published], release: releasePair(PINS), log: (m) => this.log(m) });
           this.log(`✔ berth-vmm ${r!.sha256.slice(0, 16)}… verified (${r!.source === "copied" ? `copied from ${r!.from}` : `downloaded from ${r!.from}`}, ${r!.ms} ms)`);
           this.log(`    ${r!.path}`);
         } catch (err) {
           this.error(err instanceof Error ? err.message : String(err));
         }
+      }
+    }
+    // The libkrun the published berth-vmm was built against, beside it (its
+    // RUNPATH is $ORIGIN, its LC_RPATH @loader_path), with the link the
+    // loader looks for.
+    const libkrun = libkrunPin();
+    const home = join(vmHome(), "bin", "berth-vmm");
+    if (libkrun && published && !flags.vmm && existsSync(home) && (await sha256File(home)) === published.sha256) {
+      try {
+        const [r] = await installArtifacts({ ...(from ? { from: resolve(from) } : {}), ...(urlTemplate ? { urlTemplate } : {}), force: flags.force, pins: [libkrun], release: releasePair(PINS), log: (m) => this.log(m) });
+        const link = join(vmHome(), "bin", libkrunNames().link);
+        let current: string | undefined;
+        try {
+          current = readlinkSync(link);
+        } catch {}
+        if (current !== libkrun.file) {
+          rmSync(link, { force: true });
+          symlinkSync(libkrun.file, link);
+        }
+        this.log(`✔ libkrun ${r!.sha256.slice(0, 16)}… verified (${r!.source === "installed" ? "already installed" : r!.source === "copied" ? `copied from ${r!.from}` : `downloaded from ${r!.from}`}, ${r!.ms} ms)`);
+        this.log(`    ${r!.path} (and ${link})`);
+      } catch (err) {
+        this.error(err instanceof Error ? err.message : String(err));
       }
     }
     // The kernel and rootfs berth-vmm was built to boot; it refuses any other.
@@ -92,7 +136,7 @@ export default class VmInstall extends Command {
       const vmm = locateVmm(process.env, config.vm?.vmm);
       if (!vmm) this.error("--layer needs a berth-vmm, which carries the layer pins");
       try {
-        await ensureLayers(flags.layer, vmm, (m) => this.log(m), "--layer");
+        await ensureLayers(flags.layer, vmm, (m) => this.log(m), "--layer", { ...(from ? { from: resolve(from) } : {}), ...(urlTemplate ? { urlTemplate } : {}) });
       } catch (err) {
         this.error(err instanceof Error ? err.message : String(err));
       }

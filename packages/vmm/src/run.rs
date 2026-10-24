@@ -72,15 +72,16 @@ until the guest powers off ({\"op\":\"shutdown\"} on control.sock, or every app 
                         vsock 1026. Without it the guest has no way out at all
   --egress-max-conns N  concurrent egress tunnels (default 64)
   --no-host-sandbox     don't confine berth-vmm itself. By default, just before
-                        the VM starts, it applies a Seatbelt profile allowing
-                        only this sandbox's kernel, rootfs, app directories,
-                        state and secrets disks and run directory (and outbound
-                        TCP for the egress dialer); see src/sandbox.rs
+                        the VM starts, it confines itself to this sandbox's
+                        kernel, rootfs, app directories, state and secrets
+                        disks and run directory (and outbound TCP for the
+                        egress dialer): a Seatbelt profile on macOS, Landlock
+                        and a seccomp deny list on Linux; see src/sandbox.rs
   --host-sandbox-probe PATH
                         after confining itself, try to read and write PATH and
                         report the result in the host_sandbox line (repeatable;
                         a diagnostic, used by scripts/e2e.mjs)
-  --layer NAME          attach the optional layer NAME (pinned in rootfs/manifest.toml
+  --layer NAME          attach the optional layer NAME (pinned in rootfs/manifest-<arch>.toml
                         as layer_<NAME>_*), from <artifacts>/layers/layer-<NAME>-<sha>.erofs,
                         read-only; berth-init lays it over the base (repeatable).
                         See docs/design/microvm-layers.md
@@ -126,7 +127,7 @@ pub fn opts(argv: &[String]) -> Opts {
     let mut log_level = 1;
     let mut egress_allow: Vec<String> = vec![];
     let mut egress_max: Option<usize> = None;
-    let mut host_sandbox = cfg!(target_os = "macos");
+    let mut host_sandbox = cfg!(any(target_os = "macos", target_os = "linux"));
     let mut probes: Vec<String> = vec![];
     let mut publish: Vec<u16> = vec![];
     let mut layer_names: Vec<String> = vec![];
@@ -176,7 +177,7 @@ pub fn opts(argv: &[String]) -> Opts {
     }
     if !host_sandbox {
         eprintln!("{{\"source\":\"berth-vmm\",\"event\":\"host_sandbox\",\"kind\":null,\"applied\":false,\"reason\":{:?}}}",
-            if cfg!(target_os = "macos") { "--no-host-sandbox" } else { "no host sandbox on this platform yet" });
+            if cfg!(any(target_os = "macos", target_os = "linux")) { "--no-host-sandbox" } else { "no host sandbox on this platform" });
         if !probes.is_empty() {
             die("--host-sandbox-probe needs the host sandbox");
         }
@@ -194,12 +195,12 @@ pub fn opts(argv: &[String]) -> Opts {
     // The pinned artifacts.
     let art = PathBuf::from(artifacts.unwrap_or_else(|| format!("{}/.berth/vm", home())));
     let kernel = art.join("kernel/sha256").join(pins::kernel_pin()).join("Image");
-    need_file(&kernel, "the pinned kernel (kernel/manifest.toml image_sha256)");
+    need_file(&kernel, "the pinned kernel (kernel/manifest-<arch>.toml image_sha256)");
     let rootfs = match rootfs {
         Some(r) => r,
         None => {
             let p = art.join("rootfs").join(format!("rootfs-{}.erofs", pins::rootfs_pin()));
-            need_file(&p, "the pinned rootfs (rootfs/manifest.toml image_sha256)");
+            need_file(&p, "the pinned rootfs (rootfs/manifest-<arch>.toml image_sha256)");
             p.display().to_string()
         }
     };

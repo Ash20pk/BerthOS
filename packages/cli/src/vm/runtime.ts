@@ -61,19 +61,22 @@ export async function ensureArtifacts(log: (message: string) => void, vmm: strin
  * yet: downloaded once, from the same release as the kernel and rootfs, and
  * checked like them. Says what and how big first; the browser is hundreds of MB.
  */
-export async function ensureLayers(names: string[], vmm: string, log: (message: string) => void, needer = "this sandbox"): Promise<void> {
+export async function ensureLayers(names: string[], vmm: string, log: (message: string) => void, needer = "this sandbox", source?: { from?: string; urlTemplate?: string }): Promise<void> {
   const pins = vmmLayerPins(vmm);
   for (const name of names) {
     const pin = pins[name];
     if (!pin) throw new VmHostError(`this berth-vmm pins no ${name} layer; update it with \`berth vm install\``);
     if (artifactsPresent(undefined, [pin])) continue;
+    // `berth vm install` passes its own --from/--url/--no-download; a sandbox
+    // that needs a layer goes to the configured sources.
     const config = readConfigFile();
-    const from = resolveArtifactsDir(undefined, process.env, config);
+    const from = source ? source.from : resolveArtifactsDir(undefined, process.env, config);
+    const urlTemplate = source ? source.urlTemplate : resolveArtifactsUrl(undefined, process.env, config);
     log(`the ${name} layer (${Math.round(pin.size / 1048576)} MB) is needed by ${needer}; installing it once into ${vmHome()}...`);
     try {
       const [r] = await installArtifacts({
         ...(from && existsSync(from) ? { from } : {}),
-        urlTemplate: resolveArtifactsUrl(undefined, process.env, config),
+        ...(urlTemplate ? { urlTemplate } : {}),
         release: releasePair(activePins(vmm)),
         pins: [pin],
         log,

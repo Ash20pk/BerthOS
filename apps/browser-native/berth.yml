@@ -23,6 +23,10 @@ exports:
     input: { url: string }
   - name: click
     input: { selector: string }
+  - name: fill
+    input: { selector: string, value: string }
+  - name: press
+    input: { selector: string, key: string }
   - name: get_page_text
     output: { text: string }
   - name: search

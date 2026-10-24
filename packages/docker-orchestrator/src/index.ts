@@ -10,6 +10,7 @@ export {
   describeDockerHost,
   type DockerHostResolution,
 } from "./docker-host.js";
+export { SCAFFOLD_BUILD_APPROVALS } from "./build-approvals.js";
 export { buildCacheRef, buildImage, checkoutId, checkoutTag, removeImageKeepingCache, type BuildImageOptions, type BuildTarget } from "./image.js";
 export {
   startContainer,
