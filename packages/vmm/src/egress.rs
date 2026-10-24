@@ -312,9 +312,16 @@ struct Dialer {
     next_id: AtomicU64,
 }
 
-/// Starts the dialer on its own threads. It lives as long as the process
-/// (libkrun exits the process when the guest powers off).
-pub fn start(cfg: &Config) -> Result<(), String> {
+/// The dialer's socket, bound and logged, not yet served.
+pub struct Bound {
+    listener: UnixListener,
+    d: Arc<Dialer>,
+}
+
+/// Binds the dialer's socket. Nothing is served until `serve`: on Linux the
+/// host sandbox binds only threads started after it, so the dialer's threads
+/// start once berth-vmm is confined.
+pub fn bind(cfg: &Config) -> Result<Bound, String> {
     let _ = std::fs::remove_file(&cfg.socket);
     let listener = UnixListener::bind(&cfg.socket).map_err(|e| format!("egress dialer: cannot listen on {}: {e}", cfg.socket.display()))?;
     {
@@ -329,34 +336,59 @@ pub fn start(cfg: &Config) -> Result<(), String> {
         allow.join(","),
         cfg.max_conns
     ));
-    std::thread::Builder::new()
-        .name("egress".into())
-        .spawn(move || {
-            for conn in listener.incoming() {
-                let Ok(conn) = conn else { continue };
-                let id = d.next_id.fetch_add(1, Ordering::SeqCst);
-                if d.active.fetch_add(1, Ordering::SeqCst) >= d.max_conns {
-                    d.active.fetch_sub(1, Ordering::SeqCst);
-                    deny(id, &conn, "busy", "", 0, &format!("{} tunnels open, the cap", d.max_conns));
-                    continue;
+    Ok(Bound { listener, d })
+}
+
+impl Bound {
+    /// Serves the dialer on its own threads. It lives as long as the process
+    /// (libkrun exits the process when the guest powers off).
+    pub fn serve(self) -> Result<(), String> {
+        let Bound { listener, d } = self;
+        std::thread::Builder::new()
+            .name("egress".into())
+            .spawn(move || {
+                for conn in listener.incoming() {
+                    let Ok(conn) = conn else { continue };
+                    let id = d.next_id.fetch_add(1, Ordering::SeqCst);
+                    if d.active.fetch_add(1, Ordering::SeqCst) >= d.max_conns {
+                        d.active.fetch_sub(1, Ordering::SeqCst);
+                        deny(id, &conn, "busy", "", 0, &format!("{} tunnels open, the cap", d.max_conns));
+                        continue;
+                    }
+                    let d = d.clone();
+                    std::thread::spawn(move || {
+                        handle(&d, id, conn);
+                        d.active.fetch_sub(1, Ordering::SeqCst);
+                    });
                 }
-                let d = d.clone();
-                std::thread::spawn(move || {
-                    handle(&d, id, conn);
-                    d.active.fetch_sub(1, Ordering::SeqCst);
-                });
-            }
-        })
-        .map_err(|e| format!("egress dialer thread: {e}"))?;
-    Ok(())
+            })
+            .map_err(|e| format!("egress dialer thread: {e}"))?;
+        Ok(())
+    }
+}
+
+/// Binds and serves at once (the dialer alone, with no VM to confine first).
+pub fn start(cfg: &Config) -> Result<(), String> {
+    bind(cfg)?.serve()
 }
 
 fn deny(id: u64, mut conn: &UnixStream, code: &str, host: &str, port: u16, why: &str) {
     let decision = if code == "unreachable" { "failed" } else { "denied" };
     log(format!("\"event\":\"egress\",\"id\":{id},\"decision\":\"{decision}\",\"code\":\"{code}\",\"host\":{},\"port\":{port},\"reason\":{}", js(host), js(why)));
     let _ = conn.write_all(format!("ERR {code} {why}\n").as_bytes());
+    // Half-close, then let the guest hang up first: libkrun on Linux drops a
+    // stream's undelivered bytes when the host side closes it outright, and
+    // the guest saw EOF without the ERR line. Bounded, so a guest that never
+    // closes holds the thread for at most DENY_LINGER.
+    let _ = conn.shutdown(Shutdown::Write);
+    let _ = conn.set_read_timeout(Some(DENY_LINGER));
+    let mut sink = [0u8; 512];
+    while matches!(conn.read(&mut sink), Ok(n) if n > 0) {}
     let _ = conn.shutdown(Shutdown::Both);
 }
+
+/// How long a refused connection waits for the guest to close it.
+const DENY_LINGER: std::time::Duration = std::time::Duration::from_secs(5);
 
 fn read_request(conn: &UnixStream) -> Result<String, &'static str> {
     conn.set_read_timeout(Some(REQUEST_TIMEOUT)).map_err(|_| "socket error")?;

@@ -1,4 +1,4 @@
-# gitleaks' default rules, plus one allowlist entry.
+# gitleaks' default rules, plus two allowlist entries.
 #
 # The containment benchmark generates a throwaway canary on every run
 # (bench/run.mjs: `bench-canary-${randomBytes(12).toString("hex")}`) and
@@ -9,10 +9,18 @@
 #
 # Allowlisted by the canary's exact shape, not by path: a real key committed
 # to bench/results/ is still caught.
+#
+# The VM pin manifests (packages/vmm/{kernel,rootfs}/manifest-<arch>.toml)
+# record each guest binary's content hash as `<name>_sha256 = "<64 hex>"`,
+# and `github_api_broker_sha256` trips generic-api-key on its name alone. The
+# sha256 of a published file is public by design; allowlisted by that shape.
 [extend]
 useDefault = true
 
 [allowlist]
-description = "containment benchmark canary (bench/run.mjs), not a credential"
+description = "containment benchmark canary (bench/run.mjs) and VM artifact sha256 pins, not credentials"
 regexTarget = "match"
-regexes = ['''BENCH_WORKLOAD_SECRET=bench-canary-[0-9a-f]{24}\b''']
+regexes = [
+  '''BENCH_WORKLOAD_SECRET=bench-canary-[0-9a-f]{24}\b''',
+  '''[a-z0-9_]+_sha256 = "[0-9a-f]{64}"''',
+]

@@ -2,11 +2,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { checkHost, staleInstalledVmm, vmmFeatures } from "./host.js";
-import { KERNEL_PIN, ROOTFS_PIN } from "./pins.js";
+import { KERNEL_PIN, ROOTFS_PIN, libkrunPin } from "./pins.js";
 
 const dir = mkdtempSync(join(tmpdir(), "berth-host-"));
 function fakeVmm(kernel = KERNEL_PIN.sha256, rootfs = ROOTFS_PIN.sha256) {
@@ -49,10 +49,25 @@ test("unsigned berth-vmm: fail, with the codesign command that fixes it", () => 
 test("libkrun missing or the wrong version: fail, with the install command", () => {
   const missing = byId(checkHost({ env: { BERTH_VMM: fakeVmm() }, platform: "darwin", run: host({ libkrun: join(dir, "nope", "libkrun.1.dylib") }) }));
   assert.equal(missing.libkrun!.status, "fail");
-  assert.match(missing.libkrun!.remedy!, /brew tap libkrun\/krun && brew install libkrun/);
+  // A CLI that pins a published macOS libkrun installs it; one that doesn't sends you to Homebrew.
+  assert.match(missing.libkrun!.remedy!, libkrunPin(`darwin-${process.arch}`) ? /berth vm install/ : /brew tap libkrun\/krun && brew install libkrun/);
   const old = byId(checkHost({ env: { BERTH_VMM: fakeVmm() }, platform: "darwin", run: host({ libkrun: oldLib }) }));
   assert.equal(old.libkrun!.status, "fail");
   assert.match(old.libkrun!.detail, /1\.18\.0 .*built against 1\.19\.6/);
+});
+
+test("a published macOS berth-vmm links @rpath/libkrun.1.dylib: the one beside it", () => {
+  const bin = join(dir, "published-bin");
+  mkdirSync(bin);
+  const vmm = fakeVmm();
+  const inBin = join(bin, "berth-vmm");
+  writeFileSync(inBin, readFileSync(vmm));
+  chmodSync(inBin, 0o755);
+  writeFileSync(join(bin, "libkrun.1.19.6.dylib"), "");
+  symlinkSync("libkrun.1.19.6.dylib", join(bin, "libkrun.1.dylib"));
+  const c = byId(checkHost({ env: { BERTH_VMM: inBin }, platform: "darwin", run: host({ libkrun: "@rpath/libkrun.1.dylib" }) }));
+  assert.equal(c.libkrun!.status, "ok");
+  assert.match(c.libkrun!.detail, new RegExp(`1\\.19\\.6 at ${join(bin, "libkrun.1.dylib")}`));
 });
 
 test("no hypervisor, no berth-vmm, other pins", () => {
