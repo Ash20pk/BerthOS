@@ -1,7 +1,7 @@
 #!/bin/sh
 # Runs INSIDE a builder (scripts/common.sh run_builder: a libkrun builder VM
 # with TSI on for apk and the Go module proxy, or a container on a Linux
-# runner), like build-berth-init-in-vm.sh. Alpine's go is natively aarch64, and
+# runner), like build-berth-init-in-vm.sh. Alpine's go is native to the builder's architecture, and
 # with CGO_ENABLED=0 the daemon is a static binary with no libc at all.
 #   /src  (virtio-fs, read-only): semantic-fs-daemon/
 #   /out  (virtio-fs): semantic-fs-daemon, test.log, apk.lock
