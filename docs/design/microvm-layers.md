@@ -1,6 +1,6 @@
 # Optional layers for the microVM, and embeddings
 
-Status: layers and the browser layer built (feat/vm-layers); embeddings still a proposal. Covers the browser (the last capability the VM refused) and a proposal for embeddings.
+Status: layers and the browser layer built (feat/vm-layers); embeddings spiked — don't switch, keep the built daemon. Covers the browser (the last capability the VM refused) and a proposal for embeddings.
 
 ## The problem
 
@@ -85,6 +85,55 @@ The spike, before anything changes:
 
 If a static model ranks those cases as well, switch. If not, keep A as built and do B once layers exist. C is the option I'd rule out: a host process doing work for the guest on app-supplied text is the kind of channel the VM is there to avoid.
 
+### Spike results (one static model tried so far)
+
+Ran all-MiniLM-L6-v2 (via `@xenova/transformers`, as built) against `potion-base-8M`
+(model2vec, static, a third-party JS port with no official package yet — single
+maintainer, worth re-checking before depending on it for real) on the milestone's
+three query/fixture pairs:
+
+| | rank correct | RSS added | load time |
+|---|---|---|---|
+| all-MiniLM-L6-v2 (built) | 3/3 | +216 MB | 193 ms |
+| potion-base-8M (static) | 3/3 | +53 MB | 31 ms |
+
+Ranking was identical, but potion's absolute cosine scores (0.15–0.25) sit at or
+below the **0.2 threshold calibrated for MiniLM** (`embeddingMatchThreshold`,
+`index.go`), so two of the three cases would be silently dropped by the
+match-or-keyword gate even though the ranking was right — a drop-in swap doesn't
+work without recalibrating the threshold.
+
+Recalibrating on 16 short, tag-style pairs (the same register the 0.2 threshold
+was calibrated against) found potion's related scores cluster at 0.13–0.56 (mean
+0.28) and unrelated at -0.07–0.46 (mean 0.07, one outlier), giving a best
+separating threshold of **~0.11** at 15/16 correct. The one miss — two dissimilar
+short tags ("unrelated-refactor" vs "fix-auth-bug") scoring 0.463 — is a false
+positive a threshold alone can't fix, and it's new: MiniLM didn't show it on this
+set.
+
+**Widening the set reverses the read.** 16 pairs only tested topically unrelated
+negatives ("fix-auth-bug" vs "quarterly marketing plan"), which any model
+separates easily. Adding 18 harder negatives — same topic area, different task
+("database migration" vs "database backup schedule", "rate limit handling" vs
+"rate card pricing update") — is where potion-base-8M actually needs to work,
+and there it doesn't: those 18 scored a mean of 0.473, *higher* than the mean of
+genuinely related pairs (0.360). Best achievable threshold over the full 34-pair
+set drops to 68% correct. A static token-lookup-and-mean-pool model has no way
+to tell "database migration" from "database backup" apart — both are dominated
+by the shared word "database" — which is exactly the kind of same-topic
+discrimination semantic-fs's cosine term exists to do once keyword matching
+already found the topic.
+
+**Recommendation: don't switch.** Keep A (the built daemon, all-MiniLM-L6-v2) for
+both runtimes. A static model isn't a free RAM win here — its failure mode is
+false-positives on same-topic/different-task pairs, which is worse than the
+250 MB it would save. Revisit only if a different static model demonstrates it
+can separate same-topic negatives on a set this size; don't re-test
+potion-base-8M itself without a materially different pooling/tokenization
+approach, since the shared-word problem is structural, not a tuning issue. B
+(the built kit shipped as a layer, saving the 28 MB download for non-`/context`
+apps) is still open and doesn't depend on this question.
+
 ## Steps
 
 1. **Layers.** The build script, the pins, `berth-vmm --layer`, `berth-init`'s overlay mounts, CLI download on demand, attestation of layers. Proven with a small test layer (a few KB, holding a marker binary) before the browser.
@@ -104,6 +153,15 @@ If a static model ranks those cases as well, switch. If not, keep A as built and
 
 ## Open questions
 
-- **Every rootfs bump rebuilds every layer in CI** (about 10 minutes for the browser), only to move its base pin. The image itself doesn't change, and since its file is named by its own hash, an installed layer is reused, not downloaded again. Pinning a layer to the base's package set, rather than to the base image's hash, would save the rebuild; it needs a hash of the base's apk database in the manifest.
+- **Every rootfs bump rebuilds every layer in CI** (about 10 minutes for the browser), only to move its base pin. The image itself doesn't change, and since its file is named by its own hash, an installed layer is reused, not downloaded again. Pinning a layer to the base's package set, rather than to the base image's hash, would save the rebuild; it needs a hash of the base's apk database in the manifest. Scoped below, not yet built: it's boot-time verification code (`berth-vmm` refusing a layer built for the wrong base), and round-tripping it needs a real rootfs + layer rebuild on the Linux builder, not just a code read.
+
+  **The plan:**
+  1. `build-rootfs.sh` computes `apk_db_sha256`: the sha256 of the installed package set (e.g. `apk info -v | sort`, or the APKINDEX entries actually installed — whichever is stable across a rebuild that reproduces the same image). Stores it in `rootfs/manifest.toml` next to `image_sha256`, and bakes it into the image as `/etc/berth/apk-db-sha256` so a booted guest (and `berth-vmm`, which hashes the mounted image) can read it without rebuilding.
+  2. `build-layer.sh` pins `layer_<name>_apk_base` (the base's `apk_db_sha256`) instead of `layer_<name>_base` (the base's `image_sha256`). `layer_<name>_base` can stay too, informationally, since it's still useful in the mismatch error message.
+  3. `pins.rs`'s `LayerPin` gets an `apk_base: String` field (`layer_pin_in` parses it); `verify_layer` reads `/etc/berth/apk-db-sha256` from the booted rootfs (mounted alongside it, the same way it already hashes the rootfs image) and compares against `pin.apk_base` instead of requiring `pin.base == booted_rootfs`.
+  4. CI (`vm-artifacts.yml`): a rootfs rebuild that doesn't change the package set no longer needs to rebuild every layer — it checks each layer's `apk_db_sha256` still matches and leaves the layer file alone.
+  5. Verify by hand before trusting it: bump something that changes `berth-init` (not packages) in `build-rootfs.sh`, confirm `apk_db_sha256` is unchanged across the rebuild, confirm the already-built browser layer still attaches without a layer rebuild, then do the reverse (bump a package) and confirm the layer is correctly refused until rebuilt.
+
+  Risk to call out before building it: a layer links against the base's shared libraries, not just its package *list* — if `apk_db_sha256` is computed from package names/versions, two bases with the same packages but different compiler flags or an Alpine point-release's rebuilt binaries could share a hash while actually being ABI-incompatible. Worth either hashing the actual installed file list under `/usr` and `/lib` (not just the apk database), or accepting that risk explicitly and documenting it, before this replaces the current exact-image-hash check.
 - **Only one layer, the browser, is published for apps.** The example layer ships too, so CI and the e2e can prove the mechanism; it is 460 KB.
 - **The display stack runs whenever the browser layer is attached,** even for a sandbox that only drives Chromium headless (`BERTH_TEST_MODE`). Starting it lazily, on the app's first display connection, would save about 40 MB.
