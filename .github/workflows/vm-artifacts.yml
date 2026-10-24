@@ -309,13 +309,13 @@ jobs:
       # esbuild, yaml and zod at the lockfile's versions, for the sdk-node bundles.
       - run: pnpm install --frozen-lockfile
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: guest-${{ matrix.arch }}
           path: ${{ env.BERTH_VMM_ARTIFACTS }}
 
       # Pinning: the guest job's manifest carries the binaries' new pins.
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: env.UPDATE_MANIFEST == '1'
         with:
           name: pins-guest-${{ matrix.arch }}
@@ -399,12 +399,12 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       # The base each layer is built over: the image the rootfs job just checked.
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: rootfs-${{ matrix.arch }}
           path: ${{ env.BERTH_VMM_ARTIFACTS }}/rootfs
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: env.UPDATE_MANIFEST == '1'
         with:
           name: pins-rootfs-${{ matrix.arch }}
@@ -467,12 +467,12 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: env.UPDATE_MANIFEST == '1'
         with:
           name: pins-kernel-${{ matrix.arch }}
           path: packages/vmm
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: env.UPDATE_MANIFEST == '1'
         with:
           name: pins-layers-${{ matrix.arch }}
@@ -661,12 +661,12 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: env.UPDATE_MANIFEST == '1'
         with:
           name: pins-kernel-x86_64
           path: packages/vmm
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: env.UPDATE_MANIFEST == '1'
         with:
           name: pins-layers-x86_64
@@ -682,12 +682,12 @@ jobs:
           test -r /dev/kvm && test -w /dev/kvm
           uname -a; cat /sys/kernel/security/lsm; echo
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: "{kernel,rootfs,layers}-x86_64"
           path: ${{ runner.temp }}/dl
           merge-multiple: true
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: vmm-linux-x64
           path: ${{ runner.temp }}/vmm
@@ -823,19 +823,19 @@ jobs:
     steps:
       # In job order, each over the last: the layers job's rootfs manifest is
       # the final one (the guest and rootfs jobs' are steps on the way).
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: pins-guest-${{ inputs.arch }}
           path: pins
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: pins-rootfs-${{ inputs.arch }}
           path: pins
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: pins-layers-${{ inputs.arch }}
           path: pins
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: pins-kernel-${{ inputs.arch }}
           path: pins
@@ -876,13 +876,13 @@ jobs:
 
       # Only the release's own artifacts: the run also holds guest (the rootfs
       # job's inputs, as directories) and, on a failure, build logs.
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: steps.skip.outputs.skip != 'yes'
         with:
           pattern: "{kernel,rootfs,layers}-${{ matrix.arch }}"
           path: dist
           merge-multiple: true
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: steps.skip.outputs.skip != 'yes'
         with:
           pattern: ${{ env.VMM_PATTERN }}
