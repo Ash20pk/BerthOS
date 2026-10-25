@@ -22,6 +22,20 @@ use landlock::{
 };
 use serde::Deserialize;
 
+// Shadows std's eprintln! for this crate (seccomp.rs included, since it is
+// declared below). std's version writes each piece of the format string with
+// its own write(2), so when two apps' agent-init share one stderr their lines
+// interleave mid-line. Formatting first and writing once keeps each line
+// whole: a single write under PIPE_BUF to a pipe is atomic.
+macro_rules! eprintln {
+    ($($arg:tt)*) => {{
+        use std::io::Write as _;
+        let mut line = format!($($arg)*);
+        line.push('\n');
+        let _ = std::io::stderr().write_all(line.as_bytes());
+    }};
+}
+
 mod seccomp;
 
 #[derive(Deserialize)]
