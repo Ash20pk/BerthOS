@@ -17,18 +17,18 @@ packages = "rootfs/packages.txt"
 source_date_epoch = 1790812800
 # /usr/local/bin/agent-init and berth-probe: build-agent-init.sh, from
 # packages/agent-init at this commit (main contains it).
-agent_init_ref = "fix/seccomp-io-uring-vsock"
-agent_init_commit = "c558ef85a920eece0413f2c08345a67396342153"
-agent_init_sha256 = "112c5f4ff89706e810b867da2e3121196e1294247a876c80b10de1ab337ec129"
+agent_init_ref = "fix/agent-init-atomic-log"
+agent_init_commit = "0204e8f2c9b924d8fe2f20c7390fe43689b4b2fa"
+agent_init_sha256 = "e8ba190c2b317d574eebfc99aa04e867ed1e5aa8cca562eb153f34a78672348a"
 probe_sha256 = "c722bb79589e8fa0f89d75ff3cdd47763aefdf2034ae15bb70baa2ddfcea9d80"
 # /sbin/berth-init and /usr/local/bin/context-bus-daemon: build-berth-init.sh,
 # from this tree (packages/vmm/init, packages/context-bus-daemon).
 berth_init_sha256 = "8fbcb33c88edf01d3e863d82a477b2c9a19c1f2c3d35ba4ad027a48ca3a6ac44"
-context_bus_daemon_sha256 = "29b094f36cfd578eb72241a4fc8beb4688e856e95bd434db9bd51c6e36bf5f69"
+context_bus_daemon_sha256 = "c9f32a6f42f18c48b3647c5c06b03fc87611f123d2642f33dcf5dea10928edcf"
 # /usr/local/bin/semantic-fs-daemon: build-semantic-fs.sh, from
 # packages/semantic-fs-daemon at HEAD: the daemon that serves /context
 # (docs/design/microvm-semantic-fs.md).
-semantic_fs_daemon_sha256 = "4a6755ac4d3e6bd7233f895f1ea35aa11394961d63ad59faec0b2faa3f2d88f9"
+semantic_fs_daemon_sha256 = "fbf507612ce1714172e103d2fa3df2dc524ccd2dd899d047970ce7e8a0761deb"
 # /usr/local/bin/berth-github-api-broker.cjs: packages/docker-orchestrator/docker/github-api-broker.cjs.
 github_api_broker_sha256 = "0a809855c067d76b2074746b2390f6b204d1d80a7cafdc8cea4371efa624baaa"
 # /usr/local/bin/berth-egress-broker.cjs: packages/docker-orchestrator/docker/egress-broker.cjs.
@@ -56,13 +56,13 @@ terminal = "tmux"
 # builder.apk.lock the builder's (erofs-utils). .github/workflows/vm-artifacts.yml
 # rebuilds it on a Linux runner and fails on any other hash. berth-vmm
 # compiles this in; berth-vmm run boots it by default.
-image_sha256 = "4f4e67cb49a1b07e96412e802bd2c6e42cfabee95d7c126b8589b1048a79a538"
-image_size = 108765184
+image_sha256 = "0c623b43a2c2852fd156d1ea6d4f00a8612143299ec7381cf2d1516607d0a9f6"
+image_size = 108904448
 # Optional layer example (rootfs/layers/example, build-layer.sh), built for the base above.
 layer_example_sha256 = "a79169aeed42b12ecb28cf40427439d5870056362ea8728036354137cd6d273d"
 layer_example_size = 475136
-layer_example_base = "4f4e67cb49a1b07e96412e802bd2c6e42cfabee95d7c126b8589b1048a79a538"
+layer_example_base = "0c623b43a2c2852fd156d1ea6d4f00a8612143299ec7381cf2d1516607d0a9f6"
 # Optional layer browser (rootfs/layers/browser, build-layer.sh), built for the base above.
-layer_browser_sha256 = "ed05e3d09c5de3a01184333174215c4f8a4fe9c1f2f227590290a68724b48641"
-layer_browser_size = 511881216
-layer_browser_base = "4f4e67cb49a1b07e96412e802bd2c6e42cfabee95d7c126b8589b1048a79a538"
+layer_browser_sha256 = "b02cec7e83efe1dcb39b78ebbef5bf30e8ebda082c7b87a4bd30e7375d976fb2"
+layer_browser_size = 511885312
+layer_browser_base = "0c623b43a2c2852fd156d1ea6d4f00a8612143299ec7381cf2d1516607d0a9f6"
