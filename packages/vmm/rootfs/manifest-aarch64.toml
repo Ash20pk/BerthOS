@@ -19,7 +19,7 @@ source_date_epoch = 1790812800
 # packages/agent-init at this commit (main contains it).
 agent_init_ref = "fix/agent-init-atomic-log"
 agent_init_commit = "0204e8f2c9b924d8fe2f20c7390fe43689b4b2fa"
-agent_init_sha256 = "9ec8b25e38d31ee82a28155304f730c0ec589b057d11fce2a56c661455929483"
+agent_init_sha256 = "0c1d011166a4e35167c4023cc65fb89a9aa2087ba7681c4c597cfd4111f9148f"
 probe_sha256 = "6ec735d885b58861b33abdd70a5a4d48ecad803cc92bd94c02f876a3346453d0"
 # /sbin/berth-init and /usr/local/bin/context-bus-daemon: build-berth-init.sh,
 # from this tree (packages/vmm/init, packages/context-bus-daemon).
@@ -56,13 +56,13 @@ terminal = "tmux"
 # builder.apk.lock the builder's (erofs-utils). .github/workflows/vm-artifacts.yml
 # rebuilds it on a Linux runner and fails on any other hash. berth-vmm
 # compiles this in; berth-vmm run boots it by default.
-image_sha256 = "2a57d350cb94a3cf3bbb6b8100dad41261a820f0539da281bd05677283b0e621"
-image_size = 108068864
+image_sha256 = "e60172628d1bbc5d36f3df44d81e4b9cf79b02fd87a974621d15e51dec570522"
+image_size = 108072960
 # Optional layer example (rootfs/layers/example, build-layer.sh), built for the base above.
 layer_example_sha256 = "707d1c9ea2b77472954ae2cddb281dbbd1ca2e8f45b1bd191ba8c1f1ee3359c6"
 layer_example_size = 471040
-layer_example_base = "2a57d350cb94a3cf3bbb6b8100dad41261a820f0539da281bd05677283b0e621"
+layer_example_base = "e60172628d1bbc5d36f3df44d81e4b9cf79b02fd87a974621d15e51dec570522"
 # Optional layer browser (rootfs/layers/browser, build-layer.sh), built for the base above.
 layer_browser_sha256 = "643b36055173d7698bfcd103646ec09d0c57b9f61977d4c30e29bef3d5957ce8"
 layer_browser_size = 485203968
-layer_browser_base = "2a57d350cb94a3cf3bbb6b8100dad41261a820f0539da281bd05677283b0e621"
+layer_browser_base = "e60172628d1bbc5d36f3df44d81e4b9cf79b02fd87a974621d15e51dec570522"

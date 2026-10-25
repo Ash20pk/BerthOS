@@ -40,11 +40,11 @@ export interface GuestPins {
 export const GUEST_PINS: Partial<Record<GuestArch, GuestPins>> = {
   aarch64: {
     kernel: { sha256: "8f79e8dae97ebc0ab8fcdc4ad209bb025ec967be82c713503e0612cfdd340ec8", size: 23668744, linux: "6.12.109", configSha256: "e3f33c2bd4bffa16e52a066c325967e4bde091f20063e6eb5b81e8a2efac4dc8" },
-    rootfs: { sha256: "bf06cedb9b40c5f23a74e2b2fe87458cd43b81a7d65ce09a65730b1e7cf590fa", size: 107937792 },
+    rootfs: { sha256: "e60172628d1bbc5d36f3df44d81e4b9cf79b02fd87a974621d15e51dec570522", size: 108072960 },
   },
   x86_64: {
     kernel: { sha256: "10d4b54c0896668a93f9d26d0a701aac4a14ce813f3ed4d3b4d26e50d7b7b8d1", size: 27928992, linux: "6.12.109", configSha256: "6e0fd31c75cd563f8bf650765504d97989316f70e9bbb333fb0230db78fe4283" },
-    rootfs: { sha256: "4f4e67cb49a1b07e96412e802bd2c6e42cfabee95d7c126b8589b1048a79a538", size: 108765184 },
+    rootfs: { sha256: "0c623b43a2c2852fd156d1ea6d4f00a8612143299ec7381cf2d1516607d0a9f6", size: 108904448 },
   },
 };
 
@@ -121,8 +121,8 @@ export type VmmPlatform = "darwin-arm64" | "linux-arm64" | "linux-x64";
  * `berth vm install` refuses any other bytes, and clears macOS's quarantine
  * attribute only on a file that matched.
  *
- * All three are from the per-architecture releases vm-artifacts-8f79e8da-bf06cedb
- * (aarch64: darwin-arm64, linux-arm64) and vm-artifacts-10d4b54c-4f4e67cb
+ * All three are from the per-architecture releases vm-artifacts-8f79e8da-e6017262
+ * (aarch64: darwin-arm64, linux-arm64) and vm-artifacts-10d4b54c-0c623b43
  * (x86_64: linux-x64). Runs 40103596964 / 40103557191 and 40104945503 built
  * each of them to the same bytes.
  */
