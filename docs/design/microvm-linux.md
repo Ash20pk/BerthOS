@@ -139,6 +139,11 @@ Each is its own branch, tested before the next.
   `4a6755ac…`, rootfs `bf06cedb…` (aarch64) and `4f4e67cb…` (x86_64), and the layers over them. The
   kernels, agent-init and berth-init rebuilt unchanged. This will recur until the apk cache is pinned
   (open problem 10 in `microvm-runtime.md`).
+- **Re-pinned for the agent-init log fix, 2026-10-25.** agent-init's `eprintln!` wrote each line in
+  pieces, so two apps sharing a stderr spliced their lines together and the Multi-App check failed about
+  one run in three. Both manifests now pin agent-init to the fix (`0204e8f2…`), which also carries main's
+  libc, tokio and sqlite bumps. `update_pins` runs 40198606357 (aarch64) and 40198603422 (x86_64) give
+  rootfs `e6017262…` (aarch64) and `0c623b43…` (x86_64); the kernels are unchanged.
 - **Linux arm64 booted**, 2026-10-24, on a nested-KVM Lima VM (Ubuntu 24.04, Linux 6.8, VZ on an M4) with
   the published linux-arm64 berth-vmm `a3cf2a09…` and its libkrun, rootfs `62f96e1b…`: host sandbox
   Landlock ABI 4 with TCP rules and seccomp; `e2e.mjs` single 18/18, multi 17/17, enforce 12/12, stdio 3/3,
