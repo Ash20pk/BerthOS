@@ -101,7 +101,11 @@ export default class Test extends Command {
       });
 
       const [result] = await docker.run(image, cmd, stdout, {
-        Env: ["BERTH_TEST_MODE=1"],
+        // Production images set BERTH_REQUIRE_APP_CGROUPS=1, and this one-shot
+        // run delegates no cgroup subtree, so the entrypoint would refuse to
+        // boot and the contract check would never run. A test run checks
+        // exports, not per-app resource limits; the entrypoint still warns.
+        Env: ["BERTH_TEST_MODE=1", "BERTH_REQUIRE_APP_CGROUPS=0"],
         HostConfig: {
           AutoRemove: true,
           // Every sandbox mounts /context via FUSE unconditionally (see
@@ -171,6 +175,9 @@ export default class Test extends Command {
       if (exportCheck.parsed?.missingInManifest?.length) {
         this.log(`  implemented but not declared: ${exportCheck.parsed.missingInManifest.join(", ")}`);
       }
+      if (exportCheck.parsed?.error && !exportCheck.parsed.missingInCode?.length && !exportCheck.parsed.missingInManifest?.length) {
+        this.log(`  ${exportCheck.parsed.error}`);
+      }
       for (const r of exportCheck.parsed?.results ?? []) {
         if (!r.ok) this.log(`  ✗ ${r.export}: ${r.error}`);
       }
@@ -200,7 +207,10 @@ function parseLastJsonLine(output: string): ExportCheckResult | undefined {
   const lastLine = output.trim().split("\n").pop();
   if (!lastLine) return undefined;
   try {
-    return JSON.parse(lastLine);
+    // Only the check's own result counts. The entrypoint also prints JSON
+    // event lines, and one of those last (a refused boot) is not a result.
+    const parsed = JSON.parse(lastLine);
+    return typeof parsed?.ok === "boolean" ? parsed : undefined;
   } catch {
     // app's own `npm test`/pytest output won't be JSON — that's expected.
     return undefined;
