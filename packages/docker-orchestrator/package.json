@@ -35,7 +35,7 @@
     "ai-agents"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=22.19"
   },
   "publishConfig": {
     "access": "public",

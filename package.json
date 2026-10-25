@@ -15,7 +15,7 @@
   "author": "Berth Contributors",
   "packageManager": "pnpm@10.21.0",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.19"
   },
   "scripts": {
     "build": "turbo run build",

@@ -42,7 +42,7 @@ An app has two parts: `berth.yml`, which says what it may touch and what it expo
 
 ### Before you start
 
-You need Docker, Node 22+, pnpm and the Berth CLI:
+You need Docker, Node 22.19+, pnpm and the Berth CLI:
 
 ```bash
 npm install -g @berthos/cli

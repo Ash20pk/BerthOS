@@ -62,7 +62,7 @@ Follow these steps in order: prerequisites, install, a first enforcement demo, t
 
 ### Prerequisites
 
-- Node.js 22+ (`nvm use` reads the repo's `.nvmrc`)
+- Node.js 22.19+ (`nvm use` reads the repo's `.nvmrc`)
 - Docker, running locally
 - `corepack enable` (ships with Node 22 and manages pnpm)
 
