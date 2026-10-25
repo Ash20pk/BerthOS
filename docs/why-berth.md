@@ -2,7 +2,11 @@
 
 An agent is only as safe as the tools it can call. Berth gives those tools a boundary the Linux kernel enforces, so you can hand an agent a real shell, a real filesystem and a real browser without handing it your machine. The short version is in the [README](../README.md); this page makes the longer case.
 
-## The problem
+## Context
+
+Berth sits between an agent and the tools it calls. Around it are the team that ships the agent, the model that drives it, and the text the model reads, some of which an attacker may control. The [README](../README.md#level-1-system-context) draws the whole system.
+
+### The problem
 
 Agent frameworks give you a loop and a tool registry. They don't give the agent a computer to work on. That part is left to you: a subprocess here, a sandbox VM there, and a system prompt asking the model to behave.
 
@@ -15,7 +19,11 @@ Teams that ship agents past a demo hit the same gaps:
 - **No memory between runs.** Files, notes and state vanish when the session ends.
 - **Tools that can't coordinate.** Two tools that need to react to each other get glued together in your orchestration code.
 
-## What Berth does about it
+## Containers
+
+Each tool runs as a resident app inside a sandbox, under rules the kernel applies from its manifest. Where the kernel can't see what matters, a proxy in the sandbox enforces it.
+
+### What Berth does about it
 
 Every tool runs as a *resident app* with a manifest, `berth.yml`, that lists what it may touch: `filesystem:write:/workspace`, `network:connect:443`, `browser:navigate:*.github.com`. Before the tool's first line of code runs, Berth compiles that list into Landlock and seccomp rules. Anything not declared is refused by the kernel. A prompt-injected write to `/etc` doesn't get argued down; it fails with `EACCES`.
 
@@ -25,7 +33,11 @@ Where the kernel can't see what matters (it sees ports, not hostnames), a proxy 
 
 Around that boundary you also get the other missing pieces: a live view of the agent's browser and terminal, state that survives the run, and a context bus that lets apps react to each other.
 
-## Use cases
+## Components
+
+The first-party apps, each a resident app, and the job each one does:
+
+### Use cases
 
 **A coding agent with a real shell, not your whole machine.** Give it [`apps/filesystem`](../apps/filesystem) and [`apps/terminal`](../apps/terminal) and it can write files, run tests and drive a shell. `filesystem:write:/workspace` is enforced by the kernel, so `rm -rf /etc` from that shell fails with `EACCES`, and everything the shell starts inherits the same limits. When it writes a file, `apps/filesystem` publishes `fs.file_created`, and [`apps/code-editor`](../apps/code-editor) reacts to it over the context bus with no orchestration code from you.
 
@@ -39,7 +51,11 @@ Around that boundary you also get the other missing pieces: a live view of the a
 
 **Several agents, each with only what it needs.** Boot one shared sandbox with `berth os up team --apps=apps/filesystem,apps/notes,apps/terminal`, then scope a writer agent to `filesystem` and a note-taker to `notes`. One sandbox, least privilege per agent. This uses the experimental agent framework; see [Multi-agent architecture](./berth-agents-guide.md#multi-agent-architecture).
 
-## How it fits with what you already use
+## Code
+
+How to call Berth from what you already run:
+
+### How it fits with what you already use
 
 Berth sits underneath your tools. It doesn't replace your agent or your framework.
 
@@ -48,7 +64,7 @@ Berth sits underneath your tools. It doesn't replace your agent or your framewor
 - **You already run on E2B, Daytona or Kubernetes.** Berth adds the app model and the kernel-enforced permissions on top. `berth deploy --fleet=e2b|daytona|k8s` ships the same sandbox definition there.
 - **You want a Berth-native agent.** The agent framework, `@berthos/agents`, adds agents, crews, governance, tracing and serving over HTTP. It's experimental and unpublished, and runs from a clone. Start with [Building a Berth Agent](./berth-agents-guide.md#building-a-berth-agent).
 
-## Use it from your existing framework
+### Use it from your existing framework
 
 Boot a `Computer` and hand its tools to the loop you already run:
 

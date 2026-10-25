@@ -1,0 +1,125 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1160 680" width="1160" height="680" role="img" aria-label="@berthos/sdk: containers (C4 level 2)">
+<title>@berthos/sdk: containers (C4 level 2)</title>
+<style>
+  text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  .ln { stroke: #57606a; }
+  .bd { stroke: #8c959f; }
+  .bl { fill: #57606a; }
+  .ah { fill: #57606a; }
+  .pill { fill: #f6f8fa; stroke: #d0d7de; }
+  .pt { fill: #24292f; }
+  @media (prefers-color-scheme: dark) {
+    .ln { stroke: #8b949e; }
+    .bd { stroke: #6e7681; }
+    .bl { fill: #9198a1; }
+    .ah { fill: #8b949e; }
+    .pill { fill: #161b22; stroke: #30363d; }
+    .pt { fill: #e6edf3; }
+  }
+</style>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+  <marker id="arrow-start" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+</defs>
+<rect x="260" y="20" width="880" height="600" rx="14" fill="none" class="bd" stroke-width="1.5" stroke-dasharray="7 5"/>
+<text x="276" y="606" class="bl" font-size="13.5" font-weight="700">Sandbox</text>
+
+<path d="M240,182 L448,182" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="278.1" y="162" width="147.8" height="40" rx="6" class="pill"/>
+<text x="352" y="174" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="352" dy="0">calls exports</tspan>
+<tspan x="352" dy="16" font-style="italic">[stdio, line JSON]</tspan>
+</text>
+<path d="M240,427 L448,427" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="266" y="407" width="162" height="40" rx="6" class="pill"/>
+<text x="347" y="419" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="347" dy="0">POST /rpc</tspan>
+<tspan x="347" dy="16" font-style="italic">[HTTP, bearer token]</tspan>
+</text>
+<path d="M690,90 L898,90" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="721.1" y="70" width="147.8" height="40" rx="6" class="pill"/>
+<text x="795" y="82" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="795" dy="0">publish, subscribe</tspan>
+<tspan x="795" dy="16" font-style="italic">[Unix socket]</tspan>
+</text>
+<path d="M690,200 L898,200" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="738.85" y="180" width="112.3" height="40" rx="6" class="pill"/>
+<text x="795" y="192" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="795" dy="0">tag, query</tspan>
+<tspan x="795" dy="16" font-style="italic">[Unix socket]</tspan>
+</text>
+<path d="M690,310 L898,310" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="710.45" y="290" width="169.1" height="40" rx="6" class="pill"/>
+<text x="795" y="302" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="795" dy="0">evaluate_action first</tspan>
+<tspan x="795" dy="16" font-style="italic">[Unix socket]</tspan>
+</text>
+<path d="M690,420 L898,420" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="742.4" y="400" width="105.19999999999999" height="40" rx="6" class="pill"/>
+<text x="795" y="412" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="795" dy="0">fetch()</tspan>
+<tspan x="795" dy="16" font-style="italic">[HTTP proxy]</tspan>
+</text>
+<path d="M900,530 L692,530" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="696.25" y="510" width="197.5" height="40" rx="6" class="pill"/>
+<text x="795" y="522" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="795" dy="0">app:invoke</tspan>
+<tspan x="795" dy="16" font-style="italic">[peers/&lt;caller&gt;/rpc.sock]</tspan>
+</text>
+<rect x="30" y="120" width="210" height="125" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="135" y="157" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="135" font-size="15.5" font-weight="700">Host CLI</tspan>
+<tspan x="135" dy="17" font-size="11.5" opacity="0.85">[Container: berth rpc, berth mcp]</tspan>
+<tspan x="135" dy="20" font-size="12.5">Calls your exports from the</tspan>
+<tspan x="135" dy="17" font-size="12.5">host</tspan>
+</text>
+<rect x="30" y="360" width="210" height="135" rx="10" fill="#6b7280" stroke="#4b5563" stroke-width="1.5"/>
+<text x="135" y="402" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="135" font-size="15.5" font-weight="700">Remote client</tspan>
+<tspan x="135" dy="17" font-size="11.5" opacity="0.85">[External: your own client]</tspan>
+<tspan x="135" dy="20" font-size="12.5">Calls a deployed app on</tspan>
+<tspan x="135" dy="17" font-size="12.5">E2B, Daytona or Kubernetes</tspan>
+</text>
+<rect x="450" y="60" width="240" height="480" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="570" y="266" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="570" font-size="15.5" font-weight="700">Your app</tspan>
+<tspan x="570" dy="17" font-size="11.5" opacity="0.85">[Container: Node.js + @berthos/sdk]</tspan>
+<tspan x="570" dy="20" font-size="12.5">Runs dist/index.js under the</tspan>
+<tspan x="570" dy="17" font-size="12.5">kernel policy compiled from its</tspan>
+<tspan x="570" dy="17" font-size="12.5">capabilities</tspan>
+</text>
+<rect x="900" y="40" width="220" height="100" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="1010" y="73" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="1010" font-size="15.5" font-weight="700">Context bus daemon</tspan>
+<tspan x="1010" dy="17" font-size="11.5" opacity="0.85">[Container: Rust]</tspan>
+<tspan x="1010" dy="20" font-size="12.5">Pub/sub between apps</tspan>
+</text>
+<rect x="900" y="150" width="220" height="100" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="1010" y="183" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="1010" font-size="15.5" font-weight="700">Semantic FS daemon</tspan>
+<tspan x="1010" dy="17" font-size="11.5" opacity="0.85">[Container: Go, mounted at /context]</tspan>
+<tspan x="1010" dy="20" font-size="12.5">Tags and search</tspan>
+</text>
+<rect x="900" y="260" width="220" height="100" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="1010" y="293" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="1010" font-size="15.5" font-weight="700">Governing app</tspan>
+<tspan x="1010" dy="17" font-size="11.5" opacity="0.85">[Container: governs: true]</tspan>
+<tspan x="1010" dy="20" font-size="12.5">Allows or refuses each call</tspan>
+</text>
+<rect x="900" y="370" width="220" height="100" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="1010" y="403" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="1010" font-size="15.5" font-weight="700">Egress proxy</tspan>
+<tspan x="1010" dy="17" font-size="11.5" opacity="0.85">[Container: Node.js, :8090]</tspan>
+<tspan x="1010" dy="20" font-size="12.5">Allows only declared hosts</tspan>
+</text>
+<rect x="900" y="480" width="220" height="100" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="1010" y="513" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="1010" font-size="15.5" font-weight="700">Sibling app</tspan>
+<tspan x="1010" dy="17" font-size="11.5" opacity="0.85">[Container: another resident app]</tspan>
+<tspan x="1010" dy="20" font-size="12.5">Declares app:invoke:&lt;app&gt;</tspan>
+</text>
+<rect x="24" y="646" width="16" height="16" rx="4" fill="#438dd5" stroke="#3c7fc0"/>
+<text x="46" y="658.5" font-size="12.5" class="bl">Container</text>
+<rect x="117" y="646" width="16" height="16" rx="4" fill="#6b7280" stroke="#4b5563"/>
+<text x="139" y="658.5" font-size="12.5" class="bl">External</text>
+</svg>

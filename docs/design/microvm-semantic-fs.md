@@ -2,7 +2,11 @@
 
 Status: steps 1 to 4 done (feat/vm-semantic-fs-build, -init, -cli, test/vm-semantic-fs-e2e); step 5, the release, to go. Closes the semantic-fs part of open problem 4 in [`microvm-runtime.md`](microvm-runtime.md#open-problems) and of open problem 3 in [`microvm-guest-init.md`](microvm-guest-init.md), and the "semantic-fs and `/context`" limit in [`../local-vm.md`](../local-vm.md#limits).
 
-## The problem
+## Context
+
+semantic-fs gives a sandbox's apps a shared `/context` directory whose files are indexed, so apps can tag them and query them by keyword and by meaning. This design brings it into the microVM. It involves the apps that declare a `/context` scope, berth-init, which starts the daemon, the state disk that keeps the data, and the CLI, which refused such apps before.
+
+### The problem
 
 An app that declares `filesystem:read:/context` or `filesystem:write:/context` is refused before a VM boot (`packages/cli/src/vm/support.ts:44`). `apps/filesystem` declares both, so the app most demos and the LangChain e2e scenarios use cannot run with `--runtime vm`.
 
@@ -11,7 +15,13 @@ In the guest today:
 - berth-init mounts a plain tmpfs on `/context` (`packages/vmm/init/src/main.rs:369`). Files written there are not indexed and don't survive a reboot.
 - No semantic-fs daemon runs, and berth-init sets `BERTH_NO_SEMANTIC_FS=1` for every app (`main.rs:679`). Only `entrypoint.sh` reads that flag. In the guest the SDK sees `BERTH_BOOT_ID`, finds no socket at `/tmp/berth-semantic-fs.sock`, and hands the app a client whose `tag` and `query` throw (`packages/sdk/src/runtime.ts:59-70`).
 
-## What semantic-fs is today
+## Containers
+
+<p align="center"><img src="../images/c4/design-microvm-semantic-fs.svg" alt="semantic-fs containers in the guest: berth-init starts the semantic-fs daemon as root before any app, and starts the embeddings daemon under agent-init when an app declares /context. An app reads and writes files through the FUSE mount at /context and sends tag and query requests over the daemon's Unix socket; its SDK gets embeddings from the embeddings daemon over embed.sock. The daemon keeps its files and SQLite index on the state disk under /state/context, or on a tmpfs under /run/berth/context without one." width="100%"></p>
+
+The daemon is one process that serves the apps two ways, a FUSE mount and a control socket. In the guest, berth-init starts it, and an embeddings daemon runs beside it ([section 7](#7-embeddings)).
+
+### What semantic-fs is today
 
 `packages/semantic-fs-daemon` is a static Go binary (`CGO_ENABLED=0`; `bazil.org/fuse`, `modernc.org/sqlite`, `golang.org/x/sys`; go 1.26). It does two things:
 
@@ -22,11 +32,15 @@ Embeddings are computed in the app, by the SDK (`@xenova/transformers`, `all-Min
 
 In Docker the daemon starts as root from `entrypoint.sh`, outside agent-init, because Landlock forbids `mount(2)`. After mounting it narrows its own capabilities to `CHOWN`, `DAC_OVERRIDE`, `FOWNER` and `FSETID`, sets `no_new_privs`, and logs `post_mount_caps_narrowed`. Its uid stays 0, a residual `internal/privs` already names. Since the sandbox no longer has `CAP_SYS_ADMIN`, the mount happens in a sidecar container by default (`semantic-fs-sidecar.ts`). Data does not outlive the sandbox: the sidecar's volumes are removed on stop, and only `berth snapshot` carries it over.
 
-## Design
+## Components
+
+The design, section by section: how the daemon starts, how it mounts, where its data lives, how it names callers, how it is built and pinned, what the CLI changes, and where embeddings come from.
+
+### Design
 
 The guest needs none of the Docker workarounds. berth-init is PID 1 and root, the kernel is ours, and no AppArmor profile stands in the way. So the same daemon runs inside the guest, started by berth-init, with no sidecar.
 
-### 1. The daemon, started by berth-init
+#### 1. The daemon, started by berth-init
 
 A `start_semantic_fs` in berth-init's daemons phase, modelled on `start_context_bus` (`main.rs:737-806`), with these differences:
 
@@ -38,7 +52,7 @@ A `start_semantic_fs` in berth-init's daemons phase, modelled on `start_context_
 
 **Recommendation: start it on every boot where the binary exists,** as context-bus is, rather than only when an app declares `/context`. The `tag` and `query` ops don't need a `/context` capability, and an app shouldn't get a different SDK depending on its neighbours. That holds only if the boot cost is small. Measure it in step 2, and fall back to starting it only when needed if it adds more than about 50 ms.
 
-### 2. Mounting: fusermount3, without its setuid bit
+#### 2. Mounting: fusermount3, without its setuid bit
 
 `bazil.org/fuse`'s `Mount()` always execs `fusermount3`, even as root. The Docker image installs it from Alpine's `fuse3` package (`base.Dockerfile:81-84`).
 
@@ -48,7 +62,7 @@ The alternative is a small change to the daemon: open `/dev/fuse` and call `moun
 
 The kernel side is already there: `CONFIG_FUSE_FS=y` is in `kernel/berth-kernel.config:23`. berth-init mounts devtmpfs (`main.rs:307`), so `/dev/fuse` should appear by itself. That is inferred, not yet seen in a guest; step 2 checks it.
 
-### 3. Where the data lives: the state disk
+#### 3. Where the data lives: the state disk
 
 The daemon's defaults, `/var/berth/context-data` and `/var/berth/context-index.db`, sit on the read-only erofs root. berth-init overrides them:
 
@@ -59,7 +73,7 @@ The daemon's defaults, `/var/berth/context-data` and `/var/berth/context-index.d
 
 The index uses `journal_mode=TRUNCATE`, one file, which an ext4 journal plus a SIGKILL after the shutdown timeout leaves consistent at worst to the last committed transaction.
 
-### 4. Identity and access
+#### 4. Identity and access
 
 No change is needed:
 
@@ -68,7 +82,7 @@ No change is needed:
 - Apps reach the socket through membership of the `berth` group (9999). Landlock doesn't hook connecting to a pathname socket (`generate-capability-policy.ts:58-74`). Check in step 4 that every VM app carries 9999 as a supplementary gid, as the context-bus socket already requires.
 - `/context` scopes already compile in the guest, by both the Node and Python compilers (`capability.ts:53`, `berth_sdk/manifest.py:151`).
 
-### 5. Building and pinning the binary
+#### 5. Building and pinning the binary
 
 No VM builder has Go today. Add `guest/build-semantic-fs-in-vm.sh`, run by the same Alpine builder as `build-berth-init-in-vm.sh`, with these settings:
 
@@ -78,13 +92,13 @@ No VM builder has Go today. Add `guest/build-semantic-fs-in-vm.sh`, run by the s
 
 Fetching modules from the Go proxy is a live dependency, like the apk and crates.io ones open problem 10 already records. `go.sum` makes a drift visible, and vendoring is the same later fix.
 
-### 6. The CLI
+#### 6. The CLI
 
 - Delete the `/context` refusal in `support.ts:44` and its test case.
 - `docs/local-vm.md`: remove the limit, and add the persistence note from section 3.
 - No new flags.
 
-### 7. Embeddings
+#### 7. Embeddings
 
 Done since (feat/vm-embeddings), and not the way first assumed. Loading the model in each app, as a container does, failed twice over: `@xenova/transformers` needs `__filename` (undefined in an app's ES-module bundle) and the model isn't in an app's share; and once both were fixed, loading it takes about 200 MB per process (measured: 38 MB of node, 245 MB with the model, 265 MB peak), more than a default VM gives its apps together after berth-init's daemon reserve. `notes`, which never queries `/context`, was OOM-killed too, because the SDK warmed the model in every app.
 
@@ -97,7 +111,11 @@ So the sandbox has one model:
 
 `scripts/e2e.mjs context` checks a query that shares no word with a file's tag ("authentication credentials timing out" against "login token expiry bug") finds it, and does not return an unrelated file. The rootfs grows by 28 MB, to 107.5 MB.
 
-## Release impact
+## Code
+
+The daemon is [`packages/semantic-fs-daemon`](../../packages/semantic-fs-daemon). berth-init's side is `start_semantic_fs` in [`packages/vmm/init/src/main.rs`](../../packages/vmm/init/src/main.rs), and the Go build runs in [`packages/vmm/guest/build-semantic-fs-in-vm.sh`](../../packages/vmm/guest/build-semantic-fs-in-vm.sh). The checks are `packages/vmm/scripts/e2e.mjs context` and `packages/cli/test/vm-e2e.mjs`.
+
+### Release impact
 
 A new binary in the rootfs changes its `image_sha256`, and with it the release tag `vm-artifacts-<kernel8>-<rootfs8>`, `packages/cli/src/vm/pins.ts`, and the manifests compiled into berth-vmm (`microvm-image.md`). The kernel is unchanged. This needs one more vm-artifacts release once it lands, and the `VMM_PINS` entry for that release's berth-vmm.
 

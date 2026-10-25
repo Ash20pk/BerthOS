@@ -1,0 +1,31 @@
+export default {
+  name: "design-microvm-image",
+  w: 1160,
+  h: 770,
+  title: "microVM image: containers (C4 level 2)",
+  boundaries: [
+    { x: 20, y: 500, w: 272, h: 210, label: "Guest" },
+  ],
+  boxes: [
+    { kind: "container", name: "Build scripts", type: "Container: shell, packages/vmm/scripts", desc: "build-kernel.sh, build-rootfs.sh and the guest builds; hash each output", x: 40, y: 60, w: 240, h: 120 },
+    { kind: "container", name: "Builder", type: "Container: libkrun VM or Docker", desc: "Fresh Alpine 3.24.2 root from the pinned minirootfs", x: 460, y: 60, w: 240, h: 120 },
+    { kind: "external", name: "Alpine, kernel.org", type: "External System", desc: "Packages, linux and libkrunfw tarballs", x: 880, y: 60, w: 240, h: 120 },
+    { kind: "container", name: "CI workflow", type: "Container: GitHub Actions", desc: "vm-artifacts.yml: rebuilds, checks every pin", x: 40, y: 290, w: 240, h: 130 },
+    { kind: "external", name: "GitHub release", type: "External System", desc: "vm-artifacts-<kernel8>-<rootfs8>, assets named by sha256", x: 460, y: 290, w: 240, h: 130 },
+    { kind: "container", name: "berth vm install", type: "Container: Node.js, berth CLI", desc: "Takes the pins from berth-vmm, downloads and checks each asset", x: 880, y: 290, w: 240, h: 130 },
+    { kind: "container", name: "Guest init", type: "Container: /sbin/berth-init", desc: "Mounts the state disk and /app, writes identities, serves the vsock ports", x: 40, y: 530, w: 240, h: 140 },
+    { kind: "container", name: "berth-vmm", type: "Container: Rust, libkrun on HVF", desc: "Refuses a kernel or rootfs that does not match its compiled-in pins", x: 460, y: 530, w: 240, h: 140 },
+    { kind: "container", shape: "db", name: "Artifacts directory", type: "~/.berth/vm", desc: "kernel/sha256/<pin>/Image, rootfs/rootfs-<pin>.erofs", x: 880, y: 530, w: 240, h: 140 },
+  ],
+  edges: [
+    { pts: [[280, 120], [458, 120]], label: "run_builder\n[VM or docker]", at: [370, 120] },
+    { pts: [[700, 120], [878, 120]], label: "apk add, tarballs\n[HTTPS]", at: [790, 120] },
+    { pts: [[160, 290], [160, 182]], label: "runs the\nsame scripts", at: [160, 235] },
+    { pts: [[280, 355], [458, 355]], label: "publishes\n[GitHub release]", at: [370, 355] },
+    { pts: [[880, 355], [702, 355]], label: "downloads, checks\nsha256 [HTTPS]", at: [790, 355] },
+    { pts: [[1000, 420], [1000, 528]], label: "renames into\nplace", at: [1000, 475] },
+    { pts: [[700, 600], [878, 600]], label: "reads, verifies\nthe pins", at: [790, 600] },
+    { pts: [[460, 600], [282, 600]], label: "boots: vda, vdb,\napp share", at: [374, 600] },
+  ],
+  legendKinds: [["container", "Container"], ["external", "External"]],
+};

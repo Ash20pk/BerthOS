@@ -2,7 +2,31 @@
 
 `network:peer:<name>` puts a resident app on a WireGuard mesh with apps in other sandboxes, so they can reach each other by a stable mesh IP without sharing a Docker network. Two apps are connected only when **both** name each other. Use it when apps in separate containers need to talk directly.
 
-## Using it
+## Context
+
+The mesh joins resident apps in separate sandboxes, each its own container under `berth dev`. A coordinator that you start on the host introduces them; after that, the apps reach each other directly by mesh IP. The kernel still decides which ports an app may listen on and connect to.
+
+## Containers
+
+<p align="center"><img src="./images/c4/mesh-reference.svg" alt="Mesh containers: in each sandbox container, mesh-daemon registers with the mesh coordinator on the host over HTTP on port 4875 and fetches its roster every five seconds. The two daemons hold a WireGuard tunnel between them on UDP 51820, and each app connects to the other's mesh IP over wg0." width="100%"></p>
+
+### How it works
+
+- **`mesh-coordinator`** (the host-side service) hands out mesh IPs, stores each peer's WireGuard public key, and decides who meets whom. A peer's roster only ever contains peers whose `network:peer:` patterns and its own match both ways.
+- **`mesh-daemon`** runs in any container where an app declares `network:peer:`, and nowhere else. It generates a key pair, registers with the coordinator, brings up `wg0`, and every five seconds fetches its roster and applies it. It configures only the peers the coordinator returns.
+- The kernel can't see WireGuard's UDP traffic per app, so **the coordinator's mutual match is the authorization boundary**. Declaring `network:peer:` also opens the coordinator's port to the app, and to no app that didn't declare it.
+- The container gets `NET_ADMIN` and `/dev/net/tun` for the daemon. `agent-init` drops all capabilities before starting the app, so the app itself never has them.
+- The daemon uses kernel WireGuard if the host has it, and otherwise falls back to the userspace `boringtun-cli` built into the image. Its boot log says which.
+- If the coordinator is unreachable at boot, the mesh is off for that boot, with a warning; the app still starts. If it goes away later, the daemon keeps its last roster and existing tunnels keep working until it's back.
+- The first registration of a name returns an owner token, which the daemon stores. Re-registering the name without it is refused, so nothing else can take over a peer's identity.
+
+## Components
+
+Inside the coordinator: mesh IP allocation from `100.64.0.0/10`, the store of public keys and hashes of owner tokens (SQLite), and the mutual pattern match that builds each peer's roster. Inside the daemon: key generation, registration, and the five-second loop that applies the roster to `wg0`. The details are in [How it works](#how-it-works); the settings are in [Configuration](#configuration).
+
+## Code
+
+### Using it
 
 Each side names the other. The name to match is the peer's **container name**, which under `berth dev` is `berth-dev-<appName>`:
 
@@ -35,17 +59,7 @@ Patterns may use `*` (`network:peer:berth-dev-*`, or `network:peer:*` for any na
 
 Listening needs `network:bind:<port>`, and connecting to a peer's port needs `network:connect:<port>`, as for any other network access. See [enforcement](./kernel-enforcement.md).
 
-## How it works
-
-- **`mesh-coordinator`** (the host-side service) hands out mesh IPs, stores each peer's WireGuard public key, and decides who meets whom. A peer's roster only ever contains peers whose `network:peer:` patterns and its own match both ways.
-- **`mesh-daemon`** runs in any container where an app declares `network:peer:`, and nowhere else. It generates a key pair, registers with the coordinator, brings up `wg0`, and every five seconds fetches its roster and applies it. It configures only the peers the coordinator returns.
-- The kernel can't see WireGuard's UDP traffic per app, so **the coordinator's mutual match is the authorization boundary**. Declaring `network:peer:` also opens the coordinator's port to the app, and to no app that didn't declare it.
-- The container gets `NET_ADMIN` and `/dev/net/tun` for the daemon. `agent-init` drops all capabilities before starting the app, so the app itself never has them.
-- The daemon uses kernel WireGuard if the host has it, and otherwise falls back to the userspace `boringtun-cli` built into the image. Its boot log says which.
-- If the coordinator is unreachable at boot, the mesh is off for that boot, with a warning; the app still starts. If it goes away later, the daemon keeps its last roster and existing tunnels keep working until it's back.
-- The first registration of a name returns an owner token, which the daemon stores. Re-registering the name without it is refused, so nothing else can take over a peer's identity.
-
-## Configuration
+### Configuration
 
 | Setting | Default | What it does |
 |---|---|---|

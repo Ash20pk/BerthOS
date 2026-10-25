@@ -2,26 +2,19 @@
 
 `berth snapshot` saves a running sandbox and brings it back later as a fresh container: its filesystem and installed packages, plus everything in [`/context`](./semantic-fs-reference.md) and its tag index. Use it to checkpoint an agent's work before a risky step, or to start several runs from the same state. On E2B and Daytona the same commands use the provider's own pause, snapshot and fork.
 
-## Using it
+## Context
 
-Run these from the app's directory (they read its `berth.yml` for the app name), with `berth dev` running:
+You take and restore snapshots with the `berth` CLI, from the app's directory. Locally the sandbox is a Docker container started by `berth dev`; on a remote fleet, the snapshot is the provider's.
 
-```bash
-berth snapshot create                 # snapshot berth-dev-<appName>
-berth snapshot list
-berth snapshot restore <id>           # start a new container from it
-```
+## Containers
 
-`create` prints the snapshot's id (its creation time, such as `2026-08-02T12-00-00-000Z`) and the restore command to use.
+Locally, the CLI works against Docker: it commits the running container, archives the files behind `/context` and its tag index, and writes the snapshot to a directory on the host. `restore` loads the image back into Docker and starts a new container alongside the original. With `--fleet`, the CLI calls the provider instead (see [Remote fleets](#remote-fleets-e2bdaytona-via---fleet)), and the provider holds the snapshot.
 
-| Command | Flag | What it does |
-|---|---|---|
-| `create` | `--container=<name>` | Snapshot a different container. Default `berth-dev-<appName>`. |
-| `restore <id>` | `--name=<name>` | Name for the new container. Default `berth-restored-<appName>-<id>`. |
+## Components
 
-Restoring doesn't touch the original; it starts a new container alongside it.
+A local snapshot is a directory of archives plus metadata, and `restore` rebuilds a container from it:
 
-## What a snapshot holds
+### What a snapshot holds
 
 Each snapshot is a directory under `~/.berth/snapshots/<appName>/<id>/` (mode `0700`):
 
@@ -40,7 +33,30 @@ Each snapshot is a directory under `~/.berth/snapshots/<appName>/<id>/` (mode `0
 
 A snapshot also works on a container that crashed or was killed: it captures whatever was written before it died.
 
-## Remote fleets (E2B/Daytona) via `--fleet`
+## Code
+
+The commands are in [`packages/cli/src/commands/snapshot`](../packages/cli/src/commands/snapshot).
+
+### Using it
+
+Run these from the app's directory (they read its `berth.yml` for the app name), with `berth dev` running:
+
+```bash
+berth snapshot create                 # snapshot berth-dev-<appName>
+berth snapshot list
+berth snapshot restore <id>           # start a new container from it
+```
+
+`create` prints the snapshot's id (its creation time, such as `2026-08-02T12-00-00-000Z`) and the restore command to use.
+
+| Command | Flag | What it does |
+|---|---|---|
+| `create` | `--container=<name>` | Snapshot a different container. Default `berth-dev-<appName>`. |
+| `restore <id>` | `--name=<name>` | Name for the new container. Default `berth-restored-<appName>-<id>`. |
+
+Restoring doesn't touch the original; it starts a new container alongside it.
+
+### Remote fleets (E2B/Daytona) via `--fleet`
 
 With `--fleet=<alias>`, the commands act on a deployed instance using the provider's native feature. The providers differ, so the commands do too:
 

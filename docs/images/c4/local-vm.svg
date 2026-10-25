@@ -1,0 +1,127 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1160 860" width="1160" height="860" role="img" aria-label="Local microVM runtime: containers (C4 level 2)">
+<title>Local microVM runtime: containers (C4 level 2)</title>
+<style>
+  text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  .ln { stroke: #57606a; }
+  .bd { stroke: #8c959f; }
+  .bl { fill: #57606a; }
+  .ah { fill: #57606a; }
+  .pill { fill: #f6f8fa; stroke: #d0d7de; }
+  .pt { fill: #24292f; }
+  @media (prefers-color-scheme: dark) {
+    .ln { stroke: #8b949e; }
+    .bd { stroke: #6e7681; }
+    .bl { fill: #9198a1; }
+    .ah { fill: #8b949e; }
+    .pill { fill: #161b22; stroke: #30363d; }
+    .pt { fill: #e6edf3; }
+  }
+</style>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+  <marker id="arrow-start" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+</defs>
+<rect x="20" y="30" width="300" height="480" rx="14" fill="none" class="bd" stroke-width="1.5" stroke-dasharray="7 5"/>
+<text x="36" y="496" class="bl" font-size="13.5" font-weight="700">Host</text>
+
+<rect x="20" y="580" width="1130" height="220" rx="14" fill="none" class="bd" stroke-width="1.5" stroke-dasharray="7 5"/>
+<text x="36" y="786" class="bl" font-size="13.5" font-weight="700">microVM guest</text>
+<text x="36" y="786" dx="104.8" class="bl" font-size="12">pinned kernel and erofs rootfs, no network device</text>
+<path d="M300,130 L498,130" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="333.2" y="110" width="133.6" height="40" rx="6" class="pill"/>
+<text x="400" y="122" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="400" dy="0">berth vm install</tspan>
+<tspan x="400" dy="16" font-style="italic">[HTTPS]</tspan>
+</text>
+<path d="M170,200 L170,328" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="71.25" y="245" width="197.5" height="40" rx="6" class="pill"/>
+<text x="170" y="257" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="170" dy="0">spawns, then talks over</tspan>
+<tspan x="170" dy="16" font-style="italic">[Unix sockets in run dir]</tspan>
+</text>
+<path d="M170,480 L170,608" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="67.7" y="525" width="204.6" height="40" rx="6" class="pill"/>
+<text x="170" y="537" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="170" dy="0">control, logs, RPC</tspan>
+<tspan x="170" dy="16" font-style="italic">[vsock 1024, 1025, 5000+i]</tspan>
+</text>
+<path d="M280,680 L478,680" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="316.75" y="660" width="126.5" height="40" rx="6" class="pill"/>
+<text x="380" y="672" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="380" dy="0">starts each app</tspan>
+<tspan x="380" dy="16" font-style="italic">[agent-init]</tspan>
+</text>
+<path d="M700,680 L838,680" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="705.75" y="660" width="126.5" height="40" rx="6" class="pill"/>
+<text x="769" y="672" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="769" dy="0" font-style="italic">[Unix sockets,</tspan>
+<tspan x="769" dy="16">127.0.0.1:8090]</tspan>
+</text>
+<path d="M980,608 L980,450 L302,450" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="562.55" y="430" width="154.9" height="40" rx="6" class="pill"/>
+<text x="640" y="442" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="640" dy="0">allowed connections</tspan>
+<tspan x="640" dy="16" font-style="italic">[vsock 1026]</tspan>
+</text>
+<path d="M300,370 L1000,370 L1000,192" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="562.55" y="350" width="154.9" height="40" rx="6" class="pill"/>
+<text x="640" y="362" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="640" dy="0">dials, checks again</tspan>
+<tspan x="640" dy="16" font-style="italic">[TCP]</tspan>
+</text>
+<rect x="40" y="60" width="260" height="140" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="170" y="96" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="170" font-size="15.5" font-weight="700">berth CLI</tspan>
+<tspan x="170" dy="17" font-size="11.5" opacity="0.85">[Container: Node.js]</tspan>
+<tspan x="170" dy="20" font-size="12.5">berth dev, mcp, rpc, vm. Bundles</tspan>
+<tspan x="170" dy="17" font-size="12.5">the app, finds the VM again by its</tspan>
+<tspan x="170" dy="17" font-size="12.5">run directory</tspan>
+</text>
+<rect x="500" y="70" width="250" height="120" rx="10" fill="#6b7280" stroke="#4b5563" stroke-width="1.5"/>
+<text x="625" y="104.5" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="625" font-size="15.5" font-weight="700">vm-artifacts release</tspan>
+<tspan x="625" dy="17" font-size="11.5" opacity="0.85">[External System: GitHub]</tspan>
+<tspan x="625" dy="20" font-size="12.5">Kernel, rootfs, berth-vmm,</tspan>
+<tspan x="625" dy="17" font-size="12.5">checked against pins</tspan>
+</text>
+<rect x="875" y="70" width="250" height="120" rx="10" fill="#6b7280" stroke="#4b5563" stroke-width="1.5"/>
+<text x="1000" y="113" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="1000" font-size="15.5" font-weight="700">Internet hosts</tspan>
+<tspan x="1000" dy="17" font-size="11.5" opacity="0.85">[External System]</tspan>
+<tspan x="1000" dy="20" font-size="12.5">Only those in --egress-allow</tspan>
+</text>
+<rect x="40" y="330" width="260" height="150" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="170" y="371" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="170" font-size="15.5" font-weight="700">berth-vmm</tspan>
+<tspan x="170" dy="17" font-size="11.5" opacity="0.85">[Container: Rust + libkrun]</tspan>
+<tspan x="170" dy="20" font-size="12.5">One VM per process. Hosts the</tspan>
+<tspan x="170" dy="17" font-size="12.5">egress dialer. Under Seatbelt on</tspan>
+<tspan x="170" dy="17" font-size="12.5">macOS</tspan>
+</text>
+<rect x="40" y="610" width="240" height="140" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="160" y="646" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="160" font-size="15.5" font-weight="700">berth-init</tspan>
+<tspan x="160" dy="17" font-size="11.5" opacity="0.85">[Container: Rust, PID 1]</tspan>
+<tspan x="160" dy="20" font-size="12.5">Compiles the policy, reads the</tspan>
+<tspan x="160" dy="17" font-size="12.5">secrets disk, starts the apps</tspan>
+<tspan x="160" dy="17" font-size="12.5">and daemons</tspan>
+</text>
+<rect x="480" y="610" width="220" height="140" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="590" y="654.5" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="590" font-size="15.5" font-weight="700">Resident app</tspan>
+<tspan x="590" dy="17" font-size="11.5" opacity="0.85">[Container: Node.js or Python]</tspan>
+<tspan x="590" dy="20" font-size="12.5">Own uid and cgroup, under</tspan>
+<tspan x="590" dy="17" font-size="12.5">Landlock and seccomp</tspan>
+</text>
+<rect x="840" y="610" width="280" height="140" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="980" y="654.5" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="980" font-size="15.5" font-weight="700">Guest daemons</tspan>
+<tspan x="980" dy="17" font-size="11.5" opacity="0.85">[Container: in the guest]</tspan>
+<tspan x="980" dy="20" font-size="12.5">Context bus, semantic-fs, egress</tspan>
+<tspan x="980" dy="17" font-size="12.5">broker; GitHub broker when declared</tspan>
+</text>
+<rect x="24" y="826" width="16" height="16" rx="4" fill="#438dd5" stroke="#3c7fc0"/>
+<text x="46" y="838.5" font-size="12.5" class="bl">Container</text>
+<rect x="117" y="826" width="16" height="16" rx="4" fill="#6b7280" stroke="#4b5563"/>
+<text x="139" y="838.5" font-size="12.5" class="bl">External</text>
+</svg>

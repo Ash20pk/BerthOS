@@ -2,7 +2,29 @@
 
 The Python SDK's context bus client lets a Python resident app publish and subscribe to events from other apps in the same sandbox, including TypeScript apps. It talks to the same daemon as `@berthos/sdk`'s [`ContextBusClient`](./sdk-reference.md#contextbusclient). For the rest of the Python SDK, see the [Python SDK reference](./sdk-python-reference.md).
 
-## Use it
+## Context
+
+A Python resident app uses this client to exchange events with the other apps in its sandbox, whatever language they are written in. The only system it touches is the sandbox's context bus daemon.
+
+## Containers
+
+Two processes are involved: your app's Python process, which holds the client, and the context bus daemon, which the sandbox runs and which every app's client connects to over a Unix socket.
+
+### How it connects
+
+At startup the runtime connects to the daemon's Unix socket at `$BERTH_CONTEXT_BUS_SOCKET` (default `/tmp/berth-context-bus.sock`), retrying for up to 2 seconds. Messages are protobuf frames, each prefixed with a 4-byte big-endian length, the same as the TypeScript client.
+
+If the daemon can't be reached, for example when you run the app outside a sandbox, the runtime logs a warning and uses an in-process stand-in: `publish` delivers only to subscribers in the same process, and `register` does nothing.
+
+See the [context bus reference](./context-bus-reference.md) for topics and the daemon itself.
+
+## Components
+
+Inside the client: the length-prefixed protobuf framing it shares with the TypeScript client, a background thread that reads frames from the daemon and calls your subscription handlers, and the in-process stand-in described above. The client is [`berth_sdk/context_bus.py`](../packages/sdk-python/berth_sdk/context_bus.py), and the stand-in [`berth_sdk/local_context_bus.py`](../packages/sdk-python/berth_sdk/local_context_bus.py).
+
+## Code
+
+### Use it
 
 The client arrives as `ctx.context_bus` in your `on_agent_ready` hook. Keep a reference if your exports need it:
 
@@ -39,7 +61,7 @@ app = define_app(setup)
 
 A TypeScript app subscribed to `fs.file_created`, such as [`apps/code-editor`](../apps/code-editor), receives this event unchanged.
 
-## API
+### API
 
 | Method | What it does |
 |---|---|
@@ -51,14 +73,6 @@ The methods are synchronous, unlike the TypeScript client's `async` ones, becaus
 
 Subscription handlers run on a background thread that reads from the daemon, so guard any state they share with your export handlers.
 
-## How it connects
-
-At startup the runtime connects to the daemon's Unix socket at `$BERTH_CONTEXT_BUS_SOCKET` (default `/tmp/berth-context-bus.sock`), retrying for up to 2 seconds. Messages are protobuf frames, each prefixed with a 4-byte big-endian length, the same as the TypeScript client.
-
-If the daemon can't be reached, for example when you run the app outside a sandbox, the runtime logs a warning and uses an in-process stand-in: `publish` delivers only to subscribers in the same process, and `register` does nothing.
-
-See the [context bus reference](./context-bus-reference.md) for topics and the daemon itself.
-
-## Regenerating the protobuf code
+### Regenerating the protobuf code
 
 `berth_sdk/context_bus_pb2.py` is generated from `packages/sdk-python/proto/context_bus.proto`, a copy of `packages/sdk/proto/context_bus.proto` that must be kept in sync by hand. Regenerate it with `packages/sdk-python/scripts/gen_proto.sh`, which runs `python3 -m grpc_tools.protoc` (from `grpcio-tools`). Don't use a system `protoc`: it can be newer than the `protobuf` runtime on PyPI, and the generated code then fails to import with `VersionError: Detected incompatible Protobuf Gencode/Runtime versions`.
