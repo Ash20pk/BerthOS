@@ -6,7 +6,7 @@ Berth has one maintainer, so reviews can take a few days. If you hear nothing fo
 
 ## Set up
 
-You need Node.js 22+, pnpm (through corepack) and Docker.
+You need Node.js 22.19+, pnpm (through corepack) and Docker.
 
 ```bash
 git clone https://github.com/Ash20pk/BerthOS && cd BerthOS

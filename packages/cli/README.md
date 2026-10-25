@@ -8,7 +8,7 @@ The `berth` command: scaffold, run, test and deploy resident apps, check whether
 npm install -g @berthos/cli
 ```
 
-Needs Node.js 22+ and Docker.
+Needs Node.js 22.19+ and Docker.
 
 ## Usage
 

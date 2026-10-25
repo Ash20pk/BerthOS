@@ -29,7 +29,7 @@ Follow these steps in order: build the repository, add the server to your client
 
 ### Prerequisites
 
-- Node.js 22+, Docker running locally, `corepack enable`.
+- Node.js 22.19+, Docker running locally, `corepack enable`.
 - A built checkout of the repository, which holds the apps:
 
 ```bash
