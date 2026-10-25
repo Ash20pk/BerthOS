@@ -144,6 +144,10 @@ Each is its own branch, tested before the next.
   one run in three. Both manifests now pin agent-init to the fix (`0204e8f2…`), which also carries main's
   libc, tokio and sqlite bumps. `update_pins` runs 40198606357 (aarch64) and 40198603422 (x86_64) give
   rootfs `e6017262…` (aarch64) and `0c623b43…` (x86_64); the kernels are unchanged.
+- **Re-pinned for Go 1.26.10, 2026-10-25.** The first publish from main (run 40216091795) stopped at the
+  guest build: Alpine had moved go to 1.26.10 a few hours after the re-pin above, so semantic-fs-daemon no
+  longer built to its pin on either architecture. `update_pins` runs 40217496771 (aarch64) and 40217494503
+  (x86_64) give rootfs `dfb5f6b0…` and `af4f3fc0…`. Open problem 10 again.
 - **Linux arm64 booted**, 2026-10-24, on a nested-KVM Lima VM (Ubuntu 24.04, Linux 6.8, VZ on an M4) with
   the published linux-arm64 berth-vmm `a3cf2a09…` and its libkrun, rootfs `62f96e1b…`: host sandbox
   Landlock ABI 4 with TCP rules and seccomp; `e2e.mjs` single 18/18, multi 17/17, enforce 12/12, stdio 3/3,

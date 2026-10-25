@@ -28,7 +28,7 @@ context_bus_daemon_sha256 = "401eec5ecd99024fdca5cbaee626947f47be2075e04b8b30013
 # /usr/local/bin/semantic-fs-daemon: build-semantic-fs.sh, from
 # packages/semantic-fs-daemon at HEAD: the daemon that serves /context
 # (docs/design/microvm-semantic-fs.md).
-semantic_fs_daemon_sha256 = "ef1a0d0c62b6e0f10120de5ceb947fad1b975f48fa999f54343de504244d4b78"
+semantic_fs_daemon_sha256 = "a6d4b1b5f0d9a16dea236f5abfb1e5baf853219156ed5d2c2f51f2b917da4341"
 # /usr/local/bin/berth-github-api-broker.cjs: packages/docker-orchestrator/docker/github-api-broker.cjs.
 github_api_broker_sha256 = "0a809855c067d76b2074746b2390f6b204d1d80a7cafdc8cea4371efa624baaa"
 # /usr/local/bin/berth-egress-broker.cjs: packages/docker-orchestrator/docker/egress-broker.cjs.
@@ -56,13 +56,13 @@ terminal = "tmux"
 # builder.apk.lock the builder's (erofs-utils). .github/workflows/vm-artifacts.yml
 # rebuilds it on a Linux runner and fails on any other hash. berth-vmm
 # compiles this in; berth-vmm run boots it by default.
-image_sha256 = "e60172628d1bbc5d36f3df44d81e4b9cf79b02fd87a974621d15e51dec570522"
+image_sha256 = "dfb5f6b030ca59884f2466783961169dd2f4d6fb71ff08d30028f67eff29331f"
 image_size = 108072960
 # Optional layer example (rootfs/layers/example, build-layer.sh), built for the base above.
 layer_example_sha256 = "707d1c9ea2b77472954ae2cddb281dbbd1ca2e8f45b1bd191ba8c1f1ee3359c6"
 layer_example_size = 471040
-layer_example_base = "e60172628d1bbc5d36f3df44d81e4b9cf79b02fd87a974621d15e51dec570522"
+layer_example_base = "dfb5f6b030ca59884f2466783961169dd2f4d6fb71ff08d30028f67eff29331f"
 # Optional layer browser (rootfs/layers/browser, build-layer.sh), built for the base above.
 layer_browser_sha256 = "643b36055173d7698bfcd103646ec09d0c57b9f61977d4c30e29bef3d5957ce8"
 layer_browser_size = 485203968
-layer_browser_base = "e60172628d1bbc5d36f3df44d81e4b9cf79b02fd87a974621d15e51dec570522"
+layer_browser_base = "dfb5f6b030ca59884f2466783961169dd2f4d6fb71ff08d30028f67eff29331f"
