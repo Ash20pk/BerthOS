@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 590" width="1040" height="590" role="img" aria-label="Egress broker: containers (C4 level 2)">
+<title>Egress broker: containers (C4 level 2)</title>
+<style>
+  text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  .ln { stroke: #57606a; }
+  .bd { stroke: #8c959f; }
+  .bl { fill: #57606a; }
+  .ah { fill: #57606a; }
+  .pill { fill: #f6f8fa; stroke: #d0d7de; }
+  .pt { fill: #24292f; }
+  @media (prefers-color-scheme: dark) {
+    .ln { stroke: #8b949e; }
+    .bd { stroke: #6e7681; }
+    .bl { fill: #9198a1; }
+    .ah { fill: #8b949e; }
+    .pill { fill: #161b22; stroke: #30363d; }
+    .pt { fill: #e6edf3; }
+  }
+</style>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+  <marker id="arrow-start" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+</defs>
+<rect x="20" y="30" width="260" height="440" rx="14" fill="none" class="bd" stroke-width="1.5" stroke-dasharray="7 5"/>
+<text x="36" y="456" class="bl" font-size="13.5" font-weight="700">Sandbox</text>
+
+<rect x="400" y="280" width="260" height="190" rx="14" fill="none" class="bd" stroke-width="1.5" stroke-dasharray="7 5"/>
+<text x="416" y="456" class="bl" font-size="13.5" font-weight="700">Host</text>
+<text x="416" y="456" dx="36.4" class="bl" font-size="12">microVM only</text>
+<path d="M150,185 L150,298" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="79.65" y="222" width="140.7" height="40" rx="6" class="pill"/>
+<text x="150" y="234" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="150" dy="0">CONNECT host:port</tspan>
+<tspan x="150" dy="16" font-style="italic">[HTTP proxy]</tspan>
+</text>
+<path d="M260,122 L418,122" fill="none" class="ln" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrow)"/>
+<rect x="286.4" y="102" width="105.19999999999999" height="40" rx="6" class="pill"/>
+<text x="339" y="114" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="339" dy="0">every other</tspan>
+<tspan x="339" dy="16">port refused</tspan>
+</text>
+<path d="M260,362 L418,362" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="286.4" y="342" width="105.19999999999999" height="40" rx="6" class="pill"/>
+<text x="339" y="354" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="339" dy="0">allowed only</tspan>
+<tspan x="339" dy="16" font-style="italic">[vsock 1026]</tspan>
+</text>
+<path d="M640,362 L798,362" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="662.85" y="342" width="112.3" height="40" rx="6" class="pill"/>
+<text x="719" y="354" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="719" dy="0">dials, checks</tspan>
+<tspan x="719" dy="16">again [TCP]</tspan>
+</text>
+<path d="M150,435 L150,520 L905,520 L905,427" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="392.2" y="508" width="275.6" height="24" rx="6" class="pill"/>
+<text x="530" y="520" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="530" dy="0">in a container: dials directly [TCP]</tspan>
+</text>
+<rect x="40" y="60" width="220" height="125" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="150" y="88.5" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="150" font-size="15.5" font-weight="700">Resident app</tspan>
+<tspan x="150" dy="17" font-size="11.5" opacity="0.85">[Container: Node.js or Chromium]</tspan>
+<tspan x="150" dy="20" font-size="12.5">Declares</tspan>
+<tspan x="150" dy="17" font-size="12.5">network:host:&lt;pattern&gt; and</tspan>
+<tspan x="150" dy="17" font-size="12.5">network:connect:8090</tspan>
+</text>
+<rect x="40" y="300" width="220" height="135" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="150" y="333.5" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="150" font-size="15.5" font-weight="700">Egress broker</tspan>
+<tspan x="150" dy="17" font-size="11.5" opacity="0.85">[Container: Node.js, 127.0.0.1:8090]</tspan>
+<tspan x="150" dy="20" font-size="12.5">Checks host and port against</tspan>
+<tspan x="150" dy="17" font-size="12.5">the app's patterns, refuses</tspan>
+<tspan x="150" dy="17" font-size="12.5">internal addresses</tspan>
+</text>
+<rect x="420" y="300" width="220" height="125" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="530" y="337" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="530" font-size="15.5" font-weight="700">Host dialer</tspan>
+<tspan x="530" dy="17" font-size="11.5" opacity="0.85">[Container: in berth-vmm]</tspan>
+<tspan x="530" dy="20" font-size="12.5">Its own allowlist and</tspan>
+<tspan x="530" dy="17" font-size="12.5">internal-address refusal</tspan>
+</text>
+<rect x="420" y="60" width="220" height="125" rx="10" fill="#6b7280" stroke="#4b5563" stroke-width="1.5"/>
+<text x="530" y="97" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="530" font-size="15.5" font-weight="700">Kernel</tspan>
+<tspan x="530" dy="17" font-size="11.5" opacity="0.85">[Landlock + seccomp]</tspan>
+<tspan x="530" dy="20" font-size="12.5">Allows the app no outbound</tspan>
+<tspan x="530" dy="17" font-size="12.5">port but the broker's</tspan>
+</text>
+<rect x="800" y="300" width="210" height="125" rx="10" fill="#6b7280" stroke="#4b5563" stroke-width="1.5"/>
+<text x="905" y="337" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="905" font-size="15.5" font-weight="700">Internet hosts</tspan>
+<tspan x="905" dy="17" font-size="11.5" opacity="0.85">[External System]</tspan>
+<tspan x="905" dy="20" font-size="12.5">Only those a declared</tspan>
+<tspan x="905" dy="17" font-size="12.5">pattern covers</tspan>
+</text>
+<rect x="24" y="556" width="16" height="16" rx="4" fill="#438dd5" stroke="#3c7fc0"/>
+<text x="46" y="568.5" font-size="12.5" class="bl">Container</text>
+<rect x="117" y="556" width="16" height="16" rx="4" fill="#6b7280" stroke="#4b5563"/>
+<text x="139" y="568.5" font-size="12.5" class="bl">External</text>
+</svg>

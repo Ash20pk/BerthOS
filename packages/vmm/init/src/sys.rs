@@ -189,10 +189,10 @@ pub fn kill(pid: i32, sig: i32) {
 pub fn power_off() -> ! {
     unsafe {
         libc::sync();
-        libc::reboot(libc::RB_POWER_OFF);
-        // reboot(2) only returns on failure (EPERM outside PID 1's
-        // namespace). Exiting PID 1 panics the kernel, and libkrun's cmdline
-        // has panic=-1, which reboots and ends the VM anyway.
+        libc::reboot(if cfg!(target_arch = "x86_64") { libc::RB_AUTOBOOT } else { libc::RB_POWER_OFF });
+        // x86_64: no ACPI, so power-off halts; reboot=k's reset ends the VM.
+        // reboot(2) returns only on failure; exiting PID 1 then panics the
+        // kernel, and panic=-1 reboots, which ends the VM anyway.
         libc::_exit(1);
     }
 }

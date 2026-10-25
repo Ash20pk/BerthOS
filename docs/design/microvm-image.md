@@ -14,37 +14,41 @@ This follows the libkrun spike (`docs/design/microvm-spike.md`). The spike boote
 
 Artifacts live in `/Users/ash/berth-wt/vm-image-artifacts/` (`$ART`). Nothing big is committed.
 
-## Results
+## Context
 
-| Goal | Result | Evidence |
-|---|---|---|
-| 1. Pinned kernel, raw Image, sha256-verified, measured | **Pass** | A fresh, rust-free builder root rebuilt `Image` with sha256 `8f79e8da…` (the spike's hash). `berth-vmm --kernel` boots it, refuses a one-byte-modified copy, and prints the hash in a `measurements` line |
-| 2. Content-addressed read-only rootfs + per-sandbox state disk | **Pass** | `rootfs-2eaa3e0a….erofs` (46.4 MB), rebuilt with the same hash every time, mounted `/dev/vda erofs ro`. Every file is root-owned; the static uids are baked in and the app uids are written at boot. The state disk is `/dev/vdb` ext4, created sparse, formatted on first boot |
-| 3. End to end | **Pass** | Boot 1: `add_note`, then a graceful stop. Boot 2: `list_notes` returns the note. `ruleset=FullyEnforced`. Ownership was checked (table below). Boot times are below; the host was under load from other work |
-| 4. Docs | This file | |
+The image is what berth-vmm boots for every sandbox: the pinned kernel, the shared read-only rootfs, and a state disk per sandbox. Users never build it. CI builds it from source and publishes it as a GitHub release, and `berth vm install` downloads it and checks it against the pins ([Distribution](#distribution)). You rebuild it with the scripts in `packages/vmm/scripts/`, in a builder VM on macOS or a container on Linux. The runtime around it, and its current state, is in [`microvm-runtime.md`](microvm-runtime.md).
 
-python3 was **not** in the base image at first. Since feat/vm-python it is, with berth_sdk's dependencies from Alpine (py3-yaml, py3-pydantic, py3-protobuf) and berth_sdk itself at `/opt/berth/sdk-python`: rootfs `322ee4f3…` is 74.7 MB against 46.7 MB without (+28 MB, +60%). The `PYTHON=1` variant is gone. Since feat/vm-semantic-fs-build it also holds `fuse3` (fusermount3, setuid bit removed) and `semantic-fs-daemon` (7.5 MB, static Go): rootfs `7f361418…` is 79.5 MB. berth-init starting it (feat/vm-semantic-fs-init) made that `30845aab…`, 79.5 MB, and its `kill_daemon` test hook (test/vm-semantic-fs-e2e) `e3b83441…`.
+## Containers
 
-## How to build and run
+<p align="center"><img src="../images/c4/design-microvm-image.svg" alt="microVM image containers: the build scripts run each build in a builder, a libkrun VM or a Docker container, which fetches packages and tarballs from Alpine and kernel.org. The CI workflow runs the same scripts and publishes a GitHub release. berth vm install downloads it, checks each sha256 and renames the files into ~/.berth/vm. berth-vmm reads them from there, refuses anything that does not match its compiled-in pins, and boots the guest with the rootfs as vda, the state disk as vdb and the app share; the guest init mounts them." width="100%"></p>
 
-```sh
-cd packages/vmm
-./scripts/build-kernel.sh       # ~5 to 9 min, 8 vCPU builder VM, ~2.2 GB scratch at peak (deleted after)
-./scripts/build-agent-init.sh   # ~30 s
-./scripts/build-rootfs.sh       # ~7 s after the first apk download
-./scripts/run-probe.sh                          # enforcement probe on the image
-MODE=inspect STATE=$ART/state/x.img ./scripts/run-probe.sh   # mounts + ownership
+The build scripts run on the host and start each in-builder script in a builder: a libkrun builder VM (`BERTH_BUILDER=vm`, the macOS default) or a container (`BERTH_BUILDER=docker`, the Linux default and CI). CI's `vm-artifacts.yml` runs the same scripts and publishes a GitHub release, which `berth vm install` downloads into `~/.berth/vm`. berth-vmm checks the kernel and rootfs against its compiled-in pins, attaches the rootfs as `/dev/vda` and the state disk as `/dev/vdb`, and shares the app over virtio-fs. In the guest, the init at `/sbin/berth-init` mounts them. What it gets from berth-vmm, and what it has to do, is the contract below.
 
-STATE=$ART/state/notes.img ACTIONS=add  node scripts/boot-notes.mjs   # boot 1: add, graceful stop
-STATE=$ART/state/notes.img ACTIONS=list node scripts/boot-notes.mjs   # boot 2: list
-STATE=$ART/state/notes.img RUNS=6 node scripts/boot-notes.mjs         # first + 5 repeats
-```
+### Guest init contract (the seam with `feat/vm-guest-init`)
 
-On Linux the same scripts build in a container instead of a builder VM (`BERTH_BUILDER=docker`, the default there; see [Distribution](#distribution)), which is how CI runs them. Each build script checks for 10 GB free before it starts. Builder VMs are the only VMs that run with TSI on, and the only ones that use libkrunfw's bundled kernel (`--libkrunfw-kernel`, through `DYLD_LIBRARY_PATH`). A sandbox never does either.
+The init is just a file: whatever `BERTH_INIT=<file>` names is installed at **`/sbin/berth-init`**, mode 0755, owner 0:0, and its hash is recorded in `inputs.json` (`berthInit`). A static Rust binary drops in the same way, and nothing else in the image or in berth-vmm changes. We checked this by building with `BERTH_INIT=guest/net-probe.sh`: the image booted it as init. The shell version stays the default until the Rust init lands.
 
-## 1. The kernel
+What the init gets, and has to do (what `guest/berth-init.sh` does today):
 
-### What is pinned
+| | |
+|---|---|
+| Started by | libkrun's `init.krun` as PID 1, which mounts `/proc`, `/sys`, `/dev` and cgroup2 (without `nsdelegate`/`favordynmods`, so remount it), switches to the image and execs `/sbin/berth-init` as root with berth-vmm's explicit env (never the host's). libkrun passes that env on the kernel command line (`KRUN_INIT=… KRUN_BLOCK_ROOT_DEVICE=/dev/vda …`). feat/vm-guest-init's berth-init also runs directly as `init=`; over this erofs root it has only been tested exec'd by init.krun |
+| Root | `/dev/vda`, erofs, **read-only**. Writable places: tmpfs it mounts on `/run` and `/tmp`, and the state disk |
+| Env from berth-vmm | `PATH`, `BERTH_STATE_DEV=/dev/vdb` when there is a state disk, plus `--env` (today `BERTH_VM_MODE=rpc,probe,inspect`, `BERTH_REQUIRE_ENFORCEMENT`) |
+| Must mount | securityfs, cgroup2 (`nsdelegate,favordynmods`, falling back without the latter), tmpfs `/run`, `/tmp` and `/context`, virtio-fs tag `app` read-only on `/app` (multi-app: `/app/<tag>`, per `BERTH_VM_APPS`) |
+| State disk | if `BERTH_STATE_DEV` is set: ext4 magic `0xEF53` at byte 1080, else `mkfs.ext4 -L berth-state -m 0 -E root_owner=0:0,nodiscard`; mount `nosuid,nodev` on `/state`; `/state/workspace` owned by the app uid, 0750, bind-mounted on `/workspace`. Without one: tmpfs `/workspace` |
+| Identities | the image has `berth` (9999) and `berth-context-bus` (9001). The init writes `berth-<app>` = 10000 + index into a tmpfs copy of passwd/group, adds it to `berth`, and binds the copies over `/etc/passwd` and `/etc/group` |
+| Policy | `node /opt/berth/sdk-node/generate-capability-policy.mjs` in `/app` as root, with `NODE_OPTIONS`/`NODE_PATH` unset → `/run/berth/capability-policy.json`, 0:appgid 0640 |
+| vsock (feat/vm-guest-init's plan, all listen-mode) | **1024 control**: a `hello` line, then line-JSON ops: `{"op":"status"}`, and `{"op":"shutdown"}`, which means stop the apps, `sync`, unmount `/workspace` and `/state`, exit (init.krun then ends the VM). **1025 logs** (the Rust init only). **5000+i RPC** for app i. The shell stand-in serves 1024 (hello, status, shutdown) and 5000 |
+| Exit | the init's exit ends the VM; exit after the state disk is unmounted |
+
+## Components
+
+The parts of the image: the kernel (how it is pinned, built, verified and distributed), then the root filesystem, the app share and the per-sandbox state disk.
+
+### 1. The kernel
+
+#### What is pinned
 
 `packages/vmm/kernel/manifest.toml`:
 
@@ -60,7 +64,7 @@ On Linux the same scripts build in a container instead of a builder VM (`BERTH_B
 
 The config delta is the spike's, plus three assertions the rootfs depends on (`VIRTIO_BLK`, `EROFS_FS`, `EROFS_FS_ZIP`). All three were already on, so the Image did not change.
 
-### Build (`scripts/build-kernel.sh`, `kernel/build-in-vm.sh`)
+#### Build (`scripts/build-kernel.sh`, `kernel/build-in-vm.sh`)
 
 1. The host downloads the linux and libkrunfw tarballs into `$ART/cache` and checks both against the manifest. It also checks the config delta's sha256. A changed delta stops the build unless `UPDATE_MANIFEST=1` is set, which rewrites the output pins.
 2. A builder VM boots a fresh Alpine root used only for kernel builds. The spike shared one root with the agent-init build, and its rustc leaked into `.config`. The sources reach the VM on a read-only `/in` share. The VM installs the toolchain with apk, untars, patches, merges the config, checks every delta line survived `olddefconfig`, and builds `Image` with `RUSTC=/bin/false` and a fixed timestamp, user and host. It writes `toolchain.txt` (gcc, ld, and every apk package with its version).
@@ -70,7 +74,7 @@ The config delta is the spike's, plus three assertions the rootfs depends on (`V
 
 The libkrunfw dylib wrapping (`bin2cbundle.py` + `cc`) is gone. Nothing boots the kernel that way any more.
 
-### How berth-vmm uses it
+#### How berth-vmm uses it
 
 - `include_str!("../kernel/manifest.toml")` puts the pin inside the binary. Changing the kernel means changing the manifest and rebuilding `berth-vmm`, which is what we want: the launcher and its kernel are versioned together.
 - `--kernel <path>`: berth-vmm hashes the file and refuses on a mismatch, with exit 2 before libkrun is touched:
@@ -79,7 +83,7 @@ The libkrunfw dylib wrapping (`bin2cbundle.py` + `cc`) is gone. Nothing boots th
 - With no `--kernel`, berth-vmm refuses to start unless `--libkrunfw-kernel` is passed explicitly (builders).
 - Hashing the 23.7 MB Image takes **11 to 17 ms** (CommonCrypto). SHA-256 is CommonCrypto on macOS, with a portable implementation elsewhere. Both are tested against the FIPS vectors, and the crate still has no dependencies.
 
-### The measurement line (for attestation)
+#### The measurement line (for attestation)
 
 Every boot prints one JSON line on stderr before the VM starts:
 
@@ -93,7 +97,7 @@ Every boot prints one JSON line on stderr before the VM starts:
 
 `kernel: null` (a builder on libkrunfw) or `rootfs: null` (a virtio-fs root) means "not pinned", and attestation must report it as such. The line is not signed yet: the host prints it, and a later step signs it or feeds it to the attestation record.
 
-### Distribution
+#### Distribution
 
 Implemented on `feat/vm-artifacts-release`. Users never build the kernel or the rootfs: CI does, and proves the result is the pinned bytes.
 
@@ -133,7 +137,7 @@ The in-builder scripts see `/in` or `/src`, `/out` and `/build` either way, and 
 
 **Signing berth-vmm.** It is ad hoc signed. macOS runs it once it isn't quarantined, so a copy downloaded with a browser needs `xattr -d com.apple.quarantine`. `berth vm install` does that only after the sha256 matched, and a file Node downloads isn't quarantined in the first place. Proper distribution needs an Apple Developer ID Application certificate in the workflow (a `.p12` and its password as secrets, imported into a temporary keychain), `codesign --options runtime --timestamp` with the same entitlements, then `xcrun notarytool submit --wait` with an App Store Connect API key. A bare Mach-O can't be stapled, so the ticket is fetched online on first run, or it ships in a zip or pkg instead.
 
-#### Reproducibility across machines (evidence, 2026-10-01)
+##### Reproducibility across machines (evidence, 2026-10-01)
 
 | Artifact | Fresh root on the dev Mac, today | Pin |
 |---|---|---|
@@ -153,9 +157,9 @@ The new image passed `scripts/e2e.mjs all` (51/51) and `egress` (28/28). The CLI
 
 **The limit that remains.** apk resolves the newest versions in v3.24, and the mirror drops old ones. A pin is reproducible from source only while Alpine still serves the package set in `rootfs/apk.lock` (and `kernel/apk.lock` and `guest/*.apk.lock` for the toolchains). The scripts report any difference from those locks, and the hash check fails if it matters. The kernel's toolchain drift above did not matter, but a gcc or binutils update would. So publish soon after pinning, and re-pin (`UPDATE_MANIFEST=1`) when CI reports drift. Published assets don't expire. Only the ability to rebuild them bit for bit does. Making that permanent needs a package snapshot: `apk fetch` the exact `.apk` files, which Alpine signs, into a cache kept with the release, and install from it offline. That is the next step, and is not done.
 
-## 2. The root filesystem
+### 2. The root filesystem
 
-### Image
+#### Image
 
 `$ART/rootfs/rootfs-2eaa3e0afc4597ad084d74df1d4fe37e7cc9aa1ddbd35051357d7ffab2142414.erofs`: **46,366,720 bytes**, erofs with lz4hc, built from an 82.5 MB tree.
 
@@ -174,7 +178,7 @@ The new image passed `scripts/e2e.mjs all` (51/51) and `egress` (28/28). The CLI
 
 A read-only root cannot `adduser` at boot the way `entrypoint.sh` does. The first version of this branch baked in 16 slots (`berth-app0..15`). context-bus-daemon names peers by `berth-<app>`, though, so the image now carries only the static identities. The init copies `passwd` and `group` to tmpfs, appends `berth-<app>` (uid = 10000 + the app's index, as in Docker), adds it to `berth`, and bind-mounts the copies over `/etc/passwd` and `/etc/group`. feat/vm-guest-init's berth-init does the same, and the shell stand-in here does it for the single app. In the guest: `berth-notes:x:10000:10000`, `berth:x:9999:berth-context-bus,berth-notes`.
 
-### Build (`scripts/build-rootfs.sh`, `rootfs/build-in-vm.sh`)
+#### Build (`scripts/build-rootfs.sh`, `rootfs/build-in-vm.sh`)
 
 1. On the host: fetch and check the minirootfs, bundle the sdk-node tools and notes with esbuild, and stage `/in`: the tarball, `packages.txt`, `SOURCE_DATE_EPOCH` (from `rootfs/manifest.toml`), and a `files/` overlay tree.
 2. In a builder VM (its own fresh Alpine root, TSI on, 4 vCPU): untar onto an ext4 scratch disk **as guest root**, `apk --root … add`, overlay `files/` and chown every overlaid path to 0:0, then append the identities and empty `resolv.conf`. Drop `/var/cache/apk` and `/var/log/apk.log`. List every path with `uid:gid mode` and **fail if uid 501 appears**. Then `mkfs.erofs -zlz4hc -T$EPOCH --all-time -U <fixed uuid>` (erofs-utils 1.9), with `SOURCE_DATE_EPOCH` unset so that every inode gets the epoch.
@@ -182,12 +186,12 @@ A read-only root cannot `adduser` at boot the way `entrypoint.sh` does. The firs
 
 **Reproducibility.** Two leaks of build time had to go: `/var/log/apk.log` (it carries a wall-clock line) and the git commit, which is now only in the outer `inputs.json`, since inside the image it would change the hash on every unrelated commit. After that, rebuilds gave the same hash every time: three in a row of one tree (`30eb84a4…`), the pre-alignment image `42b32ced…` from a dirty and then a clean tree, and the final image `2eaa3e0a…` twice. Every build formats a new scratch disk, so ext4 directory order does not leak in either. The limit is that apk resolves the newest package versions in v3.24, so a rebuild next month may differ. Content addressing makes that visible (a new hash, a diffable `inputs.json`) rather than silent. Bit-exact rebuilds of an old image need a pinned apk package cache (open item). Later it turned out that the sdk-node bundles also carried the build machine's paths. That is fixed, see [Distribution](#distribution).
 
-### How berth-vmm boots it
+#### How berth-vmm boots it
 
 - `--rootfs IMG`: the expected hash comes from the file name (`<name>-<sha256>.<ext>`), or from `--rootfs-sha256`. A name without a hash is refused. berth-vmm probes the fstype once from the superblock magic (erofs or ext4), while the image is still trusted. It hashes the file (18 to 38 ms for 46 MB) and refuses a mismatch. Then `krun_add_disk(read_only=true)` makes it `/dev/vda`, and `krun_set_root_disk_remount("/dev/vda", "erofs", "ro")`: libkrun boots init.krun from its internal dummy virtio-fs root, then mounts the image and switches to it. The guest shows `/dev/vda / erofs ro,relatime,user_xattr,acl,cache_strategy=readaround`.
 - The image is shared by every sandbox, so it must be immutable from inside any of them. Three layers protect it: the guest kernel refuses writes (`dd of=/dev/vda` gives `EPERM`, `/sys/block/vda/ro` = 1), libkrun opens a read-only disk `O_RDONLY`, and the file is mode 0444. The image's hash was unchanged after that attempt.
 
-### App code: keep the read-only virtio-fs share
+#### App code: keep the read-only virtio-fs share
 
 We keep the spike's `app` virtio-fs share, mounted read-only at `/app`, instead of baking the app into a per-app layer:
 
@@ -196,7 +200,7 @@ We keep the spike's `app` virtio-fs share, mounted read-only at `/app`, instead 
 - The base image stays one shared, cacheable artifact per Berth release instead of one per app.
 - The cost is ownership. virtio-fs has no uid mapping, so `/app` shows the host user, **501:20**, inside the guest. It is read-only and world-readable (0644/0755), so the app (10000) can read it and nobody can write it. 501 is not in the guest's passwd. For `berth deploy` or attested runs, a per-app erofs layer (same builder, hashed, owner 0:0) is the better fit: it would be measured like the rootfs, while the share is not.
 
-### Ownership inside the guest (`MODE=inspect`)
+#### Ownership inside the guest (`MODE=inspect`)
 
 ```
 0:0 755 /                       0:0 755 /usr/local/bin/agent-init
@@ -213,13 +217,45 @@ mounts: tmpfs /context; cgroup2 rw,nosuid,nodev,noexec,relatime,nsdelegate,favor
 
 The only non-0:0 file in the image is `/etc/shadow` (0:42 0640, Alpine's `shadow` group). The spike's problem, guest uid 501 owning `/`, `/etc` and `/etc/passwd`, is gone. While fixing it we found two bugs of the same kind: `cp -a` from the virtio-fs `/in` carried 501 onto existing directories and onto the image root itself. The build now fails if any 501 remains.
 
-### Per-sandbox state disk
+#### Per-sandbox state disk
 
 - `--state IMG [--state-size MiB]` (default 1024): if the file is missing, berth-vmm creates it sparse at that size, and the size is the cap. The disk attaches read-write as `/dev/vdb`, and the guest gets `BERTH_STATE_DEV=/dev/vdb`. On a 256 MiB disk, a new disk with notes on it allocates ~25 MB on the host.
 - In the guest, `berth-init` checks the ext4 magic, runs `mkfs.ext4 -L berth-state -m 0 -E root_owner=0:0,nodiscard` on a blank disk, mounts it `nosuid,nodev` at `/state`, creates `/state/workspace` (10000:10000, 0750) and bind-mounts it onto `/workspace`. Without `--state`, `/workspace` is tmpfs, as in the spike.
 - **Stop:** `{"op":"shutdown"}` on the control port, vsock 1024, makes the init answer `shutting_down`, kill every other process, `sync`, unmount `/workspace` and `/state`, and exit. init.krun then ends the VM, and berth-vmm exits 0, ~210 ms after the request for the shell init (feat/vm-guest-init's Rust init: 37 to 48 ms). A `SIGKILL` of berth-vmm also kept the note in one trial (ext4 journal, writes already flushed), but only the graceful path is a guarantee.
 
 **libkrun bug found (and worked around):** on macOS, libkrun 1.19.6 truncates a raw disk image when the guest discards or write-zeroes a range that reaches the end of the device. `blkdiscard -o <size-64K> -l 64K /dev/vdb` shortens the file by 64 KiB, the same range 64 KiB further from the end does not, and `blkdiscard /dev/vdb` leaves a 0-byte file. `mkfs.ext4` zeroes the last blocks, so every freshly formatted disk came back 64 KiB short. The next boot then failed with `mount: mounting /dev/vdb on /state failed: Invalid argument`, because the filesystem was larger than the device. berth-vmm now extends a short state disk back to `--state-size` before boot. The lost tail is a range the guest asked to read as zeros, so a sparse zero tail is the right content. It reports `restoredBytes` (65536 after a first format). This should go upstream. A guest can still truncate its *own* disk mid-run (denial of its own state only). The read-only rootfs cannot be truncated (see above).
+
+## Code
+
+The commands that build the artifacts and boot them.
+
+### How to build and run
+
+```sh
+cd packages/vmm
+./scripts/build-kernel.sh       # ~5 to 9 min, 8 vCPU builder VM, ~2.2 GB scratch at peak (deleted after)
+./scripts/build-agent-init.sh   # ~30 s
+./scripts/build-rootfs.sh       # ~7 s after the first apk download
+./scripts/run-probe.sh                          # enforcement probe on the image
+MODE=inspect STATE=$ART/state/x.img ./scripts/run-probe.sh   # mounts + ownership
+
+STATE=$ART/state/notes.img ACTIONS=add  node scripts/boot-notes.mjs   # boot 1: add, graceful stop
+STATE=$ART/state/notes.img ACTIONS=list node scripts/boot-notes.mjs   # boot 2: list
+STATE=$ART/state/notes.img RUNS=6 node scripts/boot-notes.mjs         # first + 5 repeats
+```
+
+On Linux the same scripts build in a container instead of a builder VM (`BERTH_BUILDER=docker`, the default there; see [Distribution](#distribution)), which is how CI runs them. Each build script checks for 10 GB free before it starts. Builder VMs are the only VMs that run with TSI on, and the only ones that use libkrunfw's bundled kernel (`--libkrunfw-kernel`, through `DYLD_LIBRARY_PATH`). A sandbox never does either.
+
+## Results
+
+| Goal | Result | Evidence |
+|---|---|---|
+| 1. Pinned kernel, raw Image, sha256-verified, measured | **Pass** | A fresh, rust-free builder root rebuilt `Image` with sha256 `8f79e8da…` (the spike's hash). `berth-vmm --kernel` boots it, refuses a one-byte-modified copy, and prints the hash in a `measurements` line |
+| 2. Content-addressed read-only rootfs + per-sandbox state disk | **Pass** | `rootfs-2eaa3e0a….erofs` (46.4 MB), rebuilt with the same hash every time, mounted `/dev/vda erofs ro`. Every file is root-owned; the static uids are baked in and the app uids are written at boot. The state disk is `/dev/vdb` ext4, created sparse, formatted on first boot |
+| 3. End to end | **Pass** | Boot 1: `add_note`, then a graceful stop. Boot 2: `list_notes` returns the note. `ruleset=FullyEnforced`. Ownership was checked (table below). Boot times are below; the host was under load from other work |
+| 4. Docs | This file | |
+
+python3 was **not** in the base image at first. Since feat/vm-python it is, with berth_sdk's dependencies from Alpine (py3-yaml, py3-pydantic, py3-protobuf) and berth_sdk itself at `/opt/berth/sdk-python`: rootfs `322ee4f3…` is 74.7 MB against 46.7 MB without (+28 MB, +60%). The `PYTHON=1` variant is gone. Since feat/vm-semantic-fs-build it also holds `fuse3` (fusermount3, setuid bit removed) and `semantic-fs-daemon` (7.5 MB, static Go): rootfs `7f361418…` is 79.5 MB. berth-init starting it (feat/vm-semantic-fs-init) made that `30845aab…`, 79.5 MB, and its `kill_daemon` test hook (test/vm-semantic-fs-e2e) `e3b83441…`.
 
 ## 3. End to end
 
@@ -267,24 +303,6 @@ What this shows:
 - New work in every boot: hashing the kernel (11 to 17 ms) and the rootfs (18 to 38 ms) before boot, and ~15 to 20 ms to mount the state disk (plus ~20 ms of mkfs on the first boot).
 
 Phase marks (image + state, a repeat): guest init at 159 ms, state disk mounted at 181, policy compiled at 303, agent-init applied at 313, app ready at 462. berth-vmm's physical footprint is 91 to 117 MiB (the spike measured 104 to 107).
-
-## Guest init contract (the seam with `feat/vm-guest-init`)
-
-The init is just a file: whatever `BERTH_INIT=<file>` names is installed at **`/sbin/berth-init`**, mode 0755, owner 0:0, and its hash is recorded in `inputs.json` (`berthInit`). A static Rust binary drops in the same way, and nothing else in the image or in berth-vmm changes. We checked this by building with `BERTH_INIT=guest/net-probe.sh`: the image booted it as init. The shell version stays the default until the Rust init lands.
-
-What the init gets, and has to do (what `guest/berth-init.sh` does today):
-
-| | |
-|---|---|
-| Started by | libkrun's `init.krun` as PID 1, which mounts `/proc`, `/sys`, `/dev` and cgroup2 (without `nsdelegate`/`favordynmods`, so remount it), switches to the image and execs `/sbin/berth-init` as root with berth-vmm's explicit env (never the host's). libkrun passes that env on the kernel command line (`KRUN_INIT=… KRUN_BLOCK_ROOT_DEVICE=/dev/vda …`). feat/vm-guest-init's berth-init also runs directly as `init=`; over this erofs root it has only been tested exec'd by init.krun |
-| Root | `/dev/vda`, erofs, **read-only**. Writable places: tmpfs it mounts on `/run` and `/tmp`, and the state disk |
-| Env from berth-vmm | `PATH`, `BERTH_STATE_DEV=/dev/vdb` when there is a state disk, plus `--env` (today `BERTH_VM_MODE=rpc,probe,inspect`, `BERTH_REQUIRE_ENFORCEMENT`) |
-| Must mount | securityfs, cgroup2 (`nsdelegate,favordynmods`, falling back without the latter), tmpfs `/run`, `/tmp` and `/context`, virtio-fs tag `app` read-only on `/app` (multi-app: `/app/<tag>`, per `BERTH_VM_APPS`) |
-| State disk | if `BERTH_STATE_DEV` is set: ext4 magic `0xEF53` at byte 1080, else `mkfs.ext4 -L berth-state -m 0 -E root_owner=0:0,nodiscard`; mount `nosuid,nodev` on `/state`; `/state/workspace` owned by the app uid, 0750, bind-mounted on `/workspace`. Without one: tmpfs `/workspace` |
-| Identities | the image has `berth` (9999) and `berth-context-bus` (9001). The init writes `berth-<app>` = 10000 + index into a tmpfs copy of passwd/group, adds it to `berth`, and binds the copies over `/etc/passwd` and `/etc/group` |
-| Policy | `node /opt/berth/sdk-node/generate-capability-policy.mjs` in `/app` as root, with `NODE_OPTIONS`/`NODE_PATH` unset → `/run/berth/capability-policy.json`, 0:appgid 0640 |
-| vsock (feat/vm-guest-init's plan, all listen-mode) | **1024 control**: a `hello` line, then line-JSON ops: `{"op":"status"}`, and `{"op":"shutdown"}`, which means stop the apps, `sync`, unmount `/workspace` and `/state`, exit (init.krun then ends the VM). **1025 logs** (the Rust init only). **5000+i RPC** for app i. The shell stand-in serves 1024 (hello, status, shutdown) and 5000 |
-| Exit | the init's exit ends the VM; exit after the state disk is unmounted |
 
 ## Problems and open questions
 

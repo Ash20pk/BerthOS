@@ -2,7 +2,65 @@
 
 Install Berth, watch the kernel refuse a write, run and scaffold a resident app, and find every CLI command. If you only want to use Berth from an agent you already run, [the MCP quickstart](./mcp-quickstart.md) is shorter: one entry in your MCP client's config, no code.
 
-## Prerequisites
+## Context
+
+You, on your own machine, install the `berth` CLI and use it to run resident apps: tools defined by a `berth.yml` whose capabilities the Linux kernel enforces. The CLI needs Docker and, for enforcement, a kernel with Landlock. An agent you already run reaches the same apps over MCP ([the MCP quickstart](./mcp-quickstart.md)); the experimental agent framework calls Anthropic or OpenAI with your API key. `berth deploy` ships an app to a remote provider (E2B, Daytona or Kubernetes), and releases publish to npm and PyPI from GitHub Actions. For the whole picture, see the [README](../README.md#level-1-system-context).
+
+## Containers
+
+- **The `berth` CLI**, a Node.js process on your machine. It builds an image for your app and starts it through the Docker daemon, or as a [local microVM](./local-vm.md) with `berth dev --runtime vm`.
+- **The sandbox**, the container `berth dev` starts, holding one app (or several, with `--apps`). `agent-init` applies the app's Landlock and seccomp policy before the app's first line runs.
+- **Callers from the host.** `berth rpc` and `berth mcp` call an app's exports from the host. A browser app's noVNC and VNC ports bind to `127.0.0.1` only.
+
+How these fit together is in the [README](../README.md#level-2-containers).
+
+## Components
+
+The repository's packages, apps and examples, and what each holds:
+
+### Repository layout
+
+```
+packages/
+  manifest-schema/     berth.yml schema, validation, and capability parsing
+  sdk/                 resident app SDK: defineApp(), lifecycle hooks, context bus client
+  sdk-python/          Python resident app SDK, wire-compatible with @berthos/sdk
+  cli/                 the `berth` CLI
+  docker-orchestrator/ container lifecycle for a Berth OS, and the doctor checks
+  agent-init/          Rust binary that applies the Landlock and seccomp policy before starting the app
+  context-bus-daemon/  Rust daemon for shared memory between apps in one Berth OS
+  semantic-fs-daemon/  Go/FUSE filesystem searchable by file tags, backed by SQLite
+  registry-server/     local app registry for publish, discover, install (Fastify + SQLite)
+  mesh-coordinator/    WireGuard mesh coordination: allocates IPs, exchanges keys, matches peers
+  mesh-daemon/         Rust daemon that applies a sandbox's WireGuard config
+  adapters/            deploy adapters for E2B, Daytona and Kubernetes
+  audit/               the hash-chained audit trail and the attestation record
+  tls/                 certificates for the registry and mesh coordinator
+experimental/          the agent framework: experimental, unpublished (see experimental/README.md)
+  agents/              Computer, Agent, Crew: boots a Berth OS and drives it with any LLM provider
+  agents-python/       Python Agent/Crew, plus Computer.connect() over `berth os up --http-rpc`
+  seam-*/              Berth tools for the Claude Agent SDK and OpenAI Agents
+apps/
+  filesystem/          read and write /workspace; publishes fs.file_created
+  code-editor/         reacts to fs.file_created over the context bus
+  code-interpreter/    run Python, JavaScript or shell; no network unless declared
+  terminal/            shared shell (tmux + ttyd), watchable live in the browser
+  browser-native/      headless Chromium plus VNC; also a DuckDuckGo search
+  github-assistant/    read repos and open issues, scoped by verb and path
+  notes/               stateful notes persisted to /workspace
+  activity-feed/       collects fs.file_created and notes.* into one feed
+  hello-world-py/      minimal Python resident app
+examples/
+  kernel-says-no/      one app, two writes, one EACCES from the kernel; no LLM, no API key
+  resident-apps/       apps to run with `berth dev` (hello-world, http-fetch, generic-connector)
+  agents/              agent examples using @berthos/agents (simple-agent, agent-server, with-vercel-ai-sdk)
+```
+
+## Code
+
+Follow these steps in order: prerequisites, install, a first enforcement demo, then running, scaffolding, testing and deploying an app. The CLI reference and the release process come after.
+
+### Prerequisites
 
 - Node.js 22+ (`nvm use` reads the repo's `.nvmrc`)
 - Docker, running locally
@@ -10,7 +68,7 @@ Install Berth, watch the kernel refuse a write, run and scaffold a resident app,
 
 Kernel enforcement needs Landlock (Linux 6.7+). Docker Desktop's VM on macOS and Windows doesn't have it. Run `berth doctor` to check your machine; see [enforcement by platform](./kernel-enforcement.md#kernel-enforcement-by-platform).
 
-## Install and build
+### Install and build
 
 The CLI installs on its own with `npm install -g @berthos/cli`. The demos and first-party apps live in the repository, so to run them, clone and build:
 
@@ -24,7 +82,7 @@ pnpm build
 
 The commands below write `berth`. In a clone without the global install, that's `node packages/cli/bin/berth.js` from the repo root (or `node ../../packages/cli/bin/berth.js` from inside an app's folder).
 
-## See enforcement, with no API key
+### See enforcement, with no API key
 
 ```bash
 cd examples/kernel-says-no && pnpm start
@@ -36,7 +94,7 @@ The demo makes two writes through one resident app's `write_file` tool: one insi
 
 More demos are in the [examples catalog](../examples/README.md): `prompt-injection` (a compromised model, refused by the kernel), `no-egress` (code execution with no network), and `audit-trail` (tamper-evident records; needs neither a Landlock kernel nor an API key).
 
-## Run an agent
+### Run an agent
 
 The agent framework (`@berthos/agents`) is experimental and not published, so this works from a clone only. [`examples/agents/simple-agent`](../examples/agents/simple-agent) boots a Berth OS from `apps/filesystem` and runs one task against it, picking Anthropic or OpenAI from whichever key you set:
 
@@ -48,7 +106,7 @@ pnpm start
 
 On macOS or Windows without an enforcing VM, prefix `pnpm start` with `BERTH_ALLOW_UNENFORCED=1`. The apps then run unrestricted, with a warning. Under the hood this is `runAgent({ apps: "apps/filesystem", task: "..." })`; the full API is in [Building a Berth Agent](./berth-agents-guide.md#building-a-berth-agent).
 
-## Run a resident app directly
+### Run a resident app directly
 
 `berth dev` builds and boots one resident app in the sandbox, with no agent attached, and restarts it when you save.
 
@@ -91,7 +149,7 @@ Open the URL and enter the password to watch and control the sandboxed Chromium.
 
 Two more apps to try: [`apps/activity-feed`](../apps/activity-feed) collects context-bus events from `filesystem` and `notes` into one feed, and [`apps/terminal`](../apps/terminal) is a shared `tmux` shell the agent drives and you can watch and type into from the browser.
 
-## Scaffold your own resident app
+### Scaffold your own resident app
 
 ```bash
 berth init my-app
@@ -103,7 +161,7 @@ berth dev
 
 Next: [Resident apps](./resident-apps.md) for the anatomy, the [manifest reference](./manifest-reference.md) for `berth.yml`, and the [SDK reference](./sdk-reference.md).
 
-## Testing and deploying
+### Testing and deploying
 
 ```bash
 berth test              # build the production image, check exports, call each one, run your npm test
@@ -112,7 +170,7 @@ berth test --json       # JSON output for CI
 berth deploy --fleet=e2b          # or --fleet=daytona, --fleet=k8s, or an alias from ~/.berthrc
 ```
 
-## CLI reference
+### CLI reference
 
 | Command | What it does |
 |---|---|
@@ -141,7 +199,7 @@ Run `berth <command> --help` for every flag. More detail: [MCP bridge](./mcp-bri
 
 `berth agent run`, `berth crew run` and `berth eval` need the experimental agent framework, which `@berthos/cli` doesn't depend on and which isn't published. They work from a clone, where the framework is built alongside the CLI. From an installed CLI they print a message saying so.
 
-## Releasing
+### Releasing
 
 Releases run from GitHub: **Actions → Release → Run workflow**, enter a version (`x.y.z`), and leave *dry run* ticked to rehearse. The workflow, `.github/workflows/release.yml`, must run on `main`.
 
@@ -159,41 +217,3 @@ To retire a broken version, **Actions → Deprecate npm versions** takes a versi
 The workflow relies on one-time repository settings: GitHub environments `npm` and `pypi`, each limited to `main` with a required reviewer; an `NPM_TOKEN` secret with publish rights to the `@berthos` scope; and a PyPI trusted publisher on `berthos-sdk` pointing at `release.yml` and the `pypi` environment. The top of the workflow file describes each.
 
 The agent framework under `experimental/` is not released.
-
-## Repository layout
-
-```
-packages/
-  manifest-schema/     berth.yml schema, validation, and capability parsing
-  sdk/                 resident app SDK: defineApp(), lifecycle hooks, context bus client
-  sdk-python/          Python resident app SDK, wire-compatible with @berthos/sdk
-  cli/                 the `berth` CLI
-  docker-orchestrator/ container lifecycle for a Berth OS, and the doctor checks
-  agent-init/          Rust binary that applies the Landlock and seccomp policy before starting the app
-  context-bus-daemon/  Rust daemon for shared memory between apps in one Berth OS
-  semantic-fs-daemon/  Go/FUSE filesystem searchable by file tags, backed by SQLite
-  registry-server/     local app registry for publish, discover, install (Fastify + SQLite)
-  mesh-coordinator/    WireGuard mesh coordination: allocates IPs, exchanges keys, matches peers
-  mesh-daemon/         Rust daemon that applies a sandbox's WireGuard config
-  adapters/            deploy adapters for E2B, Daytona and Kubernetes
-  audit/               the hash-chained audit trail and the attestation record
-  tls/                 certificates for the registry and mesh coordinator
-experimental/          the agent framework: experimental, unpublished (see experimental/README.md)
-  agents/              Computer, Agent, Crew: boots a Berth OS and drives it with any LLM provider
-  agents-python/       Python Agent/Crew, plus Computer.connect() over `berth os up --http-rpc`
-  seam-*/              Berth tools for the Claude Agent SDK and OpenAI Agents
-apps/
-  filesystem/          read and write /workspace; publishes fs.file_created
-  code-editor/         reacts to fs.file_created over the context bus
-  code-interpreter/    run Python, JavaScript or shell; no network unless declared
-  terminal/            shared shell (tmux + ttyd), watchable live in the browser
-  browser-native/      headless Chromium plus VNC; also a DuckDuckGo search
-  github-assistant/    read repos and open issues, scoped by verb and path
-  notes/               stateful notes persisted to /workspace
-  activity-feed/       collects fs.file_created and notes.* into one feed
-  hello-world-py/      minimal Python resident app
-examples/
-  kernel-says-no/      one app, two writes, one EACCES from the kernel; no LLM, no API key
-  resident-apps/       apps to run with `berth dev` (hello-world, http-fetch, generic-connector)
-  agents/              agent examples using @berthos/agents (simple-agent, agent-server, with-vercel-ai-sdk)
-```

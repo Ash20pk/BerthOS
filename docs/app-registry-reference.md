@@ -2,7 +2,35 @@
 
 The app registry is a small server you run yourself for sharing resident apps. `berth publish` uploads an app to it, and `berth init --registry` starts a new project from one. Use it to share apps inside a team or on a closed network.
 
-## Use it
+## Context
+
+The people involved are whoever publishes an app and whoever starts a project from it, each with the `berth` CLI. The registry is one server you run, on your machine or on a host the team can reach; nothing in it talks to a public service.
+
+## Containers
+
+Two pieces are involved: the `berth` CLI, which builds and packs the app locally, and `berth-registry`, a Fastify server that keeps metadata in SQLite and bundles on disk. They talk over HTTP, or HTTPS with [TLS](./tls-reference.md).
+
+### How it works
+
+`berth publish` builds the app's production Docker image, packs the app directory into `dist-bundle/publish-bundle.tar.gz` (skipping `node_modules`, `dist-bundle` and `vendor`), and uploads the bundle with the app's `berth.yml`. The registry validates the manifest with the same schema `berth dev` uses, stores the metadata in SQLite and the bundle on disk. The Docker image stays local; only the source bundle is uploaded.
+
+`berth init --registry` downloads the latest version of the named app, extracts it as the new project, sets `name:` in its `berth.yml` to the new project's name, vendors the SDK (see below), runs `pnpm install` and validates the manifest.
+
+Without `--registry`, `berth publish` still builds the image and writes the bundle locally, and uploads nothing.
+
+## Components
+
+Inside the registry: manifest validation with the same schema `berth dev` uses, the per-name owner token, immutable versions, and the `latest` rule (see [Endpoints](#endpoints)). On the CLI side, `berth init` also vendors the SDK so the new project installs without this repo:
+
+### Making `@berthos/sdk` installable outside this monorepo
+
+A scaffolded project has to install `@berthos/sdk` without this repo's pnpm workspace. So `berth init` copies a self-contained SDK tarball into the project as `vendor/berth-sdk.tgz` and points `package.json` at it with `"@berthos/sdk": "file:./vendor/berth-sdk.tgz"`. It also writes a `pnpm-workspace.yaml` with `allowBuilds: { protobufjs: true }`, so pnpm 10+ runs the SDK dependency's install script without asking.
+
+The tarball, `packages/sdk/dist-external/berth-sdk.tgz`, is built by `pnpm --filter @berthos/sdk build`. It bundles the SDK and its manifest types, and depends on `zod`, `protobufjs` and `yaml` from npm. If `berth init` can't find it, it warns and leaves the dependency unchanged.
+
+## Code
+
+### Use it
 
 Start a registry:
 
@@ -32,15 +60,7 @@ berth init my-app --registry http://localhost:4873 --template notes
 
 For a registry on another machine, serve it over HTTPS so the owner token isn't sent in the clear. See [TLS](./tls-reference.md).
 
-## How it works
-
-`berth publish` builds the app's production Docker image, packs the app directory into `dist-bundle/publish-bundle.tar.gz` (skipping `node_modules`, `dist-bundle` and `vendor`), and uploads the bundle with the app's `berth.yml`. The registry validates the manifest with the same schema `berth dev` uses, stores the metadata in SQLite and the bundle on disk. The Docker image stays local; only the source bundle is uploaded.
-
-`berth init --registry` downloads the latest version of the named app, extracts it as the new project, sets `name:` in its `berth.yml` to the new project's name, vendors the SDK (see below), runs `pnpm install` and validates the manifest.
-
-Without `--registry`, `berth publish` still builds the image and writes the bundle locally, and uploads nothing.
-
-## Commands
+### Commands
 
 | Command | Flags |
 |---|---|
@@ -49,7 +69,7 @@ Without `--registry`, `berth publish` still builds the image and writes the bund
 
 `--ca` and `--insecure` are described in [TLS](./tls-reference.md#clients).
 
-## Server configuration
+### Server configuration
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -62,7 +82,7 @@ To embed it, `createRegistryServer({ dataDir, tls?, logger? })` returns a Fastif
 
 Uploads are limited to 100 MB.
 
-## Endpoints
+### Endpoints
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -85,12 +105,6 @@ Errors are JSON `{"error": "..."}`:
 | `409` | That name and version are already published. Versions are immutable: the stored bundle is never replaced |
 
 `latest` means the highest version number, not the most recently published. Publishing `1.5.0` after `2.0.0` leaves `2.0.0` as latest.
-
-## Making `@berthos/sdk` installable outside this monorepo
-
-A scaffolded project has to install `@berthos/sdk` without this repo's pnpm workspace. So `berth init` copies a self-contained SDK tarball into the project as `vendor/berth-sdk.tgz` and points `package.json` at it with `"@berthos/sdk": "file:./vendor/berth-sdk.tgz"`. It also writes a `pnpm-workspace.yaml` with `allowBuilds: { protobufjs: true }`, so pnpm 10+ runs the SDK dependency's install script without asking.
-
-The tarball, `packages/sdk/dist-external/berth-sdk.tgz`, is built by `pnpm --filter @berthos/sdk build`. It bundles the SDK and its manifest types, and depends on `zod`, `protobufjs` and `yaml` from npm. If `berth init` can't find it, it warns and leaves the dependency unchanged.
 
 ## Scope
 
