@@ -1,0 +1,26 @@
+export default {
+  name: "readme-1-context",
+  w: 1100,
+  h: 760,
+  title: "Berth: system context (C4 level 1)",
+  boxes: [
+    { kind: "person", name: "Developer", type: "Person", desc: "Writes resident apps and their berth.yml, runs the berth CLI", x: 50, y: 60, w: 260, h: 120 },
+    { kind: "external", name: "AI agent", type: "Software System", desc: "Claude Code, Cursor, any MCP client, or your own tool-calling loop", x: 420, y: 60, w: 260, h: 120 },
+    { kind: "person", name: "Reviewer", type: "Person", desc: "Checks what ran in a session, and what was enforced", x: 790, y: 60, w: 260, h: 120 },
+    { kind: "system", name: "Berth", type: "Software System", desc: "Runs an agent's tools in a sandbox, each confined to the capabilities its manifest declares", x: 370, y: 330, w: 360, h: 130 },
+    { kind: "external", name: "Host kernel or hypervisor", type: "External System", desc: "Linux 6.7+ (Landlock, seccomp, cgroups), or HVF / KVM for the microVM", x: 20, y: 560, w: 245, h: 125 },
+    { kind: "external", name: "Internet hosts", type: "External System", desc: "Only the hosts an app declares", x: 295, y: 560, w: 245, h: 125 },
+    { kind: "external", name: "GitHub API", type: "External System", desc: "Only the API verbs an app declares", x: 570, y: 560, w: 245, h: 125 },
+    { kind: "external", name: "Remote sandboxes", type: "External System", desc: "E2B, Daytona, Kubernetes", x: 845, y: 560, w: 235, h: 125 },
+  ],
+  edges: [
+    { pts: [[180, 180], [180, 255], [470, 255], [470, 328]], label: "builds and runs apps\n[berth CLI]", at: [300, 255] },
+    { pts: [[550, 180], [550, 328]], label: "calls tools\n[MCP over stdio, or SDK adapters]", at: [550, 214] },
+    { pts: [[920, 180], [920, 255], [630, 255], [630, 328]], label: "verifies attestation records", at: [790, 255] },
+    { pts: [[368, 420], [142, 420], [142, 558]], label: "has its policy\nenforced by", at: [142, 500] },
+    { pts: [[417, 460], [417, 558]], label: "declared hosts\n[egress broker]", at: [417, 510] },
+    { pts: [[692, 460], [692, 558]], label: "declared verbs\n[API broker]", at: [692, 510] },
+    { pts: [[732, 420], [962, 420], [962, 558]], label: "deploys apps to\n[deploy adapters]", at: [962, 500] },
+  ],
+  legendKinds: [["person", "Person"], ["system", "The system"], ["external", "External system"]],
+};

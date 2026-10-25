@@ -4,7 +4,23 @@ A Berth OS is the sandbox your agent's tools run in: one Docker container holdin
 
 > `Computer`, `createAgent()` and `runAgent()` come from the experimental agent framework (`@berthos/agents`), which isn't published to npm. Use it from a clone of this repo.
 
-## What's inside one
+## Context
+
+You start a Berth OS with `berth os up`, and your agent code connects to it by name, from any directory, as many times as it likes. It runs on your local Docker. A client that can't reach Docker, such as the [Python client](./agents-python-reference.md), can call one app's exports over HTTP instead. For how a sandbox sits among the rest of Berth, see the [README](../README.md#level-2-containers).
+
+## Containers
+
+<p align="center"><img src="./images/c4/berth-os-reference.svg" alt="Berth OS containers: berth os up builds and starts the berth-os-<name> container through the Docker API and writes the state file ~/.berth/os/<name>.json; agent code reads the state file and calls exports through docker exec; a client with no Docker access calls one app's exports over the HTTP bridge with a bearer token; a semantic FS sidecar container, berth-os-<name>-fs, mounts /context into the sandbox." width="100%"></p>
+
+`berth os up` builds the image and starts the container `berth-os-<name>`, then records it in a state file that `Computer.connect()` reads. By default a sidecar container, `berth-os-<name>-fs`, runs beside it and mounts `/context` into the sandbox, so the sandbox itself never holds the capability to mount ([where the mount comes from](./semantic-fs-reference.md#where-the-mount-comes-from-and-how-to-have-none); [`semantic-fs-sidecar.ts`](../packages/docker-orchestrator/src/semantic-fs-sidecar.ts)).
+
+### The HTTP bridge
+
+`Computer.connect()` reaches apps through `docker exec`, so it only works from a process that can talk to Docker on the same host. `--http-rpc` is the alternative: a bearer-token-protected HTTP listener on `127.0.0.1`. It runs inside one app and serves only that app's exports, so choose it with `--http-rpc-app` when you load more than one.
+
+## Components
+
+### What's inside one
 
 - **Resident apps.** Each app is a `berth.yml` plus code, and its exports become tools. See [Resident apps](./resident-apps.md).
 - **Kernel enforcement.** Each app's declared capabilities are compiled into a Landlock and seccomp policy and applied before the app starts. See [enforcement](./kernel-enforcement.md).
@@ -14,7 +30,9 @@ A Berth OS is the sandbox your agent's tools run in: one Docker container holdin
 
 It's the same runtime `berth dev`, `berth test` and `berth deploy` use.
 
-## Keep one running
+## Code
+
+### Keep one running
 
 ```bash
 berth os up my-agent --apps=apps/filesystem,apps/notes
@@ -48,7 +66,7 @@ await createAgent({ connect: { name: "my-agent", apps: ["filesystem"] }, llm });
 
 For a long-lived server, see [`examples/agents/agent-server`](../examples/agents/agent-server): set `BERTH_OS_CONNECT=<name>` and restarting the server doesn't rebuild the sandbox.
 
-## `berth os up`
+### `berth os up`
 
 ```bash
 berth os up [<name>] --apps=<dir1>,<dir2>,...
@@ -85,17 +103,13 @@ If an instance with that name is already running, `up` says so and does nothing;
 
 Across the loaded apps, at most one may declare each of `browser:*`, `terminal:*`, `network:peer:*`, and `browser:navigate:*`/`network:host:*` (one display, one terminal port, one mesh interface, one egress proxy per container). App names must be unique.
 
-## `berth os status` and `berth os down`
+### `berth os status` and `berth os down`
 
 `berth os status [<name>]` lists each recorded instance with `running` or `stopped`, its container, its apps and, if set, its HTTP bridge URL. A container that stopped on its own keeps its record until you run `down`.
 
 `berth os down <name>` stops and removes the container, removes the image's tag, and deletes the record. The image itself stays as build cache, tagged `berth-build-cache:production-berth-os_<name>-<hash>` (`<hash>` is 8 hex digits derived from the primary app's directory, so each checkout keeps its own), so the next `berth os up` of the same apps doesn't rebuild from the base; the next build that replaces it removes it. Every image Berth builds carries the label `io.berthos.build-cache`, which is how to find them: `docker images --filter label=io.berthos.build-cache`. A `berth/<name>:dev` or `berth/<name>:<version>` left by `berth dev` or `berth test` from before their tags were per checkout isn't removed for you, since a checkout still on that Berth may be using it; `docker rmi` it once none is.
 
-## The HTTP bridge
-
-`Computer.connect()` reaches apps through `docker exec`, so it only works from a process that can talk to Docker on the same host. `--http-rpc` is the alternative: a bearer-token-protected HTTP listener on `127.0.0.1`. It runs inside one app and serves only that app's exports, so choose it with `--http-rpc-app` when you load more than one.
-
-## State file
+### State file
 
 `berth os up` writes `~/.berth/os/<name>.json` (mode `0600`, in a `0700` directory, since it can hold the bridge token). `Computer.connect()` reads it, so agent code can connect from any directory.
 

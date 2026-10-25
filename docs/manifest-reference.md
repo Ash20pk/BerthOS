@@ -29,7 +29,38 @@ on_install:
   - "pip install -r requirements.txt"
 ```
 
-## Fields
+## Context
+
+You write `berth.yml`. The Berth CLI reads it (`berth init`, `berth dev`, `berth test`, `berth publish`, `berth deploy`), the [app registry](./app-registry-reference.md) shows its description and capabilities to anyone installing your app, and the sandbox turns its capabilities into what the app may and may not touch. For how this sits among the rest of Berth, see the [README](../README.md#level-4-code).
+
+## Containers
+
+`berth.yml` is a file, not a running process. These are the pieces that read it or act on it:
+
+- **The CLI** loads and validates it before anything builds or boots, and builds the image it names (see [`name`](#name-required) and [`on_install`](#on_install-default-)).
+- **The sandbox** compiles its capabilities into the app's kernel policy at boot, and `agent-init` starts the app under it.
+- **The proxies inside the sandbox**, the [egress proxy](./egress-broker-reference.md) and the [GitHub API proxy](./github-api-scoping-reference.md), enforce the capabilities the kernel can't, and the [mesh coordinator](./mesh-reference.md) enforces `network:peer:`. The "Enforced by" column under [Capabilities](#capabilities) says which piece handles each one.
+
+## Components
+
+Inside `@berthos/manifest-schema`: migrations ([`migrations.ts`](../packages/manifest-schema/src/migrations.ts)) bring an older file up to the current format, the schema ([`schema.ts`](../packages/manifest-schema/src/schema.ts)) and the capability checks ([`capability.ts`](../packages/manifest-schema/src/capability.ts)) validate it, and [`validate.ts`](../packages/manifest-schema/src/validate.ts) reports each problem with its file, line and field.
+
+### Schema versions
+
+`schema_version` versions the format of `berth.yml`, so a future breaking change can migrate old files instead of misreading them. The current version is `1`.
+
+| `schema_version` | Result |
+|---|---|
+| omitted | Treated as current |
+| older than current | Migrated forward one version at a time, then validated. Fails with a clear error if a migration step is missing. |
+| newer than your `@berthos/manifest-schema` | Fails with an error telling you to upgrade `@berthos/manifest-schema` |
+| not a non-negative integer | Fails |
+
+New optional fields with defaults don't change the version. Renaming a field, changing its type, or making it required does, and ships with a migration.
+
+## Code
+
+### Fields
 
 | Field | Type | Default | What it does |
 |---|---|---|---|
@@ -48,33 +79,33 @@ on_install:
 | [`governance`](#governance-default-exempt-false) | object | `{exempt: false}` | Opts this app out of governance |
 | [`resources`](#resources-default-) | object | `{}` | This app's CPU, memory, task and GPU limits |
 
-### `name` (required)
+#### `name` (required)
 
 Lowercase letters, digits and dashes. Berth uses it as the image name (`berth/<name>:<version>` for `berth publish` and `berth deploy`; `berth/<name>:dev-<hash>` for `berth dev` and `berth/<name>:<version>-<hash>` for `berth test`, where `<hash>` is 8 hex digits derived from the app directory's path, so two checkouts of an app with the same name don't share an image), the app's identity on the context bus, and the name other apps use in `app:invoke:<name>`.
 
-### `version` (required)
+#### `version` (required)
 
 Strict semver: `x.y.z`. Used as the image tag.
 
-### `schema_version` (default: current)
+#### `schema_version` (default: current)
 
 The version of the `berth.yml` format itself, not of your app. Leave it out. Omitted means the current version, which is `1`. See [Schema versions](#schema-versions).
 
-### `description` (default: `""`)
+#### `description` (default: `""`)
 
 A one-line summary. The [app registry](./app-registry-reference.md) shows it in listings and matches search terms against it.
 
-### `runtime` (default: `node`)
+#### `runtime` (default: `node`)
 
 The language the app's code is written in: `node` (the [TypeScript SDK](./sdk-reference.md)) or `python` (the [Python SDK](./sdk-python-reference.md)). Every way of running an app reads it, `berth test` included, and apps with different runtimes can share one sandbox. It is recorded in the image when the image is built, so changing it needs a rebuild, as `on_install` does.
 
-### `capabilities` (default: `[]`)
+#### `capabilities` (default: `[]`)
 
 A list of `namespace:action:scope` strings. Anything not declared is denied. The forms Berth acts on, and what each one grants, are in [Capabilities](#capabilities) below.
 
 Declare only what the app needs. The kernel policy is built from this list, and the app registry shows it to anyone installing your app.
 
-### `secrets` (default: `[]`)
+#### `secrets` (default: `[]`)
 
 Names of environment variables this app needs as credentials. Names only, never values: the values come from the environment Berth is booted with.
 
@@ -85,7 +116,7 @@ secrets:
 
 A name declared by any app in the sandbox is removed from the shared secrets file and delivered only to the apps that declared it, each through its own `0600` file. If a declared name has no value at boot, Berth warns (by name, never by value) and the app boots without it. Each entry must be a valid env var name (`^[A-Za-z_][A-Za-z0-9_]*$`). See the [secrets reference](./secrets-reference.md).
 
-### `exports` (default: `[]`)
+#### `exports` (default: `[]`)
 
 The functions your app exposes. Each becomes a tool an agent can call.
 
@@ -110,7 +141,7 @@ Types are `string`, `number`, `boolean`, `object` or `array`. Nested field maps 
 exports mismatch between berth.yml and app code — declared in berth.yml but not implemented: create_issue
 ```
 
-### `on_install` (default: `[]`)
+#### `on_install` (default: `[]`)
 
 Shell commands that run once, when the image is built. Use them for dependencies: `pip install -r requirements.txt`, `apk add <tool>`.
 
@@ -121,11 +152,11 @@ Shell commands that run once, when the image is built. Use them for dependencies
 
 For setup that has to happen at startup inside your app's process, use the SDK's [`app.onInstall(fn)`](./sdk-reference.md#apponinstallfn). It runs under your app's declared capabilities.
 
-### `on_agent_ready` (default: `[]`)
+#### `on_agent_ready` (default: `[]`)
 
 Accepted and validated, but **never executed**. Nothing reads it. To run code when your app comes up, use the SDK's [`app.onAgentReady(fn)`](./sdk-reference.md#apponagentreadyfn).
 
-### `expose` (default: `{browser: true, terminal: true, preview: false}`)
+#### `expose` (default: `{browser: true, terminal: true, preview: false}`)
 
 Whether a human can watch the app's browser or terminal. This is separate from the capability: declaring `browser:*` lets the app drive a browser; `expose` decides whether you can see it.
 
@@ -146,13 +177,13 @@ expose:
 
 `preview` is off by default because a deployed instance can be public. It only has an effect when the matching `browser:*` or `terminal:*` capability is declared. Only noVNC and ttyd are ever previewed; raw VNC and Chromium's debugging port stay inside the sandbox. E2B and Daytona give you a public HTTPS URL. Kubernetes gets a `Service` and reports its in-cluster DNS name; a public URL there needs your own Ingress or LoadBalancer (see the [Kubernetes adapter](./k8s-adapter-reference.md#how-it-maps-to-deployadapter)).
 
-### `governs` (default: `false`)
+#### `governs` (default: `false`)
 
 Makes this app the governance authority for the apps it shares a sandbox with. Before any other app's export runs, Berth asks this app's `evaluate_action` export, and a denial stops the call. If the governor can't be reached, the call is refused.
 
 `governs: true` requires an `evaluate_action` entry in `exports`, or the manifest fails validation. Load at most one governing app per sandbox. See the [governance reference](./governance-reference.md) for the `evaluate_action` contract.
 
-### `governance` (default: `{exempt: false}`)
+#### `governance` (default: `{exempt: false}`)
 
 ```yaml
 governance:
@@ -161,7 +192,7 @@ governance:
 
 Opts this app out of the governing app's checks. Has no effect when no app declares `governs: true`.
 
-### `resources` (default: `{}`)
+#### `resources` (default: `{}`)
 
 ```yaml
 resources:
@@ -179,7 +210,7 @@ All four keys are optional positive numbers, and each is a limit on this app, no
 | `berth deploy --fleet=k8s` | Each declared key becomes both the Pod's request and its limit (`cpu`, `${memory_mb}Mi`, `nvidia.com/gpu`), giving Guaranteed QoS. `gpu` needs the NVIDIA device plugin on the cluster. `pids` is ignored: a Pod's task limit is kubelet configuration, not a Pod field. |
 | `berth deploy --fleet=e2b` or `daytona` | Ignored. Sizing comes from the provider's template or plan. |
 
-## Capabilities
+### Capabilities
 
 A capability is `namespace:action:scope`. The namespace and action are lowercase letters, digits, `_` and `-`; the scope is anything after the second colon and may contain `*` globs (`*.github.com` matches `api.github.com`, not `example.com`). A declared capability covers a request when the namespace and action match exactly and the scope matches the glob.
 
@@ -201,7 +232,7 @@ A capability is `namespace:action:scope`. The namespace and action are lowercase
 
 Any other string is valid and recorded. [`requestCapability()`](./sdk-reference.md#requestcapabilityappname-capability) reports it as granted if declared, but nothing enforces it. Which layer enforces each capability, per platform, is in [enforcement](./kernel-enforcement.md#available-capabilities).
 
-### Filesystem paths
+#### Filesystem paths
 
 A `filesystem:read:` or `filesystem:write:` scope must be:
 
@@ -213,7 +244,7 @@ A `filesystem:write:` scope also can't name a path inside a `node_modules` direc
 
 `filesystem:write:/` is refused. Berth creates each declared write path at boot, before enforcement starts, which is why the scope can't be an arbitrary string. Under `berth dev` your project folder is mounted read-only, so a declared path that doesn't exist there is skipped with a warning; declare paths that exist.
 
-### Proxied network access
+#### Proxied network access
 
 The kernel sees ports, not hostnames. So hostname and API scoping go through a proxy inside the sandbox, and the app needs the kernel grant to reach the proxy's port:
 
@@ -225,7 +256,7 @@ capabilities:
 
 Call [`configureEgressProxy()`](./sdk-reference.md#configureegressproxy) once to route your app's `fetch()` through it. See the [egress proxy](./egress-broker-reference.md) and [GitHub API scoping](./github-api-scoping-reference.md) references.
 
-### Calling another app
+#### Calling another app
 
 `app:invoke:<name>` gives the calling app its own socket to the target, `/run/berth/<name>/peers/<caller>/rpc.sock`, which no other app can reach. Without it, connecting fails with `EACCES`. Because the socket belongs to one caller, the target knows which app is calling and logs it.
 
@@ -234,7 +265,7 @@ Call [`configureEgressProxy()`](./sdk-reference.md#configureegressproxy) once to
 
 See [Talking to other apps](./resident-apps.md#talking-to-other-apps) and the [multi-app reference](./multi-app-reference.md). For the mesh, see the [mesh reference](./mesh-reference.md).
 
-## Validation errors
+### Validation errors
 
 `berth dev`, `berth test`, `berth init` and `berth publish` load the manifest first and refuse an invalid one, naming the file, line and field:
 
@@ -244,16 +275,3 @@ berth.yml:6 capabilities.0: filesystem path must be /workspace, /context, /tmp, 
 ```
 
 From code, `loadManifest(path)` reads and validates a file, and `validateManifest(obj)` validates an object you've already parsed. Both are in `@berthos/manifest-schema` and throw `ManifestValidationError`, whose `issues` list carries each `message`, `path`, `line` and `column`.
-
-## Schema versions
-
-`schema_version` versions the format of `berth.yml`, so a future breaking change can migrate old files instead of misreading them. The current version is `1`.
-
-| `schema_version` | Result |
-|---|---|
-| omitted | Treated as current |
-| older than current | Migrated forward one version at a time, then validated. Fails with a clear error if a migration step is missing. |
-| newer than your `@berthos/manifest-schema` | Fails with an error telling you to upgrade `@berthos/manifest-schema` |
-| not a non-negative integer | Fails |
-
-New optional fields with defaults don't change the version. Renaming a field, changing its type, or making it required does, and ships with a migration.

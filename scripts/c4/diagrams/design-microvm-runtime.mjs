@@ -1,0 +1,31 @@
+export default {
+  name: "design-microvm-runtime",
+  w: 1180,
+  h: 950,
+  title: "microVM runtime: containers (C4 level 2)",
+  boundaries: [
+    { x: 30, y: 240, w: 240, h: 470, label: "Host", sub: "macOS" },
+    { x: 430, y: 240, w: 730, h: 470, label: "Guest", sub: "one microVM per sandbox" },
+  ],
+  boxes: [
+    { kind: "person", name: "Developer", type: "Person", desc: "Runs berth dev or berth mcp with --runtime vm", x: 45, y: 70, w: 210, h: 100 },
+    { kind: "container", name: "berth CLI", type: "Container: Node.js", desc: "packages/cli/src/vm: bundles the app, installs the pinned artifacts, waits for app_ready", x: 45, y: 270, w: 210, h: 140 },
+    { kind: "container", name: "berth-vmm", type: "Container: Rust, libkrun on HVF", desc: "Checks the kernel and rootfs pins, maps vsock ports to Unix sockets, runs the egress dialer, under Seatbelt", x: 45, y: 520, w: 210, h: 150 },
+    { kind: "external", name: "Internet hosts", type: "External System", desc: "Only the hosts the apps declare", x: 45, y: 790, w: 210, h: 100 },
+    { kind: "container", name: "App", type: "Container: Node.js under agent-init", desc: "uid 10000+i, its own cgroup, Landlock and seccomp", x: 470, y: 270, w: 230, h: 140 },
+    { kind: "container", name: "context-bus-daemon", type: "Container: Rust, uid 9001", desc: "Confined by agent-init; registers each app by its peer identity", x: 880, y: 270, w: 250, h: 140 },
+    { kind: "container", name: "berth-init", type: "Container: Rust, PID 1", desc: "Mounts, cgroups, policy compile, identities; starts the daemons and apps", x: 470, y: 520, w: 230, h: 150 },
+    { kind: "container", shape: "db", name: "Disks and share", type: "virtio-blk, virtio-fs", desc: "vda erofs rootfs (ro), vdb ext4 state disk, app share (ro)", x: 880, y: 520, w: 250, h: 150 },
+  ],
+  edges: [
+    { pts: [[150, 170], [150, 268]], label: "berth dev / mcp\n--runtime vm", at: [150, 205] },
+    { pts: [[150, 410], [150, 518]], label: "spawns, then\ncontrol, logs, RPC\n[Unix sockets]", at: [150, 465] },
+    { pts: [[255, 570], [468, 570]], label: "control, logs, RPC\n[vsock]", at: [350, 570] },
+    { pts: [[470, 635], [257, 635]], label: "egress relay\n[vsock 1026]", at: [350, 635] },
+    { pts: [[585, 520], [585, 412]], label: "RPC relay\n[Unix socket]", at: [585, 465] },
+    { pts: [[700, 340], [878, 340]], both: true, label: "events\n[Unix socket]", at: [789, 340] },
+    { pts: [[700, 595], [878, 595]], label: "mounts\n[block, virtio-fs]", at: [789, 595] },
+    { pts: [[150, 670], [150, 788]], label: "allowed hosts only\n[TCP]", at: [150, 750] },
+  ],
+  legendKinds: [["person", "Person"], ["container", "Container"], ["external", "External"]],
+};

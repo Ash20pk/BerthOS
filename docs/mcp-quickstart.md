@@ -6,7 +6,28 @@ Your agent gets the tools a resident app declares in its `berth.yml`, and nothin
 
 How the bridge works, and its flags: [mcp-bridge-reference.md](./mcp-bridge-reference.md).
 
-## Prerequisites
+## Context
+
+Your MCP client (Claude Code, Claude Desktop, Cursor or another) starts `berth mcp` as a local server and calls the tools it offers. Behind it is one resident app, running in a sandbox on your machine's Docker, whose `berth.yml` sets both which tools exist and what the kernel lets them do. Each session is written to Berth's audit trail, which you can read and attest afterwards.
+
+## Containers
+
+- **Your MCP client**, which spawns the server command from its config and talks to it over stdio.
+- **The bridge**, `berth mcp`, a Node.js process on your machine. It boots the app's sandbox if none is running, or attaches to the one `berth dev` started.
+- **The sandbox**, a Docker container named `berth-dev-<app>` on whichever daemon your Docker context or `DOCKER_HOST` selects (Docker Desktop, Colima or Linux).
+- **The audit trail**, `~/.berth/audit/audit.jsonl`, appended to by the bridge.
+
+The full picture, with the microVM runtime, is in [the bridge reference](./mcp-bridge-reference.md#containers).
+
+## Components
+
+Inside the bridge: the tool list built from `berth.yml`, the denial explainer that turns a refusal into the line that would allow it, and the audit recorder. Each is described in [the bridge reference](./mcp-bridge-reference.md#components); this page shows them from the client's side, in [Code](#code).
+
+## Code
+
+Follow these steps in order: build the repository, add the server to your client, narrow it, then see a denial and the record of the session.
+
+### Prerequisites
 
 - Node.js 22+, Docker running locally, `corepack enable`.
 - A built checkout of the repository, which holds the apps:
@@ -26,7 +47,7 @@ node packages/cli/bin/berth.js mcp --app filesystem --app-dir apps/filesystem --
 
 Enforcement needs a Landlock kernel. On macOS or Windows, run `node packages/cli/bin/berth.js doctor` first; see [the doctor reference](./doctor-reference.md).
 
-## Add it to Claude Code
+### Add it to Claude Code
 
 ```bash
 claude mcp add berth-filesystem -- node /absolute/path/to/BerthOS/packages/cli/bin/berth.js \
@@ -46,7 +67,7 @@ claude mcp add berth-filesystem \
   mcp --app filesystem --app-dir /absolute/path/to/BerthOS/apps/filesystem
 ```
 
-## Add it to Claude Desktop, Cursor, or any JSON-configured client
+### Add it to Claude Desktop, Cursor, or any JSON-configured client
 
 ```json
 {
@@ -67,7 +88,7 @@ claude mcp add berth-filesystem \
 
 Drop the `env` block on Docker Desktop or Linux.
 
-## Give it less than everything
+### Give it less than everything
 
 `--only` bridges some of the app's exports instead of all of them:
 
@@ -77,7 +98,7 @@ mcp --app filesystem --app-dir .../apps/filesystem --only write_file,read_file
 
 A name that isn't in the manifest is an error. `--only` limits what the bridge exposes; it doesn't authenticate the caller ([limits](./mcp-bridge-reference.md#whats-real-vs-deliberately-deferred)).
 
-## What a denial looks like
+### What a denial looks like
 
 `apps/filesystem` declares write access to `/workspace` and `/context`, so a `write_file` call aimed at `/etc` comes back as:
 
@@ -107,7 +128,7 @@ The reader is usually another agent, so the message is built to be acted on:
 
 - **Other failures stay what they are.** `EROFS` is the read-only workspace mount, and the message says so instead of pointing at `capabilities:`. Ordinary app errors and input validation errors pass through unchanged.
 
-## See what it did, and prove it
+### See what it did, and prove it
 
 Every session is recorded. The bridge prints its run id when it starts:
 
@@ -126,7 +147,7 @@ node scripts/verify-attestation.mjs session.json       # anyone can check it, no
 
 The record says which calls the session made, which policies were enforced, and whether the kernel was enforcing them (`ACTIVE`) or not (`NOT_ENFORCED`). Only which export was called, when and with what outcome is recorded, not inputs or outputs. Use `--run-id` to choose the id, `--no-audit` to turn it off. See [audit](./audit-reference.md) and [attestation](./attestation-reference.md).
 
-## `berth dev` and `berth mcp` together
+### `berth dev` and `berth mcp` together
 
 `berth mcp` boots the app's sandbox when none is running and stops it when the bridge exits, on a signal or when the client closes the pipe. If `berth dev` is already running the same app, the bridge attaches to that container and leaves it running. That's the better loop while you edit the app: `berth dev` reloads on save and shows the logs. `--no-boot` makes the bridge attach only, and fail if nothing is running.
 

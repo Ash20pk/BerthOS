@@ -126,7 +126,11 @@ function assert(condition, message) {
 }
 
 async function startLogCapture(container) {
-  const raw = await container.logs({ follow: true, stdout: true, stderr: true, tail: 0 });
+  // From the container's first line, not from when this attaches: the
+  // agent-init "restricted" lines print as each app is exec'd, which can be
+  // before startContainer() has returned, and `tail: 0` dropped them. The
+  // container is created fresh for this run, so its whole log is this run's.
+  const raw = await container.logs({ follow: true, stdout: true, stderr: true });
   const stdout = new PassThrough();
   const stderr = new PassThrough();
   docker.modem.demuxStream(raw, stdout, stderr);

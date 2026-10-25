@@ -29,7 +29,7 @@
 //                          killed (test hook): queries, tags and writes fail
 //                          with errors, the apps keep running, shutdown is
 //                          clean (docs/design/microvm-semantic-fs.md)
-//   node e2e.mjs host      berth-vmm confined by its own Seatbelt profile
+//   node e2e.mjs host      berth-vmm confined by its own host sandbox (Seatbelt; Landlock + seccomp on Linux)
 //                          (src/sandbox.rs): a file of the user's outside the
 //                          sandbox can't be read or written, the pinned kernel
 //                          is readable but not writable, the run directory is
@@ -91,9 +91,13 @@ const VERBOSE = process.env.VERBOSE === "1";
 mkdirSync(RUN, { recursive: true });
 const MAX_LINE = 1 << 20;
 const pinned = (file, key) => new RegExp(`^${key} = "([0-9a-f]{64})"`, "m").exec(readFileSync(join(vmmDir, file), "utf8"))[1];
-const KERNEL_PIN = pinned("kernel/manifest.toml", "image_sha256");
-// Default: the rootfs pinned in rootfs/manifest.toml, as berth-vmm run picks it.
-const ROOTFS_PIN = pinned("rootfs/manifest.toml", "image_sha256");
+// The guest is the host's architecture, as berth-vmm's compiled-in pins are.
+const ARCH = { arm64: "aarch64", x64: "x86_64" }[process.arch] ?? process.arch;
+const KERNEL_MANIFEST = `kernel/manifest-${ARCH}.toml`;
+const ROOTFS_MANIFEST = `rootfs/manifest-${ARCH}.toml`;
+const KERNEL_PIN = pinned(KERNEL_MANIFEST, "image_sha256");
+// Default: the rootfs pinned in rootfs/manifest-<arch>.toml, as berth-vmm run picks it.
+const ROOTFS_PIN = pinned(ROOTFS_MANIFEST, "image_sha256");
 const ROOTFS = process.env.ROOTFS;
 
 const fail = (m) => {
@@ -736,7 +740,9 @@ async function host() {
   // Stand-ins for the user's own files: outside every path the sandbox uses.
   const outside = join(os.tmpdir(), `berth-host-probe-${process.pid}.txt`);
   writeFileSync(outside, "a file of the user's");
-  const sibling = join(ART, "rootfs", "LATEST");
+  // A file beside the pinned rootfs that the sandbox isn't granted.
+  const sibling = join(ART, "rootfs", `berth-host-probe-${process.pid}.txt`);
+  writeFileSync(sibling, "beside the rootfs");
   const kernel = join(ART, "kernel/sha256", KERNEL_PIN, "Image");
   const inRun = join(RUN, "host", "probe-target.txt");
   mkdirSync(join(RUN, "host"), { recursive: true });
@@ -744,13 +750,19 @@ async function host() {
   const probes = [outside, sibling, kernel, inRun];
   const b = await run("host", ["notes"], { extra: probes.flatMap((p) => ["--host-sandbox-probe", p]) });
   const s = await attach(b);
-  const { result: added } = await rpcConnect(rpcPath(b, 0), (r) => r.call("add_note", { text: "under seatbelt" }));
+  const { result: added } = await rpcConnect(rpcPath(b, 0), (r) => r.call("add_note", { text: "under the host sandbox" }));
   const off = await shutdown(b, s);
   rmSync(outside, { force: true });
+  rmSync(sibling, { force: true });
   const hs = b.vmm.host_sandbox;
   const at = (p) => hs?.probes?.find((x) => x.path === p) ?? {};
   const denied = (v) => v === "EPERM" || v === "EACCES";
-  check(results, hs?.applied === true && hs.kind === "seatbelt", `berth-vmm confined itself (${hs?.kind}, ${hs?.profileBytes} bytes of profile; tcpOut ${hs?.tcpOut})`);
+  if (process.platform === "linux") {
+    check(results, hs?.applied === true && hs.kind === "landlock" && hs.landlockAbi >= 1 && hs.seccomp === true, `berth-vmm confined itself (landlock ABI ${hs?.landlockAbi}, tcpRules ${hs?.tcpRules}, scoped ${hs?.scoped}, seccomp ${hs?.seccompDenied} denied; tcpOut ${hs?.tcpOut}; absent ${JSON.stringify(hs?.absent)})`);
+    check(results, hs?.execProbe === "EPERM", `exec is refused once confined (${hs?.execProbe})`);
+  } else {
+    check(results, hs?.applied === true && hs.kind === "seatbelt", `berth-vmm confined itself (${hs?.kind}, ${hs?.profileBytes} bytes of profile; tcpOut ${hs?.tcpOut})`);
+  }
   check(results, denied(at(outside).read) && denied(at(outside).write), `a file of the user's outside the sandbox: read ${at(outside).read}, write ${at(outside).write}`);
   check(results, denied(at(sibling).read), `a file next to the pinned rootfs, not granted: read ${at(sibling).read}`);
   check(results, at(kernel).read === "ok" && denied(at(kernel).write), `the pinned kernel: read ${at(kernel).read}, write ${at(kernel).write}`);
@@ -872,7 +884,7 @@ async function terminal() {
 
 async function layer() {
   const results = [];
-  const pinnedLayer = (name) => pinned("rootfs/manifest.toml", `layer_${name}_sha256`);
+  const pinnedLayer = (name) => pinned(ROOTFS_MANIFEST, `layer_${name}_sha256`);
   const b = await run("layer", ["terminal"], { extra: ["--layer", "example"] });
   const s = await attach(b);
   const { r, result: fig } = await rpcConnect(rpcPath(b, 0), (x) => x.call("run_command", { command: "figlet -f small hi; echo rc=$?" }, 30000));
@@ -891,8 +903,17 @@ async function layer() {
   const refuse = (args) => spawnSync(VMM, ["run", "--artifacts", ART, "--run-dir", join(RUN, "layer-refused"), "--app", join(APPS, "notes"), ...args], { encoding: "utf8" });
   const unpinned = refuse(["--layer", "nosuch"]);
   check(results, unpinned.status !== 0 && /no layer "nosuch" is pinned/.test(unpinned.stderr), `an unpinned layer is refused: ${unpinned.stderr.trim().split("\n")[0]}`);
-  const other = join(ART, "rootfs", readdirSync(join(ART, "rootfs")).find((f) => f.endsWith(".erofs") && !f.includes(ROOTFS_PIN)) ?? "none.erofs");
-  const wrongBase = existsSync(other) ? refuse(["--rootfs", other, "--layer", "example"]) : { status: 0, stderr: "no other rootfs to try" };
+  let other = join(ART, "rootfs", readdirSync(join(ART, "rootfs")).find((f) => f.endsWith(".erofs") && !f.includes(ROOTFS_PIN)) ?? "none.erofs");
+  if (!existsSync(other)) {
+    // None left from an earlier build (a fresh CI runner): the pinned image
+    // with its last byte changed is a valid, content-addressed other base.
+    const img = readFileSync(join(ART, "rootfs", `rootfs-${ROOTFS_PIN}.erofs`));
+    img[img.length - 1] ^= 1;
+    other = join(RUN, `rootfs-${createHash("sha256").update(img).digest("hex")}.erofs`);
+    writeFileSync(other, img);
+  }
+  const wrongBase = refuse(["--rootfs", other, "--layer", "example"]);
+  if (other.startsWith(RUN)) rmSync(other, { force: true });
   check(results, wrongBase.status !== 0 && /was built for rootfs/.test(wrongBase.stderr), `a layer on a base it wasn't built for is refused: ${wrongBase.stderr.trim().split("\n")[0]}`);
   return { results, measured: m };
 }
