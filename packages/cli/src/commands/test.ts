@@ -155,7 +155,7 @@ export default class Test extends Command {
   }
 
   private printHumanSummary(
-    exportCheck: { exitCode: number; parsed?: ExportCheckResult },
+    exportCheck: { exitCode: number; output: string; parsed?: ExportCheckResult },
     appTestCheck: { exitCode: number; output: string } | null,
   ): void {
     if (exportCheck.parsed?.ok) {
@@ -173,6 +173,12 @@ export default class Test extends Command {
       }
       for (const r of exportCheck.parsed?.results ?? []) {
         if (!r.ok) this.log(`  ✗ ${r.export}: ${r.error}`);
+      }
+      // No result line means the check itself crashed (a missing module, a
+      // runtime that won't load), so the reason is only in its output.
+      if (!exportCheck.parsed) {
+        this.log(`  the check exited ${exportCheck.exitCode} without a result. Last lines of its output:`);
+        for (const line of exportCheck.output.trimEnd().split("\n").slice(-40)) this.log(`  ${line}`);
       }
     }
 
