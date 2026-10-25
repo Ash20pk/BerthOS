@@ -208,19 +208,19 @@ jobs:
 
       - name: Keep the build log
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: kernel-build-log-${{ matrix.arch }}
           path: ${{ env.BERTH_VMM_ARTIFACTS }}/kernel-build/out/
           if-no-files-found: ignore
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: kernel-${{ matrix.arch }}
           path: dist/
           if-no-files-found: error
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: env.UPDATE_MANIFEST == '1'
         with:
           name: pins-kernel-${{ matrix.arch }}
@@ -263,7 +263,7 @@ jobs:
           cp "packages/vmm/rootfs/manifest-$ARCH.toml" pins/rootfs/
           cp packages/vmm/guest/*."$ARCH".apk.lock pins/guest/
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: guest-${{ matrix.arch }}
           path: |
@@ -272,7 +272,7 @@ jobs:
             ${{ env.BERTH_VMM_ARTIFACTS }}/semantic-fs-build/out/
           if-no-files-found: error
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: env.UPDATE_MANIFEST == '1'
         with:
           name: pins-guest-${{ matrix.arch }}
@@ -332,7 +332,7 @@ jobs:
       # On a hash mismatch, keep what the build produced (the image, its file
       # listing, inputs and package locks) so it can be compared with a local
       # build of the same pin.
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
           name: rootfs-mismatch-${{ matrix.arch }}
@@ -356,13 +356,13 @@ jobs:
             cp "$M" "packages/vmm/rootfs/$ARCH.apk.lock" "packages/vmm/rootfs/builder.$ARCH.apk.lock" pins/rootfs/
           fi
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: rootfs-${{ matrix.arch }}
           path: dist/
           if-no-files-found: error
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: env.UPDATE_MANIFEST == '1'
         with:
           name: pins-rootfs-${{ matrix.arch }}
@@ -433,13 +433,13 @@ jobs:
             done
           fi
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: layers-${{ matrix.arch }}
           path: dist/
           if-no-files-found: error
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: env.UPDATE_MANIFEST == '1'
         with:
           name: pins-layers-${{ matrix.arch }}
@@ -642,7 +642,7 @@ jobs:
             echo "::notice title=Pin this libkrun in the CLI::LIBKRUN_PINS[\"$PLATFORM\"] = { sha256: \"$LSHA\", size: $LSIZE } in packages/cli/src/vm/pins.ts"
           fi
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: vmm-${{ matrix.platform }}
           path: dist/
@@ -797,7 +797,7 @@ jobs:
           for f in "$ART"/run/*/console.log; do echo "== $f"; tail -60 "$f"; done
           ls "$ART"/run/e2e-*.json 2>/dev/null || true
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: e2e-x86_64
@@ -841,7 +841,7 @@ jobs:
           path: pins
       - name: List
         run: find pins -type f | sort && cat pins/kernel/manifest-*.toml pins/rootfs/manifest-*.toml | grep -E '^(arch|image_sha256|image_size|config_sha256|[a-z_]+_sha256) '
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: pins-${{ inputs.arch }}
           path: pins/
