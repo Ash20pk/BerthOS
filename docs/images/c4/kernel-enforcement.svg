@@ -1,0 +1,103 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 790" width="1000" height="790" role="img" aria-label="Enforcement: containers (C4 level 2)">
+<title>Enforcement: containers (C4 level 2)</title>
+<style>
+  text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  .ln { stroke: #57606a; }
+  .bd { stroke: #8c959f; }
+  .bl { fill: #57606a; }
+  .ah { fill: #57606a; }
+  .pill { fill: #f6f8fa; stroke: #d0d7de; }
+  .pt { fill: #24292f; }
+  @media (prefers-color-scheme: dark) {
+    .ln { stroke: #8b949e; }
+    .bd { stroke: #6e7681; }
+    .bl { fill: #9198a1; }
+    .ah { fill: #8b949e; }
+    .pill { fill: #161b22; stroke: #30363d; }
+    .pt { fill: #e6edf3; }
+  }
+</style>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+  <marker id="arrow-start" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+</defs>
+<rect x="20" y="30" width="580" height="440" rx="14" fill="none" class="bd" stroke-width="1.5" stroke-dasharray="7 5"/>
+<text x="36" y="456" class="bl" font-size="13.5" font-weight="700">Sandbox</text>
+
+<path d="M160,185 L160,298" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="89.65" y="222" width="140.7" height="40" rx="6" class="pill"/>
+<text x="160" y="234" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="160" dy="0">CONNECT host:port</tspan>
+<tspan x="160" dy="16" font-style="italic">[HTTP proxy]</tspan>
+</text>
+<path d="M460,185 L460,298" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="368.35" y="222" width="183.29999999999998" height="40" rx="6" class="pill"/>
+<text x="460" y="234" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="460" dy="0">CONNECT api.github.com</tspan>
+<tspan x="460" dy="16" font-style="italic">[TLS ends at the proxy]</tspan>
+</text>
+<path d="M580,122 L718,122" fill="none" class="ln" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrow)"/>
+<rect x="607.05" y="102" width="83.9" height="40" rx="6" class="pill"/>
+<text x="649" y="114" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="649" dy="0">checked</tspan>
+<tspan x="649" dy="16">in-kernel</tspan>
+</text>
+<path d="M160,425 L160,578" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="107.4" y="505" width="105.19999999999999" height="40" rx="6" class="pill"/>
+<text x="160" y="517" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="160" dy="0">allowed only</tspan>
+<tspan x="160" dy="16" font-style="italic">[TCP]</tspan>
+</text>
+<path d="M460,425 L460,578" fill="none" class="ln" stroke-width="1.6" marker-end="url(#arrow)"/>
+<rect x="407.4" y="505" width="105.19999999999999" height="40" rx="6" class="pill"/>
+<text x="460" y="517" text-anchor="middle" dominant-baseline="middle" font-size="12" class="pt">
+<tspan x="460" dy="0">allowed only</tspan>
+<tspan x="460" dy="16" font-style="italic">[TLS]</tspan>
+</text>
+<rect x="40" y="60" width="540" height="125" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="310" y="105.5" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="310" font-size="15.5" font-weight="700">Resident app</tspan>
+<tspan x="310" dy="17" font-size="11.5" opacity="0.85">[Container: one uid per app]</tspan>
+<tspan x="310" dy="20" font-size="12.5">Declares capabilities in berth.yml</tspan>
+</text>
+<rect x="40" y="300" width="240" height="125" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="160" y="337" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="160" font-size="15.5" font-weight="700">Egress proxy</tspan>
+<tspan x="160" dy="17" font-size="11.5" opacity="0.85">[Container: Node.js, 127.0.0.1:8090]</tspan>
+<tspan x="160" dy="20" font-size="12.5">browser:navigate / network:host:</tspan>
+<tspan x="160" dy="17" font-size="12.5">hostnames only</tspan>
+</text>
+<rect x="340" y="300" width="240" height="125" rx="10" fill="#438dd5" stroke="#3c7fc0" stroke-width="1.5"/>
+<text x="460" y="337" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="460" font-size="15.5" font-weight="700">GitHub API proxy</tspan>
+<tspan x="460" dy="17" font-size="11.5" opacity="0.85">[Container: Node.js, 127.0.0.1:8092]</tspan>
+<tspan x="460" dy="20" font-size="12.5">github:read / github:write:</tspan>
+<tspan x="460" dy="17" font-size="12.5">method and path</tspan>
+</text>
+<rect x="720" y="60" width="250" height="125" rx="10" fill="#6b7280" stroke="#4b5563" stroke-width="1.5"/>
+<text x="845" y="88.5" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="845" font-size="15.5" font-weight="700">Kernel</tspan>
+<tspan x="845" dy="17" font-size="11.5" opacity="0.85">[Landlock + seccomp]</tspan>
+<tspan x="845" dy="20" font-size="12.5">Files, outbound ports, binds,</tspan>
+<tspan x="845" dy="17" font-size="12.5">socket types, io_uring,</tspan>
+<tspan x="845" dy="17" font-size="12.5">namespaces</tspan>
+</text>
+<rect x="40" y="580" width="240" height="110" rx="10" fill="#6b7280" stroke="#4b5563" stroke-width="1.5"/>
+<text x="160" y="609.5" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="160" font-size="15.5" font-weight="700">Internet hosts</tspan>
+<tspan x="160" dy="17" font-size="11.5" opacity="0.85">[External System]</tspan>
+<tspan x="160" dy="20" font-size="12.5">Only those a declared pattern</tspan>
+<tspan x="160" dy="17" font-size="12.5">covers</tspan>
+</text>
+<rect x="340" y="580" width="240" height="110" rx="10" fill="#6b7280" stroke="#4b5563" stroke-width="1.5"/>
+<text x="460" y="609.5" text-anchor="middle" dominant-baseline="middle" fill="#ffffff">
+<tspan x="460" font-size="15.5" font-weight="700">api.github.com</tspan>
+<tspan x="460" dy="17" font-size="11.5" opacity="0.85">[External System]</tspan>
+<tspan x="460" dy="20" font-size="12.5">Only routes a declared scope</tspan>
+<tspan x="460" dy="17" font-size="12.5">covers</tspan>
+</text>
+<rect x="24" y="756" width="16" height="16" rx="4" fill="#438dd5" stroke="#3c7fc0"/>
+<text x="46" y="768.5" font-size="12.5" class="bl">Container</text>
+<rect x="117" y="756" width="16" height="16" rx="4" fill="#6b7280" stroke="#4b5563"/>
+<text x="139" y="768.5" font-size="12.5" class="bl">External</text>
+</svg>

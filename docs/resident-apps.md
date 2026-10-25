@@ -4,7 +4,43 @@ A resident app is a tool your agent can use, running inside the Berth sandbox. I
 
 This guide takes you from `berth init` to an app that fetches web pages from one allowed host. Field details are in the [manifest reference](./manifest-reference.md) and the API in the [SDK reference](./sdk-reference.md).
 
-## Before you start
+## Context
+
+You write the app; `berth dev` builds it into a sandbox and runs it there. Your agent uses its exports as tools, through `berth mcp`, which serves them to any MCP client. Inside the sandbox, the kernel refuses whatever `berth.yml` doesn't declare, and the app can reach other apps and, through the egress proxy, the hosts it declares. The steps to build one start at [Before you start](#before-you-start), under [Code](#code). For how this sits among the rest of Berth, see the [README](../README.md#resident-apps-in-the-box).
+
+## Containers
+
+Your app runs as its own process inside the sandbox container `berth dev` starts. The sandbox also runs the egress proxy that step 3 uses, and the daemons and sockets that other apps are reached through. The [SDK reference](./sdk-reference.md#containers) has a diagram of these pieces.
+
+### Talking to other apps
+
+Apps in the same sandbox can share events, files and exports. The first two are reachable from the `AppContext` your `onAgentReady` hook receives.
+
+- **Context bus** (`ctx.contextBus`): `register`, `publish(topic, payload)`, `subscribe(topic, handler)`. Pub/sub between apps. One app publishes `fs.file_created`, another reacts, and neither knows the other exists. See the [context bus reference](./context-bus-reference.md).
+- **Semantic filesystem** (`ctx.semanticFs`): `register`, `tag(path, meta)`, `query(text, limit)`. A filesystem at `/context` that records who wrote each file and why, so other apps can find files by searching. The search covers tags (`task`, `relatedApps`, path, author), not file contents, and only files something tagged. See the [semantic filesystem reference](./semantic-fs-reference.md#query-semantics--hybrid-keyword--embedding-similarity).
+- **Direct calls**: declare `app:invoke:<name>` and your app gets its own socket to that app's exports, at `/run/berth/<name>/peers/<your-app>/rpc.sock`. Send one JSON request per line (`{"id": "1", "export": "list_notes", "input": {}}`) and read one response per line. Apps that don't declare it get `EACCES`. See the [manifest reference](./manifest-reference.md#calling-another-app).
+
+[`apps/filesystem`](../apps/filesystem) and [`apps/code-editor`](../apps/code-editor) show the context bus in use: the first publishes `fs.file_created`, the second reacts to it.
+
+To run several apps in one sandbox, each with its own kernel policy, pass `--apps=<paths>` to `berth dev` or `berth os up`. See the [multi-app reference](./multi-app-reference.md).
+
+## Components
+
+An app has two parts: `berth.yml`, which says what it may touch and what it exports, and the code that implements those exports. The rules below are the checks Berth applies to them, and the ones people most often hit.
+
+### Rules that trip people up
+
+- **Exports must match on both sides.** Every `app.export({ name })` needs an entry in `berth.yml`'s `exports:`, and every entry needs an `app.export`. A mismatch stops the app at boot.
+- **Anything undeclared is denied.** Filesystem writes, outbound connections and listening ports are refused by the kernel unless `berth.yml` declares them. Filesystem paths must be under `/workspace`, `/context`, `/tmp` or `/app`.
+- **Use a hostname, not an open port.** Reach the outside world with `network:host:<pattern>` through the egress proxy, not `network:connect:*`, which opens every port. The proxy can chain through an upstream proxy of your own; see [egress proxy](./egress-broker-reference.md#optional-chaining-through-an-upstream-proxy-eg-residential).
+- **`on_install` runs at image build time.** Changing it needs a restart of `berth dev`, which rebuilds; a file-change restart doesn't. For setup inside your app's process at startup, use `app.onInstall(fn)` ([manifest reference](./manifest-reference.md#on_install-default-)).
+- **Declaring a capability and exposing it are separate.** A `browser:*` or `terminal:*` capability makes `berth dev` publish a noVNC or ttyd port on `127.0.0.1`, behind a password it prints each boot. Turn that off with `expose: { browser: false }` or `expose: { terminal: false }`. A deployed instance only gets a viewing URL with `expose: { preview: true }`.
+- **Credentials go in `secrets:`.** List the env var names your app needs, and each is delivered only to the apps that declare it. See the [secrets reference](./secrets-reference.md).
+- **Your project folder is read-only inside `berth dev`.** An app can't modify your repository. App data written under `$BERTH_WORKSPACE_ROOT` lands in `.berth/dev-workspace/` in your project.
+
+## Code
+
+### Before you start
 
 You need Docker, Node 22+, pnpm and the Berth CLI:
 
@@ -15,7 +51,7 @@ berth doctor
 
 `berth doctor` tells you whether this machine's kernel can enforce capabilities. Enforcement needs Landlock (Linux 6.7+); Docker Desktop doesn't have it. Without it, `berth dev` runs your app unrestricted and warns you. On a Mac, `berth doctor --fix` sets up a VM that can enforce. Set `BERTH_REQUIRE_ENFORCEMENT=1` to refuse to run an app that can't be locked down.
 
-## 1. Scaffold
+### 1. Scaffold
 
 ```bash
 berth init my-app --template hello-world
@@ -73,7 +109,7 @@ export default defineApp((app) => {
 });
 ```
 
-## 2. Run it
+### 2. Run it
 
 Berth runs your compiled `dist/index.js`, so build first, then boot:
 
@@ -104,7 +140,7 @@ berth rpc my-app --export ping
 
 `berth dev` restarts the container when `src/` or `berth.yml` changes. It doesn't compile TypeScript, so keep `pnpm exec tsc -p tsconfig.json --watch` running in a third terminal, or rebuild before each change is picked up.
 
-## 3. Add an export that needs a capability
+### 3. Add an export that needs a capability
 
 An app starts with no network. To fetch pages from one host, declare that host and the port of the sandbox's egress proxy, which checks every request against the hosts you declared:
 
@@ -158,7 +194,7 @@ berth rpc my-app --export fetch_text --input '{"url":"https://api.github.com"}' 
 
 On an enforcing kernel, a direct connection that skips the proxy is refused too, because the app may only connect to port 8090. This is the same pattern as [`examples/resident-apps/http-fetch`](../examples/resident-apps/http-fetch). Every capability you can declare is listed in the [manifest reference](./manifest-reference.md#capabilities).
 
-## 4. Test it
+### 4. Test it
 
 ```bash
 berth test
@@ -168,7 +204,7 @@ berth test
 
 The generated inputs are made up (a field named `url` gets `https://example.com`, `selector` gets `body`, `email` gets `test@example.com`, anything else a placeholder), so an export that needs real state or a service will usually throw on them. That's reported as not exercised, with the error, and doesn't fail the check. What fails it is an export missing on one side, output that doesn't match the declared schema, or a `TypeError` or `ReferenceError` thrown by the handler, which is a bug in the code rather than a refusal of the input. Your `npm test` runs inside the sandbox, under your app's own capabilities: a test that needs something the app doesn't declare, such as listening on a port, fails there.
 
-## 5. Use it from an agent
+### 5. Use it from an agent
 
 `berth mcp` serves your app's exports as MCP tools, so any MCP client can use them:
 
@@ -179,29 +215,7 @@ claude mcp add my-app -- berth mcp --app my-app --app-dir /abs/path/to/my-app
 
 `--only=<exports>` limits which exports the client sees. See the [MCP quickstart](./mcp-quickstart.md) for Claude Desktop and Cursor. To publish your app for others, see `berth publish` in the [app registry reference](./app-registry-reference.md).
 
-## Rules that trip people up
-
-- **Exports must match on both sides.** Every `app.export({ name })` needs an entry in `berth.yml`'s `exports:`, and every entry needs an `app.export`. A mismatch stops the app at boot.
-- **Anything undeclared is denied.** Filesystem writes, outbound connections and listening ports are refused by the kernel unless `berth.yml` declares them. Filesystem paths must be under `/workspace`, `/context`, `/tmp` or `/app`.
-- **Use a hostname, not an open port.** Reach the outside world with `network:host:<pattern>` through the egress proxy, not `network:connect:*`, which opens every port. The proxy can chain through an upstream proxy of your own; see [egress proxy](./egress-broker-reference.md#optional-chaining-through-an-upstream-proxy-eg-residential).
-- **`on_install` runs at image build time.** Changing it needs a restart of `berth dev`, which rebuilds; a file-change restart doesn't. For setup inside your app's process at startup, use `app.onInstall(fn)` ([manifest reference](./manifest-reference.md#on_install-default-)).
-- **Declaring a capability and exposing it are separate.** A `browser:*` or `terminal:*` capability makes `berth dev` publish a noVNC or ttyd port on `127.0.0.1`, behind a password it prints each boot. Turn that off with `expose: { browser: false }` or `expose: { terminal: false }`. A deployed instance only gets a viewing URL with `expose: { preview: true }`.
-- **Credentials go in `secrets:`.** List the env var names your app needs, and each is delivered only to the apps that declare it. See the [secrets reference](./secrets-reference.md).
-- **Your project folder is read-only inside `berth dev`.** An app can't modify your repository. App data written under `$BERTH_WORKSPACE_ROOT` lands in `.berth/dev-workspace/` in your project.
-
-## Talking to other apps
-
-Apps in the same sandbox can share events, files and exports. The first two are reachable from the `AppContext` your `onAgentReady` hook receives.
-
-- **Context bus** (`ctx.contextBus`): `register`, `publish(topic, payload)`, `subscribe(topic, handler)`. Pub/sub between apps. One app publishes `fs.file_created`, another reacts, and neither knows the other exists. See the [context bus reference](./context-bus-reference.md).
-- **Semantic filesystem** (`ctx.semanticFs`): `register`, `tag(path, meta)`, `query(text, limit)`. A filesystem at `/context` that records who wrote each file and why, so other apps can find files by searching. The search covers tags (`task`, `relatedApps`, path, author), not file contents, and only files something tagged. See the [semantic filesystem reference](./semantic-fs-reference.md#query-semantics--hybrid-keyword--embedding-similarity).
-- **Direct calls**: declare `app:invoke:<name>` and your app gets its own socket to that app's exports, at `/run/berth/<name>/peers/<your-app>/rpc.sock`. Send one JSON request per line (`{"id": "1", "export": "list_notes", "input": {}}`) and read one response per line. Apps that don't declare it get `EACCES`. See the [manifest reference](./manifest-reference.md#calling-another-app).
-
-[`apps/filesystem`](../apps/filesystem) and [`apps/code-editor`](../apps/code-editor) show the context bus in use: the first publishes `fs.file_created`, the second reacts to it.
-
-To run several apps in one sandbox, each with its own kernel policy, pass `--apps=<paths>` to `berth dev` or `berth os up`. See the [multi-app reference](./multi-app-reference.md).
-
-## Other ways to build one
+### Other ways to build one
 
 - **From a REST API description.** For an app that only calls REST endpoints, [`defineConnectorApp`](./sdk-reference.md#defineconnectorappconfig-a-resident-app-from-a-declarative-rest-api-description) turns a config into exports, with no handlers to write.
 - **In Python.** The [Python SDK](./sdk-python-reference.md) (`pip install berthos-sdk`) speaks the same protocol.

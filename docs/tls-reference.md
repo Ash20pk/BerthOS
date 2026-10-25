@@ -2,7 +2,32 @@
 
 The app registry and the mesh coordinator serve plain HTTP unless you give them a certificate. Turn TLS on whenever one is reachable from another machine, because clients send tokens to it.
 
-## Turn it on
+## Context
+
+TLS matters wherever a Berth token crosses a network: an owner token sent to a registry by `berth publish`, a mesh registration sent to the coordinator, and the bearer token a client sends to a deployed sandbox's RPC bridge. The people involved are whoever runs those servers and whoever points a client at them.
+
+## Containers
+
+Three servers can serve HTTPS: `berth-registry` (the [app registry](./app-registry-reference.md)), `berth-mesh-coordinator` (the [mesh](./mesh-reference.md) coordinator), and the HTTP RPC bridge inside a deployed sandbox. The clients are the CLI's `berth publish` and `berth init`, and whatever calls the RPC bridge.
+
+### The RPC bridge
+
+The HTTP RPC bridge a deployed sandbox exposes serves HTTPS when `BERTH_HTTP_RPC_TLS_CERT` and `BERTH_HTTP_RPC_TLS_KEY` (file paths, not PEM contents) are both set in the container. Setting only one refuses to start. The bearer token is required either way. The app serving the bridge is granted read access to the directories holding the two files (and to their real locations, if they are symlinks), since it reads them after its read scope is enforced. The grant is the whole directory, not the two files: a certificate at `/app/cert.pem` lets that app read all of `/app`, other apps' directories included. Put the certificate and key in a directory of their own, such as `/etc/berth/tls/`, and not directly in `/`, which is never granted.
+
+Whether you need it depends on how the port is exposed:
+
+| Exposure | Already TLS? |
+|---|---|
+| E2B host, Daytona preview link | Yes. The provider terminates TLS in front of the bridge. |
+| Kubernetes NodePort, a raw port mapping | No. The bearer token crosses the network in the clear. |
+
+## Components
+
+`@berthos/tls` ([`packages/tls/src`](../packages/tls/src)) holds the shared parts: server settings resolved from a variable prefix, which refuse a partial configuration; the client side behind `--ca`, `--insecure` and the plain-HTTP warning; and the certificate generation behind `berth tls init`.
+
+## Code
+
+### Turn it on
 
 Point the server at a certificate and key:
 
@@ -32,7 +57,7 @@ A partial configuration refuses to start rather than falling back to HTTP: a cer
 
 Embedding a server: pass `tls: resolveServerTls({ certPath, keyPath })` (from `@berthos/tls`) to `createRegistryServer()` or `createMeshCoordinatorServer()`. It returns `undefined`, meaning plain HTTP, when nothing is set. `resolveServerTlsFromEnv(prefix)` reads the variables above.
 
-## Certificates for development
+### Certificates for development
 
 ```bash
 berth tls init
@@ -52,7 +77,7 @@ Files written: `ca.crt`, `ca.key`, `server.crt`, `server.key`.
 
 Use these for development and closed networks only. For a server reachable from a network you don't control, use a certificate from a real CA.
 
-## Clients
+### Clients
 
 ```bash
 berth publish --registry https://registry.internal:4873 --ca /path/to/ca.crt
@@ -71,17 +96,6 @@ berth init --registry https://registry.internal:4873 --ca /path/to/ca.crt
 ```
 [berth] WARNING: sending a registry owner token to http://registry.internal:4873 over plain HTTP — it crosses the network in the clear. Use https:// (see docs/tls-reference.md).
 ```
-
-## The RPC bridge
-
-The HTTP RPC bridge a deployed sandbox exposes serves HTTPS when `BERTH_HTTP_RPC_TLS_CERT` and `BERTH_HTTP_RPC_TLS_KEY` (file paths, not PEM contents) are both set in the container. Setting only one refuses to start. The bearer token is required either way. The app serving the bridge is granted read access to the directories holding the two files (and to their real locations, if they are symlinks), since it reads them after its read scope is enforced. The grant is the whole directory, not the two files: a certificate at `/app/cert.pem` lets that app read all of `/app`, other apps' directories included. Put the certificate and key in a directory of their own, such as `/etc/berth/tls/`, and not directly in `/`, which is never granted.
-
-Whether you need it depends on how the port is exposed:
-
-| Exposure | Already TLS? |
-|---|---|
-| E2B host, Daytona preview link | Yes. The provider terminates TLS in front of the bridge. |
-| Kubernetes NodePort, a raw port mapping | No. The bearer token crosses the network in the clear. |
 
 ## Limits
 

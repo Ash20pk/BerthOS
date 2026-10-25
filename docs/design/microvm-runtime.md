@@ -11,7 +11,13 @@ This is the consolidated state of Berth's microVM runtime. The three earlier wri
 
 Artifacts live in `/Users/ash/berth-wt/vm-runtime-artifacts/` (`$ART`, `BERTH_VMM_ARTIFACTS`). The kernel, the download cache, agent-init and the builder roots are APFS clones (`cp -c`) of the image and guest-init branches' artifacts. Nothing big is committed.
 
-## Status
+## Context
+
+The microVM runtime is the sandbox the berth CLI boots instead of a Docker container. The CLI starts `berth-vmm` on the Mac, which runs one VM per sandbox on HVF through libkrun 1.19.6, and the apps run inside that VM. It has no network device: the only way out is the egress dialer on the host ([`microvm-egress.md`](microvm-egress.md)).
+
+The kernel, the rootfs and berth-vmm come from a GitHub release that `.github/workflows/vm-artifacts.yml` builds from source, and `berth vm install` checks each file against the pins compiled into berth-vmm (open problem 1). libkrun comes from the Homebrew tap. For how this sits among the rest of Berth, see the [README](../../README.md#level-2-containers).
+
+### Status
 
 **Since feat/local-vm-runtime, the berth CLI runs this.** `berth vm install`, `berth dev --runtime vm`, `berth mcp --runtime vm`, `berth rpc --runtime vm`, `berth doctor --sandbox vm` and `berth attest` on a VM session. The user-facing page is [`docs/local-vm.md`](../local-vm.md), and the CLI side is described under [The CLI's local-vm runtime](#the-clis-local-vm-runtime) below. Docker is still the default.
 
@@ -25,7 +31,47 @@ Artifacts live in `/Users/ash/berth-wt/vm-runtime-artifacts/` (`$ART`, `BERTH_VM
 | 5. This document | Done | |
 | Egress (feat/vm-egress) | **Pass, 28/28** | `node scripts/e2e.mjs egress`: an app with `network:host:example.com` fetches https://example.com through the in-guest broker and the host dialer; undeclared hosts and internal addresses are refused by the host even with the broker bypassed by guest root. Rootfs **`5f80e448…`** with berth-init **`c82613e7…`** and the broker, reproduced twice; `e2e.mjs all` still 51/51 on it. Details in [`microvm-egress.md`](microvm-egress.md) |
 
-## What boots
+## Containers
+
+<p align="center"><img src="../images/c4/design-microvm-runtime.svg" alt="microVM runtime containers: the developer runs the berth CLI, which spawns berth-vmm on the host and talks to it through Unix sockets. berth-vmm maps vsock ports to those sockets and reaches berth-init, PID 1 in the guest, which relays RPC to each app over a Unix socket, runs context-bus-daemon beside the apps, and mounts the rootfs, the state disk and the app share. Egress comes back to berth-vmm on vsock 1026, and its dialer reaches only declared internet hosts." width="100%"></p>
+
+Two processes run on the host. The berth CLI (`packages/cli/src/vm/`) spawns `berth-vmm run` detached, reads the `endpoints` and measurement lines it prints on stderr, and then talks to it through the sockets in its run directory. berth-vmm hashes the pinned artifacts, confines itself with a Seatbelt profile (open problem 9), runs the VM through libkrun, and, given `--egress-allow`, runs the egress dialer. In the guest, berth-init is PID 1. It starts context-bus-daemon (uid 9001) and each app under agent-init (uid 10000+i), and relays each app's RPC to the app's own Unix socket (socket mode, the default; `BERTH_VM_RPC=stdio` uses the app's stdio instead).
+
+Each vsock port is mapped to a Unix socket in the run directory: 1024 to `control.sock`, 1025 to `logs.sock` and 5000+i to `rpc-<i>.sock`, all connected from the host, and 1026 to `egress.sock`, where the guest connects out ([Port plan](#port-plan)). The rootfs is `vda`, read-only; the state disk is `vdb`; the app is a read-only virtio-fs share ([What boots](#what-boots)).
+
+### The CLI's local-vm runtime
+
+Branch feat/local-vm-runtime. The code is in `packages/cli/src/vm/`. berth-vmm and berth-init are unchanged: the CLI reads and drives what they already print and serve.
+
+**Where it lives, and why not adapter-core.** `DeployAdapter` (`packages/adapters/adapter-core`) takes a Docker image reference (`upload(imageRef)`, `start(remoteImageRef)`) and is used only by `berth deploy`, for remote providers. `berth dev` and `berth mcp` don't go through it: they drive docker-orchestrator directly (`bootDevContainer`, `createStdioRpcClient`, `gatherBootEvidence`). A local VM consumes no image and needs dev's and mcp's hooks (hot reload, ready waiting, RPC, boot evidence), so it is a runtime alongside docker-orchestrator, selected by `--runtime vm`. `berth mcp` reuses its background-sandbox state machine (`util/mcp-sandbox.ts`) unchanged, with VM steps behind `SandboxSteps`. The RPC framing is docker-orchestrator's, split out as `createLineRpcClient`.
+
+| Open problem (below) | What the CLI does now | Still open |
+|---|---|---|
+| 1. Artifacts | `berth vm install` copies from a build directory or downloads from a sha256-keyed URL template, hashes each file against its pin before renaming it into berth-vmm's layout, and runs automatically on the first VM boot. The pins are read out of the berth-vmm binary's compiled-in manifests, so the CLI installs what berth-vmm will accept even when the two were built apart. `berth doctor` checks the hypervisor, berth-vmm's entitlement (and prints the `codesign` fix), the pins, and libkrun's version | Done since: the default URL is the GitHub release `vm-artifacts.yml` publishes, and berth-vmm is downloaded when the CLI pins it. Open: notarizing berth-vmm; libkrun still comes from the Homebrew tap |
+| 2. Bundling | esbuild bundles the app and the SDK runtime into the share layout. esbuild and the SDK come from the project, or from the CLI's own dependencies, so a `berth init` project outside the repo works without `npm install`. Cached by content (the files esbuild read, `berth.yml`, and the source listing): 9 ms on a hit, 125 to 180 ms on a miss | Native addons can't work (refused with a clear error); files the app reads from its own directory at run time aren't in the share |
+| 3. Lifecycle | `berth-vmm run` is spawned detached, with its run dir under `~/.berth/run/vm/<name>/` (pid file, `vm.json`, `vmm.log`). Ready means every app's `app_ready` on control, with greeting-or-retry. A boot that fails (berth-vmm refusing, `boot_failed`, an app exiting) is reported with berth-vmm's own words. Stop is `{"op":"shutdown"}`, then SIGKILL after a timeout, and the sockets are cleaned up. Reattach goes by the pid file and record: a run dir whose pid is dead, or whose pid is no longer that run dir's berth-vmm (checked with `ps`), is stale and cleaned. The process that started a VM pumps `logs.sock` (one reader at a time) into `guest.log` for everyone else | A VM orphaned by a CLI that was SIGKILLed keeps running until the next `berth dev` or `berth vm stop` |
+
+**Hot reload is a VM reboot.** The guest would see a new bundle on the virtio-fs share, but berth-init's control port has no restart op, and adding one means a new berth-init, rootfs and pin. A reboot costs 366 to 405 ms here, and it also recompiles the policy, which matters for a `berth.yml` change. A save that leaves the bundle unchanged doesn't reboot at all.
+
+**Attestation.** The evidence sources are listed in [`attestation-reference.md`](../attestation-reference.md#a-microvm-boot). The record gains `boot.isolation`, an extension field, so existing records and verifiers are unaffected. `policies` is empty until berth-init reports the compiled policy's sha256.
+
+**Egress.** When berth-vmm's `run --help` offers `--egress-allow` (feat/vm-egress), the CLI passes the apps' `network:host:` and `browser:navigate:` scopes verbatim, allows `network:host` and `network:connect` apps (at most one per sandbox), and prints the dialer's `egress` lines in `berth dev`. Without it, network apps are refused before boot.
+
+Measured with `packages/cli/test/vm-e2e.mjs` (17/17) on the M4 at load 5 to 8, each over 3 runs:
+
+| | |
+|---|---|
+| `berth dev --runtime vm`, first boot (bundle miss + boot) | 581 to 603 ms; boot alone 401 to 425 ms |
+| reload after a real edit (bundle + stop + boot) | median 537 to 558 ms (bundle 124 to 171, stop 35 to 39, boot 366 to 405) |
+| `berth mcp --runtime vm`, spawn → first `tools/call` answered, booting its own VM | 625 to 851 ms (median 658 and 788 in two runs); `initialize` alone about 300 ms |
+| the same, attaching to a running `berth dev` VM | 256 ms |
+| Docker path, same span, warm image | about 1.6 s (not re-measured here) |
+
+## Components
+
+Inside the guest: the boot chain from the kernel to each app, and the decisions behind it (how berth-init is started, what the kernel command line may carry, cgroup2, the state disk and the port plan).
+
+### What boots
 
 ```
 host: berth-vmm run --app apps/notes --state notes.img
@@ -46,9 +92,9 @@ kernel 6.12.109 (pinned cmdline: root=/dev/vda rootfstype=erofs ro … init=/sbi
 
 Everything the guest executes comes from the pinned kernel or the hashed rootfs. The exception is app code on the `/app` share, which is unmeasured (open problem 7).
 
-## Decisions (goal 2)
+### Decisions (goal 2)
 
-### Boot berth-init directly, not through init.krun
+#### Boot berth-init directly, not through init.krun
 
 The pinned command line is now
 
@@ -65,27 +111,31 @@ and berth-vmm no longer calls `krun_set_root_disk_remount` when it boots the pin
 
 init.krun remains for the two other root kinds: builder VMs (libkrunfw's kernel, virtio-fs root, TSI) and the spike's layout, which we keep as a benchmark control. That layout has its own manifest key, `cmdline_virtiofs_root`. berth-vmm picks the key from the root kind, and **both come from the manifest**. A `--rootfs` that is not erofs is refused with the pinned kernel. A guest command other than `/sbin/berth-init` is also refused there, because the kernel would ignore it silently.
 
-### The kernel command line, and what berth-init needs from it
+#### The kernel command line, and what berth-init needs from it
 
 berth-init is configured through its environment, and libkrun appends berth-vmm's `--env` entries to the kernel command line as `K="V"`. The pinned part comes only from the manifest. The guest's needs fit in that space: `BERTH_VM_APPS`, `BERTH_STATE_DEV`, `PATH`, and optional `BERTH_VM_RPC` and friends. A single-app boot uses 301 to 324 bytes of `/proc/cmdline`, now reported as `cmdlineBytes` in `boot_start`.
 
 **A hole, fixed (776641e).** A `"` inside a value ends libkrun's quoting. `--env 'X=1" lsm="yama'` booted with `lsm=capability,yama`, which is Landlock off. agent-init then refused to start the apps (`NotEnforced`, fail-closed), but `init=` could have been replaced the same way. So the pinned command line was only pinned against `--cmdline`, not against `--env`. berth-vmm now requires identifier names, and values with no whitespace, quotes, backslashes or control characters. It also caps the count at 20 (the kernel panics past 31 boot environment words) and refuses a line over `COMMAND_LINE_SIZE` (2048). With short tags, that last check is what limits the app count (about 50; open problem 6).
 
-### cgroup2 remount
+#### cgroup2 remount
 
 When berth-init boots directly, nothing has mounted cgroup2 yet, so berth-init mounts it fresh with `nsdelegate,favordynmods` (falling back to `nsdelegate` alone). The init.krun path remounts with the same options. A failed remount is now logged rather than ignored. `boot_start` carries the resulting options (`"cgroup2":"rw,nsdelegate,favordynmods"`), and the e2e asserts them.
 
-### The state disk contract
+#### The state disk contract
 
 berth-vmm's restore of the truncated tail (the libkrun 1.19.6 discard bug, `microvm-image.md`) is in the merged berth-vmm (`pins::open_state`). The e2e's second boot shows `restoredBytes: 65536` after mkfs on the first boot, and the disk mounts. berth-init formats a blank disk `-E nodiscard`, mounts it at `/state`, and binds `/state/workspace` onto `/workspace`. The ownership pass then makes `/workspace` the app's (one app) or `root:berth 2775` (several apps).
 
 The measurement line now **measures the disk too**: `chunkedSha256` is SHA-256 over per-MiB chunk hashes. A chunk with no data extent (`SEEK_DATA`/`SEEK_HOLE`) is known to be zeros and is not read. The digest depends only on the bytes, not on how the file happens to be allocated, and costs what the data costs: 38.8 MB read and 15 to 20 ms for a 256 MiB disk with notes on it, against 0 ms for a new disk. It is taken after the restore and before the guest can write.
 
-### Port plan
+#### Port plan
 
 1024 control, 1025 logs, 5000+i RPC for app i, all in listen mode. berth-init serves this plan. **1026 egress** (feat/vm-egress) is the one port where the guest connects out: berth-vmm's egress dialer listens on `<run-dir>/egress.sock`, and the port is mapped only when `run` is given `--egress-allow` ([`microvm-egress.md`](microvm-egress.md)). `berth-vmm run` maps it to `control.sock`, `logs.sock` and `rpc-<i>.sock`, and the shell init's 5001 stop port is gone with the shell init. The e2e and `scripts/vm.mjs` follow the host-side rule from `microvm-guest-init.md`: every line is bounded, parsed as a JSON object and shape-checked, and nothing from the guest picks an action.
 
-## How to build
+## Code
+
+Building the pinned artifacts, running a sandbox by hand with `berth-vmm run`, and the tests.
+
+### How to build
 
 Nothing is installed on the host. Every compiler runs in a builder VM (libkrunfw's kernel, TSI on, its own Alpine root under `$ART/builders/`).
 
@@ -101,7 +151,7 @@ export BERTH_VMM_ARTIFACTS=/Users/ash/berth-wt/vm-runtime-artifacts   # the defa
 
 After a rootfs change, put the new hash in `rootfs/manifest.toml` (`image_sha256`, `image_size`, and the berth-init and context-bus-daemon hashes) and rebuild berth-vmm. It compiles both manifests in.
 
-### Pinned artifacts and inputs
+#### Pinned artifacts and inputs
 
 | | sha256 | Inputs |
 |---|---|---|
@@ -116,7 +166,7 @@ After a rootfs change, put the new hash in `rootfs/manifest.toml` (`image_sha256
 
 Before the rootfs, we rebuilt berth-init from the merge commit's source. It came out bit-identical to feat/vm-guest-init's binary (`50940a85…`), so the merge changed nothing in it. The two later commits to `init/` (the boot report and the remount warning) gave `f00ebfc2…`, reproduced twice.
 
-## How to run
+### How to run
 
 ```sh
 cd packages/vmm
@@ -157,7 +207,7 @@ node scripts/vm.mjs stop   $A/run/notes        # stop apps, sync, unmount, power
 
 The low-level form (`berth-vmm --kernel … --rootfs … --share … --vsock …`) is still there. It is what `run` expands to, and what builder VMs use.
 
-### Tests
+#### Tests
 
 ```sh
 node scripts/e2e.mjs all            # single, multi, enforce, stdio, exits (51 checks)
@@ -225,34 +275,6 @@ Where the time goes (guest uptime, median runs from run 1):
 
 Host side before boot: kernel hash 8 to 16 ms, rootfs hash 17 to 24 ms, state digest 15 to 20 ms (0 for a new disk). Shutdown on request takes 35 to 46 ms to berth-vmm's exit.
 
-## The CLI's local-vm runtime
-
-Branch feat/local-vm-runtime. The code is in `packages/cli/src/vm/`. berth-vmm and berth-init are unchanged: the CLI reads and drives what they already print and serve.
-
-**Where it lives, and why not adapter-core.** `DeployAdapter` (`packages/adapters/adapter-core`) takes a Docker image reference (`upload(imageRef)`, `start(remoteImageRef)`) and is used only by `berth deploy`, for remote providers. `berth dev` and `berth mcp` don't go through it: they drive docker-orchestrator directly (`bootDevContainer`, `createStdioRpcClient`, `gatherBootEvidence`). A local VM consumes no image and needs dev's and mcp's hooks (hot reload, ready waiting, RPC, boot evidence), so it is a runtime alongside docker-orchestrator, selected by `--runtime vm`. `berth mcp` reuses its background-sandbox state machine (`util/mcp-sandbox.ts`) unchanged, with VM steps behind `SandboxSteps`. The RPC framing is docker-orchestrator's, split out as `createLineRpcClient`.
-
-| Open problem (below) | What the CLI does now | Still open |
-|---|---|---|
-| 1. Artifacts | `berth vm install` copies from a build directory or downloads from a sha256-keyed URL template, hashes each file against its pin before renaming it into berth-vmm's layout, and runs automatically on the first VM boot. The pins are read out of the berth-vmm binary's compiled-in manifests, so the CLI installs what berth-vmm will accept even when the two were built apart. `berth doctor` checks the hypervisor, berth-vmm's entitlement (and prints the `codesign` fix), the pins, and libkrun's version | Done since: the default URL is the GitHub release `vm-artifacts.yml` publishes, and berth-vmm is downloaded when the CLI pins it. Open: notarizing berth-vmm; libkrun still comes from the Homebrew tap |
-| 2. Bundling | esbuild bundles the app and the SDK runtime into the share layout. esbuild and the SDK come from the project, or from the CLI's own dependencies, so a `berth init` project outside the repo works without `npm install`. Cached by content (the files esbuild read, `berth.yml`, and the source listing): 9 ms on a hit, 125 to 180 ms on a miss | Native addons can't work (refused with a clear error); files the app reads from its own directory at run time aren't in the share |
-| 3. Lifecycle | `berth-vmm run` is spawned detached, with its run dir under `~/.berth/run/vm/<name>/` (pid file, `vm.json`, `vmm.log`). Ready means every app's `app_ready` on control, with greeting-or-retry. A boot that fails (berth-vmm refusing, `boot_failed`, an app exiting) is reported with berth-vmm's own words. Stop is `{"op":"shutdown"}`, then SIGKILL after a timeout, and the sockets are cleaned up. Reattach goes by the pid file and record: a run dir whose pid is dead, or whose pid is no longer that run dir's berth-vmm (checked with `ps`), is stale and cleaned. The process that started a VM pumps `logs.sock` (one reader at a time) into `guest.log` for everyone else | A VM orphaned by a CLI that was SIGKILLed keeps running until the next `berth dev` or `berth vm stop` |
-
-**Hot reload is a VM reboot.** The guest would see a new bundle on the virtio-fs share, but berth-init's control port has no restart op, and adding one means a new berth-init, rootfs and pin. A reboot costs 366 to 405 ms here, and it also recompiles the policy, which matters for a `berth.yml` change. A save that leaves the bundle unchanged doesn't reboot at all.
-
-**Attestation.** The evidence sources are listed in [`attestation-reference.md`](../attestation-reference.md#a-microvm-boot). The record gains `boot.isolation`, an extension field, so existing records and verifiers are unaffected. `policies` is empty until berth-init reports the compiled policy's sha256.
-
-**Egress.** When berth-vmm's `run --help` offers `--egress-allow` (feat/vm-egress), the CLI passes the apps' `network:host:` and `browser:navigate:` scopes verbatim, allows `network:host` and `network:connect` apps (at most one per sandbox), and prints the dialer's `egress` lines in `berth dev`. Without it, network apps are refused before boot.
-
-Measured with `packages/cli/test/vm-e2e.mjs` (17/17) on the M4 at load 5 to 8, each over 3 runs:
-
-| | |
-|---|---|
-| `berth dev --runtime vm`, first boot (bundle miss + boot) | 581 to 603 ms; boot alone 401 to 425 ms |
-| reload after a real edit (bundle + stop + boot) | median 537 to 558 ms (bundle 124 to 171, stop 35 to 39, boot 366 to 405) |
-| `berth mcp --runtime vm`, spawn → first `tools/call` answered, booting its own VM | 625 to 851 ms (median 658 and 788 in two runs); `initialize` alone about 300 ms |
-| the same, attaching to a running `berth dev` VM | 256 ms |
-| Docker path, same span, warm image | about 1.6 s (not re-measured here) |
-
 ## Open problems
 
 Ordered by how much each one blocks a `local-vm` adapter in the berth CLI. Problems 1 to 3 are now handled by the CLI. What is left of them is in the table under [The CLI's local-vm runtime](#the-clis-local-vm-runtime).
@@ -260,7 +282,7 @@ Ordered by how much each one blocks a `local-vm` adapter in the berth CLI. Probl
 1. **Artifacts have to reach the user.** Done: `.github/workflows/vm-artifacts.yml` rebuilds the kernel and rootfs from source, checks them against the pins and publishes them with berth-vmm as a GitHub release, and `berth vm install` downloads and verifies them (`microvm-image.md`, "Distribution"; [`../local-vm.md`](../local-vm.md#install)). libkrun ships with berth-vmm on every platform (feat/vm-macos-libkrun on macOS, [`microvm-linux.md`](microvm-linux.md) on Linux): built from the 1.19.6 tag, pinned by sha256 and installed beside it, so the user installs nothing and the Homebrew tap moving past 1.19.6 doesn't matter. Still open: berth-vmm is ad hoc signed, not notarized.
 2. **Apps have to be bundled.** An app share is `berth.yml` + `dist/index.mjs` (the app with the SDK and zod inlined) + `runtime.mjs` + `proto/context_bus.proto`. `build-apps.sh` makes these with esbuild from another checkout's `node_modules`. The CLI needs that step for `berth dev`: either bundle at run time, or ship the runtime bundle and bundle only the app.
 3. **Lifecycle and readiness are the adapter's job.** `berth-vmm run` stays in the foreground and gives no ready signal of its own. Readiness is `app_ready` / `boot_complete` on control. libkrun accepts a connection before the guest listens, so every client must use greeting-or-retry (as `vm.mjs` and `e2e.mjs` do). A stop needs the guest to cooperate, with SIGKILL after a timeout (only the ext4 journal protects state then). There is no reattach, pid file or `ps` for a running sandbox, and the sockets stay in the run directory after exit.
-4. **Missing parts of entrypoint.sh** (`microvm-guest-init.md`, open problem 3). The egress broker and the host-side dialer are done (feat/vm-egress, [`microvm-egress.md`](microvm-egress.md)); the GitHub API broker too (feat/vm-github-broker: berth-init starts it as uid 9003 under agent-init, and its upstream is the same dial socket the egress broker uses). Upstream proxy chaining and the mesh are not. Secrets are done (feat/vm-secrets, 5. below). Also missing: the governance gate. The browser display is done, in an optional layer downloaded when a browser app needs it (feat/vm-layers, [`microvm-layers.md`](microvm-layers.md)). The terminal is done: tmux and ttyd are in the image (feat/vm-terminal, feat/vm-ttyd), and `berth-vmm run --publish PORT` makes a guest TCP port reachable from the host as `<run-dir>/publish-<PORT>.sock` (berth-init relays vsock 2000+i to 127.0.0.1:PORT). semantic-fs runs in the guest since feat/vm-semantic-fs-init ([`microvm-semantic-fs.md`](microvm-semantic-fs.md)); the CLI still refuses `/context` scopes until step 3 there. An app needing any of these cannot run in a VM yet. Python apps run (feat/vm-python): the image has python3, berth_sdk's dependencies from Alpine, and berth_sdk at `/opt/berth/sdk-python` (pinned as `sdk_python_sha256`); the CLI copies a `runtime: python` app's own files into its share with a `.berth-runtime` marker, and berth-init compiles its policy with berth_sdk's own compiler (`python3 -I`, the image's SDK first on `sys.path`, as `entrypoint.sh`'s `run_python_sdk_tool` does, so the policy grants read access to `/opt/berth/sdk-python`; the Node compiler doesn't know it, and the app could not import berth_sdk), then starts it as `agent-init python3 -m berth_sdk.runtime` with `PYTHONPATH=/opt/berth/sdk-python`. Nothing is pip-installed, so a Python app may import only the standard library and those three packages.
+4. **Missing parts of entrypoint.sh** (`microvm-guest-init.md`, open problem 3). The egress broker and the host-side dialer are done (feat/vm-egress, [`microvm-egress.md`](microvm-egress.md)); the GitHub API broker too (feat/vm-github-broker: berth-init starts it as uid 9003 under agent-init, and its upstream is the same dial socket the egress broker uses). Upstream proxy chaining and the mesh are not. Secrets are done (feat/vm-secrets, 5. below). Also missing: the governance gate. The browser display is done, in an optional layer downloaded when a browser app needs it (feat/vm-layers, [`microvm-layers.md`](microvm-layers.md)). The terminal is done: tmux and ttyd are in the image (feat/vm-terminal, feat/vm-ttyd), and `berth-vmm run --publish PORT` makes a guest TCP port reachable from the host as `<run-dir>/publish-<PORT>.sock` (berth-init relays vsock 2000+i to 127.0.0.1:PORT). semantic-fs runs in the guest since feat/vm-semantic-fs-init ([`microvm-semantic-fs.md`](microvm-semantic-fs.md)), and the CLI runs `/context` apps on a berth-vmm whose image has the daemon (feat/vm-semantic-fs-cli). An app needing any of these cannot run in a VM yet. Python apps run (feat/vm-python): the image has python3, berth_sdk's dependencies from Alpine, and berth_sdk at `/opt/berth/sdk-python` (pinned as `sdk_python_sha256`); the CLI copies a `runtime: python` app's own files into its share with a `.berth-runtime` marker, and berth-init compiles its policy with berth_sdk's own compiler (`python3 -I`, the image's SDK first on `sys.path`, as `entrypoint.sh`'s `run_python_sdk_tool` does, so the policy grants read access to `/opt/berth/sdk-python`; the Node compiler doesn't know it, and the app could not import berth_sdk), then starts it as `agent-init python3 -m berth_sdk.runtime` with `PYTHONPATH=/opt/berth/sdk-python`. Nothing is pip-installed, so a Python app may import only the standard library and those three packages.
 5. **The guest environment is world-readable inside the guest.** It travels on the kernel command line, and the probe app (uid 10002, Landlock read on `/proc`) could read `/proc/cmdline`. Never pass a secret with `--env`. Done for secrets (feat/vm-secrets): `berth-vmm run --secrets FILE` attaches a read-only secrets disk (format in `packages/vmm/src/secrets.rs`, a magic line, one JSON object, NUL padding to sectors) and sets `BERTH_SECRETS_DEV`. berth-init reads it before any daemon or app starts, removes the device node, and puts the `shared` entries and the app's own `apps.<name>` entries into each app's environment, never over a name it sets itself. The CLI writes the disk from `berth dev --env/--env-file` (0600 in the run dir) and deletes it once the sandbox is ready. `vm-e2e.mjs` checks that a declared secret reaches only its app, that the value is not in `/proc/cmdline`, any other process's environ, a device node or a log, and that the host file is gone. `berth mcp --runtime vm` takes them too, with `--env`/`--env-file`, when it boots the VM (feat/vm-mcp-env). The kernel command line still carries berth-vmm's own settings, which are not secret.
 6. **Command-line budget.** At most 20 `--env` entries and 2048 bytes in all. `BERTH_VM_APPS` grows with the tags, so the practical app limit is about 50 with short names (berth-init's own limit is 64). Passing configuration on a small config disk or a vsock handshake would remove both limits.
 7. **`/app` is measured at boot** (feat/vm-measure-apps): berth-vmm hashes each read-only share (sha256 of its sorted `<sha256>  <path>` lines) into the measurement line, and `berth attest` records it as `boot.isolation.apps`; berth-init reports each compiled policy's sha256 (`policy_digest`), which fills `policies`. Still open: the share shows host uid 501 inside the guest (virtio-fs, no idmap), and stays live after the digest. Attested and deployed runs want a hashed per-app erofs layer, measured like the rootfs and immutable.
