@@ -123,13 +123,13 @@ export type VmmPlatform = "darwin-arm64" | "linux-arm64" | "linux-x64";
  *
  * All three are from the per-architecture releases vm-artifacts-8f79e8da-e6017262
  * (aarch64: darwin-arm64, linux-arm64) and vm-artifacts-10d4b54c-0c623b43
- * (x86_64: linux-x64). Runs 40103596964 / 40103557191 and 40104945503 built
- * each of them to the same bytes.
+ * (x86_64: linux-x64). Run 40200731376 built all three; it also rebuilt both
+ * rootfs images to their pins and passed the x86_64 e2e under KVM.
  */
 export const VMM_PINS: Partial<Record<VmmPlatform, { sha256: string; size: number }>> = {
-  "darwin-arm64": { sha256: "92fd7ae2a97e029f1689cfd626600dfcbef39e8933ed304b0e2466a385c167ae", size: 700608 },
-  "linux-arm64": { sha256: "2ecc29d88ea0fd1abadc7a142bb0f7b53de5f8e104860ef2e24ce3c487646dc6", size: 725632 },
-  "linux-x64": { sha256: "e5809f8c43281b1e821be4b48003855a7913fe5905d2f32a52c7bf377b91e6d1", size: 742152 },
+  "darwin-arm64": { sha256: "628e6ac16dde4657a2c177a0614ee89de91f9d47db631b8c8d59e111fc2904f0", size: 700608 },
+  "linux-arm64": { sha256: "1b72e4966c5c96c0ff89eab64bb868e8ee9a2cac75640f8b3ee65ec2c53e7fd1", size: 725632 },
+  "linux-x64": { sha256: "308dd7d8a6e7a0cb5c821dcd2c2eefe7775d3a3859c7891ea5154ed8582cb0dd", size: 742152 },
 };
 
 export function vmmPin(platform: string = `${process.platform}-${process.arch}`, pins: Partial<Record<string, { sha256: string; size: number }>> = VMM_PINS): ArtifactPin | undefined {
