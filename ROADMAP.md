@@ -10,7 +10,7 @@ Want to take something on? Open an issue saying which item, or comment on the on
 |---|---|---|
 | **Install from npm and PyPI** | `npm install -g @berthos/cli`, the `@berthos/*` packages, and `berthos-sdk` on PyPI. Each release is cut from a GitHub workflow, with npm provenance and an SBOM attached. | [Quickstart](./docs/quickstart.md) · [Releases](https://github.com/Ash20pk/BerthOS/releases) |
 | **Kernel-enforced sandbox** | A `berth.yml` capability list compiled into a Landlock and seccomp policy, applied before the tool's first line runs. Files, outbound network, raw sockets and namespaces are denied unless declared, and every app runs as its own uid. Needs Linux 6.7+, or the microVM runtime, which brings its own kernel. | [Enforcement](./docs/kernel-enforcement.md) |
-| **A microVM runtime, no Docker** | New in 0.3.0, as a preview. `berth dev --runtime vm` boots each sandbox in a small VM with Berth's own pinned kernel, on Apple silicon Macs and Linux with KVM, so enforcement is the same on every machine. No network device: egress goes through a dialer on the host that checks the allowlist again. | [microVM runtime](./docs/local-vm.md) |
+| **A microVM runtime, no Docker** | The default on Apple silicon Macs and Linux with KVM since 0.3.1: `berth dev` boots each sandbox in a small VM with Berth's own pinned kernel, so enforcement is the same on every machine, and the first run installs it. No network device: egress goes through a dialer on the host that checks the allowlist again. | [microVM runtime](./docs/local-vm.md) |
 | **Works with your agent** | An MCP server for Claude Code, Claude Desktop, Cursor or any MCP client, plus tool adapters for the Vercel AI SDK and LangChain (from a clone for now). | [MCP quickstart](./docs/mcp-quickstart.md) |
 | **Resident apps** | Build a tool as a manifest plus a handler, in TypeScript or Python. First-party apps: filesystem, terminal, browser, code interpreter, web fetch, git, Postgres, MySQL, GitHub, notes. | [Resident apps](./docs/resident-apps.md) |
 | **Scoped network access** | An egress proxy that scopes browsing by hostname, and a GitHub proxy that scopes API calls by method and path. | [Egress](./docs/egress-broker-reference.md) · [GitHub](./docs/github-api-scoping-reference.md) |
@@ -24,7 +24,7 @@ Want to take something on? Open an issue saying which item, or comment on the on
 What's being worked on first.
 
 - **A standalone sandbox package.** `Computer` and the framework adapters (`toAiSdkTools`, `toLangChainTools`, `toToolSpecs`) move out of the agent framework into their own package, so embedding Berth in an existing TypeScript agent doesn't mean installing a framework.
-- **The microVM as the default runtime.** It shipped as a preview in 0.3.0. Before it replaces Docker as the default, it needs what is left in its [limits](./docs/local-vm.md#limits) (other service brokers, the mesh), a notarized berth-vmm on macOS, and rebuilds that don't depend on what Alpine serves that day (a pinned package cache).
+- **The microVM everywhere.** It's the default where it can run since 0.3.1. Still left: what is in its [limits](./docs/local-vm.md#limits) (other service brokers, the mesh), `berth test`, `berth deploy` and the agent framework on the VM path, a notarized berth-vmm on macOS, and rebuilds that don't depend on what Alpine serves that day (a pinned package cache).
 
 ## Next
 

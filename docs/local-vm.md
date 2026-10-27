@@ -1,20 +1,20 @@
 # Local microVM runtime
 
-`berth dev --runtime vm` and `berth mcp --runtime vm` run your app in a small virtual machine instead of a Docker container. The VM boots Berth's own pinned Linux kernel and a read-only base image, so the kernel that enforces your app's capabilities is the same on every machine, with Landlock always built in. No Docker daemon is involved, and no image is built.
+`berth dev`, `berth mcp` and `berth rpc` run your app in a small virtual machine. The VM boots Berth's own pinned Linux kernel and a read-only base image, so the kernel that enforces your app's capabilities is the same on every machine, with Landlock always built in. No Docker daemon is involved, and no image is built.
 
-Docker is still the default. The VM runtime runs Node and Python apps that use the filesystem, `/context`, secrets and declared network hosts today. See [Limits](#limits) for what it doesn't cover yet.
+Since 0.3.1 it is the default wherever it can run: Apple silicon Macs, and Linux on arm64 or x86_64 with KVM. Elsewhere (Intel Macs, Windows, Linux without `/dev/kvm`) the sandbox is a Docker container, and `--runtime`, `BERTH_SANDBOX` or `"sandbox"` in `~/.berth/config.json` choose either one explicitly. The VM runs Node and Python apps that use the filesystem, `/context`, secrets, declared network hosts, the terminal, the browser and the GitHub broker. See [Limits](#limits) for what it doesn't cover yet. `berth test` and `berth deploy` build a container image, so they use Docker.
 
-| | `--runtime docker` (default) | `--runtime vm` |
+| | `--runtime vm` (default where it can run) | `--runtime docker` |
 |---|---|---|
-| Kernel that enforces the policy | the Docker host's (Docker Desktop: no Landlock; Colima: yes) | Berth's pinned kernel 6.12.109, Landlock built in |
-| What runs your app | an image built from your project | your bundled app on a read-only share, in a pinned erofs rootfs |
-| Network | the egress broker | the egress broker in the guest, plus a host-side dialer that enforces the `network:host:` allowlist again on the host. The VM itself has no network device |
-| First `tools/call` after `berth mcp` starts | about 1.6 s with a warm image | about 0.7 s |
-| Reload after a code change | container restart | VM reboot, about 0.55 s |
+| Kernel that enforces the policy | Berth's pinned kernel 6.12.109, Landlock built in | the Docker host's (Docker Desktop: no Landlock; Colima: yes) |
+| What runs your app | your bundled app on a read-only share, in a pinned erofs rootfs | an image built from your project |
+| Network | the egress broker in the guest, plus a host-side dialer that enforces the `network:host:` allowlist again on the host. The VM itself has no network device | the egress broker |
+| First `tools/call` after `berth mcp` starts | about 0.7 s | about 1.6 s with a warm image |
+| Reload after a code change | VM reboot, about 0.55 s | container restart |
 
 ## Context
 
-You run the `berth` CLI on your own machine, and it boots a VM where it would otherwise start a Docker container. The systems it touches are the host's hypervisor (Hypervisor.framework on macOS, KVM on Linux) through libkrun, the GitHub release that `berth vm install` downloads the pinned kernel, rootfs and berth-vmm from, and the hosts an app declares under `network:host:`. An MCP client reaches the app through `berth mcp --runtime vm`, as it does with Docker.
+You run the `berth` CLI on your own machine, and it boots a VM for each sandbox. The systems it touches are the host's hypervisor (Hypervisor.framework on macOS, KVM on Linux) through libkrun, the GitHub release that `berth vm install` downloads the pinned kernel, rootfs and berth-vmm from, and the hosts an app declares under `network:host:`. An MCP client reaches the app through `berth mcp`, as it does with Docker.
 
 ### Requirements
 
@@ -27,7 +27,7 @@ You run the `berth` CLI on your own machine, and it boots a VM where it would ot
 
 <p align="center"><img src="./images/c4/local-vm.svg" alt="Local microVM containers: on the host, the berth CLI downloads the pinned kernel, rootfs and berth-vmm from the vm-artifacts release, then spawns berth-vmm and talks to it over Unix sockets in the run directory. berth-vmm reaches berth-init, PID 1 in the guest, over vsock 1024, 1025 and 5000 and up. berth-init starts each resident app under agent-init and runs the guest daemons. The egress broker in the guest hands allowed connections over vsock 1026 to the dialer in berth-vmm, which checks them again and dials the internet host." width="100%"></p>
 
-`berth dev --runtime vm` ([Run an app](#run-an-app)) brings these pieces up.
+`berth dev` ([Run an app](#run-an-app)) brings these pieces up.
 
 What happens:
 
@@ -50,6 +50,8 @@ On the host, berth-vmm carries the kernel and rootfs pins it was built with and 
 ## Code
 
 ### Install
+
+There's no separate step: the first `berth dev` or `berth mcp` that boots a VM installs everything below, the same way `berth vm install` does, and a later boot after a CLI upgrade replaces an older release's berth-vmm. To install ahead of time, for example before going offline or in a provisioning script:
 
 ```bash
 berth vm install
@@ -90,7 +92,7 @@ A download is checked against the pinned size as it streams, and against the sha
 
 `--no-download` copies from `--from` only. `--vmm <path>` copies that berth-vmm to `~/.berth/vm/bin/berth-vmm` instead of downloading one. The signature is part of the binary, so it carries over. Otherwise the CLI looks for berth-vmm in `BERTH_VMM`, then `~/.berth/vm/bin`, then `PATH`, then the checkout's `packages/vmm/target/release`.
 
-If the kernel and rootfs aren't installed, `berth dev --runtime vm` installs them the first time it runs, from the same sources.
+If anything isn't installed, `berth dev` installs it the first time it runs, from the same sources.
 
 #### Verifying by hand
 
@@ -134,19 +136,19 @@ Each script fails on a hash that isn't its pin and prints both. The builds are r
 
 ```bash
 cd apps/notes
-berth dev --runtime vm
+berth dev
 ```
 
 ```
 VM ready in 416 ms (bundle 9 ms, cached, boot 407 ms). boot 353f3798-…, berth-vmm pid 28633
-[berth:dev] run dir ~/.berth/run/vm/berth-dev-notes; call it with `berth rpc notes --runtime vm --export <name>` …
+[berth:dev] run dir ~/.berth/run/vm/berth-dev-notes; call it with `berth rpc notes --export <name>` …
 ```
 
 From another terminal:
 
 ```bash
-berth rpc notes --runtime vm --export add_note --input '{"text":"hello"}'
-berth rpc notes --runtime vm --export list_notes
+berth rpc notes --export add_note --input '{"text":"hello"}'
+berth rpc notes --export list_notes
 berth vm status                 # running VMs, their apps, pids, uids and cgroup limits
 berth vm logs berth-dev-notes   # the guest's log: apps, berth-init, context-bus
 berth vm stop berth-dev-notes
@@ -162,11 +164,11 @@ Only the standard library and berth_sdk's own dependencies (pyyaml, pydantic, pr
 
 ```bash
 export GITHUB_TOKEN=...            # or keep it in a .env file
-berth dev --runtime vm --env GITHUB_TOKEN --env GITHUB_REPO=owner/name
-berth dev --runtime vm --env-file .env
+berth dev --env GITHUB_TOKEN --env GITHUB_REPO=owner/name
+berth dev --env-file .env
 ```
 
-`--env` and `--env-file` work as they do on `berth os up` (and on `berth dev` with Docker), and on `berth mcp --runtime vm` when it boots the VM itself. A name an app declares under `secrets:` in its `berth.yml` reaches that app alone. Any other name reaches every app in the sandbox, with a warning. A declared name with no value prints a warning naming it, and the app boots without it.
+`--env` and `--env-file` work as they do on `berth os up` and with Docker, and on `berth mcp` when it boots the VM itself. A name an app declares under `secrets:` in its `berth.yml` reaches that app alone. Any other name reaches every app in the sandbox, with a warning. A declared name with no value prints a warning naming it, and the app boots without it.
 
 None of it goes on the guest's kernel command line, which every process in the guest can read in `/proc/cmdline`. The CLI writes the values to `secrets.img` in the run directory (0600), berth-vmm attaches it as a read-only disk, and berth-init reads it as root before anything starts, removes the device node, and puts each app's values into that app's environment only. The apps run as different uids, so one can't read another's `/proc/<pid>/environ`. The CLI deletes `secrets.img` as soon as the sandbox is ready. Values are never logged; berth-init reports the names it delivered. See the [secrets reference](secrets-reference.md#in-a-microvm).
 
@@ -184,20 +186,25 @@ The CLI reboots the whole VM rather than restarting only the app. The app share 
 #### MCP
 
 ```bash
-berth mcp --runtime vm --app notes --app-dir apps/notes
+berth mcp --app notes --app-dir apps/notes
 ```
 
-The bridge works as it does with Docker (see the [MCP bridge reference](mcp-bridge-reference.md)). If `berth dev --runtime vm` is already running the app, the bridge attaches to that VM and leaves it running when the client goes. Otherwise it boots its own VM and stops it at the end of the session. Tool calls are audited the same way, and the session records the VM's boot evidence. `berth attest <runId>` then reports the session with `boot.isolation` (see the [attestation reference](attestation-reference.md#a-microvm-boot)).
+The bridge works as it does with Docker (see the [MCP bridge reference](mcp-bridge-reference.md)). If `berth dev` is already running the app, the bridge attaches to that VM and leaves it running when the client goes. Otherwise it boots its own VM and stops it at the end of the session. Tool calls are audited the same way, and the session records the VM's boot evidence. `berth attest <runId>` then reports the session with `boot.isolation` (see the [attestation reference](attestation-reference.md#a-microvm-boot)).
 
 Time from spawning `berth mcp` to the first answered `tools/call`, measured by `packages/cli/test/vm-e2e.mjs` on an Apple M4 under load: 625 to 851 ms when the bridge boots its own VM (about 300 ms of that is the CLI starting), and about 260 ms when it attaches to a running one. The Docker path takes about 1.6 s with a warm image.
 
 ### Choosing the runtime
 
+The first of these that is set wins:
+
 | | |
 |---|---|
-| per command | `--runtime vm` on `berth dev`, `berth mcp`, `berth rpc` |
-| per shell | `export BERTH_SANDBOX=vm` |
-| per user | `{"sandbox": "vm"}` in `~/.berth/config.json` |
+| per command | `--runtime vm` or `--runtime docker` on `berth dev`, `berth mcp`, `berth rpc` (`--sandbox` on `berth doctor`) |
+| per shell | `export BERTH_SANDBOX=docker` |
+| per user | `{"sandbox": "docker"}` in `~/.berth/config.json` |
+| the host | `vm` on an Apple silicon Mac, or on Linux with a `/dev/kvm` you can open read-write, when the CLI pins a published berth-vmm for the platform; `docker` everywhere else |
+
+`berth doctor --fix` sets up Colima for the Docker path, so it checks Docker unless `--sandbox vm` is passed.
 
 The variable is `BERTH_SANDBOX`, not `BERTH_RUNTIME`. `BERTH_RUNTIME` already selects the container runtime Docker uses, such as `runsc` for gVisor.
 

@@ -10,39 +10,32 @@ This README is laid out along the [C4 model](https://c4model.com): the [system i
 
 ## See it in 60 seconds
 
-No API key and no LLM needed: this demo calls the tool directly, the way an agent would.
-
-```bash
-git clone https://github.com/Ash20pk/BerthOS && cd BerthOS
-corepack enable && pnpm install && pnpm build
-node packages/cli/bin/berth.js doctor --fix     # can this machine's kernel enforce anything?
-cd examples/kernel-says-no && pnpm start
-```
-
-```
---- inside the declared scope ---
-write /workspace/hello.txt -> ok, read back: "hello from a sandbox"
-
---- outside the declared scope ---
-write /etc/berth-should-not-exist.txt -> EACCES: permission denied, open '/etc/berth-should-not-exist.txt'
-
-PASS — the capability line in berth.yml is the boundary, and the kernel is the one holding it.
-```
-
-Nothing in that script, or in the app's own code, checks the second path. The kernel refused it.
-
-> **On a Mac, run `doctor` first.** Docker Desktop's VM has no Landlock, so nothing would be enforced, and the demo says so and exits non-zero rather than faking a pass. `berth doctor --fix` sets up a [Colima](./docs/mac-enforcement.md) VM whose kernel can enforce, or use the [microVM runtime](./docs/local-vm.md), which boots Berth's own kernel. Linux 6.7+ works out of the box.
-
-### Or in a microVM, with no Docker (new in 0.3.0, preview)
+No API key and no LLM needed: you call the tool directly, the way an agent would. On an Apple silicon Mac or Linux with KVM, there's nothing else to install: each sandbox is a small VM that boots Berth's own kernel.
 
 ```bash
 npm install -g @berthos/cli
-berth vm install              # pinned kernel, rootfs, berth-vmm and libkrun, each checked against its sha256
-berth doctor --sandbox vm
-cd my-app && berth dev --runtime vm
+git clone https://github.com/Ash20pk/BerthOS && cd BerthOS
+corepack enable && pnpm install && pnpm build
+
+cd apps/filesystem && berth dev      # first run downloads the VM (about 140 MB, each file checked against its sha256)
 ```
 
-On Apple silicon Macs and on Linux with KVM (arm64 or x86_64). The VM boots Berth's own kernel, so enforcement is the same on every machine, and it is up in about half a second: on an Apple M4, the first tool call over MCP takes 0.63 to 0.85 s, against about 1.6 s for a warm Docker image, and there is no image build on first run. Docker stays the default while the VM is in preview: an app that needs something the VM doesn't run yet is refused before boot, with the reason. See [the microVM runtime](./docs/local-vm.md) and its [limits](./docs/local-vm.md#limits).
+`apps/filesystem` declares `filesystem:write:/workspace` and nothing else. In a second terminal, from the same folder:
+
+```bash
+berth rpc filesystem --export write_file --input '{"path":"hello.txt","content":"hello from a sandbox"}'
+berth rpc filesystem --export read_file --input '{"path":"hello.txt"}'
+# { "content": "hello from a sandbox" }
+
+berth rpc filesystem --export write_file --input '{"path":"/tmp/escape.txt","content":"x"}'
+# Error: "/tmp/escape.txt" ... is outside /workspace. (EACCES: permission denied, open '/tmp/escape.txt')
+```
+
+Nothing in the app's code checks the second path. The capability line in `berth.yml` was compiled into a Landlock ruleset before the app started, and the kernel refused the write. Try `/etc` and it's refused even earlier: the VM's root filesystem is read-only.
+
+The VM is up in about half a second. On an Apple M4, the first tool call over MCP takes 0.63 to 0.85 s, and there is no image to build first. `berth doctor` checks that this machine can run it. Details: [the microVM runtime](./docs/local-vm.md), and what it doesn't run yet: [limits](./docs/local-vm.md#limits).
+
+> **Intel Mac, Windows, or Linux without KVM?** Berth runs its sandboxes in Docker there, on a kernel with Landlock: Linux 6.7+ works out of the box, and on an Intel Mac `berth doctor --fix` sets up [Colima](./docs/mac-enforcement.md). `berth test` and `berth deploy` also build a container image, so they need Docker on any machine.
 
 More demos, each proving one boundary: a [fully compromised model](./examples/prompt-injection) told to backdoor `/etc`, [attacker-chosen code with no network](./examples/no-egress), and a [tamper-evident audit trail](./examples/audit-trail) catching an edited record. See the [catalog](./examples/README.md).
 
@@ -59,10 +52,9 @@ Your agent is outside the system boundary on purpose: Berth doesn't run it, prom
 **Any MCP client, no code.** `berth mcp` is an MCP server. It boots the sandbox itself, exposes the app's exports as tools, and shuts the sandbox down when your client disconnects.
 
 ```bash
-node packages/cli/bin/berth.js mcp --app filesystem --app-dir apps/filesystem --warm   # build the image once
+berth mcp --app filesystem --app-dir apps/filesystem --warm   # first run: install the VM and boot once
 
-claude mcp add berth-filesystem -- node /abs/path/BerthOS/packages/cli/bin/berth.js \
-  mcp --app filesystem --app-dir /abs/path/BerthOS/apps/filesystem
+claude mcp add berth-filesystem -- berth mcp --app filesystem --app-dir /abs/path/BerthOS/apps/filesystem
 ```
 
 Ask your agent to write to `/etc` and it gets back a denial that tells it why, not just an error code:
@@ -112,8 +104,8 @@ Zooming into Berth: the separately running pieces, and how they talk. "Container
 | Container | Code | What it does |
 |---|---|---|
 | berth CLI | [`packages/cli`](./packages/cli) | Every command; bundles apps, boots and stops sandboxes, speaks MCP, writes the audit trail, runs `attest` |
-| Container sandbox | [`packages/docker-orchestrator`](./packages/docker-orchestrator) | Alpine base image, container lifecycle, hot reload, snapshots. The default runtime |
-| microVM sandbox | [`packages/vmm`](./packages/vmm) | `berth-vmm` boots a libkrun VM (HVF on macOS) from a pinned kernel and rootfs, with no network device; egress only through a dialer on the host. See [the microVM runtime](./docs/local-vm.md) |
+| microVM sandbox | [`packages/vmm`](./packages/vmm) | `berth-vmm` boots a libkrun VM (HVF on macOS, KVM on Linux) from a pinned kernel and rootfs, with no network device; egress only through a dialer on the host. The default wherever it can run. See [the microVM runtime](./docs/local-vm.md) |
+| Container sandbox | [`packages/docker-orchestrator`](./packages/docker-orchestrator) | Alpine base image, container lifecycle, hot reload, snapshots. Used where the VM can't run (Intel Macs, Windows, Linux without KVM), and for the images `berth test` and `berth deploy` build |
 | Audit trail | [`packages/audit`](./packages/audit) | Structured records with a hash chain and payload redaction; [reference](./docs/audit-reference.md) |
 | Registry server | [`packages/registry-server`](./packages/registry-server) | Local app registry; [reference](./docs/app-registry-reference.md) |
 | Mesh coordinator | [`packages/mesh-coordinator`](./packages/mesh-coordinator) | Stable mesh IPs and mutual peer matching; [reference](./docs/mesh-reference.md) |
@@ -204,7 +196,7 @@ The rest is in [Resident apps](./docs/resident-apps.md), the [SDK reference](./d
 - **Kernel-enforced:** filesystem read and write scopes, outbound TCP, UDP and raw sockets, namespace creation, and isolation between apps. This is real on any Linux 6.7+ kernel, and in the microVM, which boots its own kernel.
 - **Broker-enforced:** browser hostnames and GitHub API verbs go through a proxy that checks them, because the kernel sees ports, not hostnames. Which capability is enforced at which level: [enforcement](./docs/kernel-enforcement.md).
 - **It won't pretend.** On a kernel that can't enforce, `berth doctor` says so and the demos fail. Every `berth mcp` session writes its tool calls to a hash-chained audit trail, and `berth attest <runId>` turns a session into a record of what ran and the enforcement measured for its boot. Anyone can check the record with a standalone script, and it says `NOT_ENFORCED` when nothing was enforced.
-- **Not a defence against root on the host.** Anyone who can `docker exec` into the container bypasses all of it. What's in scope and what isn't: [threat model](./docs/threat-model.md).
+- **Not a defence against root on the host.** Root on the host can reach into the sandbox, whether it is a VM or a container (`docker exec`), and bypass all of it. What's in scope and what isn't: [threat model](./docs/threat-model.md).
 
 ## Docs
 
@@ -213,7 +205,7 @@ The rest is in [Resident apps](./docs/resident-apps.md), the [SDK reference](./d
 | [MCP quickstart](./docs/mcp-quickstart.md) | Berth in Claude Code, Claude Desktop or Cursor in five minutes |
 | [Quickstart](./docs/quickstart.md) | Install, run, scaffold, the CLI reference, releasing |
 | [Resident apps](./docs/resident-apps.md) | Building your own tools |
-| [microVM runtime](./docs/local-vm.md) | Running sandboxes in a microVM instead of Docker |
+| [microVM runtime](./docs/local-vm.md) | How sandboxes run in a microVM, and what the VM covers |
 | [Enforcement](./docs/kernel-enforcement.md) | Every capability and what enforces it, per platform |
 | [Threat model](./docs/threat-model.md) | What holds, against whom, and what's out of scope |
 | [Roadmap](./ROADMAP.md) | What works today, what's next, and where to help |

@@ -8,7 +8,7 @@ You run `berth doctor` on a machine (yours, or a CI runner) before you trust Ber
 
 ## Containers
 
-The CLI runs on the host and does no kernel checks there. It asks the Docker daemon for its version and kernel, then runs a short-lived probe container on that daemon, so the answer comes from the kernel your apps would get. With `--sandbox vm` it skips Docker and looks for a hypervisor, `berth-vmm` and the pinned kernel and rootfs on the host ([The microVM section](#the-microvm-section)).
+The CLI runs on the host and does no kernel checks there. Where the microVM is the default (Apple silicon Macs, Linux with KVM), it looks for a hypervisor, `berth-vmm` and the pinned kernel and rootfs on the host ([The microVM section](#the-microvm-section)). For the Docker path, it asks the Docker daemon for its version and kernel, then runs a short-lived probe container on that daemon, so the answer comes from the kernel your apps would get.
 
 ### Which kernel it checks
 
@@ -102,7 +102,7 @@ berth doctor --sandbox vm
 | `--runtime=<name>` | Check a container runtime, e.g. `runsc` for gVisor, and run the kernel probe under it. Defaults to `BERTH_RUNTIME` |
 | `--image=<image>` | Image to run the kernel probe in. Defaults to a local Berth image |
 | `--no-probe` | Skip the container probe. The kernel checks then report `unknown` |
-| `--sandbox=<docker\|vm>` | Which sandbox to check for. `docker` (the default, or `BERTH_SANDBOX`, or `"sandbox"` in `~/.berth/config.json`) runs the container checks and adds the microVM section for information. `vm` checks only the [local microVM runtime](local-vm.md), never contacts Docker, and exits with the VM's verdict. See [The microVM section](#the-microvm-section) |
+| `--sandbox=<docker\|vm>` | Which sandbox to check for. Defaults to `BERTH_SANDBOX`, then `"sandbox"` in `~/.berth/config.json`, then `vm` on Apple silicon Macs and Linux with KVM and `docker` elsewhere; `--fix` checks `docker`. `docker` runs the container checks and adds the microVM section for information. `vm` checks only the [local microVM runtime](local-vm.md), never contacts Docker, and exits with the VM's verdict. See [The microVM section](#the-microvm-section) |
 
 ### Exit codes
 

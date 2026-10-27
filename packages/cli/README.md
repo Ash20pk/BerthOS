@@ -8,20 +8,12 @@ The `berth` command: scaffold, run, test and deploy resident apps, check whether
 npm install -g @berthos/cli
 ```
 
-Needs Node.js 22.19+, and either Docker or, on an Apple silicon Mac or Linux with KVM, the microVM runtime:
-
-```sh
-berth vm install          # pinned kernel, rootfs, berth-vmm and libkrun, each checked against its sha256
-berth doctor --sandbox vm
-berth dev --runtime vm    # in an app directory
-```
-
-The microVM boots Berth's own kernel, so enforcement doesn't depend on your machine's. It is a preview in 0.3.0, and Docker is still the default ([docs](https://github.com/Ash20pk/BerthOS/blob/main/docs/local-vm.md)).
+Needs Node.js 22.19+. On an Apple silicon Mac or Linux with KVM, that's all: each sandbox is a small VM that boots Berth's own kernel, so enforcement doesn't depend on your machine's, and the first `berth dev` downloads it (about 140 MB, every file checked against its sha256). Intel Macs, Windows and Linux without KVM use Docker instead, and `berth test` and `berth deploy` build a container image, so they need Docker anywhere ([docs](https://github.com/Ash20pk/BerthOS/blob/main/docs/local-vm.md)).
 
 ## Usage
 
 ```sh
-berth doctor --fix        # can this machine's kernel enforce? (--fix sets up Colima on a Mac)
+berth doctor              # can this machine enforce?
 berth init my-app         # scaffold a resident app
 cd my-app
 berth dev                 # boot it in a sandbox, reload on save
@@ -34,7 +26,7 @@ berth mcp --app my-app    # serve its exports as MCP tools over stdio
 | Command | What it does |
 |---|---|
 | `berth init [name]` | Scaffold a resident app (`--template`, `--registry`) |
-| `berth dev` | Boot the app in a local sandbox with hot reload (`--apps` adds companion apps, `--runtime vm` uses a local microVM) |
+| `berth dev` | Boot the app in a local sandbox with hot reload (`--apps` adds companion apps, `--runtime docker\|vm` picks the sandbox) |
 | `berth test` | Build the production image, check export contracts, run the app's tests (`--json`) |
 | `berth doctor` | Check whether this machine can enforce capabilities |
 | `berth mcp --app <name>` | Expose an app's exports as MCP tools (`--only`, `--warm`, `--no-boot`) |
