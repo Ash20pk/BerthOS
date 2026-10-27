@@ -38,7 +38,7 @@ export default class Doctor extends Command {
     }),
     sandbox: Flags.string({
       description:
-        "which sandbox to check for: docker (the container checks, plus the microVM section for information) or vm (only the microVM runtime; Docker isn't contacted, and the exit code is the VM's). Defaults to BERTH_SANDBOX, then \"sandbox\" in ~/.berth/config.json",
+        "which sandbox to check for: docker (the container checks, plus the microVM section for information) or vm (only the microVM runtime; Docker isn't contacted, and the exit code is the VM's). Defaults to BERTH_SANDBOX, then \"sandbox\" in ~/.berth/config.json, then vm on Apple silicon Macs and Linux with KVM and docker elsewhere. --fix checks docker",
       options: ["docker", "vm"],
     }),
     fix: Flags.boolean({
@@ -52,7 +52,8 @@ export default class Doctor extends Command {
     const { flags } = await this.parse(Doctor);
     let sandbox;
     try {
-      sandbox = resolveSandbox(flags.sandbox);
+      // --fix sets up Colima for the Docker path, so it checks Docker unless told otherwise.
+      sandbox = flags.fix && !flags.sandbox ? "docker" : resolveSandbox(flags.sandbox);
     } catch (err) {
       this.error(err instanceof Error ? err.message : String(err));
     }

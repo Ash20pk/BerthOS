@@ -3,18 +3,35 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_ARTIFACTS_URL, readConfigFile, resolveArtifactsDir, resolveArtifactsUrl, resolveSandbox } from "./config.js";
+import { DEFAULT_ARTIFACTS_URL, defaultSandbox, readConfigFile, resolveArtifactsDir, resolveArtifactsUrl, resolveSandbox } from "./config.js";
 import { expandUrlTemplate } from "./artifacts.js";
 import { KERNEL_PIN, ROOTFS_PIN, releaseTag } from "./pins.js";
 
-test("sandbox runtime: flag over BERTH_SANDBOX over the config file over docker", () => {
-  assert.equal(resolveSandbox(undefined, {}, {}), "docker");
-  assert.equal(resolveSandbox(undefined, {}, { sandbox: "vm" }), "vm");
-  assert.equal(resolveSandbox(undefined, { BERTH_SANDBOX: "docker" }, { sandbox: "vm" }), "docker");
-  assert.equal(resolveSandbox("vm", { BERTH_SANDBOX: "docker" }, {}), "vm");
-  assert.throws(() => resolveSandbox("firecracker", {}, {}), /--runtime is "firecracker"; expected docker or vm/);
+const intelMac = { platform: "darwin" as const, arch: "x64", kvm: () => false };
+const appleSilicon = { platform: "darwin" as const, arch: "arm64", kvm: () => false };
+
+test("sandbox runtime: flag over BERTH_SANDBOX over the config file over the host's default", () => {
+  assert.equal(resolveSandbox(undefined, {}, {}, intelMac), "docker");
+  assert.equal(resolveSandbox(undefined, {}, {}, appleSilicon), "vm");
+  assert.equal(resolveSandbox(undefined, {}, { sandbox: "vm" }, intelMac), "vm");
+  assert.equal(resolveSandbox(undefined, {}, { sandbox: "docker" }, appleSilicon), "docker");
+  assert.equal(resolveSandbox(undefined, { BERTH_SANDBOX: "docker" }, { sandbox: "vm" }, appleSilicon), "docker");
+  assert.equal(resolveSandbox("vm", { BERTH_SANDBOX: "docker" }, {}, intelMac), "vm");
+  assert.throws(() => resolveSandbox("firecracker", {}, {}, appleSilicon), /--runtime is "firecracker"; expected docker or vm/);
   // BERTH_RUNTIME is the Docker container runtime (runsc), and is not read here.
-  assert.equal(resolveSandbox(undefined, { BERTH_RUNTIME: "vm" } as NodeJS.ProcessEnv, {}), "docker");
+  assert.equal(resolveSandbox(undefined, { BERTH_RUNTIME: "vm" } as NodeJS.ProcessEnv, {}, intelMac), "docker");
+});
+
+test("the default is the microVM wherever it can run, and Docker everywhere else", () => {
+  assert.equal(defaultSandbox(appleSilicon), "vm");
+  assert.equal(defaultSandbox(intelMac), "docker");
+  assert.equal(defaultSandbox({ platform: "linux", arch: "x64", kvm: () => true }), "vm");
+  assert.equal(defaultSandbox({ platform: "linux", arch: "arm64", kvm: () => true }), "vm");
+  // Most CI runners and cloud VMs: no /dev/kvm, or not this user's.
+  assert.equal(defaultSandbox({ platform: "linux", arch: "x64", kvm: () => false }), "docker");
+  assert.equal(defaultSandbox({ platform: "win32", arch: "x64", kvm: () => false }), "docker");
+  // No published berth-vmm for the platform: nothing to download, so Docker.
+  assert.equal(defaultSandbox({ platform: "linux", arch: "riscv64", kvm: () => true }), "docker");
 });
 
 test("artifact sources: flag, then environment, then config", () => {

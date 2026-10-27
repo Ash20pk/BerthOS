@@ -3,7 +3,7 @@ import { printable, type GuestLogLine } from "./guest-lines.js";
 import { devSandboxName } from "./paths.js";
 import { createServer, connect } from "node:net";
 import { randomBytes } from "node:crypto";
-import { assertSupported, bootVm, bundleApps, ensureArtifacts, requireHost, terminalApp, NOVNC_PORT, TERMINAL_PORT, type VmAppInput } from "./runtime.js";
+import { assertSupported, bootVm, bundleApps, ensureArtifacts, ensureVmm, requireHost, terminalApp, NOVNC_PORT, TERMINAL_PORT, type VmAppInput } from "./runtime.js";
 import { layersFor } from "./support.js";
 import { pidAlive, VmSandbox } from "./sandbox.js";
 
@@ -32,6 +32,7 @@ export interface DevVmOptions {
 export async function runDevVm(options: DevVmOptions): Promise<void> {
   const { apps, log } = options;
   const primary = apps[0]!;
+  await ensureVmm(log);
   const vmm = requireHost();
   await ensureArtifacts(log, vmm);
   assertSupported(apps, vmm);

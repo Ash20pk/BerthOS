@@ -88,7 +88,7 @@ export default class Mcp extends Command {
     container: Flags.string({ description: "container (or microVM sandbox) name to reach (defaults to berth-dev-<app>)" }),
     runtime: Flags.string({
       description:
-        "where the sandbox runs: docker (default) or vm, a local microVM (docs/local-vm.md). Defaults to BERTH_SANDBOX, then \"sandbox\" in ~/.berth/config.json",
+        "where the sandbox runs: vm, a local microVM (docs/local-vm.md), or docker. Defaults to BERTH_SANDBOX, then \"sandbox\" in ~/.berth/config.json, then vm on Apple silicon Macs and Linux with KVM and docker elsewhere",
       options: ["docker", "vm"],
     }),
     "app-dir": Flags.string({ description: "path to the app's directory (defaults to the current directory)", default: "." }),

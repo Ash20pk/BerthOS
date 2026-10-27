@@ -92,7 +92,7 @@ export function layersFor(manifests: BerthManifest[]): string[] {
 }
 
 export function vmUnsupportedMessage(name: string, reasons: string[]): string {
-  return `"${name}" needs what the microVM runtime doesn't have yet:\n  - ${reasons.join("\n  - ")}\nRun it with --runtime docker (the default), or see docs/local-vm.md for what the VM covers.`;
+  return `"${name}" needs what the microVM runtime doesn't have yet:\n  - ${reasons.join("\n  - ")}\nRun it with --runtime docker, or see docs/local-vm.md for what the VM covers.`;
 }
 
 /**

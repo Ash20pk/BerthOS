@@ -1,11 +1,12 @@
-import { readFileSync } from "node:fs";
+import { accessSync, constants, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { berthHome } from "./paths.js";
+import { vmmPin } from "./pins.js";
 
 /**
  * Which sandbox `berth dev`, `berth mcp` and `berth rpc` use, and where the
  * VM artifacts come from. Resolved flag > environment > ~/.berth/config.json
- * > default:
+ * > the host's default (defaultSandbox):
  *
  *   --runtime docker|vm        BERTH_SANDBOX          {"sandbox": "vm"}
  *   --url TEMPLATE             BERTH_VM_ARTIFACTS_URL {"vm": {"artifactsUrl": "..."}}
@@ -16,7 +17,40 @@ import { berthHome } from "./paths.js";
  * of "vm" there would reach Docker as a runtime name.
  */
 export type SandboxRuntime = "docker" | "vm";
-export const DEFAULT_SANDBOX: SandboxRuntime = "docker";
+
+export interface SandboxHost {
+  platform: NodeJS.Platform;
+  arch: string;
+  /** Can this user open /dev/kvm for reading and writing? Only asked on Linux. */
+  kvm: () => boolean;
+}
+
+const thisHost: SandboxHost = {
+  platform: process.platform,
+  arch: process.arch,
+  kvm: () => {
+    try {
+      accessSync("/dev/kvm", constants.R_OK | constants.W_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+};
+
+/**
+ * The sandbox when nothing chose one. The microVM wherever it can run: Apple
+ * silicon macOS, or Linux with a usable /dev/kvm, on a platform this CLI pins a
+ * published berth-vmm for. Docker everywhere else: Intel Macs (libkrun has no
+ * backend there), Windows, and Linux without KVM, such as most CI runners and
+ * VMs without nested virtualization.
+ */
+export function defaultSandbox(host: SandboxHost = thisHost): SandboxRuntime {
+  if (!vmmPin(`${host.platform}-${host.arch}`)) return "docker";
+  if (host.platform === "darwin") return host.arch === "arm64" ? "vm" : "docker";
+  if (host.platform === "linux") return host.kvm() ? "vm" : "docker";
+  return "docker";
+}
 
 /**
  * Where `berth vm install` downloads a pinned artifact from when there is no
@@ -61,11 +95,11 @@ export function parseSandbox(value: string, from: string): SandboxRuntime {
   throw new Error(`${from} is "${value}"; expected docker or vm`);
 }
 
-export function resolveSandbox(flag: string | undefined, env = process.env, file: BerthConfigFile = readConfigFile()): SandboxRuntime {
+export function resolveSandbox(flag: string | undefined, env = process.env, file: BerthConfigFile = readConfigFile(), host: SandboxHost = thisHost): SandboxRuntime {
   if (flag) return parseSandbox(flag, "--runtime");
   if (env.BERTH_SANDBOX) return parseSandbox(env.BERTH_SANDBOX, "BERTH_SANDBOX");
   if (file.sandbox) return parseSandbox(file.sandbox, `"sandbox" in ${configPath()}`);
-  return DEFAULT_SANDBOX;
+  return defaultSandbox(host);
 }
 
 export function resolveArtifactsUrl(flag: string | undefined, env = process.env, file: BerthConfigFile = readConfigFile()): string {

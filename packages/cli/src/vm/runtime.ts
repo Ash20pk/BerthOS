@@ -1,9 +1,12 @@
 import { existsSync } from "node:fs";
+import { join } from "node:path";
 import type { BerthManifest } from "@berthos/manifest-schema";
 import { artifactsPresent, installArtifacts } from "./artifacts.js";
 import { bundleApp, type BundledApp } from "./bundle.js";
 import { readConfigFile, resolveArtifactsDir, resolveArtifactsUrl } from "./config.js";
-import { activePins, checkHost, vmmFeatures, vmmLayerPins } from "./host.js";
+import { activePins, checkHost, locateVmm, staleInstalledVmm, vmmFeatures, vmmLayerPins } from "./host.js";
+import { installPublishedVmm } from "./install-vmm.js";
+import { libkrunPin, vmmPin } from "./pins.js";
 import { releasePair } from "./artifacts.js";
 import { vmHome, vmStateDisk } from "./paths.js";
 import { VmSandbox, type StartTimings } from "./sandbox.js";
@@ -38,6 +41,41 @@ export function requireHost(): string {
     );
   }
   return host.vmm;
+}
+
+/**
+ * Installs the published berth-vmm and its libkrun on first use, as `berth vm
+ * install` would, so the default sandbox works on a fresh machine with no
+ * separate install step, and replaces an older release's berth-vmm after a CLI
+ * upgrade. Does nothing when a berth-vmm was chosen (BERTH_VMM, vm.vmm in the
+ * config), when one outside ~/.berth/vm/bin is found (a local build), or when
+ * the installed one is current and its libkrun is beside it.
+ */
+export async function ensureVmm(log: (message: string) => void): Promise<void> {
+  const config = readConfigFile();
+  if (process.env.BERTH_VMM || config.vm?.vmm) return;
+  const home = join(vmHome(), "bin", "berth-vmm");
+  const found = locateVmm(process.env);
+  if (found && found !== home) return;
+  const published = vmmPin();
+  // Nothing published for this platform: requireHost says so, with the fix.
+  if (!published) return;
+  const stale = staleInstalledVmm(home, published);
+  const libkrun = libkrunPin();
+  const libkrunMissing = libkrun !== undefined && !existsSync(join(vmHome(), "bin", libkrun.file));
+  if (!stale.replace && !libkrunMissing) return;
+  log(
+    stale.reason === "not installed"
+      ? `installing berth-vmm and libkrun into ${vmHome()} (first use)...`
+      : `updating berth-vmm in ${vmHome()} (${stale.replace ? stale.reason : "its libkrun is missing"})...`,
+  );
+  const from = resolveArtifactsDir(undefined, process.env, config);
+  const urlTemplate = resolveArtifactsUrl(undefined, process.env, config);
+  try {
+    await installPublishedVmm({ ...(from && existsSync(from) ? { from } : {}), urlTemplate, log });
+  } catch (err) {
+    throw new VmHostError(`${err instanceof Error ? err.message : String(err)}\nInstall it with \`berth vm install\`, or use --runtime docker.`);
+  }
 }
 
 /** Installs the pinned kernel and rootfs if they aren't in ~/.berth/vm yet. */
