@@ -143,6 +143,21 @@ test("an unreachable daemon fails the docker check and leaves the kernel unknowa
   assert.equal(report.checks.find((c) => c.id === "seccomp"), undefined);
 });
 
+test("a daemon that accepts the connection and never answers fails the docker check instead of hanging", async () => {
+  const started = Date.now();
+  const report = await runDoctor({
+    docker: fakeDocker({ ping: () => new Promise(() => {}) }),
+    daemonTimeoutMs: 50,
+  });
+
+  const docker = report.checks.find((c) => c.id === "docker");
+  assert.equal(docker?.status, "fail");
+  assert.match(docker?.detail ?? "", /docker ping got no answer/);
+  assert.equal(report.checks.find((c) => c.id === "landlock")?.status, "unknown");
+  assert.equal(report.enforcementActive, false);
+  assert.ok(Date.now() - started < 5_000);
+});
+
 test("no local image to probe in, and no pull, is reported as unknown with an actionable remedy", async () => {
   const report = await runDoctor({
     docker: fakeDocker({ images: [{ RepoTags: ["<none>:<none>"] }] }),

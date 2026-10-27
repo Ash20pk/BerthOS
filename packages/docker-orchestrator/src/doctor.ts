@@ -200,6 +200,36 @@ export interface CgroupProbe {
 const PROBE_TIMEOUT_MS = 20_000;
 
 /**
+ * How long one daemon call (ping, info, listing images) may take. A wedged
+ * daemon accepts the connection and then never answers, so without this
+ * `berth doctor`, the command people run because Docker is misbehaving, hung
+ * until it was killed. Overridable with BERTH_DOCTOR_TIMEOUT_MS.
+ */
+const DAEMON_TIMEOUT_MS = 10_000;
+
+function daemonTimeoutMs(override?: number): number {
+  if (override !== undefined) return override;
+  const env = Number(process.env.BERTH_DOCTOR_TIMEOUT_MS);
+  return Number.isFinite(env) && env > 0 ? env : DAEMON_TIMEOUT_MS;
+}
+
+/** Rejects with a message naming the call if `promise` hasn't settled in `ms`. */
+async function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`${what} got no answer in ${Math.round(ms / 1000)} s (the daemon may be hung; set BERTH_DOCTOR_TIMEOUT_MS to wait longer)`)),
+      ms,
+    );
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * Picks an image to run the probe in. It must contain python3, which every Berth
  * app image does (`base.Dockerfile` installs it).
  *
@@ -335,6 +365,8 @@ export interface RunDoctorOptions {
   pullProbeImage?: boolean;
   /** Test seam for that pull; resolves to the image pulled, or undefined. */
   pull?: (docker: Docker) => Promise<string | undefined>;
+  /** Per daemon call, in ms. Defaults to BERTH_DOCTOR_TIMEOUT_MS, then 10 s. */
+  daemonTimeoutMs?: number;
 }
 
 /**
@@ -354,6 +386,7 @@ export async function runDoctor(options: RunDoctorOptions = {}): Promise<DoctorR
   let daemonRuntimes: { names: string[]; default?: string } | undefined;
   const envRuntime = process.env.BERTH_RUNTIME;
   const runtime = options.runtime ?? (envRuntime === "" ? undefined : envRuntime);
+  const timeoutMs = daemonTimeoutMs(options.daemonTimeoutMs);
 
   // --- Docker ------------------------------------------------------------
   // First, and gating: every kernel fact below comes from a container, so an
@@ -366,8 +399,8 @@ export async function runDoctor(options: RunDoctorOptions = {}): Promise<DoctorR
     // quietly dialing the default socket — which on a Mac is Docker Desktop,
     // the very daemon a user who selected Colima was moving away from.
     if (endpoint?.problem) throw new Error("the selected Docker context can't be used");
-    await docker.ping();
-    const info = (await docker.info()) as {
+    await withTimeout(docker.ping(), timeoutMs, "docker ping");
+    const info = (await withTimeout(docker.info(), timeoutMs, "docker info")) as {
       KernelVersion?: string;
       OperatingSystem?: string;
       ServerVersion?: string;
@@ -402,7 +435,7 @@ export async function runDoctor(options: RunDoctorOptions = {}): Promise<DoctorR
       detail: `could not reach the Docker daemon: ${err instanceof Error ? err.message : String(err)}${via}`,
       remedy: endpoint?.problem
         ? `${endpoint.problem}. Start it (e.g. \`colima start\`), or pick another with \`docker context use <name>\`, then run \`berth doctor\` again.`
-        : "Start Docker (Docker Desktop, Colima, or `systemctl start docker`) and run `berth doctor` again.",
+        : "Start Docker (Docker Desktop, Colima, or `systemctl start docker`), or restart it if it is running but not answering, and run `berth doctor` again.",
     });
   }
 
@@ -464,7 +497,7 @@ export async function runDoctor(options: RunDoctorOptions = {}): Promise<DoctorR
   }
 
   // --- the kernel probe --------------------------------------------------
-  let probeImage = options.image ?? (dockerReachable ? await findProbeImage(docker).catch(() => undefined) : undefined);
+  let probeImage = options.image ?? (dockerReachable ? await withTimeout(findProbeImage(docker), timeoutMs, "listing images").catch(() => undefined) : undefined);
   let pulledProbeImage = false;
   if (!probeImage && dockerReachable && !options.skipProbe && options.pullProbeImage !== false) {
     probeImage = await (options.pull ?? pullProbeImage)(docker);
@@ -488,7 +521,13 @@ export async function runDoctor(options: RunDoctorOptions = {}): Promise<DoctorR
     checks.push({ id: "cgroups", title: CGROUPS_TITLE, status: "unknown", detail, remedy });
   } else {
     try {
-      const probe = await (options.probe ?? probeKernel)(docker, probeImage, runtime);
+      // The container's own run is capped at PROBE_TIMEOUT_MS inside probeKernel;
+      // this also covers a daemon that stops answering while creating it.
+      const probe = await withTimeout(
+        (options.probe ?? probeKernel)(docker, probeImage, runtime),
+        PROBE_TIMEOUT_MS + timeoutMs,
+        "the kernel probe",
+      );
       const landlock = landlockCheck(probe, runtime);
       if (pulledProbeImage) landlock.detail += ` (probed in ${probeImage}, pulled because no local Berth image was found)`;
       checks.push(landlock);
