@@ -17,6 +17,11 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Hosts with KVM (GitHub's Linux runners included) default to the microVM;
+# these jobs test the Docker path, so they ask for it. --runtime vm still wins.
+env:
+  BERTH_SANDBOX: docker
+
 jobs:
   verify:
     runs-on: ubuntu-latest

@@ -21,6 +21,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..", "..", "..");
 const FILESYSTEM_APP_DIR = join(REPO_ROOT, "apps", "filesystem");
 const BERTH_BIN = join(REPO_ROOT, "packages", "cli", "bin", "berth.js");
+// These scenarios exercise the Docker sandbox (container names, docker exec), and
+// the CLI defaults to the microVM on hosts with a hypervisor: ask for Docker.
+process.env.BERTH_SANDBOX ||= "docker";
 
 const docker = new Docker();
 

@@ -42,6 +42,9 @@ const MODEL = process.env.OPENROUTER_MODEL ?? "anthropic/claude-sonnet-5";
 const OUT_DIR = process.env.E2E_OUT_DIR ?? join(homedir(), "berth-agent-e2e");
 const ONLY = process.env.E2E_ONLY ? new Set(process.env.E2E_ONLY.split(",").map(Number)) : undefined;
 const BERTH = join(REPO, "packages/cli/bin/berth.js");
+// These scenarios exercise the Docker sandbox (container names, docker exec), and
+// the CLI defaults to the microVM on hosts with a hypervisor: ask for Docker.
+process.env.BERTH_SANDBOX ||= "docker";
 mkdirSync(OUT_DIR, { recursive: true });
 
 function openRouterKey() {

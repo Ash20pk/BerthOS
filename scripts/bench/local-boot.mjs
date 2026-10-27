@@ -74,6 +74,9 @@ import { fileURLToPath } from "node:url";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const CLI = join(REPO, "packages/cli/bin/berth.js");
+// This benchmark measures the Docker boot path, and
+// the CLI defaults to the microVM on hosts with a hypervisor: ask for Docker.
+process.env.BERTH_SANDBOX ||= "docker";
 const ORCH = join(REPO, "packages/docker-orchestrator");
 // Importing the orchestrator applies the current Docker context (Colima) before any client exists.
 const orchestrator = await import(join(ORCH, "dist/index.js"));
