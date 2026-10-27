@@ -20,7 +20,7 @@ You run the `berth` CLI on your own machine, and it boots a VM where it would ot
 
 - **macOS on Apple silicon** (Hypervisor.framework), or **Linux with KVM** (`/dev/kvm` readable and writable).
 - **libkrun 1.19.6**, which `berth vm install` puts beside the published berth-vmm on every platform: built from its pinned tag by CI, checked against its sha256, and loaded first by berth-vmm (`LC_RPATH @loader_path` on macOS, `RUNPATH $ORIGIN` on Linux). Nothing to install yourself. Only a berth-vmm you build from source links a system libkrun instead: on macOS, Homebrew's (`brew tap libkrun/krun && brew install libkrun`, at 1.19.6).
-- **berth-vmm**, the small launcher that runs one VM per process. `berth vm install` downloads it for macOS arm64, Linux arm64 and Linux x86_64, once the CLI pins that platform's build. Otherwise build it from `packages/vmm` with `cargo build --release`. On macOS it has to be signed with the hypervisor entitlement. The published build is, and the build scripts sign a local one. `berth doctor` prints the `codesign` command if it isn't. The Linux builds need glibc 2.39 or later (Ubuntu 24.04, Debian 13, Fedora 40).
+- **berth-vmm**, the small launcher that runs one VM per process. `berth vm install` downloads it for macOS arm64, Linux arm64 and Linux x86_64; the CLI pins all three since 0.3.0. Otherwise build it from `packages/vmm` with `cargo build --release`. On macOS it has to be signed with the hypervisor entitlement. The published build is, and the build scripts sign a local one. `berth doctor` prints the `codesign` command if it isn't. The Linux builds need glibc 2.39 or later (Ubuntu 24.04, Debian 13, Fedora 40).
 - **The pinned kernel and rootfs**, about 100 MB, installed with `berth vm install`.
 
 ## Containers
@@ -66,12 +66,12 @@ By default, from the GitHub release that [`.github/workflows/vm-artifacts.yml`](
 |---|---|---|---|
 | `~/.berth/vm/kernel/sha256/<sha>/Image` | `Image-<sha>` | `8f79e8dae97ebc0ab8fcdc4ad209bb025ec967be82c713503e0612cfdd340ec8` | 23,668,744 B |
 | `~/.berth/vm/rootfs/rootfs-<sha>.erofs` | `rootfs-<sha>.erofs` | `dfb5f6b030ca59884f2466783961169dd2f4d6fb71ff08d30028f67eff29331f` | 108,072,960 B |
-| `~/.berth/vm/bin/berth-vmm` | `berth-vmm-darwin-arm64-<sha>`, `berth-vmm-linux-arm64-<sha>` | `VMM_PINS` in `packages/cli/src/vm/pins.ts` | about 700 KB (macOS), 2.7 MB (Linux) |
+| `~/.berth/vm/bin/berth-vmm` | `berth-vmm-darwin-arm64-<sha>`, `berth-vmm-linux-arm64-<sha>` | `VMM_PINS` in `packages/cli/src/vm/pins.ts` | about 700 KB |
 | `~/.berth/vm/bin/libkrun.1.19.6.dylib`, `libkrun.so.1.19.6` | `libkrun-darwin-arm64-<sha>.dylib`, `libkrun-linux-arm64-<sha>.so` | `LIBKRUN_PINS` in the same file | about 4.7 MB |
 
 That is `https://github.com/Ash20pk/BerthOS/releases/download/vm-artifacts-8f79e8da-dfb5f6b0/`. The x86_64 one is `vm-artifacts-10d4b54c-af4f3fc0`: kernel `10d4b54c0896668a93f9d26d0a701aac4a14ce813f3ed4d3b4d26e50d7b7b8d1` (an ELF `vmlinux`, 27,928,992 B), rootfs `af4f3fc0be1429cf324ffc77157c1c2359c641078675c1d6d0d82b746259ac69` (108,904,448 B), and `berth-vmm-linux-x64-<sha>` with `libkrun-linux-x64-<sha>.so`. CI rebuilds each architecture's kernel and rootfs from source on GitHub's Linux runners of that architecture, and publishes the release only if they match the pins bit for bit. The release also carries `SHA256SUMS`, each rootfs's input record, berth-vmm's build record, and the kernel's GPL sources (the exact linux and libkrunfw tarballs, the config delta, the resolved config and the build script; see `SOURCES.md` there).
 
-berth-vmm and its libkrun are downloaded only when the CLI pins their sha256 for your platform (macOS arm64, Linux arm64 and Linux x86_64). A build from CI can't be pinned until CI has built it, so a CLI released before the first artifacts release has no pin, and says so. Then build berth-vmm and pass `--vmm`, or download it by hand (below).
+berth-vmm and its libkrun are downloaded only when the CLI pins their sha256 for your platform (macOS arm64, Linux arm64 and Linux x86_64). Every platform is pinned since 0.3.0. A CLI built from a checkout whose pins have no published build yet says so; then build berth-vmm and pass `--vmm`, or download it by hand (below).
 
 A download is checked against the pinned size as it streams, and against the sha256 before it's renamed into place, so nothing unverified is ever at the final path. A download that receives nothing for 30 seconds is aborted and retried, up to four attempts, resuming with an HTTP range request where the server supports one (GitHub's CDN does) and starting over where it doesn't. `BERTH_VM_DOWNLOAD_STALL_MS` changes the 30 seconds.
 

@@ -2,6 +2,8 @@
 
 On a Mac, Berth's apps run on the kernel of the Linux VM your Docker daemon lives in, not on macOS. Docker Desktop's VM has no Landlock, so nothing is enforced. Colima's default VM has it. This page sets up Colima so the kernel refuses an undeclared write.
 
+> **Or skip Docker.** On an Apple silicon Mac, the [microVM runtime](./local-vm.md) (new in 0.3.0, preview) boots Berth's own kernel, which always enforces: `berth vm install`, then `berth dev --runtime vm`. Nothing on this page is needed for it.
+
 ## Context
 
 You run the `berth` CLI on macOS, but your apps never run on the macOS kernel. They run on the Linux kernel of the VM that hosts your Docker daemon, so that VM decides whether `berth.yml` is enforced. `berth doctor` reports which kernel it is ([doctor reference](./doctor-reference.md#which-kernel-it-checks)). Docker Desktop's VM doesn't enforce; Colima, installed with Homebrew, runs one that does.

@@ -8,7 +8,15 @@ The `berth` command: scaffold, run, test and deploy resident apps, check whether
 npm install -g @berthos/cli
 ```
 
-Needs Node.js 22.19+ and Docker.
+Needs Node.js 22.19+, and either Docker or, on an Apple silicon Mac or Linux with KVM, the microVM runtime:
+
+```sh
+berth vm install          # pinned kernel, rootfs, berth-vmm and libkrun, each checked against its sha256
+berth doctor --sandbox vm
+berth dev --runtime vm    # in an app directory
+```
+
+The microVM boots Berth's own kernel, so enforcement doesn't depend on your machine's. It is a preview in 0.3.0, and Docker is still the default ([docs](https://github.com/Ash20pk/BerthOS/blob/main/docs/local-vm.md)).
 
 ## Usage
 

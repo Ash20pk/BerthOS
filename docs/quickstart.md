@@ -4,7 +4,7 @@ Install Berth, watch the kernel refuse a write, run and scaffold a resident app,
 
 ## Context
 
-You, on your own machine, install the `berth` CLI and use it to run resident apps: tools defined by a `berth.yml` whose capabilities the Linux kernel enforces. The CLI needs Docker and, for enforcement, a kernel with Landlock. An agent you already run reaches the same apps over MCP ([the MCP quickstart](./mcp-quickstart.md)); the experimental agent framework calls Anthropic or OpenAI with your API key. `berth deploy` ships an app to a remote provider (E2B, Daytona or Kubernetes), and releases publish to npm and PyPI from GitHub Actions. For the whole picture, see the [README](../README.md#level-1-system-context).
+You, on your own machine, install the `berth` CLI and use it to run resident apps: tools defined by a `berth.yml` whose capabilities the Linux kernel enforces. The CLI needs Docker and, for enforcement, a kernel with Landlock, or, on an Apple silicon Mac or Linux with KVM, the [microVM runtime](./local-vm.md), which needs neither Docker nor a host kernel with Landlock. An agent you already run reaches the same apps over MCP ([the MCP quickstart](./mcp-quickstart.md)); the experimental agent framework calls Anthropic or OpenAI with your API key. `berth deploy` ships an app to a remote provider (E2B, Daytona or Kubernetes), and releases publish to npm and PyPI from GitHub Actions. For the whole picture, see the [README](../README.md#level-1-system-context).
 
 ## Containers
 
@@ -63,10 +63,10 @@ Follow these steps in order: prerequisites, install, a first enforcement demo, t
 ### Prerequisites
 
 - Node.js 22.19+ (`nvm use` reads the repo's `.nvmrc`)
-- Docker, running locally
+- Docker, running locally, or for `--runtime vm` an Apple silicon Mac or Linux with KVM (see [the microVM runtime](./local-vm.md))
 - `corepack enable` (ships with Node 22 and manages pnpm)
 
-Kernel enforcement needs Landlock (Linux 6.7+). Docker Desktop's VM on macOS and Windows doesn't have it. Run `berth doctor` to check your machine; see [enforcement by platform](./kernel-enforcement.md#kernel-enforcement-by-platform).
+Kernel enforcement needs Landlock (Linux 6.7+). Docker Desktop's VM on macOS and Windows doesn't have it. The microVM boots Berth's own kernel, which always has it. Run `berth doctor` to check your machine (`berth doctor --sandbox vm` for the microVM); see [enforcement by platform](./kernel-enforcement.md#kernel-enforcement-by-platform).
 
 ### Install and build
 

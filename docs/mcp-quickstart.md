@@ -17,7 +17,7 @@ Your MCP client (Claude Code, Claude Desktop, Cursor or another) starts `berth m
 - **The sandbox**, a Docker container named `berth-dev-<app>` on whichever daemon your Docker context or `DOCKER_HOST` selects (Docker Desktop, Colima or Linux).
 - **The audit trail**, `~/.berth/audit/audit.jsonl`, appended to by the bridge.
 
-The full picture, with the microVM runtime, is in [the bridge reference](./mcp-bridge-reference.md#containers).
+`berth mcp --runtime vm` runs the sandbox in a microVM instead, with no Docker ([the microVM runtime](./local-vm.md)). The full picture is in [the bridge reference](./mcp-bridge-reference.md#containers).
 
 ## Components
 

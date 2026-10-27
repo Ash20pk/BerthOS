@@ -31,7 +31,7 @@ The people and systems this page is about: you, running agents whose tools are r
 Every security tool draws a line somewhere. Berth assumes these are trustworthy and doesn't try to defend against them:
 
 - **Root on the host.** Anyone who can run `docker exec` on the host can reach inside the sandbox directly and bypass every rule. This is how Docker works, not a Berth setting.
-- **The host kernel, Docker and the hypervisor.** A bug that lets code escape a container is outside what Berth can stop. For that tier, Berth can run under a hardened runtime such as gVisor (`BERTH_RUNTIME`), but today that trades away the kernel layer; `berth doctor --runtime` explains the trade.
+- **The host kernel, Docker and the hypervisor.** A bug that lets code escape a container is outside what Berth can stop. For that tier, Berth can run under a hardened runtime such as gVisor (`BERTH_RUNTIME`), but today that trades away the kernel layer; `berth doctor --runtime` explains the trade. With `--runtime vm`, the sandbox is a microVM instead of a container: code that escapes the guest kernel still has to get past the hypervisor (libkrun on HVF or KVM) and berth-vmm, which confines itself on the host (a Seatbelt profile on macOS, Landlock and seccomp on Linux). The hypervisor and berth-vmm are then what Berth trusts. See [the microVM runtime](./local-vm.md).
 - **The code you install.** Building a resident app runs its install steps on the machine doing the build. Read a third-party app before installing it, as you would any other code.
 - **Your LLM provider.** It sees every prompt and every tool result. That's inherent to using a hosted model.
 
@@ -55,7 +55,7 @@ Each capability's layer is listed in [enforcement](./kernel-enforcement.md#avail
 
 #### It needs a kernel that can enforce
 
-Everything in the kernel layer depends on Landlock, and full enforcement needs Linux 6.7 or later. Docker Desktop's VM on macOS and Windows doesn't provide it. Run `berth doctor` to see what your machine supports; on a Mac, `berth doctor --fix` sets up a VM that does.
+Everything in the kernel layer depends on Landlock, and full enforcement needs Linux 6.7 or later. Docker Desktop's VM on macOS and Windows doesn't provide it. Run `berth doctor` to see what your machine supports; on a Mac, `berth doctor --fix` sets up a VM that does, and the [microVM runtime](./local-vm.md) brings its own kernel that always does.
 
 So that local development still works on those machines, Berth **runs apps unrestricted, with a warning, when it can't enforce**. For anything that matters, set `BERTH_REQUIRE_ENFORCEMENT=1`: Berth then refuses to start an app it can't lock down. `Computer.boot()` turns this on by default.
 
