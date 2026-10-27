@@ -38,7 +38,7 @@ The checks, the Landlock probe that decides the verdict, the image the probe run
 
 | Check | `id` | What it means |
 |---|---|---|
-| Docker daemon reachable | `docker` | The daemon answers, with its version, kernel and architecture. Every check below runs in a container, so they depend on this one |
+| Docker daemon reachable | `docker` | The daemon answers, with its version, kernel and architecture. Every check below runs in a container, so they depend on this one. A daemon that takes the connection but never replies fails after 10 seconds per call instead of hanging doctor; `BERTH_DOCTOR_TIMEOUT_MS` changes that |
 | Memory for image builds | `memory` | The Docker VM's memory. A `warn` below 4 GB: the first image build compiles Berth's helpers and installs Chromium, and runs out of memory with Colima's default 2 GB. Never affects the verdict |
 | Landlock enforcement | `landlock` | The check that decides the verdict. See below |
 | Docker's default seccomp profile | `seccomp` | A `warn` isn't fatal: `agent-init` installs its own seccomp filters regardless. You lose Docker's extra layer |
