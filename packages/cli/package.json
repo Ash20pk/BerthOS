@@ -1,6 +1,6 @@
 {
   "name": "@berthos/cli",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "The berth CLI — init, dev, test, doctor, mcp, attest, os, snapshot, publish, deploy",
   "type": "module",
   "bin": {

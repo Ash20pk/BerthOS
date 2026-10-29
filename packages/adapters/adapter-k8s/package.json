@@ -1,6 +1,6 @@
 {
   "name": "@berthos/adapter-k8s",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "DeployAdapter implementation targeting a Kubernetes cluster",
   "type": "module",
   "main": "./dist/index.js",

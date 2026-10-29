@@ -1,7 +1,7 @@
 {
   "name": "berth",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Berth — the runtime and framework for AI agent workers",
   "license": "Apache-2.0",
   "repository": {
