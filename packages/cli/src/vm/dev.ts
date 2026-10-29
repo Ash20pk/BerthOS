@@ -3,7 +3,8 @@ import { printable, type GuestLogLine } from "./guest-lines.js";
 import { devSandboxName } from "./paths.js";
 import { createServer, connect } from "node:net";
 import { randomBytes } from "node:crypto";
-import { assertSupported, bootVm, bundleApps, ensureArtifacts, requireHost, terminalApp, NOVNC_PORT, TERMINAL_PORT, type VmAppInput } from "./runtime.js";
+import { defaultSandbox } from "./config.js";
+import { assertSupported, bootVm, bundleApps, ensureArtifacts, ensureVmm, requireHost, terminalApp, NOVNC_PORT, TERMINAL_PORT, type VmAppInput } from "./runtime.js";
 import { layersFor } from "./support.js";
 import { pidAlive, VmSandbox } from "./sandbox.js";
 
@@ -32,6 +33,7 @@ export interface DevVmOptions {
 export async function runDevVm(options: DevVmOptions): Promise<void> {
   const { apps, log } = options;
   const primary = apps[0]!;
+  await ensureVmm(log);
   const vmm = requireHost();
   await ensureArtifacts(log, vmm);
   assertSupported(apps, vmm);
@@ -71,7 +73,8 @@ export async function runDevVm(options: DevVmOptions): Promise<void> {
   log(
     `VM ready in ${t.bundleMs + t.readyMs} ms (bundle ${t.bundleMs} ms${current.bundles.every((b) => b.cached) ? ", cached" : ""}, boot ${t.readyMs} ms). boot ${current.ready.bootId}, berth-vmm pid ${current.sandbox.pid}`,
   );
-  log(`[berth:dev] run dir ${current.sandbox.runDir}; call it with \`berth rpc ${primary.name} --runtime vm --export <name>\` or \`berth mcp --runtime vm --app ${primary.name}\``);
+  const flag = defaultSandbox() === "vm" ? "" : " --runtime vm";
+  log(`[berth:dev] run dir ${current.sandbox.runDir}; call it with \`berth rpc ${primary.name}${flag} --export <name>\` or \`berth mcp${flag} --app ${primary.name}\``);
   watchExit(current.sandbox, log);
   // The web terminal on host loopback, forwarding to the VM's published
   // socket. By path, so it follows the sandbox across reboots.

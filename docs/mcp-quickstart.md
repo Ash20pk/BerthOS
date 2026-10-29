@@ -8,16 +8,16 @@ How the bridge works, and its flags: [mcp-bridge-reference.md](./mcp-bridge-refe
 
 ## Context
 
-Your MCP client (Claude Code, Claude Desktop, Cursor or another) starts `berth mcp` as a local server and calls the tools it offers. Behind it is one resident app, running in a sandbox on your machine's Docker, whose `berth.yml` sets both which tools exist and what the kernel lets them do. Each session is written to Berth's audit trail, which you can read and attest afterwards.
+Your MCP client (Claude Code, Claude Desktop, Cursor or another) starts `berth mcp` as a local server and calls the tools it offers. Behind it is one resident app, running in a sandbox on your machine (a microVM, or Docker where the VM can't run), whose `berth.yml` sets both which tools exist and what the kernel lets them do. Each session is written to Berth's audit trail, which you can read and attest afterwards.
 
 ## Containers
 
 - **Your MCP client**, which spawns the server command from its config and talks to it over stdio.
 - **The bridge**, `berth mcp`, a Node.js process on your machine. It boots the app's sandbox if none is running, or attaches to the one `berth dev` started.
-- **The sandbox**, a Docker container named `berth-dev-<app>` on whichever daemon your Docker context or `DOCKER_HOST` selects (Docker Desktop, Colima or Linux).
+- **The sandbox**, `berth-dev-<app>`: a [microVM](./local-vm.md) on Apple silicon Macs and Linux with KVM, or a Docker container on whichever daemon your Docker context or `DOCKER_HOST` selects.
 - **The audit trail**, `~/.berth/audit/audit.jsonl`, appended to by the bridge.
 
-The full picture, with the microVM runtime, is in [the bridge reference](./mcp-bridge-reference.md#containers).
+`--runtime docker` or `--runtime vm` picks one explicitly. The full picture is in [the bridge reference](./mcp-bridge-reference.md#containers).
 
 ## Components
 

@@ -8,7 +8,7 @@ import type { EnforcementStatus } from "../util/capability-errors.js";
 import type { SandboxSteps } from "../util/mcp-sandbox.js";
 import { vmBootEvidence, vmRulesetReports, consoleLines } from "./evidence.js";
 import { berthHome } from "./paths.js";
-import { assertSupported, bootVm, ensureArtifacts, requireHost } from "./runtime.js";
+import { assertSupported, bootVm, ensureArtifacts, ensureVmm, requireHost } from "./runtime.js";
 import { readGuestLog, VmSandbox } from "./sandbox.js";
 
 /**
@@ -85,6 +85,7 @@ export function vmSandboxSteps(options: {
     },
     boot: async (signal) => {
       log(`no microVM sandbox named "${name}" — booting one for "${options.manifest.name}"`);
+      await ensureVmm(log);
       const vmm = requireHost();
       await ensureArtifacts(log, vmm);
       const apps = [{ name: options.manifest.name, appDir: options.appDir, manifest: options.manifest }];

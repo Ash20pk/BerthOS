@@ -156,8 +156,11 @@ Each is its own branch, tested before the next.
   context needed the harness's 20 s call timeout raised. browser failed: Chromium did not launch inside
   Playwright's own 20 s there, with 2 or 4 vCPUs. The same layer passes on macOS, so this is unverified
   rather than known broken, and wants an arm64 host with KVM on bare metal.
-- **Not verified:** a clean `berth vm install` that downloads (needs both releases published and
-  `VMM_PINS` / `LIBKRUN_PINS` set from that run's notices).
+- **Released in 0.3.0, 2026-10-27.** Both releases are published (`vm-artifacts-8f79e8da-dfb5f6b0`,
+  `vm-artifacts-10d4b54c-af4f3fc0`) and `VMM_PINS` / `LIBKRUN_PINS` pin all three berth-vmm builds. The Fresh
+  install workflow (run 40467148046) installed `@berthos/cli@0.3.0` from npm and ran `berth vm install` with
+  real downloads on `ubuntu-24.04` (x86_64, KVM) and `macos-15`, both passing. Linux arm64 on bare metal is
+  still unverified (see above).
 
 ## What it doesn't cover
 

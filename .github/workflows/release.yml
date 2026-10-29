@@ -52,6 +52,11 @@ concurrency:
 permissions:
   contents: read
 
+# Hosts with KVM (GitHub's Linux runners included) default to the microVM;
+# these jobs test the Docker path, so they ask for it. --runtime vm still wins.
+env:
+  BERTH_SANDBOX: docker
+
 jobs:
   prepare:
     runs-on: ubuntu-latest

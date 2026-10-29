@@ -14,7 +14,7 @@ export default class Rpc extends Command {
   static override flags = {
     container: Flags.string({ description: "container (or microVM sandbox) name to reach (defaults to berth-dev-<appName>)" }),
     runtime: Flags.string({
-      description: "where the sandbox runs: docker (default) or vm (defaults to BERTH_SANDBOX, then \"sandbox\" in ~/.berth/config.json)",
+      description: "where the sandbox runs: vm or docker (defaults to BERTH_SANDBOX, then \"sandbox\" in ~/.berth/config.json, then vm on Apple silicon Macs and Linux with KVM and docker elsewhere)",
       options: ["docker", "vm"],
     }),
     export: Flags.string({ required: true, description: "export name to call" }),

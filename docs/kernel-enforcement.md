@@ -16,7 +16,7 @@ The pieces that enforce a capability are the kernel the sandbox runs on, the egr
 
 ### Kernel enforcement, by platform
 
-Kernel enforcement uses [Landlock](https://docs.kernel.org/userspace-api/landlock.html), a Linux kernel feature. On macOS and Windows your apps run on the kernel of the Linux VM your Docker daemon lives in, so that VM's kernel is what counts.
+Kernel enforcement uses [Landlock](https://docs.kernel.org/userspace-api/landlock.html), a Linux kernel feature. On macOS and Windows your apps run on the kernel of the Linux VM your Docker daemon lives in, so that VM's kernel is what counts. With `--runtime vm`, they run on the kernel Berth pins and boots itself.
 
 | Host | Landlock | What works |
 |---|---|---|
@@ -25,6 +25,7 @@ Kernel enforcement uses [Landlock](https://docs.kernel.org/userspace-api/landloc
 | Linux older than 5.13 | No | `berth dev`; `Computer.boot()` needs the relaxed mode below |
 | macOS / Windows, Docker Desktop | No (`landlock_create_ruleset` returns `ENOSYS`) | `berth dev`; `Computer.boot()` needs the relaxed mode below |
 | macOS, Colima | Yes | Everything, enforced by the kernel. Setup: [Enforcement on macOS](./mac-enforcement.md), or `berth doctor --fix` |
+| Apple silicon Mac or Linux with KVM (the default there) | Yes, Berth's own guest kernel (Landlock ABI 6) | Everything the [microVM runtime](./local-vm.md) runs, enforced the same on every host. No Docker. See its [limits](./local-vm.md#limits) |
 
 `berth dev` uses the dev image, which runs apps even when the kernel can't enforce, so you can build resident apps on any host. When it can't enforce, each app's boot log says `NOT RESTRICTED` and an undeclared write succeeds.
 

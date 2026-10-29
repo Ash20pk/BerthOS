@@ -88,7 +88,7 @@ export default class Mcp extends Command {
     container: Flags.string({ description: "container (or microVM sandbox) name to reach (defaults to berth-dev-<app>)" }),
     runtime: Flags.string({
       description:
-        "where the sandbox runs: docker (default) or vm, a local microVM (docs/local-vm.md). Defaults to BERTH_SANDBOX, then \"sandbox\" in ~/.berth/config.json",
+        "where the sandbox runs: vm, a local microVM (docs/local-vm.md), or docker. Defaults to BERTH_SANDBOX, then \"sandbox\" in ~/.berth/config.json, then vm on Apple silicon Macs and Linux with KVM and docker elsewhere",
       options: ["docker", "vm"],
     }),
     "app-dir": Flags.string({ description: "path to the app's directory (defaults to the current directory)", default: "." }),
@@ -108,7 +108,7 @@ export default class Mcp extends Command {
     warm: Flags.boolean({
       default: false,
       description:
-        "build the image, boot the sandbox, wait for the app to report ready, then stop it and exit 0 — without serving MCP. The bridge answers `initialize` without waiting for a boot, but its first tool call waits for the image to build; this makes that call fast.",
+        "build the image (or, in the microVM, install it on first use), boot the sandbox, wait for the app to report ready, then stop it and exit 0 — without serving MCP. The bridge answers `initialize` without waiting for a boot, but its first tool call waits for that; this makes that call fast.",
     }),
     audit: Flags.boolean({
       allowNo: true,
@@ -211,7 +211,7 @@ export default class Mcp extends Command {
       onClientPipesClosed(process, stopWarm);
       const { bootedHere } = await sandbox.ready.catch((err: unknown) => this.error(errorMessage(err)));
       if (bootedHere) await sandbox.stop();
-      this.logStderr(`warm: image built and "${manifest.name}" reached ready — an MCP client can now start this server inside its timeout`);
+      this.logStderr(`warm: ${runtime === "vm" ? "the VM is installed" : "image built"} and "${manifest.name}" reached ready — an MCP client can now start this server inside its timeout`);
       return;
     }
 

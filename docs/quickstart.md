@@ -4,12 +4,12 @@ Install Berth, watch the kernel refuse a write, run and scaffold a resident app,
 
 ## Context
 
-You, on your own machine, install the `berth` CLI and use it to run resident apps: tools defined by a `berth.yml` whose capabilities the Linux kernel enforces. The CLI needs Docker and, for enforcement, a kernel with Landlock. An agent you already run reaches the same apps over MCP ([the MCP quickstart](./mcp-quickstart.md)); the experimental agent framework calls Anthropic or OpenAI with your API key. `berth deploy` ships an app to a remote provider (E2B, Daytona or Kubernetes), and releases publish to npm and PyPI from GitHub Actions. For the whole picture, see the [README](../README.md#level-1-system-context).
+You, on your own machine, install the `berth` CLI and use it to run resident apps: tools defined by a `berth.yml` whose capabilities the Linux kernel enforces. On an Apple silicon Mac or Linux with KVM, each sandbox is a [microVM](./local-vm.md) that boots Berth's own kernel, so there is nothing else to install. Elsewhere the CLI uses Docker, on a kernel with Landlock. An agent you already run reaches the same apps over MCP ([the MCP quickstart](./mcp-quickstart.md)); the experimental agent framework calls Anthropic or OpenAI with your API key. `berth deploy` ships an app to a remote provider (E2B, Daytona or Kubernetes), and releases publish to npm and PyPI from GitHub Actions. For the whole picture, see the [README](../README.md#level-1-system-context).
 
 ## Containers
 
-- **The `berth` CLI**, a Node.js process on your machine. It builds an image for your app and starts it through the Docker daemon, or as a [local microVM](./local-vm.md) with `berth dev --runtime vm`.
-- **The sandbox**, the container `berth dev` starts, holding one app (or several, with `--apps`). `agent-init` applies the app's Landlock and seccomp policy before the app's first line runs.
+- **The `berth` CLI**, a Node.js process on your machine. It bundles your app and boots it in a [local microVM](./local-vm.md), or, where the VM can't run, builds an image and starts it through the Docker daemon.
+- **The sandbox**, the VM or container `berth dev` starts, holding one app (or several, with `--apps`). `agent-init` applies the app's Landlock and seccomp policy before the app's first line runs.
 - **Callers from the host.** `berth rpc` and `berth mcp` call an app's exports from the host. A browser app's noVNC and VNC ports bind to `127.0.0.1` only.
 
 How these fit together is in the [README](../README.md#level-2-containers).
@@ -63,10 +63,10 @@ Follow these steps in order: prerequisites, install, a first enforcement demo, t
 ### Prerequisites
 
 - Node.js 22.19+ (`nvm use` reads the repo's `.nvmrc`)
-- Docker, running locally
+- An Apple silicon Mac or Linux with KVM, for the [microVM](./local-vm.md); anywhere else, or for `berth test` and `berth deploy`, Docker running locally
 - `corepack enable` (ships with Node 22 and manages pnpm)
 
-Kernel enforcement needs Landlock (Linux 6.7+). Docker Desktop's VM on macOS and Windows doesn't have it. Run `berth doctor` to check your machine; see [enforcement by platform](./kernel-enforcement.md#kernel-enforcement-by-platform).
+Kernel enforcement needs Landlock (Linux 6.7+). Docker Desktop's VM on macOS and Windows doesn't have it. The microVM boots Berth's own kernel, which always has it. Run `berth doctor` to check your machine (`berth doctor --sandbox vm` for the microVM); see [enforcement by platform](./kernel-enforcement.md#kernel-enforcement-by-platform).
 
 ### Install and build
 
@@ -85,12 +85,15 @@ The commands below write `berth`. In a clone without the global install, that's 
 ### See enforcement, with no API key
 
 ```bash
-cd examples/kernel-says-no && pnpm start
+cd apps/filesystem && berth dev
+# in a second terminal, from the same folder:
+berth rpc filesystem --export write_file --input '{"path":"hello.txt","content":"hi"}'
+berth rpc filesystem --export write_file --input '{"path":"/tmp/escape.txt","content":"x"}'
 ```
 
-The demo makes two writes through one resident app's `write_file` tool: one inside its declared `filesystem:write:/workspace`, one outside it. The kernel refuses the second with `EACCES`. See [`examples/kernel-says-no`](../examples/kernel-says-no).
+`apps/filesystem` declares `filesystem:write:/workspace` and nothing else, so the first write succeeds and the kernel refuses the second with `EACCES`. The `examples/` demos ([`kernel-says-no`](../examples/kernel-says-no) and the others below) do the same through the experimental agent framework, which boots its sandboxes with Docker.
 
-> **On macOS or Windows, run `berth doctor --fix` first.** On a kernel without Landlock the demos exit non-zero instead of faking a pass. `--fix` sets up a Colima VM that enforces; the manual recipe is in [mac-enforcement.md](./mac-enforcement.md). Linux 6.7+ works as-is.
+> **Using Docker (Intel Mac, Windows, Linux without KVM)?** On a kernel without Landlock the demos exit non-zero instead of faking a pass. On a Mac, `berth doctor --fix` sets up a Colima VM that enforces; the manual recipe is in [mac-enforcement.md](./mac-enforcement.md). Linux 6.7+ works as-is.
 
 More demos are in the [examples catalog](../examples/README.md): `prompt-injection` (a compromised model, refused by the kernel), `no-egress` (code execution with no network), and `audit-trail` (tamper-evident records; needs neither a Landlock kernel nor an API key).
 

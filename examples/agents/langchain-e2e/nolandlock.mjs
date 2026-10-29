@@ -21,6 +21,9 @@ const { loadManifest } = await import(join(REPO, "packages/manifest-schema/dist/
 const { buildImage, startContainer, stopContainer } = await import(join(REPO, "packages/docker-orchestrator/dist/index.js"));
 const OUT_DIR = process.env.E2E_OUT_DIR ?? join(homedir(), "berth-agent-e2e");
 const BERTH = join(REPO, "packages/cli/bin/berth.js");
+// These scenarios exercise the Docker sandbox (container names, docker exec), and
+// the CLI defaults to the microVM on hosts with a hypervisor: ask for Docker.
+process.env.BERTH_SANDBOX ||= "docker";
 const APP_DIR = join(REPO, "apps/filesystem");
 const NO_LANDLOCK = JSON.stringify({
   defaultAction: "SCMP_ACT_ALLOW",

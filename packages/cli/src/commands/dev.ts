@@ -29,7 +29,7 @@ export default class Dev extends Command {
   static override flags = {
     apps: Flags.string({ description: "comma-separated workspace-relative paths of companion resident apps to run alongside this one" }),
     runtime: Flags.string({
-      description: "where the sandbox runs: docker (default) or vm, a local microVM (see docs/local-vm.md). Defaults to BERTH_SANDBOX, then \"sandbox\" in ~/.berth/config.json",
+      description: "where the sandbox runs: vm, a local microVM (see docs/local-vm.md), or docker. Defaults to BERTH_SANDBOX, then \"sandbox\" in ~/.berth/config.json, then vm on Apple silicon Macs and Linux with KVM and docker elsewhere",
       options: ["docker", "vm"],
     }),
     "mesh-coordinator": Flags.string({
