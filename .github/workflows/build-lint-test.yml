@@ -95,7 +95,7 @@ jobs:
       # either. This runner is Linux and non-root, which is exactly what the
       # ownership tests need — they chown to a group the process is already in,
       # since chowning to an arbitrary gid needs privilege.
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: packages/semantic-fs-daemon/go.mod
           cache-dependency-path: packages/semantic-fs-daemon/go.sum
